@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+#MISE description="Generate AUR PKGBUILD for a release"
+#USAGE flag "--version" help="Package version without leading v (e.g. 2026.5.18-beta.1)" {
+#USAGE   arg "<version>"
+#USAGE }
+#USAGE flag "--sha256" help="Binary tarball SHA256 checksum" {
+#USAGE   arg "<sha256>"
+#USAGE }
+
+set -e
+
+: "${usage_version:?--version is required}"
+: "${usage_sha256:?--sha256 is required}"
+
+mkdir -p aur
+
+cat >aur/PKGBUILD <<EOF
+# Maintainer: Aaron Allen <hello@aaronmallen.me>
+pkgname=pod-bin
+pkgver=${usage_version}
+pkgrel=1
+pkgdesc="A one-stop-shop capsuleer manager for EVE Online."
+arch=(x86_64)
+url="https://github.com/aaronmallen/pod"
+license=(MIT)
+provides=(pod)
+conflicts=(pod)
+
+_tag="v\${pkgver}"
+source=("pod-\${_tag}-x86_64-unknown-linux-gnu.tar.gz::https://github.com/aaronmallen/pod/releases/download/\${_tag}/pod-\${_tag}-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('${usage_sha256}')
+
+package() {
+  install -Dm755 "usr/bin/pod" "\${pkgdir}/usr/bin/pod"
+}
+EOF

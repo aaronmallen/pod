@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+#MISE description="Lint rust files"
+#MISE tools.rust="nightly"
+
+set -e
+
+cargo sort --workspace --check --config .config/tomlfmt.toml
+cargo +nightly fmt --all --check -- --config-path .config/rustfmt.toml
+cargo clippy

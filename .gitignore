@@ -1,0 +1,36 @@
+coverage/
+node_modules/
+tmp/
+web/src/generated/release.ts
+
+# Environment and secrets
+!.env.example
+.env
+.env.*
+
+# Rust
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+debug/
+target/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+*~
+*.swo
+*.swp
+.idea/
+.vscode/
+
+# LLMs
+.agents
+.claude
+.codex
+.cursor
+.gemini
+.junie
+.opencode

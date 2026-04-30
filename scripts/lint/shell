@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Lint all shell files"
+
+set -e
+
+shfmt -d scripts

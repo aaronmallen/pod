@@ -1,0 +1,97 @@
+import type { ReleaseData, Platform } from '../types';
+
+export const RELEASE: ReleaseData = {
+  version:     '2026.05.0',
+  channel:     'stable',
+  build:       '0519',
+  date:        'May 19, 2026',
+  notesAnchor: '#notes',
+};
+
+export const PLATFORMS: Platform[] = [
+  {
+    id: 'macos',
+    name: 'macOS',
+    sub: '12 Monterey or later',
+    builds: [
+      {
+        id:   'mac-arm',
+        arch: 'Apple Silicon',
+        ext:  'dmg',
+        size: '128 MB',
+        sha:  'a4f1…7c2e',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0-arm64.dmg',
+      },
+      {
+        id:   'mac-x64',
+        arch: 'Intel · x86_64',
+        ext:  'dmg',
+        size: '136 MB',
+        sha:  '9b03…1d8a',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0-x64.dmg',
+      },
+    ],
+  },
+  {
+    id: 'windows',
+    name: 'Windows',
+    sub: '10 (1809) or later · 64-bit',
+    builds: [
+      {
+        id:   'win-x64-exe',
+        arch: 'Installer',
+        ext:  'exe',
+        size: '112 MB',
+        sha:  '6e2c…4af0',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0-x64-setup.exe',
+      },
+      {
+        id:   'win-x64-msi',
+        arch: 'MSI · enterprise',
+        ext:  'msi',
+        size: '114 MB',
+        sha:  '3104…b9d1',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0-x64.msi',
+      },
+      {
+        id:   'win-x64-zip',
+        arch: 'Portable · zip',
+        ext:  'zip',
+        size: '109 MB',
+        sha:  'd8a1…0e44',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0-x64-portable.zip',
+      },
+    ],
+  },
+  {
+    id: 'linux',
+    name: 'Linux',
+    sub: 'glibc 2.31+ · X11 / Wayland',
+    builds: [
+      {
+        id:   'lin-app',
+        arch: 'AppImage · universal',
+        ext:  'AppImage',
+        size: '124 MB',
+        sha:  '772f…2c10',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/Pod-2026.05.0.AppImage',
+      },
+      {
+        id:   'lin-deb',
+        arch: '.deb · Debian / Ubuntu',
+        ext:  'deb',
+        size: '118 MB',
+        sha:  '4ab8…931e',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/pod_2026.05.0_amd64.deb',
+      },
+      {
+        id:   'lin-rpm',
+        arch: '.rpm · Fedora / RHEL',
+        ext:  'rpm',
+        size: '119 MB',
+        sha:  'c5e0…77ab',
+        url:  'https://github.com/aaronmallen/pod/releases/download/v2026.05.0/pod-2026.05.0.x86_64.rpm',
+      },
+    ],
+  },
+];

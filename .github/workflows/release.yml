@@ -1,0 +1,288 @@
+name: Release
+
+permissions:
+  actions: write
+  contents: write
+  pages: write
+
+on:
+  push:
+    tags:
+      - "[0-9]+.*"
+
+jobs:
+  wait-for-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha="${{ github.sha }}"
+          echo "Waiting for Build workflow to complete on $sha..."
+          while true; do
+            result=$(gh api \
+              "repos/${{ github.repository }}/actions/workflows/build.yml/runs" \
+              --jq ".workflow_runs[] \
+                | select(.head_sha == \"$sha\") \
+                | .conclusion" \
+              | head -1)
+            case "$result" in
+              success) echo "Build passed"; exit 0 ;;
+              failure|cancelled|timed_out) echo "Build $result"; exit 1 ;;
+              *) echo "Build still running..."; sleep 30 ;;
+            esac
+          done
+
+  create-release:
+    needs: wait-for-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          changelog: CHANGELOG.md
+          draft: true
+          title: v$tag
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  package-macos:
+    needs: create-release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+
+      - name: Add Rust targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Import Apple certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "" build.keychain
+          rm certificate.p12
+
+      - name: Build and package (x86_64)
+        run: mise run package --format dmg --target x86_64-apple-darwin
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
+      - name: Notarize macOS app (x86_64)
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Build and package (aarch64)
+        run: mise run package --format dmg --target aarch64-apple-darwin
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
+      - name: Notarize macOS app (aarch64)
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in $(find . -name "*.dmg"); do
+            gh release upload "${{ github.ref_name }}" "$f"
+          done
+
+  package-windows:
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+
+      - name: Add Rust target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Install WiX Toolset v3
+        run: choco upgrade wixtoolset -y
+
+      - name: Build and package (nsis)
+        run: mise run package --format nsis
+
+      - name: Build and package (wix)
+        run: mise run package --format wix
+
+      - name: Sign Windows installers
+        if: env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $cert = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes("certificate.pfx", $cert)
+          Get-ChildItem -Recurse -Include "*-setup.exe","*.msi" | ForEach-Object {
+            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" `
+              sign /f certificate.pfx `
+              /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+              /tr http://timestamp.sectigo.com /td sha256 /fd sha256 `
+              $_.FullName
+          }
+          Remove-Item certificate.pfx
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Include "*-setup.exe","*.msi" | ForEach-Object {
+            gh release upload "${{ github.ref_name }}" $_.FullName
+          }
+
+  package-linux:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+
+      - name: Add Rust target
+        run: rustup target add x86_64-unknown-linux-gnu
+
+      - name: Build and package (deb)
+        run: mise run package --format deb
+
+      - name: Build and package (appimage)
+        run: mise run package --format appimage
+
+      - name: Build and package (pacman)
+        run: mise run package --format pacman
+
+      - name: Build pacman package
+        run: |
+          mkdir -p /tmp/pkgbuild
+          cp target/release/PKGBUILD /tmp/pkgbuild/
+          find target/release -name "*.tar.gz" -exec cp {} /tmp/pkgbuild/ \;
+          sed -i '/^pkgver=/s/-/_/g' /tmp/pkgbuild/PKGBUILD
+          docker run --rm -v "/tmp/pkgbuild:/pkg" archlinux:latest bash -c \
+            "pacman -Sy --noconfirm base-devel && \
+            useradd -m builder && \
+            chown -R builder:builder /pkg && \
+            su builder -c 'cd /pkg && makepkg --noconfirm'"
+          find /tmp/pkgbuild -name "*.pkg.tar.zst" \
+            -exec cp {} target/release/ \;
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in $(find . \( -name "*.deb" -o -name "*.AppImage" -o -name "*.pkg.tar.zst" \)); do
+            gh release upload "${{ github.ref_name }}" "$f"
+          done
+
+      - name: Install Flatpak tools
+        run: sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add Flathub remote
+        run: sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install Flatpak runtime
+        run: sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Prepare binary tarball
+        run: |
+          deb=$(find . -name "*.deb" | head -1)
+          mkdir -p deb-extract
+          dpkg-deb -x "$deb" deb-extract
+          binary=$(find deb-extract -name "pod" -type f | head -1)
+          [[ -n "$binary" ]] || { echo "::error::pod binary not found in .deb"; exit 1; }
+          mkdir -p tarball-root/usr/bin
+          cp "$binary" tarball-root/usr/bin/pod
+          tarball="pod-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz"
+          tar -czf "$tarball" -C tarball-root .
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+
+      - name: Generate Flatpak files
+        run: mise run generate:flatpak --path "../$TARBALL"
+
+      - name: Build Flatpak
+        run: sudo flatpak-builder --repo=repo build-dir flatpak/dev.aaronmallen.pod.yml
+
+      - name: Bundle Flatpak
+        run: flatpak build-bundle repo dev.aaronmallen.pod.flatpak dev.aaronmallen.pod
+
+      - name: Upload Flatpak to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" "$TARBALL" --clobber
+          gh release upload "${{ github.ref_name }}" dev.aaronmallen.pod.flatpak --clobber
+
+  publish-release:
+    needs:
+      - package-macos
+      - package-windows
+      - package-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false
+
+  deploy-pages:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: aube --dir web install
+
+      - name: Fetch release data
+        run: aube --dir web run fetch-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build site
+        run: aube --dir web run build
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: web/dist
+          cname: pod.aaronmallen.dev

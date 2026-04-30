@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+#MISE description="Check for compilation errors"
+#USAGE flag "--package" help="Scope the check to a package" {
+#USAGE   arg "<package>"
+#USAGE }
+
+set -e
+
+PACKAGE=""
+if [ -n "${usage_package}" ]; then
+  case "${usage_package}" in
+  pod-*) PACKAGE="${usage_package}" ;;
+  *) PACKAGE="pod-${usage_package}" ;;
+  esac
+fi
+
+if [ -n "${PACKAGE}" ]; then
+  cargo check --package "${PACKAGE}" --all-targets --all-features
+else
+  cargo check --workspace --all-targets --all-features
+fi

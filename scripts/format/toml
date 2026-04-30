@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Format toml files"
+
+set -e
+
+taplo format --config .config/taplo.toml

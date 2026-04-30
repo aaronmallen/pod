@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Lint toml files"
+
+set -e
+
+taplo lint --config .config/taplo.toml

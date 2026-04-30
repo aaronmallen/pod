@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Format yaml files"
+
+set -e
+
+yamlfmt -conf .config/.yamlfmt .

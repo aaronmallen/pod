@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Format shell files"
+
+set -e
+
+shfmt -w scripts

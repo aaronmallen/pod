@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Lint all yaml files"
+
+set -e
+
+yamlfmt -lint -conf .config/.yamlfmt .

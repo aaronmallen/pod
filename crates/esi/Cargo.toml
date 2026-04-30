@@ -1,0 +1,32 @@
+[package]
+authors.workspace = true
+description = "Edit Me"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "pod-esi"
+repository.workspace = true
+version = "0.1.0"
+
+[features]
+pod-model = ["dep:pod-model"]
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+getset.workspace = true
+log.workspace = true
+pod-model = { optional = true, workspace = true }
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+validator.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+wiremock.workspace = true

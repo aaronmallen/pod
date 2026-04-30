@@ -1,0 +1,176 @@
+//! Domain model for EVE Online bloodlines.
+
+use getset::Getters;
+use serde::{Deserialize, Serialize};
+use validator::Validate;
+
+/// A bloodline, representing a character ancestry option within a race.
+///
+/// Tracks both the static EVE data (attribute scores, associated corporation and
+/// starter ship) and dirty/persisted state for change detection before database writes.
+#[derive(Clone, Debug, Deserialize, Eq, Getters, Hash, PartialEq, Serialize, Validate)]
+pub struct Model {
+  /// Base charisma attribute bonus granted to characters of this bloodline.
+  #[get = "pub"]
+  charisma: i32,
+  /// ID of the NPC corporation associated with this bloodline.
+  #[get = "pub"]
+  corporation_id: i32,
+  /// Human-readable description of the bloodline.
+  #[get = "pub"]
+  description: String,
+  dirty: bool,
+  /// Unique bloodline identifier.
+  #[get = "pub"]
+  id: i32,
+  /// Base intelligence attribute bonus granted to characters of this bloodline.
+  #[get = "pub"]
+  intelligence: i32,
+  /// Base memory attribute bonus granted to characters of this bloodline.
+  #[get = "pub"]
+  memory: i32,
+  /// Display name of the bloodline.
+  #[get = "pub"]
+  #[validate(length(min = 1))]
+  name: String,
+  /// Base perception attribute bonus granted to characters of this bloodline.
+  #[get = "pub"]
+  perception: i32,
+  persisted: bool,
+  /// Foreign key referencing the parent race.
+  #[get = "pub"]
+  race_id: i32,
+  /// Item type ID of the starter ship granted to characters of this bloodline.
+  #[get = "pub"]
+  ship_item_type_id: i32,
+  /// Base willpower attribute bonus granted to characters of this bloodline.
+  #[get = "pub"]
+  will_power: i32,
+}
+
+impl Model {
+  /// Creates a new unpersisted bloodline with all attribute scores set to zero.
+  pub fn new(id: i32, name: impl Into<String>) -> Self {
+    Self {
+      charisma: 0,
+      corporation_id: 0,
+      description: String::new(),
+      dirty: false,
+      id,
+      intelligence: 0,
+      memory: 0,
+      name: name.into(),
+      perception: 0,
+      persisted: false,
+      race_id: 0,
+      ship_item_type_id: 0,
+      will_power: 0,
+    }
+  }
+
+  /// Returns `true` if any field has been modified since the model was last persisted.
+  pub fn has_changes(&self) -> bool {
+    self.dirty
+  }
+
+  /// Returns `true` if this model was loaded from the database.
+  pub fn is_persisted(&self) -> bool {
+    self.persisted
+  }
+
+  /// Sets the charisma attribute score, marking the model dirty if already persisted.
+  pub fn set_charisma(&mut self, charisma: i32) -> &mut Self {
+    self.charisma = charisma;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the ID of the NPC corporation associated with this bloodline.
+  pub fn set_corporation_id(&mut self, corporation_id: i32) -> &mut Self {
+    self.corporation_id = corporation_id;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the lore description for this bloodline.
+  pub fn set_description(&mut self, description: impl Into<String>) -> &mut Self {
+    self.description = description.into();
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the intelligence attribute score, marking the model dirty if already persisted.
+  pub fn set_intelligence(&mut self, intelligence: i32) -> &mut Self {
+    self.intelligence = intelligence;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the memory attribute score, marking the model dirty if already persisted.
+  pub fn set_memory(&mut self, memory: i32) -> &mut Self {
+    self.memory = memory;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the display name of this bloodline.
+  pub fn set_name(&mut self, name: impl Into<String>) -> &mut Self {
+    self.name = name.into();
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the perception attribute score, marking the model dirty if already persisted.
+  pub fn set_perception(&mut self, perception: i32) -> &mut Self {
+    self.perception = perception;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the ID of the race this bloodline belongs to.
+  pub fn set_race_id(&mut self, race_id: i32) -> &mut Self {
+    self.race_id = race_id;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the item type ID of the starter ship granted to characters of this bloodline.
+  pub fn set_ship_item_type_id(&mut self, ship_item_type_id: i32) -> &mut Self {
+    self.ship_item_type_id = ship_item_type_id;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the willpower attribute score, marking the model dirty if already persisted.
+  pub fn set_will_power(&mut self, will_power: i32) -> &mut Self {
+    self.will_power = will_power;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Marks this model as loaded from the database without affecting the dirty flag.
+  pub fn mark_persisted(&mut self) -> &mut Self {
+    self.persisted = true;
+    self
+  }
+}

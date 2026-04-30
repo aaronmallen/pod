@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Format all markdown files"
+
+set -e
+
+markdownlint-cli2 --config .config/markdownlint-cli2.yml --fix

@@ -1,0 +1,16 @@
+gitignore_excludes: true
+exclude:
+  - .cargo
+  - .mise
+  - .mise-data
+  - coverage
+  - node_modules
+  - target
+  - tmp
+  - web/aube-lock.yaml
+formatter:
+  eof_newline: true
+  line_ending: lf
+  retain_line_breaks_single: true
+  trim_trailing_whitespace: true
+  type: basic

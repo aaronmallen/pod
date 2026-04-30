@@ -1,0 +1,18 @@
+[package]
+authors.workspace = true
+description = "Edit Me"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+name = "pod-ui"
+publish = false
+repository.workspace = true
+version = "0.1.0"
+
+[dependencies]
+chrono.workspace = true
+iced.workspace = true
+pod-model.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

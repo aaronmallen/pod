@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+#MISE description="Package the app for distribution"
+#USAGE flag "--format" help="Package format: dmg, app, nsis, wix, deb, appimage, pacman" {
+#USAGE   arg "<format>"
+#USAGE }
+#USAGE flag "--target" help="Rust target triple for cross-compilation" {
+#USAGE   arg "<target>"
+#USAGE }
+
+set -e
+
+FORMAT_ARGS=""
+if [ -n "${usage_format}" ]; then
+  FORMAT_ARGS="--formats ${usage_format}"
+fi
+
+TARGET_ARGS=""
+if [ -n "${usage_target}" ]; then
+  TARGET_ARGS="--target ${usage_target}"
+fi
+
+CARGO_PATH="$(which cargo 2>/dev/null || echo cargo)"
+if command -v cygpath >/dev/null 2>&1; then
+  CARGO_PATH="$(cygpath -w "$CARGO_PATH")"
+fi
+export CARGO="$CARGO_PATH"
+cargo build --release ${TARGET_ARGS}
+cargo-packager --release ${FORMAT_ARGS} ${TARGET_ARGS}

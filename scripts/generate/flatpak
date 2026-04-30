@@ -1,0 +1,94 @@
+#!/usr/bin/env sh
+#MISE description="Generate Flatpak manifest and metadata for a release"
+#USAGE flag "--url" help="Binary tarball download URL (for remote source)" {
+#USAGE   arg "<url>"
+#USAGE }
+#USAGE flag "--sha256" help="Binary tarball SHA256 checksum (for remote source)" {
+#USAGE   arg "<sha256>"
+#USAGE }
+#USAGE flag "--path" help="Local binary tarball path relative to flatpak/ dir (for CI builds)" {
+#USAGE   arg "<path>"
+#USAGE }
+
+set -e
+
+if [ -n "${usage_path}" ]; then
+  source_block="      - type: archive
+        path: ${usage_path}"
+elif [ -n "${usage_url}" ] && [ -n "${usage_sha256}" ]; then
+  source_block="      - type: archive
+        url: ${usage_url}
+        sha256: ${usage_sha256}"
+else
+  echo "error: provide either --path or both --url and --sha256" >&2
+  exit 1
+fi
+
+mkdir -p flatpak
+
+cat >flatpak/dev.aaronmallen.pod.yml <<EOF
+app-id: dev.aaronmallen.pod
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: pod
+
+finish-args:
+  - --device=dri
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+
+modules:
+  - name: pod
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 usr/bin/pod /app/bin/pod
+      - install -Dm644 dev.aaronmallen.pod.desktop /app/share/applications/dev.aaronmallen.pod.desktop
+      - install -Dm644 dev.aaronmallen.pod.appdata.xml /app/share/metainfo/dev.aaronmallen.pod.appdata.xml
+      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/dev.aaronmallen.pod.png
+      - install -Dm644 256x256.png /app/share/icons/hicolor/256x256/apps/dev.aaronmallen.pod.png
+    sources:
+${source_block}
+      - type: file
+        path: dev.aaronmallen.pod.desktop
+      - type: file
+        path: dev.aaronmallen.pod.appdata.xml
+      - type: file
+        path: ../assets/app-icons/128x128.png
+        dest-filename: 128x128.png
+      - type: file
+        path: ../assets/app-icons/256x256.png
+        dest-filename: 256x256.png
+EOF
+
+cat >flatpak/dev.aaronmallen.pod.desktop <<'EOF'
+[Desktop Entry]
+Name=Pod
+Comment=Capsuleer manager for EVE Online.
+Exec=pod
+Icon=dev.aaronmallen.pod
+Type=Application
+Categories=Utility;
+EOF
+
+cat >flatpak/dev.aaronmallen.pod.appdata.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.aaronmallen.pod</id>
+  <name>Pod</name>
+  <summary>Capsuleer manager for EVE Online</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Pod is a one-stop-shop capsuleer manager for EVE Online.</p>
+  </description>
+  <url type="homepage">https://pod.aaronmallen.dev</url>
+  <url type="bugtracker">https://github.com/aaronmallen/pod/issues</url>
+  <releases>
+    <release version="CURRENT" date="2026-05-18"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
+EOF

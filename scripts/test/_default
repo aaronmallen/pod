@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+#MISE description="Run all tests"
+#USAGE flag "--filter" help="Filter tests by name" {
+#USAGE   arg "<filter>"
+#USAGE }
+#USAGE flag "--package" help="Scope the tests to a package" {
+#USAGE   arg "<package>"
+#USAGE }
+
+set -e
+
+FILTER_ARGS=""
+if [ -n "${usage_filter}" ]; then
+  FILTER_ARGS="--no-fail-fast --filter-expr 'test(/${usage_filter}/)'"
+fi
+
+PACKAGE=""
+if [ -n "${usage_package}" ]; then
+  case "${usage_package}" in
+  pod-*) PACKAGE="${usage_package}" ;;
+  *) PACKAGE="pod-${usage_package}" ;;
+  esac
+fi
+
+if [ -n "${PACKAGE}" ]; then
+  eval cargo llvm-cov nextest --package "${PACKAGE}" --summary-only --all-features --no-tests pass "${FILTER_ARGS}"
+  cargo llvm-cov report --html --output-dir coverage/rust/"${PACKAGE}"
+  cargo llvm-cov report --cobertura --output-path coverage/rust/"${PACKAGE}"/cobertura.xml
+else
+  eval cargo llvm-cov nextest --workspace --summary-only --all-features --no-tests pass "${FILTER_ARGS}"
+  cargo llvm-cov report --html --output-dir coverage/rust
+  cargo llvm-cov report --cobertura --output-path coverage/rust/cobertura.xml
+fi

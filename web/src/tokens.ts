@@ -1,0 +1,17 @@
+export const T = {
+  paper:       '#15171B',
+  paperRaised: '#1B1E23',
+  paperSunk:   '#0E0F12',
+  rail:        '#0A0B0E',
+  railFg:      '#F4F2EC',
+  ink:         '#F4F2EC',
+  muted:       'rgba(244,242,236,0.55)',
+  veryMuted:   'rgba(244,242,236,0.35)',
+  rule:        'rgba(244,242,236,0.10)',
+  ruleStrong:  'rgba(244,242,236,0.18)',
+  plasma:      '#3FB8DB',
+  plasmaSoft:  'rgba(63,184,219,0.12)',
+  danger:      '#E07559',
+  success:     '#5BB97E',
+  warning:     '#D9B252',
+} as const;

@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Lint files with editorconfig-checker"
+
+set -e
+
+ec -config .config/editorconfig-checker.json

@@ -3,7 +3,6 @@ name: Release
 permissions:
   actions: write
   contents: write
-  pages: write
 
 on:
   push:
@@ -264,25 +263,5 @@ jobs:
 
   deploy-pages:
     needs: publish-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: jdx/mise-action@v4
-
-      - name: Install dependencies
-        run: aube --dir web install
-
-      - name: Fetch release data
-        run: aube --dir web run fetch-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build site
-        run: aube --dir web run build
-
-      - uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: web/dist
-          cname: pod.aaronmallen.dev
+    uses: ./.github/workflows/deploy-pages.yml
+    secrets: inherit

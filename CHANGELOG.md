@@ -7,6 +7,31 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+
+- Native application menu with **Help → About Pod** item. The About
+  dialog shows the current version number.
+- Character grid now scrolls when more characters are added than fit
+  on screen, with drag auto-scroll at the edges.
+- Background ESI cache cleaner service purges stale cached entries so
+  the cache does not grow unbounded between restarts.
+- Website now shows release notes parsed directly from this changelog,
+  with a beta channel badge and corrected navigation links.
+
+### Fixed
+
+- Application now exits cleanly when a database migration fails at
+  startup instead of continuing with a partially migrated schema.
+- `solar_system_id` is now persisted in the structure cache, so
+  location data survives app restarts.
+- Corporation net worth calculation no longer includes character
+  personal assets and escrow buy orders, which were previously
+  counted twice.
+- Duplicate characters can no longer be added to the roster when the
+  same character is authenticated more than once.
+
 ## [0.2.0]
 
 ### Added
@@ -45,5 +70,6 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/aaronmallen/pod/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/aaronmallen/pod/compare/26.5.20...0.2.0

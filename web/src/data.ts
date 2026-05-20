@@ -48,9 +48,9 @@ export const PLATFORMS: Platform[] = [
 ];
 
 export const RELEASE: ReleaseData = {
-  version:     '2026.05.0',
-  channel:     'stable',
-  build:       '0519',
-  date:        'May 19, 2026',
+  version:     '0.2.0',
+  channel:     'beta',
+  build:       '0520',
+  date:        'May 20, 2026',
   notesAnchor: '#notes',
 };

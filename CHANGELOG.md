@@ -3,11 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [CalVer Versioning](https://calver.org/).
+and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [26.5.20-beta.1]
+## [0.2.0]
 
 ### Added
 
@@ -19,6 +19,10 @@ and this project adheres to [CalVer Versioning](https://calver.org/).
 - File-based structured tracing with daily log rotation (7-file
   retention) written to the platform state directory under
   `pod/logs/`.
+
+### Changed
+
+- Switch to Semantic Versioning for releases.
 
 ### Fixed
 
@@ -41,5 +45,5 @@ and this project adheres to [CalVer Versioning](https://calver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/2026.5.20-beta.1...HEAD
-[26.5.20-beta.1]: https://github.com/aaronmallen/pod/compare/26.5.20...26.5.20-beta.1
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/aaronmallen/pod/compare/26.5.20...0.2.0

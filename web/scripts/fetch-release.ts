@@ -30,7 +30,7 @@ interface PlatformBuilds {
 interface Release {
   version: string;
   date: string;
-  channel: 'stable' | 'nightly';
+  channel: 'stable' | 'beta' | 'nightly';
 }
 
 interface GitHubAsset {
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
 
   const version = release.tag_name.replace(/^v/, '');
   const date = formatDate(release.published_at);
-  const channel: 'stable' | 'nightly' = release.prerelease ? 'nightly' : 'stable';
+  const channel: 'stable' | 'beta' | 'nightly' = release.prerelease ? 'beta' : 'stable';
 
   console.log(`Release: ${version} (${channel}) — ${date}`);
 

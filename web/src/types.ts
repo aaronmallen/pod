@@ -43,7 +43,7 @@ export type PlatformBuilds = Platform;
 
 export interface ReleaseData {
   version: string;
-  channel: 'stable' | 'nightly';
+  channel: 'stable' | 'beta' | 'nightly';
   build: string;
   date: string;
   notesAnchor: string;

@@ -4484,7 +4484,7 @@ dependencies = [
 
 [[package]]
 name = "pod"
-version = "26.5.20-beta.1"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "cargo-packager-updater",

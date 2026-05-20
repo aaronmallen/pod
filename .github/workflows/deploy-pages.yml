@@ -26,7 +26,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Parse changelog
-        run: pnpm --dir web run parse-changelog
+        run: aube --dir web run parse-changelog
 
       - name: Build site
         run: aube --dir web run build

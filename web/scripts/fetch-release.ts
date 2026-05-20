@@ -178,7 +178,7 @@ async function main(): Promise<void> {
 
   const version = release.tag_name.replace(/^v/, '');
   const date = formatDate(release.published_at);
-  const channel: 'stable' | 'beta' | 'nightly' = release.prerelease ? 'beta' : 'stable';
+  const channel: 'stable' | 'beta' | 'nightly' = 'beta';
 
   console.log(`Release: ${version} (${channel}) — ${date}`);
 

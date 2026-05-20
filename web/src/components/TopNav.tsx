@@ -59,7 +59,8 @@ export function TopNav({ accent, release }: TopNavProps) {
         }}>
           <span style={{
             width: 6, height: 6, borderRadius: '50%',
-            background: T.success, boxShadow: `0 0 6px ${T.success}`,
+            background: release.channel !== 'stable' ? T.warning : T.success,
+            boxShadow: release.channel !== 'stable' ? `0 0 6px ${T.warning}` : `0 0 6px ${T.success}`,
           }}/>
           <span>v{release.version}</span>
           <span style={{ color: T.veryMuted }}>·</span>

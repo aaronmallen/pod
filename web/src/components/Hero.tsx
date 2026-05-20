@@ -70,7 +70,8 @@ export function Hero({ os, layout, accent, archChoice, onChangeArch, release, pl
           }}>
             <span style={{
               padding: '1px 7px', borderRadius: 999,
-              background: T.plasmaSoft, color: accent,
+              background: release.channel !== 'stable' ? 'rgba(217,178,82,0.12)' : T.plasmaSoft,
+              color: release.channel !== 'stable' ? T.warning : accent,
               fontFamily: '"JetBrains Mono", ui-monospace, monospace',
               fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase',
               fontWeight: 500,

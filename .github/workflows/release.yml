@@ -342,8 +342,10 @@ jobs:
               ['gh', 'release', 'view', tag, '--json', 'assets'],
               capture_output=True, text=True, check=True,
           )
+          repo = os.environ.get('GITHUB_REPOSITORY', 'aaronmallen/pod')
+          base_url = f'https://github.com/{repo}/releases/download/{tag}'
           assets = {
-              a['name']: a['url']
+              a['name']: f'{base_url}/{a["name"]}'
               for a in json.loads(result.stdout)['assets']
           }
 
@@ -363,26 +365,26 @@ jobs:
 
           url = find_url(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz'))
           sig = read_sig(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz.sig'))
-          if url and sig:
-              platforms['darwin-aarch64'] = {'url': url, 'signature': sig, 'format': 'app'}
+          if url:
+              platforms['darwin-aarch64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
 
           url = find_url(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz'))
           sig = read_sig(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz.sig'))
-          if url and sig:
-              platforms['darwin-x86_64'] = {'url': url, 'signature': sig, 'format': 'app'}
+          if url:
+              platforms['darwin-x86_64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
 
           url = find_url(lambda n: n.endswith('.AppImage'))
           sig = read_sig(lambda n: n.endswith('.AppImage.sig'))
-          if url and sig:
-              platforms['linux-x86_64'] = {'url': url, 'signature': sig, 'format': 'appimage'}
+          if url:
+              platforms['linux-x86_64'] = {'url': url, 'signature': sig or '', 'format': 'appimage'}
 
           url = find_url(lambda n: n.endswith('-setup.exe'))
           sig = read_sig(lambda n: n.endswith('-setup.exe.sig'))
-          if url and sig:
-              platforms['windows-x86_64'] = {'url': url, 'signature': sig, 'format': 'nsis'}
+          if url:
+              platforms['windows-x86_64'] = {'url': url, 'signature': sig or '', 'format': 'nsis'}
 
           if not platforms:
-              print('No signatures found; skipping manifest generation')
+              print('No platform assets found; skipping manifest generation')
           else:
               pub_date = subprocess.run(
                   ['date', '-u', '+%Y-%m-%dT%H:%M:%SZ'],

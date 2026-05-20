@@ -245,7 +245,7 @@ async fn resolve_structure_names(
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(id, name)| (id, (name, 0i64)))
+    .map(|(id, name, sys_id)| (id, (name, sys_id.unwrap_or(0))))
     .collect();
 
   let missing: Vec<i64> = unique_ids.into_iter().filter(|id| !result.contains_key(id)).collect();
@@ -265,7 +265,7 @@ async fn resolve_structure_names(
     }
   }
 
-  let mut newly_resolved: Vec<(i64, String)> = Vec::new();
+  let mut newly_resolved: Vec<(i64, String, Option<i64>)> = Vec::new();
   for (struct_id, char_ids) in &struct_chars {
     let mut resolved = false;
     for &char_id in char_ids {
@@ -279,7 +279,7 @@ async fn resolve_structure_names(
       let grant = character_service::refresh_grant(character, &token);
       match esi.universe().structure(*struct_id).auth(&grant).detail().await {
         Ok(info) => {
-          newly_resolved.push((*struct_id, info.name.clone()));
+          newly_resolved.push((*struct_id, info.name.clone(), Some(info.solar_system_id)));
           result.insert(*struct_id, (info.name, info.solar_system_id));
           resolved = true;
           break;

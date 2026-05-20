@@ -17,8 +17,8 @@ impl<'a> Repo<'a> {
     }
   }
 
-  /// Returns cached names for the given structure IDs as a map of id → name.
-  pub async fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String)>, Error> {
+  /// Returns cached entries for the given structure IDs as `(id, name, solar_system_id)` triples.
+  pub async fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String, Option<i64>)>, Error> {
     if ids.is_empty() {
       return Ok(Vec::new());
     }
@@ -26,7 +26,7 @@ impl<'a> Repo<'a> {
       .filter(structure_cache::Column::Id.is_in(ids.to_vec()))
       .all(self.db)
       .await?;
-    Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
+    Ok(rows.into_iter().map(|r| (r.id, r.name, r.solar_system_id)).collect())
   }
 
   /// Inserts or updates a structure name entry.
@@ -34,6 +34,7 @@ impl<'a> Repo<'a> {
     let active = structure_cache::ActiveModel {
       id: Set(id),
       name: Set(name.to_string()),
+      solar_system_id: Set(None),
     };
     structure_cache::Entity::insert(active)
       .on_conflict(
@@ -46,23 +47,24 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
-  /// Bulk-upserts structure name entries.
-  pub async fn upsert_many(&self, entries: &[(i64, String)]) -> Result<(), Error> {
+  /// Bulk-upserts structure name entries with solar system IDs.
+  pub async fn upsert_many(&self, entries: &[(i64, String, Option<i64>)]) -> Result<(), Error> {
     if entries.is_empty() {
       return Ok(());
     }
     let active: Vec<structure_cache::ActiveModel> = entries
       .iter()
-      .map(|(id, name)| structure_cache::ActiveModel {
+      .map(|(id, name, sys_id)| structure_cache::ActiveModel {
         id: Set(*id),
         name: Set(name.clone()),
+        solar_system_id: Set(*sys_id),
       })
       .collect();
     for chunk in active.chunks(200) {
       structure_cache::Entity::insert_many(chunk.to_vec())
         .on_conflict(
           OnConflict::column(structure_cache::Column::Id)
-            .update_column(structure_cache::Column::Name)
+            .update_columns([structure_cache::Column::Name, structure_cache::Column::SolarSystemId])
             .to_owned(),
         )
         .exec(self.db)

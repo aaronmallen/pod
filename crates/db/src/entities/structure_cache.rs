@@ -12,6 +12,8 @@ pub struct Model {
   pub id: i64,
   /// Display name of the structure.
   pub name: String,
+  /// Solar system ID where this structure resides, if known.
+  pub solar_system_id: Option<i64>,
 }
 
 /// Default active-model behaviour with no custom hooks.

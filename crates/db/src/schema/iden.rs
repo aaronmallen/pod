@@ -541,6 +541,7 @@ pub enum Stockpiles {
 pub enum StructureCache {
   Id,
   Name,
+  SolarSystemId,
   Table,
 }
 

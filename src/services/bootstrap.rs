@@ -307,16 +307,16 @@ async fn cache_structure_names_from_assets(
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(id, _)| id)
+    .map(|(id, _, _)| id)
     .collect();
 
-  let mut resolved: Vec<(i64, String)> = Vec::new();
+  let mut resolved: Vec<(i64, String, Option<i64>)> = Vec::new();
   for id in structure_ids {
     if cached.contains(&id) {
       continue;
     }
     if let Ok(info) = esi.universe().structure(id).auth(grant).detail().await {
-      resolved.push((id, info.name));
+      resolved.push((id, info.name, Some(info.solar_system_id)));
     } else {
       tracing::debug!(
         "bootstrap: could not resolve structure {} for character {}",

@@ -70,6 +70,7 @@ pub mod m0000000042_create_stockpile_items;
 
 // Universe cache
 pub mod m0000000043_create_structure_cache;
+pub mod m0000000044_add_solar_system_id_to_structure_cache;
 
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
@@ -137,6 +138,7 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000042_create_stockpile_items::Migration),
       // Universe cache
       Box::new(m0000000043_create_structure_cache::Migration),
+      Box::new(m0000000044_add_solar_system_id_to_structure_cache::Migration),
     ]
   }
 }

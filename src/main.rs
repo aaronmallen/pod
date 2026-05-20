@@ -11,6 +11,7 @@ use controllers::{main_window as main_ctrl, skill_plan_window, splash as splash_
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
+  components::update_banner,
   plan_math::BaseAttrs,
   style::{spacing::layout, typography::bytes as font_bytes},
   views::{mail, main_window, skills, splash, wallet},
@@ -36,6 +37,7 @@ struct App {
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
   step_label: String,
   sync_step_size: f32,
+  update_dismissed: bool,
   update_state: services::updater::UpdateState,
   window_id: Option<window::Id>,
   window_position: Option<Point>,
@@ -56,6 +58,7 @@ enum Message {
   Splash(splash_ctrl::Message),
   SkillPlan(window::Id, skill_plan_window::Message),
   Tick,
+  UpdateBanner(update_banner::Message),
   Updater(services::updater::Message),
   WindowMoved(window::Id, Point),
   WindowOpened(window::Id),
@@ -73,6 +76,7 @@ impl Default for App {
       plan_windows: HashMap::new(),
       step_label: "Opening database\u{2026}".to_string(),
       sync_step_size: 0.15,
+      update_dismissed: false,
       update_state: services::updater::UpdateState::default(),
       window_id: None,
       window_position: None,
@@ -371,6 +375,20 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
       }
       task
     }
+    Message::UpdateBanner(msg) => match msg {
+      update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
+      update_banner::Message::DismissPressed => {
+        app.update_dismissed = true;
+        Task::none()
+      }
+      update_banner::Message::RestartPressed => {
+        Task::done(Message::Updater(services::updater::Message::RestartRequested))
+      }
+      update_banner::Message::RetryPressed => {
+        app.update_dismissed = false;
+        Task::done(Message::Updater(services::updater::Message::CheckRequested))
+      }
+    },
     Message::Updater(msg) => {
       use services::updater::Message as UpdMsg;
       match msg {
@@ -496,10 +514,32 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
       .version(env!("CARGO_PKG_VERSION"))
       .render()
       .map(Message::Splash),
-    AppPhase::Main(state) => main_window::Component::new(state)
-      .window_size(app.window_size.width, app.window_size.height)
-      .render()
-      .map(Message::Main),
+    AppPhase::Main(state) => {
+      let content = main_window::Component::new(state)
+        .window_size(app.window_size.width, app.window_size.height)
+        .render()
+        .map(Message::Main);
+      match banner_state(&app.update_state, app.update_dismissed) {
+        Some(state) => iced::widget::column([
+          update_banner::Component::new(state).render().map(Message::UpdateBanner),
+          content,
+        ])
+        .into(),
+        None => content,
+      }
+    }
+  }
+}
+
+fn banner_state(state: &services::updater::UpdateState, dismissed: bool) -> Option<update_banner::BannerState> {
+  use services::updater::UpdateState;
+  match state {
+    UpdateState::Idle => None,
+    UpdateState::UpdateAvailable(_) | UpdateState::Error(_) if dismissed => None,
+    UpdateState::UpdateAvailable(v) => Some(update_banner::BannerState::UpdateAvailable(v.clone())),
+    UpdateState::Downloading => Some(update_banner::BannerState::Downloading),
+    UpdateState::ReadyToRestart => Some(update_banner::BannerState::ReadyToRestart),
+    UpdateState::Error(e) => Some(update_banner::BannerState::Error(e.clone())),
   }
 }
 

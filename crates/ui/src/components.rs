@@ -25,6 +25,7 @@ pub mod splash_logo;
 pub mod splash_status;
 pub mod status_bar;
 pub mod tab_strip;
+pub mod update_banner;
 
 pub use avatar::Component as Avatar;
 pub use backdrop::Component as Backdrop;
@@ -53,3 +54,4 @@ pub use splash_logo::Component as SplashLogo;
 pub use splash_status::Component as SplashStatus;
 pub use status_bar::Component as StatusBar;
 pub use tab_strip::Component as TabStrip;
+pub use update_banner::Component as UpdateBanner;

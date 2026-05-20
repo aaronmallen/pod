@@ -48,12 +48,9 @@ pub mod mono {
 
 /// Raw font bytes for registration with the iced runtime.
 pub mod bytes {
-  /// Variable font covering weights 300–700 under a single "Space Grotesk"
-  /// family name. Static per-weight TTF files register under separate GDI
-  /// family names on Windows (e.g. "Space Grotesk Medium"), causing weight
-  /// lookups to fall back to a system symbol font. The variable font avoids
-  /// this by exposing the `wght` axis without splitting the family.
-  pub const BODY: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk.ttf");
+  pub const BODY_MEDIUM: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Medium.ttf");
+  pub const BODY_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Regular.ttf");
+  pub const BODY_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-SemiBold.ttf");
   pub const MONO_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono-Italic.ttf");
   pub const MONO_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono.ttf");
 }

@@ -143,7 +143,9 @@ fn main() -> iced::Result {
       }
     })
     .subscription(subscription)
-    .font(font_bytes::BODY)
+    .font(font_bytes::BODY_REGULAR)
+    .font(font_bytes::BODY_MEDIUM)
+    .font(font_bytes::BODY_SEMIBOLD)
     .font(font_bytes::MONO_REGULAR)
     .font(font_bytes::MONO_ITALIC)
     .run()

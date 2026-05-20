@@ -48,6 +48,8 @@ jobs:
   package-macos:
     needs: create-release
     runs-on: macos-latest
+    env:
+      PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
 
@@ -92,6 +94,26 @@ jobs:
             --wait
           xcrun stapler staple "$DMG"
 
+      - name: Create app tarball for updater (x86_64)
+        run: |
+          hdiutil detach /Volumes/PodUpdateMount || true
+          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
+          TARBALL="${DMG%.dmg}.app.tar.gz"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
+          APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
+          xcrun stapler staple "$APP" || true
+          tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
+          hdiutil detach /Volumes/PodUpdateMount
+
+      - name: Sign package for updater (x86_64)
+        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          TARBALL=$(find . -path "*/x86_64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
+          cargo-packager signer sign "$TARBALL"
+
       - name: Build and package (aarch64)
         run: mise run package --format dmg --target aarch64-apple-darwin
         env:
@@ -112,17 +134,39 @@ jobs:
             --wait
           xcrun stapler staple "$DMG"
 
+      - name: Create app tarball for updater (aarch64)
+        run: |
+          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
+          TARBALL="${DMG%.dmg}.app.tar.gz"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
+          APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
+          xcrun stapler staple "$APP" || true
+          tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
+          hdiutil detach /Volumes/PodUpdateMount
+
+      - name: Sign package for updater (aarch64)
+        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          TARBALL=$(find . -path "*/aarch64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
+          cargo-packager signer sign "$TARBALL"
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for f in $(find . -name "*.dmg"); do
+          for f in $(find . \( -name "*.dmg" -o -name "*.app.tar.gz" \
+            -o -name "*.app.tar.gz.sig" \)); do
             gh release upload "${{ github.ref_name }}" "$f"
           done
 
   package-windows:
     needs: create-release
     runs-on: windows-latest
+    env:
+      PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
 
@@ -158,18 +202,30 @@ jobs:
           }
           Remove-Item certificate.pfx
 
+      - name: Sign package for updater
+        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $nsis = Get-ChildItem -Recurse -Filter "*-setup.exe" | Select-Object -First 1
+          if ($nsis) { cargo-packager signer sign $nsis.FullName }
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          Get-ChildItem -Recurse -Include "*-setup.exe","*.msi" | ForEach-Object {
+          Get-ChildItem -Recurse -Include "*-setup.exe","*.msi","*.exe.sig" | ForEach-Object {
             gh release upload "${{ github.ref_name }}" $_.FullName
           }
 
   package-linux:
     needs: create-release
     runs-on: ubuntu-latest
+    env:
+      PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
 
@@ -183,6 +239,15 @@ jobs:
 
       - name: Build and package (appimage)
         run: mise run package --format appimage
+
+      - name: Sign package for updater
+        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          APPIMAGE=$(find . -name "*.AppImage" | head -1)
+          cargo-packager signer sign "$APPIMAGE"
 
       - name: Build and package (pacman)
         run: mise run package --format pacman
@@ -205,7 +270,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for f in $(find . \( -name "*.deb" -o -name "*.AppImage" -o -name "*.pkg.tar.zst" \)); do
+          for f in $(find . \( -name "*.deb" -o -name "*.AppImage" \
+            -o -name "*.AppImage.sig" -o -name "*.pkg.tar.zst" \)); do
             gh release upload "${{ github.ref_name }}" "$f"
           done
 
@@ -255,6 +321,85 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Generate update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p sigs
+          gh release download "$TAG" --pattern "*.sig" --dir sigs/ || true
+
+          python3 - << 'PYEOF'
+          import json, os, subprocess
+          from pathlib import Path
+
+          tag = os.environ['GITHUB_REF_NAME']
+
+          result = subprocess.run(
+              ['gh', 'release', 'view', tag, '--json', 'assets'],
+              capture_output=True, text=True, check=True,
+          )
+          assets = {
+              a['name']: a['browserDownloadUrl']
+              for a in json.loads(result.stdout)['assets']
+          }
+
+          def find_url(predicate):
+              return next((url for name, url in assets.items() if predicate(name)), None)
+
+          def read_sig(predicate):
+              sig_dir = Path('sigs')
+              if not sig_dir.exists():
+                  return None
+              for path in sig_dir.iterdir():
+                  if predicate(path.name):
+                      return path.read_text().strip()
+              return None
+
+          platforms = {}
+
+          url = find_url(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz'))
+          sig = read_sig(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz.sig'))
+          if url and sig:
+              platforms['darwin-aarch64'] = {'url': url, 'signature': sig, 'format': 'app'}
+
+          url = find_url(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz'))
+          sig = read_sig(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz.sig'))
+          if url and sig:
+              platforms['darwin-x86_64'] = {'url': url, 'signature': sig, 'format': 'app'}
+
+          url = find_url(lambda n: n.endswith('.AppImage'))
+          sig = read_sig(lambda n: n.endswith('.AppImage.sig'))
+          if url and sig:
+              platforms['linux-x86_64'] = {'url': url, 'signature': sig, 'format': 'appimage'}
+
+          url = find_url(lambda n: n.endswith('-setup.exe'))
+          sig = read_sig(lambda n: n.endswith('-setup.exe.sig'))
+          if url and sig:
+              platforms['windows-x86_64'] = {'url': url, 'signature': sig, 'format': 'nsis'}
+
+          if not platforms:
+              print('No signatures found; skipping manifest generation')
+          else:
+              pub_date = subprocess.run(
+                  ['date', '-u', '+%Y-%m-%dT%H:%M:%SZ'],
+                  capture_output=True, text=True,
+              ).stdout.strip()
+              manifest = {
+                  'version': tag,
+                  'notes': 'See the release page for details.',
+                  'pub_date': pub_date,
+                  'platforms': platforms,
+              }
+              with open('latest.json', 'w') as f:
+                  json.dump(manifest, f, indent=2)
+              print(f"Generated latest.json with platforms: {list(platforms.keys())}")
+          PYEOF
+
+          if [ -f latest.json ]; then
+            gh release upload "$TAG" latest.json --clobber
+          fi
 
       - name: Publish release
         env:

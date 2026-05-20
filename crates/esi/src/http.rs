@@ -526,6 +526,182 @@ mod tests {
       }
     }
 
+    mod download_to_file {
+      use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+      };
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_writes_response_body_to_file_on_2xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/data.bin"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"hello bytes".to_vec(), "application/octet-stream"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/data.bin", server.uri());
+        let dest = std::env::temp_dir().join("pod_esi_test_download.bin");
+
+        let result = client.download_to_file(&url, &dest, 30).await;
+
+        assert!(result.is_ok());
+        let written = std::fs::read(&dest).unwrap();
+        let _ = std::fs::remove_file(&dest);
+        assert_eq!(written, b"hello bytes");
+      }
+
+      #[tokio::test]
+      async fn it_returns_api_error_on_4xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/data.bin"))
+          .respond_with(ResponseTemplate::new(404).set_body_raw(r#"{"error":"Not Found"}"#, "application/json"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/data.bin", server.uri());
+        let dest = std::env::temp_dir().join("pod_esi_test_download_404.bin");
+
+        let result = client.download_to_file(&url, &dest, 30).await;
+
+        assert!(matches!(
+          result,
+          Err(Error::Api {
+            status: 404,
+            ..
+          })
+        ));
+      }
+    }
+
+    mod get_bytes {
+      use pretty_assertions::assert_eq;
+      use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+      };
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_returns_body_on_2xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/raw"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"raw data".to_vec(), "application/octet-stream"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/raw", server.uri());
+
+        let result = client.get_bytes(&url).await.unwrap();
+
+        assert_eq!(result, b"raw data");
+      }
+
+      #[tokio::test]
+      async fn it_returns_api_error_on_4xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/raw"))
+          .respond_with(ResponseTemplate::new(404).set_body_raw(r#"{"error":"Not Found"}"#, "application/json"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/raw", server.uri());
+
+        let result = client.get_bytes(&url).await;
+
+        assert!(matches!(
+          result,
+          Err(Error::Api {
+            status: 404,
+            ..
+          })
+        ));
+      }
+
+      #[tokio::test]
+      async fn it_returns_api_error_on_5xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/raw"))
+          .respond_with(ResponseTemplate::new(503).set_body_raw(r#"{"error":"Unavailable"}"#, "application/json"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/raw", server.uri());
+
+        let result = client.get_bytes(&url).await;
+
+        assert!(matches!(
+          result,
+          Err(Error::Api {
+            status: 503,
+            ..
+          })
+        ));
+      }
+    }
+
+    mod post_json_anon {
+      use pretty_assertions::assert_eq;
+      use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+      };
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_returns_api_error_on_4xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/anon"))
+          .respond_with(
+            ResponseTemplate::new(401).set_body_raw(r#"{"error":"Unauthorized"}"#, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/anon", server.uri());
+
+        let result: Result<serde_json::Value, _> =
+          client.post_json_anon(&url, &serde_json::json!({"key": "val"})).await;
+
+        assert!(matches!(
+          result,
+          Err(Error::Api {
+            status: 401,
+            ..
+          })
+        ));
+      }
+
+      #[tokio::test]
+      async fn it_returns_deserialized_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/anon"))
+          .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"{"result":"ok"}"#, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let client = make_client();
+        let url = format!("{}/anon", server.uri());
+
+        let result: serde_json::Value =
+          client.post_json_anon(&url, &serde_json::json!({"key": "val"})).await.unwrap();
+
+        assert_eq!(result["result"], "ok");
+      }
+    }
+
     mod delete_empty {
       use wiremock::{
         Mock, ResponseTemplate,
@@ -727,6 +903,47 @@ mod tests {
             ..
           })
         ));
+      }
+
+      #[tokio::test]
+      async fn it_returns_single_page_when_no_x_pages_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/items"))
+          .and(query_param("page", "1"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[7,8,9]", "application/json"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+
+        let result: Vec<i32> = client
+          .get_json_paginated(&format!("{}/items", server.uri()), None)
+          .await
+          .unwrap();
+
+        assert_eq!(result, vec![7, 8, 9]);
+      }
+
+      #[tokio::test]
+      async fn it_sends_bearer_token_when_provided() {
+        use wiremock::matchers::header;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/items"))
+          .and(query_param("page", "1"))
+          .and(header("Authorization", "Bearer my-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[1]", "application/json"))
+          .mount(&server)
+          .await;
+        let client = make_client();
+
+        let result: Vec<i32> = client
+          .get_json_paginated(&format!("{}/items", server.uri()), Some("my-token"))
+          .await
+          .unwrap();
+
+        assert_eq!(result, vec![1]);
       }
     }
 
@@ -980,6 +1197,49 @@ mod tests {
         let state = limiter.state.lock().unwrap();
         assert_eq!(state.remain, 42);
         assert!(state.reset_at > Instant::now());
+      }
+    }
+
+    mod update_from_response {
+      use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_updates_state_when_headers_are_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header(ESI_ERROR_REMAIN_HEADER, "50")
+              .insert_header(ESI_ERROR_RESET_HEADER, "30")
+              .set_body_raw("[]", "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let limiter = Arc::new(RateLimiter::new());
+        let resp = reqwest::Client::new().get(server.uri()).send().await.unwrap();
+
+        limiter.update_from_response(&resp);
+
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.remain, 50);
+      }
+
+      #[tokio::test]
+      async fn it_does_not_update_when_headers_are_absent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+          .mount(&server)
+          .await;
+        let limiter = Arc::new(RateLimiter::new());
+        let resp = reqwest::Client::new().get(server.uri()).send().await.unwrap();
+
+        limiter.update_from_response(&resp);
+
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.remain, 100);
       }
     }
   }

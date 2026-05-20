@@ -526,6 +526,16 @@ fn update_window_events(app: &mut App, id: window::Id, event: WindowEvent) -> Ta
       if app.window_id.is_none() {
         app.window_id = Some(id);
       }
+      // boot() calls init_for_nsapp() before NSApp is fully initialized in daemon
+      // mode; re-calling here guarantees the menu is attached once NSApp is live.
+      #[cfg(target_os = "macos")]
+      if app.window_id == Some(id) {
+        MENU.with(|m| {
+          if let Some(menu) = m.get() {
+            menu.init_for_nsapp();
+          }
+        });
+      }
       disable_shadow(id)
     }
     WindowEvent::Resized(size) => {

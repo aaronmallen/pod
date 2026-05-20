@@ -10,11 +10,10 @@ export const FEATURES: Feature[] = [
 ];
 
 export const NOTES: Note[] = [
-  { tag: 'NEW', tone: 'plasma',  text: 'Wallet now unifies journal, market, contracts and recurring under a single filterable view.' },
-  { tag: 'NEW', tone: 'plasma',  text: 'Skill planner supports multi-character training paths with diff and rollover preview.' },
-  { tag: 'FIX', tone: 'success', text: 'ESI token refresh no longer races on cold-start when more than 8 characters are linked.' },
-  { tag: 'FIX', tone: 'success', text: 'Asset search returns container contents in O(1) regardless of nesting depth.' },
-  { tag: 'PERF',tone: 'warning', text: 'Initial sync from cache is ~3× faster; cold sync sees a steady 40% improvement.' },
+  { tag: 'NEW', tone: 'plasma',  text: 'In-app auto-update: Pod checks for new versions on startup and every 4 hours. A dismissible banner lets you download, install, and restart in one click — no manual download required.' },
+  { tag: 'FIX', tone: 'success', text: 'Space Grotesk now renders correctly on Windows. Corrupted font files were causing all UI text to fall back to a symbol font.' },
+  { tag: 'FIX', tone: 'success', text: 'App no longer opens a console window on Windows at startup. Previously closing that window would silently terminate Pod.' },
+  { tag: 'FIX', tone: 'success', text: 'Splash transition no longer closes the app on Wayland / KDE Plasma 6. The main window now opens fresh with the correct settings instead of mutating the splash surface.' },
 ];
 
 export const PLATFORMS: Platform[] = [

@@ -468,3 +468,118 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod parse_skill_requirements {
+    use super::*;
+
+    #[test]
+    fn returns_empty_for_empty_json() {
+      assert!(parse_skill_requirements("[]").is_empty());
+    }
+
+    #[test]
+    fn returns_empty_for_invalid_json() {
+      assert!(parse_skill_requirements("not-json").is_empty());
+    }
+
+    #[test]
+    fn returns_empty_when_no_skill_attrs_present() {
+      let json = r#"[{"attribute_id": 1, "value": 5.0}]"#;
+      assert!(parse_skill_requirements(json).is_empty());
+    }
+
+    #[test]
+    fn returns_single_requirement_when_pair_present() {
+      let json = r#"[
+        {"attribute_id": 182, "value": 3300.0},
+        {"attribute_id": 277, "value": 3.0}
+      ]"#;
+      let result = parse_skill_requirements(json);
+      assert_eq!(result, vec![(3300, 3)]);
+    }
+
+    #[test]
+    fn skips_pair_when_type_id_is_zero() {
+      let json = r#"[
+        {"attribute_id": 182, "value": 0.0},
+        {"attribute_id": 277, "value": 3.0}
+      ]"#;
+      assert!(parse_skill_requirements(json).is_empty());
+    }
+
+    #[test]
+    fn skips_pair_when_level_is_zero() {
+      let json = r#"[
+        {"attribute_id": 182, "value": 3300.0},
+        {"attribute_id": 277, "value": 0.0}
+      ]"#;
+      assert!(parse_skill_requirements(json).is_empty());
+    }
+
+    #[test]
+    fn returns_multiple_requirements_for_all_five_pairs() {
+      let json = r#"[
+        {"attribute_id": 182, "value": 100.0},
+        {"attribute_id": 277, "value": 1.0},
+        {"attribute_id": 183, "value": 200.0},
+        {"attribute_id": 278, "value": 2.0},
+        {"attribute_id": 184, "value": 300.0},
+        {"attribute_id": 279, "value": 3.0},
+        {"attribute_id": 185, "value": 400.0},
+        {"attribute_id": 280, "value": 4.0},
+        {"attribute_id": 186, "value": 500.0},
+        {"attribute_id": 281, "value": 5.0}
+      ]"#;
+      let result = parse_skill_requirements(json);
+      assert_eq!(result.len(), 5);
+      assert!(result.contains(&(100, 1)));
+      assert!(result.contains(&(200, 2)));
+      assert!(result.contains(&(300, 3)));
+      assert!(result.contains(&(400, 4)));
+      assert!(result.contains(&(500, 5)));
+    }
+
+    #[test]
+    fn skips_pair_when_type_id_missing() {
+      let json = r#"[{"attribute_id": 277, "value": 3.0}]"#;
+      assert!(parse_skill_requirements(json).is_empty());
+    }
+
+    #[test]
+    fn skips_pair_when_level_missing() {
+      let json = r#"[{"attribute_id": 182, "value": 3300.0}]"#;
+      assert!(parse_skill_requirements(json).is_empty());
+    }
+  }
+
+  mod parse_cert_ids {
+    use super::*;
+
+    #[test]
+    fn returns_empty_for_none() {
+      assert!(parse_cert_ids(None).is_empty());
+    }
+
+    #[test]
+    fn returns_ids_for_valid_json() {
+      let s = "[1, 2, 3]".to_string();
+      assert_eq!(parse_cert_ids(Some(&s)), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn returns_empty_for_invalid_json() {
+      let s = "not-json".to_string();
+      assert!(parse_cert_ids(Some(&s)).is_empty());
+    }
+
+    #[test]
+    fn returns_empty_for_empty_array() {
+      let s = "[]".to_string();
+      assert!(parse_cert_ids(Some(&s)).is_empty());
+    }
+  }
+}

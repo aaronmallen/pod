@@ -128,3 +128,188 @@ impl<'a> Repo<'a> {
     self.tags_for_entity(corporation_id, "corporation").await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  async fn insert_character(db: &DatabaseConnection, id: i64) {
+    use sea_orm::ActiveValue::Set;
+    crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
+      access_token: Set(String::new()),
+      charisma: Set(None),
+      corp_id: Set(0),
+      corp_name: Set(String::new()),
+      id: Set(id),
+      intelligence: Set(None),
+      isk_balance: Set(None),
+      location_docked: Set(None),
+      location_name: Set(None),
+      memory: Set(None),
+      name: Set(format!("Character {id}")),
+      perception: Set(None),
+      portrait_tone: Set(0),
+      refresh_token: Set(String::new()),
+      sort_order: Set(0),
+      token_expires_at: Set(0),
+      willpower: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+  }
+
+  mod find_all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_tags_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find_all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_tags_after_creation() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.find_or_create("pvp").await.unwrap();
+      repo.find_or_create("industry").await.unwrap();
+
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod find_or_create {
+    use super::*;
+
+    #[tokio::test]
+    async fn creates_new_tag_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.find_or_create("pvp").await.unwrap();
+      assert_eq!(tag.name, "pvp");
+    }
+
+    #[tokio::test]
+    async fn returns_existing_tag_when_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let first = repo.find_or_create("pvp").await.unwrap();
+      let second = repo.find_or_create("pvp").await.unwrap();
+      assert_eq!(first.id, second.id);
+    }
+
+    #[tokio::test]
+    async fn creates_distinct_tags_for_different_names() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let a = repo.find_or_create("pvp").await.unwrap();
+      let b = repo.find_or_create("pve").await.unwrap();
+      assert_ne!(a.id, b.id);
+    }
+  }
+
+  mod tags_for_entity {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_entity_has_no_tags() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_tags_after_set_entity_tags() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let tag = repo.find_or_create("pvp").await.unwrap();
+      repo.set_entity_tags(1, "character", vec![tag.id]).await.unwrap();
+
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].name, "pvp");
+    }
+  }
+
+  mod set_entity_tags {
+    use super::*;
+
+    #[tokio::test]
+    async fn replaces_previous_tags_atomically() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let pvp = repo.find_or_create("pvp").await.unwrap();
+      let pve = repo.find_or_create("pve").await.unwrap();
+
+      repo.set_entity_tags(1, "character", vec![pvp.id]).await.unwrap();
+      repo.set_entity_tags(1, "character", vec![pve.id]).await.unwrap();
+
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].name, "pve");
+    }
+
+    #[tokio::test]
+    async fn set_empty_removes_all_tags() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let pvp = repo.find_or_create("pvp").await.unwrap();
+      repo.set_entity_tags(1, "character", vec![pvp.id]).await.unwrap();
+      repo.set_entity_tags(1, "character", vec![]).await.unwrap();
+
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn does_not_affect_tags_for_different_entity_type() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let pvp = repo.find_or_create("pvp").await.unwrap();
+      repo.set_entity_tags(1, "character", vec![pvp.id]).await.unwrap();
+      repo.set_entity_tags(1, "corporation", vec![]).await.unwrap();
+
+      let char_tags = repo.tags_for_entity(1, "character").await.unwrap();
+      assert_eq!(char_tags.len(), 1);
+    }
+  }
+
+  mod set_character_tags {
+    use super::*;
+
+    #[tokio::test]
+    async fn delegates_to_set_entity_tags_with_character_type() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let pvp = repo.find_or_create("pvp").await.unwrap();
+      repo.set_character_tags(1, vec![pvp.id]).await.unwrap();
+
+      let result = repo.tags_for_character(1).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].name, "pvp");
+    }
+  }
+}

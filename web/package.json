@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "fetch-release": "tsx scripts/fetch-release.ts"
+    "fetch-release": "tsx scripts/fetch-release.ts",
+    "parse-changelog": "tsx scripts/parse-changelog.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

@@ -343,7 +343,7 @@ jobs:
               capture_output=True, text=True, check=True,
           )
           assets = {
-              a['name']: a['browserDownloadUrl']
+              a['name']: a['url']
               for a in json.loads(result.stdout)['assets']
           }
 

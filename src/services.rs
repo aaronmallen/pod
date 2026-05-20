@@ -4,6 +4,7 @@ pub mod bootstrap;
 pub mod cache_cleaner;
 pub mod character;
 pub mod corporation;
+pub mod menu;
 pub mod sde;
 pub mod updater;
 pub mod window_state;

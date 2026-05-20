@@ -208,7 +208,9 @@ fn read_stored_sde_version() -> Option<String> {
 }
 
 fn write_stored_sde_version(version: &str) {
-  let Some(path) = sde_version_path() else { return };
+  let Some(path) = sde_version_path() else {
+    return;
+  };
   if let Some(parent) = path.parent() {
     std::fs::create_dir_all(parent).ok();
   }

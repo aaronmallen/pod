@@ -451,7 +451,11 @@ async fn load_assets_from_db(
 
   let structure_solar_sys_ids: Vec<i32> = structure_name_map
     .values()
-    .filter_map(|(_, sys_id)| if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None })
+    .filter_map(
+      |(_, sys_id)| {
+        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
+      },
+    )
     .collect::<HashSet<_>>()
     .into_iter()
     .collect();
@@ -726,7 +730,11 @@ async fn load_corp_assets_from_esi(
 
   let structure_solar_sys_ids: Vec<i32> = structure_name_map
     .values()
-    .filter_map(|(_, sys_id)| if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None })
+    .filter_map(
+      |(_, sys_id)| {
+        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
+      },
+    )
     .collect::<HashSet<_>>()
     .into_iter()
     .collect();

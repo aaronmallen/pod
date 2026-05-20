@@ -22,6 +22,13 @@ pub const SPACE_7: f32 = 28.0;
 /// 32px — page-level margins and gutters.
 pub const SPACE_8: f32 = 32.0;
 
+/// Distance from the top or bottom edge of the scroll area that
+/// triggers auto-scroll during a drag operation.
+pub const SCROLL_EDGE_THRESHOLD: f32 = 60.0;
+/// Number of pixels to nudge the scroll position per drag-move event
+/// when the cursor is within SCROLL_EDGE_THRESHOLD of an edge.
+pub const SCROLL_NUDGE_PX: f32 = 20.0;
+
 /// Layout dimension tokens — fixed structural sizes that are not part of the spacing scale.
 pub mod layout {
   /// Height of the top page header bar.

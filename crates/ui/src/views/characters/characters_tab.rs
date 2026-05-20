@@ -9,11 +9,13 @@ pub use character_card::Component as CharacterCard;
 pub use context_menu::Component as ContextMenu;
 use iced::{
   Background, Border, Element, Length, Padding, Point, Task,
-  widget::{column, container, mouse_area, row, stack},
+  widget::{Id, column, container, mouse_area, row, scrollable, stack},
 };
 use pod_model::{Character, CharacterSkill, TrainingQueueEntry};
 
 use crate::style::{color, radius, shadow, spacing};
+
+static GRID_SCROLL_ID: std::sync::LazyLock<Id> = std::sync::LazyLock::new(|| Id::new("character-grid"));
 
 pub struct State {
   pub portrait_handles: HashMap<i64, iced::widget::image::Handle>,
@@ -21,6 +23,7 @@ pub struct State {
   cursor_position: Point,
   pub dragging_id: Option<i64>,
   pub drag_hover: Option<i64>,
+  scroll_offset: scrollable::AbsoluteOffset,
 }
 
 impl State {
@@ -31,6 +34,7 @@ impl State {
       cursor_position: Point::ORIGIN,
       dragging_id: None,
       drag_hover: None,
+      scroll_offset: scrollable::AbsoluteOffset::default(),
     }
   }
 
@@ -98,6 +102,36 @@ impl State {
         self.drag_hover = None;
         Task::none()
       }
+      Message::DragMoved(pt, pane_height) => {
+        self.cursor_position = pt;
+        if pt.y < spacing::SCROLL_EDGE_THRESHOLD {
+          let new_y = (self.scroll_offset.y - spacing::SCROLL_NUDGE_PX).max(0.0);
+          self.scroll_offset.y = new_y;
+          return iced::widget::operation::scroll_to(
+            GRID_SCROLL_ID.clone(),
+            scrollable::AbsoluteOffset {
+              x: 0.0,
+              y: new_y,
+            },
+          );
+        }
+        if pt.y > pane_height - spacing::SCROLL_EDGE_THRESHOLD {
+          let new_y = self.scroll_offset.y + spacing::SCROLL_NUDGE_PX;
+          self.scroll_offset.y = new_y;
+          return iced::widget::operation::scroll_to(
+            GRID_SCROLL_ID.clone(),
+            scrollable::AbsoluteOffset {
+              x: 0.0,
+              y: new_y,
+            },
+          );
+        }
+        Task::none()
+      }
+      Message::ScrollOffsetChanged(viewport) => {
+        self.scroll_offset = viewport.absolute_offset();
+        Task::none()
+      }
       Message::CharacterAdded(_)
       | Message::CharacterPublicRefreshed(_)
       | Message::CharacterPublicRefreshTick
@@ -142,6 +176,10 @@ pub enum Message {
   CursorMoved(Point),
   /// Drag interaction ended.
   DragEnd,
+  /// Cursor moved during an active drag; carries cursor position and pane height.
+  DragMoved(Point, f32),
+  /// Scroll viewport changed; keeps scroll_offset in sync.
+  ScrollOffsetChanged(scrollable::Viewport),
   /// Periodic location refresh tick.
   LocationRefreshTick,
   /// Locations were refreshed with new data.
@@ -168,6 +206,7 @@ pub struct Component<'a> {
   characters: Vec<&'a Character>,
   state: &'a State,
   window_width: f32,
+  pane_height: f32,
 }
 
 impl<'a> Component<'a> {
@@ -176,11 +215,17 @@ impl<'a> Component<'a> {
       characters,
       state,
       window_width: spacing::layout::WINDOW_DEFAULT_WIDTH,
+      pane_height: spacing::layout::WINDOW_DEFAULT_HEIGHT,
     }
   }
 
   pub fn window_width(mut self, width: f32) -> Self {
     self.window_width = width;
+    self
+  }
+
+  pub fn pane_height(mut self, height: f32) -> Self {
+    self.pane_height = height;
     self
   }
 
@@ -250,6 +295,7 @@ impl<'a> Component<'a> {
     let portrait_handles = &self.state.portrait_handles;
     let dragging_id = self.state.dragging_id;
     let drag_hover = self.state.drag_hover;
+    let pane_height = self.pane_height;
     let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
 
     for chunk in self.characters.chunks(cols) {
@@ -273,7 +319,7 @@ impl<'a> Component<'a> {
       grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
     }
 
-    let grid = container(
+    let grid_column = container(
       column(grid_rows)
         .spacing(spacing::SPACE_4)
         .width(Length::Fill)
@@ -285,10 +331,22 @@ impl<'a> Component<'a> {
           right: spacing::SPACE_8,
         }),
     )
-    .center_x(Length::Fill)
-    .height(Length::Fill);
+    .center_x(Length::Fill);
 
-    mouse_area(grid).on_move(Message::CursorMoved).into()
+    let scroll = scrollable(grid_column)
+      .id(GRID_SCROLL_ID.clone())
+      .height(Length::Fill)
+      .on_scroll(Message::ScrollOffsetChanged);
+
+    mouse_area(scroll)
+      .on_move(move |pt| {
+        if dragging_id.is_some() {
+          Message::DragMoved(pt, pane_height)
+        } else {
+          Message::CursorMoved(pt)
+        }
+      })
+      .into()
   }
 }
 

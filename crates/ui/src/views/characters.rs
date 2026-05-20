@@ -185,7 +185,7 @@ impl<'a> Component<'a> {
       .render()
       .map(Message::SearchFilter);
 
-    let grid_el = render_tab_content(state, is_filtered, query, window_width);
+    let grid_el = render_tab_content(state, is_filtered, query, window_width, window_height);
 
     let base: Element<'_, Message> = container(column([header_el, filter_el, grid_el]).width(Length::Fill))
       .height(Length::Fill)
@@ -288,6 +288,7 @@ fn render_tab_content<'a>(
   is_filtered: bool,
   query: &'a str,
   window_width: f32,
+  window_height: f32,
 ) -> Element<'a, Message> {
   match state.active_tab {
     Tab::Characters => {
@@ -299,8 +300,10 @@ fn render_tab_content<'a>(
       } else if visible.is_empty() {
         EmptyState::new().filtered(query).render::<Message>()
       } else {
+        let pane_h = (window_height - spacing::layout::HEADER_HEIGHT - spacing::SPACE_8 * 2.0).max(0.0);
         CharacterPane::new(visible, &state.character_pane)
           .window_width(window_width)
+          .pane_height(pane_h)
           .render()
           .map(Message::CharactersTab)
       }

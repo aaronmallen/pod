@@ -7,6 +7,19 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Fixed
+
+- Native "Pod" menu now appears in the macOS menu bar. In daemon
+  mode, `init_for_nsapp()` was called before NSApp was fully
+  initialized; the menu is now re-attached once the first window
+  opens.
+- In-app update banner now appears correctly when a newer version
+  is available. The update manifest was using `darwin-*` platform
+  keys instead of the `macos-*` keys that `cargo-packager-updater`
+  actually resolves, causing the version check to fail silently.
+
 ## [0.3.0]
 
 ### Added
@@ -70,6 +83,7 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.3.1...HEAD
+[0.3.1]: https://github.com/aaronmallen/pod/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/aaronmallen/pod/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/aaronmallen/pod/compare/26.5.20...0.2.0

@@ -1,5 +1,6 @@
 //! Controllers: state machines and message handlers for each application phase.
 
+pub mod about_window;
 pub mod assets;
 pub mod character_detail;
 pub mod characters;

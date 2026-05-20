@@ -43,6 +43,7 @@ chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
 getset = "0.1"
 libsqlite3-sys = { features = ["bundled"], version = "0" }
+muda = "0.15"
 open = "5"
 pod-db = { path = "crates/db", version = "0.1" }
 pod-esi = { features = ["pod-model"], path = "crates/esi", version = "0.1" }
@@ -89,6 +90,7 @@ cargo-packager-updater.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true
 iced.workspace = true
+muda.workspace = true
 open.workspace = true
 pod-db.workspace = true
 pod-esi.workspace = true

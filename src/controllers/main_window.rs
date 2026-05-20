@@ -276,7 +276,9 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
       state.active_view = ActiveView::Wallet(s);
       return task.map(Message::Wallet);
     }
-    characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c)) => {
+    characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c))
+      if !state.characters.iter().any(|existing| existing.id() == c.id()) =>
+    {
       state.characters.push(c.clone());
     }
     characters::Message::ConfirmRemove => {

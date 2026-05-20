@@ -1086,6 +1086,10 @@ fn update_character_card(state: &mut State, msg: characters_tab::Message, servic
       iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
     }
     characters_tab::Message::CharacterAdded(character) => {
+      if state.all_characters.iter().any(|c| c.id() == character.id()) {
+        state.add_status = None;
+        return iced::Task::none();
+      }
       if let Some(bytes) = character.portrait_data() {
         state
           .character_pane
@@ -1486,6 +1490,33 @@ mod tests {
     corp
   }
 
+  fn make_services() -> Services {
+    Services {
+      db: None,
+      esi_client: None,
+    }
+  }
+
+  fn make_state(characters: Vec<Character>) -> State {
+    State {
+      active_tab: Default::default(),
+      add_status: None,
+      all_characters: characters.clone(),
+      all_corporations: Vec::new(),
+      all_tags: Vec::new(),
+      character_pane: characters_tab::State::new(),
+      characters,
+      confirm_remove: None,
+      confirm_remove_corporation: None,
+      corporation_pane: Default::default(),
+      corporations: Vec::new(),
+      header: Default::default(),
+      search_filter: search_filter::State::new(),
+      tag_corpus: Vec::new(),
+      tag_modal: None,
+    }
+  }
+
   mod reorder_ids {
     use pretty_assertions::assert_eq;
 
@@ -1723,6 +1754,59 @@ mod tests {
 
       assert_eq!(corpus[0].0, "pvp");
       assert_eq!(corpus[1].0, "mining");
+    }
+  }
+
+  mod update_character_card {
+    use super::*;
+
+    mod character_added {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_adds_a_new_character() {
+        let mut state = make_state(vec![make_character(1, "Alpha")]);
+        let services = make_services();
+
+        let _ = update_character_card(
+          &mut state,
+          characters_tab::Message::CharacterAdded(make_character(2, "Beta")),
+          &services,
+        );
+
+        assert_eq!(state.all_characters.len(), 2);
+      }
+
+      #[test]
+      fn it_is_no_op_when_character_already_exists() {
+        let mut state = make_state(vec![make_character(1, "Alpha")]);
+        let services = make_services();
+
+        let _ = update_character_card(
+          &mut state,
+          characters_tab::Message::CharacterAdded(make_character(1, "Alpha")),
+          &services,
+        );
+
+        assert_eq!(state.all_characters.len(), 1);
+      }
+
+      #[test]
+      fn it_clears_add_status_on_duplicate() {
+        let mut state = make_state(vec![make_character(1, "Alpha")]);
+        state.add_status = Some("Waiting for browser login\u{2026}".to_string());
+        let services = make_services();
+
+        let _ = update_character_card(
+          &mut state,
+          characters_tab::Message::CharacterAdded(make_character(1, "Alpha")),
+          &services,
+        );
+
+        assert_eq!(state.add_status, None);
+      }
     }
   }
 }

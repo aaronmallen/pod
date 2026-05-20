@@ -110,7 +110,7 @@ impl Default for App {
 }
 
 thread_local! {
-  static MENU: std::cell::OnceCell<muda::Menu> = std::cell::OnceCell::new();
+  static MENU: std::cell::OnceCell<muda::Menu> = const { std::cell::OnceCell::new() };
 }
 
 fn boot() -> (App, Task<Message>) {
@@ -604,10 +604,10 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
     return skill_plan_window::view(plan_state).map(move |m| Message::SkillPlan(window_id, m));
   }
 
-  if let Some((about_id, about_state)) = &app.about_window {
-    if window_id == *about_id {
-      return about_window::view(about_state).map(Message::AboutWindow);
-    }
+  if let Some((about_id, about_state)) = &app.about_window
+    && window_id == *about_id
+  {
+    return about_window::view(about_state).map(Message::AboutWindow);
   }
 
   match &app.phase {

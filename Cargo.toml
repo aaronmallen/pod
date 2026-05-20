@@ -42,7 +42,6 @@ chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
 getset = "0.1"
 libsqlite3-sys = { features = ["bundled"], version = "0" }
-log = "0.4"
 open = "5"
 pod-db = { path = "crates/db", version = "0.1" }
 pod-esi = { features = ["pod-model"], path = "crates/esi", version = "0.1" }
@@ -58,6 +57,9 @@ serde_yaml = "0.9"
 sha2 = "0.11"
 thiserror = "2"
 tokio = { features = ["full"], version = "1" }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { features = ["env-filter", "fmt"], version = "0.3" }
 url = "2"
 validator = { features = ["derive"], version = "0.20" }
 wiremock = "0.6"
@@ -88,7 +90,6 @@ arboard.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true
 iced.workspace = true
-log.workspace = true
 open.workspace = true
 pod-db.workspace = true
 pod-esi.workspace = true
@@ -100,6 +101,9 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

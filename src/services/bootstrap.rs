@@ -98,7 +98,7 @@ async fn run_esi_sync(db: pod_db::Repo, esi: pod_esi::Client, mut characters: Ve
     let token = match character_service::ensure_valid_token(character, &esi, &db).await {
       Some(t) => t,
       None => {
-        log::warn!("bootstrap: skipping {name} — token refresh failed");
+        tracing::warn!("bootstrap: skipping {name} — token refresh failed");
         for _ in 0..8 {
           step(tx, format!("Skipping {name}\u{2026}")).await;
         }
@@ -310,7 +310,7 @@ async fn cache_structure_names_from_assets(
     if let Ok(info) = esi.universe().structure(id).auth(grant).detail().await {
       resolved.push((id, info.name));
     } else {
-      log::debug!(
+      tracing::debug!(
         "bootstrap: could not resolve structure {} for character {}",
         id,
         character.name()
@@ -332,7 +332,7 @@ async fn sync_clones_to_db(
   let clones_data = match clones_res {
     Ok(c) => c,
     Err(e) => {
-      log::warn!("bootstrap: failed to fetch clones for character {char_id}: {e}");
+      tracing::warn!("bootstrap: failed to fetch clones for character {char_id}: {e}");
       return;
     }
   };
@@ -429,7 +429,7 @@ async fn sync_prices(db: &pod_db::Repo, esi: &pod_esi::Client) {
   let type_ids = match db.prices().types_to_track().await {
     Ok(ids) => ids,
     Err(e) => {
-      log::warn!("bootstrap: failed to get types to track: {e}");
+      tracing::warn!("bootstrap: failed to get types to track: {e}");
       return;
     }
   };
@@ -454,7 +454,7 @@ async fn sync_prices(db: &pod_db::Repo, esi: &pod_esi::Client) {
         }
         Ok(None) => {}
         Err(e) => {
-          log::warn!("bootstrap: price fetch failed for type {type_id}: {e}");
+          tracing::warn!("bootstrap: price fetch failed for type {type_id}: {e}");
         }
       }
     }));

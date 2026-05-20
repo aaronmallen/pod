@@ -15,7 +15,7 @@ pod-model = ["dep:pod-model"]
 base64.workspace = true
 bytes.workspace = true
 getset.workspace = true
-log.workspace = true
+log = "0.4"
 pod-model = { optional = true, workspace = true }
 rand.workspace = true
 reqwest.workspace = true

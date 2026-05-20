@@ -299,27 +299,30 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
           }
         }
 
-        if let Some(id) = app.window_id {
-          let mut tasks = vec![
-            task,
-            init_task.map(Message::Main),
-            window::resize(id, Size::new(target_width, target_height)),
-            window::toggle_decorations(id),
-            window::set_resizable(id, true),
-            window::set_min_size(id, Some(Size::new(layout::WINDOW_MIN_WIDTH, layout::WINDOW_MIN_HEIGHT))),
-            services::updater::check().map(Message::Updater),
-          ];
-          if let Some(geo) = &saved {
-            tasks.push(window::move_to(id, Point::new(geo.x, geo.y)));
-          }
-          Task::batch(tasks)
-        } else {
-          Task::batch(vec![
-            task,
-            init_task.map(Message::Main),
-            services::updater::check().map(Message::Updater),
-          ])
+        let position = saved
+          .as_ref()
+          .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
+          .unwrap_or(window::Position::Default);
+        let main_settings = window::Settings {
+          size: Size::new(target_width, target_height),
+          position,
+          decorations: true,
+          resizable: true,
+          min_size: Some(Size::new(layout::WINDOW_MIN_WIDTH, layout::WINDOW_MIN_HEIGHT)),
+          ..window::Settings::default()
+        };
+        let (new_id, open_task) = window::open(main_settings);
+        let splash_id = app.window_id.replace(new_id);
+        let mut tasks = vec![
+          task,
+          init_task.map(Message::Main),
+          open_task.map(Message::WindowOpened),
+          services::updater::check().map(Message::Updater),
+        ];
+        if let Some(id) = splash_id {
+          tasks.push(window::close(id));
         }
+        Task::batch(tasks)
       } else {
         task
       }

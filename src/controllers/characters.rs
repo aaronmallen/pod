@@ -667,7 +667,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     }
     Message::Header(header::Message::AddCharacter) => {
       let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available (POD_EVE_CLIENT_ID unset?)".to_string());
+        state.add_status = Some("ESI client not available".to_string());
         return iced::Task::none();
       };
 
@@ -689,7 +689,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     }
     Message::Header(header::Message::AddCorporation) => {
       let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available (POD_EVE_CLIENT_ID unset?)".to_string());
+        state.add_status = Some("ESI client not available".to_string());
         return iced::Task::none();
       };
 

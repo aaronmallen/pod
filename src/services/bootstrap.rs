@@ -19,6 +19,8 @@ pub enum Message {
   Complete(pod_db::Repo, Vec<Character>, Option<pod_esi::Client>),
   /// A non-fatal error description.
   Error(String),
+  /// A fatal error that requires the app to exit.
+  FatalError(String),
   /// DB is open but empty; static data must be seeded before continuing.
   SeedingRequired(pod_db::Repo),
   /// Static-data seeding finished; resume the normal post-DB flow.
@@ -55,7 +57,7 @@ pub fn run() -> Task<Message> {
     async { open_database().await.map_err(|e| e.to_string()) },
     |result| match result {
       Ok(db) => Message::SeedingRequired(db),
-      Err(e) => Message::Error(format!("Database error: {e}")),
+      Err(e) => Message::FatalError(format!("Database error: {e}")),
     },
   )
 }

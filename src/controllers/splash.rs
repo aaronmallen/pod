@@ -10,6 +10,8 @@ use crate::services::{bootstrap, sde};
 pub enum HandleResult {
   /// A bootstrap continuation task (maps to the top-level `Bootstrap` message).
   Bootstrap(iced::Task<bootstrap::Message>),
+  /// A fatal error that the app cannot recover from; carries the error string.
+  Fatal(String),
   /// Nothing to do.
   None,
   /// A splash animation task (maps to the top-level `Splash` message).
@@ -62,6 +64,10 @@ pub fn handle_bootstrap(
       tracing::error!("bootstrap error: {e}");
       state.progress_target = 1.0;
       HandleResult::Splash(update(state, Message::LoadingComplete))
+    }
+    bootstrap::Message::FatalError(e) => {
+      tracing::error!("fatal bootstrap error: {e}");
+      HandleResult::Fatal(e)
     }
   }
 }

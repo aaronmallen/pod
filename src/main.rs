@@ -251,6 +251,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         msg,
       ) {
         splash_ctrl::HandleResult::Bootstrap(t) => t.map(Message::Bootstrap),
+        splash_ctrl::HandleResult::Fatal(e) => {
+          eprintln!("pod: fatal startup error: {e}");
+          iced::exit()
+        }
         splash_ctrl::HandleResult::None => Task::none(),
         splash_ctrl::HandleResult::Splash(t) => t.map(Message::Splash),
       }

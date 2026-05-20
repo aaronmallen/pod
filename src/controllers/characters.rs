@@ -267,388 +267,10 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       state.all_tags = tags;
       iced::Task::none()
     }
-    Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick) => {
-      character_public_refresh_task(state, services)
-    }
-    Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshed(updates)) => {
-      for (id, corp_id, corp_name) in updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-          c.set_corp_id(corp_id);
-          c.set_corp_name(corp_name);
-        }
-      }
-      refilter(state);
-      iced::Task::none()
-    }
-    Message::CharactersTab(characters_tab::Message::CharacterAdded(character)) => {
-      if let Some(bytes) = character.portrait_data() {
-        state
-          .character_pane
-          .portrait_handles
-          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
-      }
-      state.all_characters.push(character);
-      state.add_status = None;
-      refilter(state);
-      character_public_refresh_task(state, services)
-    }
-    Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)) => {
-      if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags;
-      }
-      refilter(state);
-      recompute_tag_corpus(state);
-      iced::Task::none()
-    }
-    Message::CharactersTab(ref inner)
-      if matches!(
-        inner,
-        characters_tab::Message::ContextMenu(context_menu::Message::CopyName)
-      ) =>
-    {
-      let name = state
-        .character_pane
-        .context_menu
-        .as_ref()
-        .map(|s| s.character_name.clone())
-        .unwrap_or_default();
-      let inner = inner.clone();
-      let task = state.character_pane.update(inner).map(Message::CharactersTab);
-      iced::Task::batch([task, iced::clipboard::write(name)])
-    }
-    Message::CharactersTab(ref inner) if matches!(inner, characters_tab::Message::RemoveCharacter(_)) => {
-      if let characters_tab::Message::RemoveCharacter(id) = inner {
-        state.confirm_remove = Some(*id);
-      }
-      iced::Task::none()
-    }
-    Message::CharactersTab(ref inner)
-      if matches!(
-        inner,
-        characters_tab::Message::Card(_, character_card::Message::TagsPressed(_))
-      ) =>
-    {
-      let char_id = if let characters_tab::Message::Card(id, _) = inner {
-        *id
-      } else {
-        0
-      };
-      if let Some(c) = state.all_characters.iter().find(|c| *c.id() == char_id) {
-        let name = c.name().clone();
-        let existing = c.tags().clone();
-        let modal = pod_ui::views::characters::tag_modal::State::new(char_id, "character", name, existing);
-        let input_id = modal.input_id.clone();
-        state.tag_modal = Some(modal);
-        recompute_tag_corpus(state);
-        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
-      }
-      iced::Task::none()
-    }
-    Message::CharactersTab(ref inner)
-      if matches!(
-        inner,
-        characters_tab::Message::Card(_, character_card::Message::NamePressed(_))
-      ) =>
-    {
-      let id = if let characters_tab::Message::Card(_, character_card::Message::NamePressed(id)) = inner {
-        *id
-      } else {
-        return iced::Task::none();
-      };
-      let inner = inner.clone();
-      let _ = state.character_pane.update(inner).map(Message::CharactersTab);
-      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToDetail(id)))
-    }
-    Message::CharactersTab(ref inner)
-      if matches!(
-        inner,
-        characters_tab::Message::Card(_, character_card::Message::SkillTrainingPressed(_))
-      ) =>
-    {
-      let id = if let characters_tab::Message::Card(_, character_card::Message::SkillTrainingPressed(id)) = inner {
-        *id
-      } else {
-        return iced::Task::none();
-      };
-      let inner = inner.clone();
-      let _ = state.character_pane.update(inner).map(Message::CharactersTab);
-      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToSkills(id)))
-    }
-    Message::CharactersTab(ref inner)
-      if matches!(
-        inner,
-        characters_tab::Message::Card(_, character_card::Message::WalletPressed(_))
-      ) =>
-    {
-      let id = if let characters_tab::Message::Card(_, character_card::Message::WalletPressed(id)) = inner {
-        *id
-      } else {
-        return iced::Task::none();
-      };
-      let inner = inner.clone();
-      let _ = state.character_pane.update(inner).map(Message::CharactersTab);
-      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
-    }
-    Message::CharactersTab(characters_tab::Message::DragEnd) => {
-      let dragging = state.character_pane.dragging_id;
-      let hover = state.character_pane.drag_hover;
-      let pane_task = state
-        .character_pane
-        .update(characters_tab::Message::DragEnd)
-        .map(Message::CharactersTab);
-      if let (Some(dragging_id), Some(hover_id)) = (dragging, hover)
-        && dragging_id != hover_id
-      {
-        let ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
-        let new_order = reorder_ids(&ids, dragging_id, hover_id);
-        reorder_characters_by_ids(&mut state.all_characters, &new_order);
-        refilter(state);
-        if let Some(db) = services.db.clone() {
-          let updates: Vec<(i64, i32)> = new_order.iter().enumerate().map(|(i, &id)| (id, i as i32)).collect();
-          let db_task = iced::Task::perform(
-            async move { db.characters().update_sort_orders(&updates).await.ok() },
-            |_| Message::TagsApplied,
-          );
-          return iced::Task::batch([pane_task, db_task]);
-        }
-      }
-      pane_task
-    }
-    Message::CharactersTab(characters_tab::Message::LocationRefreshTick) => location_refresh_task(state, services),
-    Message::CharactersTab(characters_tab::Message::LocationsRefreshed(updates)) => {
-      for (id, name, docked) in updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-          c.set_location_name(name);
-          c.set_location_docked(docked);
-        }
-      }
-      refilter(state);
-      iced::Task::none()
-    }
-    Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick) => skill_queue_refresh_task(state, services),
-    Message::CharactersTab(characters_tab::Message::SkillQueuesRefreshed(updates)) => {
-      for (id, skills, tq) in updates {
-        let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) else {
-          continue;
-        };
-        let skill_map: HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
-        for s in c.skills_mut().iter_mut() {
-          s.is_active_training = false;
-          if let Some(updated) = skill_map.get(&s.skill_id) {
-            s.active_level = updated.active_level;
-            s.is_active_training = updated.is_active_training;
-            s.trained_level = updated.trained_level;
-            s.training_end_time = updated.training_end_time;
-            s.training_level_end_sp = updated.training_level_end_sp;
-            s.training_level_start_sp = updated.training_level_start_sp;
-            s.training_start_sp = updated.training_start_sp;
-            s.training_start_time = updated.training_start_time;
-          }
-        }
-        *c.training_queue_mut() = tq;
-      }
-      refilter(state);
-      iced::Task::none()
-    }
-    Message::CharactersTab(characters_tab::Message::WalletRefreshTick) => wallet_refresh_task(state, services),
-    Message::CharactersTab(characters_tab::Message::WalletsRefreshed(updates)) => {
-      for (id, balance) in updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-          c.set_isk_balance(balance);
-        }
-      }
-      refilter(state);
-      iced::Task::none()
-    }
-    Message::CharactersTab(inner) => state.character_pane.update(inner).map(Message::CharactersTab),
-    Message::ConfirmRemove => {
-      let Some(character_id) = state.confirm_remove.take() else {
-        return iced::Task::none();
-      };
-      state.all_characters.retain(|c| *c.id() != character_id);
-      state.character_pane.portrait_handles.remove(&character_id);
-      refilter(state);
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(async move { db.characters().delete(character_id).await.ok() }, |_| {
-        Message::TagsApplied
-      })
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick) => {
-      corp_public_refresh_task(state, services)
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshed(updated)) => {
-      for corp in updated {
-        if let Some(bytes) = corp.icon_data() {
-          state
-            .corporation_pane
-            .icon_handles
-            .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
-        }
-        if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-          *existing = corp.clone();
-        }
-        if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-          *existing = corp;
-        }
-      }
-      iced::Task::none()
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick) => {
-      corp_wallet_refresh_task(state, services)
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)) => {
-      if let Some(bytes) = corp.icon_data() {
-        state
-          .corporation_pane
-          .icon_handles
-          .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
-      }
-      state.all_corporations.retain(|c| *c.id() != *corp.id());
-      state.all_corporations.push(corp.clone());
-      state.corporations.retain(|c| *c.id() != *corp.id());
-      state.corporations.push(corp);
-      state.add_status = None;
-      iced::Task::none()
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorporationRemoved(id)) => {
-      state.all_corporations.retain(|c| *c.id() != id);
-      state.corporations.retain(|c| *c.id() != id);
-      iced::Task::none()
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)) => {
-      if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags.clone();
-      }
-      if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags;
-      }
-      recompute_tag_corpus(state);
-      iced::Task::none()
-    }
-    Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)) => {
-      for (corp_id, name) in resolved {
-        if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
-          *c.hq_name_mut() = Some(name.clone());
-        }
-        if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
-          *c.hq_name_mut() = Some(name);
-        }
-      }
-      iced::Task::none()
-    }
-    Message::CorporationsTab(corporations_tab::Message::CorporationsLoaded(corps)) => {
-      state.corporation_pane.icon_handles = corps
-        .iter()
-        .filter_map(|c| {
-          c.icon_data()
-            .as_ref()
-            .map(|b| (*c.id(), iced::widget::image::Handle::from_bytes(b.clone())))
-        })
-        .collect();
-      state.all_corporations = corps.clone();
-      state.corporations = corps.clone();
-
-      let tag_tasks = if let Some(db) = services.db.clone() {
-        let corp_ids: Vec<i64> = corps.iter().map(|c| *c.id()).collect();
-        iced::Task::batch(corp_ids.into_iter().map(|corp_id| {
-          let db = db.clone();
-          iced::Task::perform(
-            async move {
-              let tags = db
-                .tags()
-                .tags_for_corporation(corp_id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| (t.id, t.name))
-                .collect();
-              (corp_id, tags)
-            },
-            |(id, tags)| Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-          )
-        }))
-      } else {
-        iced::Task::none()
-      };
-
-      let hq_task = if let Some(esi) = services.esi_client.clone() {
-        let corps_with_hq: Vec<(i64, i64)> = corps
-          .iter()
-          .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
-          .collect();
-        if corps_with_hq.is_empty() {
-          iced::Task::none()
-        } else {
-          iced::Task::perform(
-            async move {
-              let mut results = Vec::new();
-              for (corp_id, station_id) in corps_with_hq {
-                if let Ok(station) = esi.universe().station(station_id).await {
-                  results.push((corp_id, station.name));
-                }
-              }
-              results
-            },
-            |resolved| Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)),
-          )
-        }
-      } else {
-        iced::Task::none()
-      };
-
-      iced::Task::batch([tag_tasks, hq_task])
-    }
-    Message::CorporationsTab(corporations_tab::Message::RemoveCorporation(corp_id)) => {
-      state.corporations.retain(|c| *c.id() != corp_id);
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(
-        async move {
-          db.corporations().delete(corp_id).await.ok();
-          corp_id
-        },
-        |id| Message::CorporationsTab(corporations_tab::Message::CorporationRemoved(id)),
-      )
-    }
-    Message::CorporationsTab(ref inner)
-      if matches!(
-        inner,
-        corporations_tab::Message::Card(_, corporation_card::Message::TagsPressed(_))
-      ) =>
-    {
-      let corp_id = if let corporations_tab::Message::Card(id, _) = inner {
-        *id
-      } else {
-        return iced::Task::none();
-      };
-      if let Some(c) = state.all_corporations.iter().find(|c| *c.id() == corp_id) {
-        let name = c.name().clone();
-        let existing = c.tags().clone();
-        let modal = pod_ui::views::characters::tag_modal::State::new(corp_id, "corporation", name, existing);
-        let input_id = modal.input_id.clone();
-        state.tag_modal = Some(modal);
-        recompute_tag_corpus(state);
-        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
-      }
-      iced::Task::none()
-    }
-    Message::CorporationsTab(inner) => state.corporation_pane.update(inner).map(Message::CorporationsTab),
-    Message::ConfirmRemoveCorporation => {
-      let Some(corp_id) = state.confirm_remove_corporation.take() else {
-        return iced::Task::none();
-      };
-      state.all_corporations.retain(|c| *c.id() != corp_id);
-      state.corporations.retain(|c| *c.id() != corp_id);
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(async move { db.corporations().delete(corp_id).await.ok() }, |_| {
-        Message::TagsApplied
-      })
-    }
+    Message::CharactersTab(msg) => update_characters_tab(state, msg, services),
+    Message::ConfirmRemove => update_confirm_remove(state, services),
+    Message::ConfirmRemoveCorporation => update_confirm_remove_corporation(state, services),
+    Message::CorporationsTab(msg) => update_corporation(state, msg, services),
     Message::DismissConfirmRemove => {
       state.confirm_remove = None;
       iced::Task::none()
@@ -657,77 +279,9 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       state.confirm_remove_corporation = None;
       iced::Task::none()
     }
-    Message::Header(header::Message::TabSelected(ref id)) => {
-      state.active_tab = match id.as_str() {
-        "corporations" => pod_ui::views::characters::Tab::Corporations,
-        _ => pod_ui::views::characters::Tab::Characters,
-      };
-      state.search_filter = search_filter::State::new();
-      iced::Task::none()
-    }
-    Message::Header(header::Message::AddCharacter) => {
-      let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available".to_string());
-        return iced::Task::none();
-      };
-
-      let (url, verifier, oauth_state) = esi
-        .auth()
-        .sign_in(pod_esi::scopes::Scopes::ALL, "http://127.0.0.1:47823/callback");
-
-      let _ = open::that_detached(&url);
-      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
-
-      let db = services.db.clone();
-      iced::Task::perform(
-        async move { add_character(esi, verifier, oauth_state, db).await },
-        |result| match result {
-          Ok(character) => Message::CharactersTab(characters_tab::Message::CharacterAdded(character)),
-          Err(e) => Message::AddCharacterError(e),
-        },
-      )
-    }
-    Message::Header(header::Message::AddCorporation) => {
-      let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available".to_string());
-        return iced::Task::none();
-      };
-
-      let (url, verifier, oauth_state) = esi.auth().sign_in(CORP_SCOPES, "http://127.0.0.1:47823/callback");
-
-      let _ = open::that_detached(&url);
-      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
-
-      let db = services.db.clone();
-      iced::Task::perform(
-        async move { add_corporation(esi, verifier, oauth_state, db).await },
-        |result| match result {
-          Ok(corp) => Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)),
-          Err(e) => Message::AddCorporationError(e),
-        },
-      )
-    }
-    Message::SearchFilter(search_filter::Message::FocusInput) => {
-      let id = state.search_filter.input_id.clone();
-      iced::widget::operation::focus(id)
-    }
-    Message::SearchFilter(inner) => {
-      if let search_filter::Message::QueryChanged(ref q) = inner {
-        let q = q.clone();
-        let task = state.search_filter.update(inner).map(Message::SearchFilter);
-        match state.active_tab {
-          pod_ui::views::characters::Tab::Characters => {
-            state.characters = filter_characters(&state.all_characters, &q);
-          }
-          pod_ui::views::characters::Tab::Corporations => {
-            state.corporations = filter_corporations(&state.all_corporations, &q);
-          }
-        }
-        return task;
-      }
-      state.search_filter.update(inner).map(Message::SearchFilter)
-    }
-    Message::TagModal(inner) => handle_tag_modal(state, inner, services),
+    Message::Header(msg) => update_header(state, msg, services),
+    Message::SearchFilter(msg) => update_search_filter(state, msg),
+    Message::TagModal(msg) => handle_tag_modal(state, msg, services),
     Message::TagsApplied => iced::Task::none(),
   }
 }
@@ -1485,4 +1039,433 @@ async fn fetch_corp_wallets(corporations: Vec<Corporation>, esi: pod_esi::Client
     let grant = corporation_service::refresh_grant(corp, &token);
     let _ = esi.corporation(*corp.id()).auth(&grant).wallets().await;
   }
+}
+
+fn update_character_card(state: &mut State, msg: characters_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    characters_tab::Message::Card(char_id, character_card::Message::NamePressed(id)) => {
+      let _ = state
+        .character_pane
+        .update(characters_tab::Message::Card(
+          char_id,
+          character_card::Message::NamePressed(id),
+        ))
+        .map(Message::CharactersTab);
+      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToDetail(id)))
+    }
+    characters_tab::Message::Card(char_id, character_card::Message::SkillTrainingPressed(id)) => {
+      let _ = state
+        .character_pane
+        .update(characters_tab::Message::Card(
+          char_id,
+          character_card::Message::SkillTrainingPressed(id),
+        ))
+        .map(Message::CharactersTab);
+      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToSkills(id)))
+    }
+    characters_tab::Message::Card(char_id, character_card::Message::TagsPressed(_)) => {
+      if let Some(c) = state.all_characters.iter().find(|c| *c.id() == char_id) {
+        let name = c.name().clone();
+        let existing = c.tags().clone();
+        let modal = pod_ui::views::characters::tag_modal::State::new(char_id, "character", name, existing);
+        let input_id = modal.input_id.clone();
+        state.tag_modal = Some(modal);
+        recompute_tag_corpus(state);
+        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+      }
+      iced::Task::none()
+    }
+    characters_tab::Message::Card(char_id, character_card::Message::WalletPressed(id)) => {
+      let _ = state
+        .character_pane
+        .update(characters_tab::Message::Card(
+          char_id,
+          character_card::Message::WalletPressed(id),
+        ))
+        .map(Message::CharactersTab);
+      iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
+    }
+    characters_tab::Message::CharacterAdded(character) => {
+      if let Some(bytes) = character.portrait_data() {
+        state
+          .character_pane
+          .portrait_handles
+          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      }
+      state.all_characters.push(character);
+      state.add_status = None;
+      refilter(state);
+      character_public_refresh_task(state, services)
+    }
+    characters_tab::Message::CharacterPublicRefreshTick => character_public_refresh_task(state, services),
+    characters_tab::Message::CharacterPublicRefreshed(updates) => {
+      for (id, corp_id, corp_name) in updates {
+        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+          c.set_corp_id(corp_id);
+          c.set_corp_name(corp_name);
+        }
+      }
+      refilter(state);
+      iced::Task::none()
+    }
+    characters_tab::Message::CharacterTagsLoaded(id, tags) => {
+      if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+        *c.tags_mut() = tags;
+      }
+      refilter(state);
+      recompute_tag_corpus(state);
+      iced::Task::none()
+    }
+    characters_tab::Message::ContextMenu(context_menu::Message::CopyName) => {
+      let name = state
+        .character_pane
+        .context_menu
+        .as_ref()
+        .map(|s| s.character_name.clone())
+        .unwrap_or_default();
+      let task = state
+        .character_pane
+        .update(characters_tab::Message::ContextMenu(context_menu::Message::CopyName))
+        .map(Message::CharactersTab);
+      iced::Task::batch([task, iced::clipboard::write(name)])
+    }
+    characters_tab::Message::LocationRefreshTick => location_refresh_task(state, services),
+    characters_tab::Message::LocationsRefreshed(updates) => {
+      for (id, name, docked) in updates {
+        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+          c.set_location_name(name);
+          c.set_location_docked(docked);
+        }
+      }
+      refilter(state);
+      iced::Task::none()
+    }
+    characters_tab::Message::RemoveCharacter(id) => {
+      state.confirm_remove = Some(id);
+      iced::Task::none()
+    }
+    msg => state.character_pane.update(msg).map(Message::CharactersTab),
+  }
+}
+
+fn update_characters_tab(state: &mut State, msg: characters_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    characters_tab::Message::DragEnd => update_drag(state, services),
+    characters_tab::Message::SkillQueueRefreshTick => skill_queue_refresh_task(state, services),
+    characters_tab::Message::SkillQueuesRefreshed(updates) => update_skills_queue(state, updates),
+    characters_tab::Message::WalletRefreshTick => wallet_refresh_task(state, services),
+    characters_tab::Message::WalletsRefreshed(updates) => update_wallet(state, updates),
+    msg => update_character_card(state, msg, services),
+  }
+}
+
+fn update_confirm_remove(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(character_id) = state.confirm_remove.take() else {
+    return iced::Task::none();
+  };
+  state.all_characters.retain(|c| *c.id() != character_id);
+  state.character_pane.portrait_handles.remove(&character_id);
+  refilter(state);
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(async move { db.characters().delete(character_id).await.ok() }, |_| {
+    Message::TagsApplied
+  })
+}
+
+fn update_confirm_remove_corporation(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(corp_id) = state.confirm_remove_corporation.take() else {
+    return iced::Task::none();
+  };
+  state.all_corporations.retain(|c| *c.id() != corp_id);
+  state.corporations.retain(|c| *c.id() != corp_id);
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(async move { db.corporations().delete(corp_id).await.ok() }, |_| {
+    Message::TagsApplied
+  })
+}
+
+fn update_corporation(state: &mut State, msg: corporations_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    corporations_tab::Message::Card(corp_id, corporation_card::Message::TagsPressed(_)) => {
+      if let Some(c) = state.all_corporations.iter().find(|c| *c.id() == corp_id) {
+        let name = c.name().clone();
+        let existing = c.tags().clone();
+        let modal = pod_ui::views::characters::tag_modal::State::new(corp_id, "corporation", name, existing);
+        let input_id = modal.input_id.clone();
+        state.tag_modal = Some(modal);
+        recompute_tag_corpus(state);
+        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+      }
+      iced::Task::none()
+    }
+    corporations_tab::Message::CorpPublicRefreshTick => corp_public_refresh_task(state, services),
+    corporations_tab::Message::CorpPublicRefreshed(updated) => {
+      for corp in updated {
+        if let Some(bytes) = corp.icon_data() {
+          state
+            .corporation_pane
+            .icon_handles
+            .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+        }
+        if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+          *existing = corp.clone();
+        }
+        if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+          *existing = corp;
+        }
+      }
+      iced::Task::none()
+    }
+    corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
+    corporations_tab::Message::CorporationAdded(corp) => {
+      if let Some(bytes) = corp.icon_data() {
+        state
+          .corporation_pane
+          .icon_handles
+          .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+      }
+      state.all_corporations.retain(|c| *c.id() != *corp.id());
+      state.all_corporations.push(corp.clone());
+      state.corporations.retain(|c| *c.id() != *corp.id());
+      state.corporations.push(corp);
+      state.add_status = None;
+      iced::Task::none()
+    }
+    corporations_tab::Message::CorporationRemoved(id) => {
+      state.all_corporations.retain(|c| *c.id() != id);
+      state.corporations.retain(|c| *c.id() != id);
+      iced::Task::none()
+    }
+    corporations_tab::Message::CorporationTagsLoaded(id, tags) => {
+      if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == id) {
+        *c.tags_mut() = tags.clone();
+      }
+      if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == id) {
+        *c.tags_mut() = tags;
+      }
+      recompute_tag_corpus(state);
+      iced::Task::none()
+    }
+    corporations_tab::Message::CorporationsLoaded(corps) => {
+      state.corporation_pane.icon_handles = corps
+        .iter()
+        .filter_map(|c| {
+          c.icon_data()
+            .as_ref()
+            .map(|b| (*c.id(), iced::widget::image::Handle::from_bytes(b.clone())))
+        })
+        .collect();
+      state.all_corporations = corps.clone();
+      state.corporations = corps.clone();
+      let tag_tasks = if let Some(db) = services.db.clone() {
+        let corp_ids: Vec<i64> = corps.iter().map(|c| *c.id()).collect();
+        iced::Task::batch(corp_ids.into_iter().map(|corp_id| {
+          let db = db.clone();
+          iced::Task::perform(
+            async move {
+              let tags = db
+                .tags()
+                .tags_for_corporation(corp_id)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| (t.id, t.name))
+                .collect();
+              (corp_id, tags)
+            },
+            |(id, tags)| Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+          )
+        }))
+      } else {
+        iced::Task::none()
+      };
+      let hq_task = if let Some(esi) = services.esi_client.clone() {
+        let corps_with_hq: Vec<(i64, i64)> = corps
+          .iter()
+          .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
+          .collect();
+        if corps_with_hq.is_empty() {
+          iced::Task::none()
+        } else {
+          iced::Task::perform(
+            async move {
+              let mut results = Vec::new();
+              for (corp_id, station_id) in corps_with_hq {
+                if let Ok(station) = esi.universe().station(station_id).await {
+                  results.push((corp_id, station.name));
+                }
+              }
+              results
+            },
+            |resolved| Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)),
+          )
+        }
+      } else {
+        iced::Task::none()
+      };
+      iced::Task::batch([tag_tasks, hq_task])
+    }
+    corporations_tab::Message::HqNamesLoaded(resolved) => {
+      for (corp_id, name) in resolved {
+        if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
+          *c.hq_name_mut() = Some(name.clone());
+        }
+        if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
+          *c.hq_name_mut() = Some(name);
+        }
+      }
+      iced::Task::none()
+    }
+    corporations_tab::Message::RemoveCorporation(corp_id) => {
+      state.corporations.retain(|c| *c.id() != corp_id);
+      let Some(db) = services.db.clone() else {
+        return iced::Task::none();
+      };
+      iced::Task::perform(
+        async move {
+          db.corporations().delete(corp_id).await.ok();
+          corp_id
+        },
+        |id| Message::CorporationsTab(corporations_tab::Message::CorporationRemoved(id)),
+      )
+    }
+    msg => state.corporation_pane.update(msg).map(Message::CorporationsTab),
+  }
+}
+
+fn update_drag(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let dragging = state.character_pane.dragging_id;
+  let hover = state.character_pane.drag_hover;
+  let pane_task = state
+    .character_pane
+    .update(characters_tab::Message::DragEnd)
+    .map(Message::CharactersTab);
+  if let (Some(dragging_id), Some(hover_id)) = (dragging, hover)
+    && dragging_id != hover_id
+  {
+    let ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
+    let new_order = reorder_ids(&ids, dragging_id, hover_id);
+    reorder_characters_by_ids(&mut state.all_characters, &new_order);
+    refilter(state);
+    if let Some(db) = services.db.clone() {
+      let updates: Vec<(i64, i32)> = new_order.iter().enumerate().map(|(i, &id)| (id, i as i32)).collect();
+      let db_task = iced::Task::perform(
+        async move { db.characters().update_sort_orders(&updates).await.ok() },
+        |_| Message::TagsApplied,
+      );
+      return iced::Task::batch([pane_task, db_task]);
+    }
+  }
+  pane_task
+}
+
+fn update_header(state: &mut State, msg: header::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    header::Message::AddCharacter => {
+      let Some(esi) = services.esi_client.clone() else {
+        state.add_status = Some("ESI client not available".to_string());
+        return iced::Task::none();
+      };
+      let (url, verifier, oauth_state) = esi
+        .auth()
+        .sign_in(pod_esi::scopes::Scopes::ALL, "http://127.0.0.1:47823/callback");
+      let _ = open::that_detached(&url);
+      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
+      let db = services.db.clone();
+      iced::Task::perform(
+        async move { add_character(esi, verifier, oauth_state, db).await },
+        |result| match result {
+          Ok(character) => Message::CharactersTab(characters_tab::Message::CharacterAdded(character)),
+          Err(e) => Message::AddCharacterError(e),
+        },
+      )
+    }
+    header::Message::AddCorporation => {
+      let Some(esi) = services.esi_client.clone() else {
+        state.add_status = Some("ESI client not available".to_string());
+        return iced::Task::none();
+      };
+      let (url, verifier, oauth_state) = esi.auth().sign_in(CORP_SCOPES, "http://127.0.0.1:47823/callback");
+      let _ = open::that_detached(&url);
+      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
+      let db = services.db.clone();
+      iced::Task::perform(
+        async move { add_corporation(esi, verifier, oauth_state, db).await },
+        |result| match result {
+          Ok(corp) => Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)),
+          Err(e) => Message::AddCorporationError(e),
+        },
+      )
+    }
+    header::Message::TabSelected(id) => {
+      state.active_tab = match id.as_str() {
+        "corporations" => pod_ui::views::characters::Tab::Corporations,
+        _ => pod_ui::views::characters::Tab::Characters,
+      };
+      state.search_filter = search_filter::State::new();
+      iced::Task::none()
+    }
+  }
+}
+
+fn update_search_filter(state: &mut State, msg: search_filter::Message) -> iced::Task<Message> {
+  if let search_filter::Message::QueryChanged(ref q) = msg {
+    let q = q.clone();
+    let task = state.search_filter.update(msg).map(Message::SearchFilter);
+    match state.active_tab {
+      pod_ui::views::characters::Tab::Characters => {
+        state.characters = filter_characters(&state.all_characters, &q);
+      }
+      pod_ui::views::characters::Tab::Corporations => {
+        state.corporations = filter_corporations(&state.all_corporations, &q);
+      }
+    }
+    return task;
+  }
+  if let search_filter::Message::FocusInput = msg {
+    return iced::widget::operation::focus(state.search_filter.input_id.clone());
+  }
+  state.search_filter.update(msg).map(Message::SearchFilter)
+}
+
+fn update_skills_queue(
+  state: &mut State,
+  updates: Vec<(i64, Vec<CharacterSkill>, Vec<TrainingQueueEntry>)>,
+) -> iced::Task<Message> {
+  for (id, skills, tq) in updates {
+    let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) else {
+      continue;
+    };
+    let skill_map: HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
+    for s in c.skills_mut().iter_mut() {
+      s.is_active_training = false;
+      if let Some(updated) = skill_map.get(&s.skill_id) {
+        s.active_level = updated.active_level;
+        s.is_active_training = updated.is_active_training;
+        s.trained_level = updated.trained_level;
+        s.training_end_time = updated.training_end_time;
+        s.training_level_end_sp = updated.training_level_end_sp;
+        s.training_level_start_sp = updated.training_level_start_sp;
+        s.training_start_sp = updated.training_start_sp;
+        s.training_start_time = updated.training_start_time;
+      }
+    }
+    *c.training_queue_mut() = tq;
+  }
+  refilter(state);
+  iced::Task::none()
+}
+
+fn update_wallet(state: &mut State, updates: Vec<(i64, Option<f64>)>) -> iced::Task<Message> {
+  for (id, balance) in updates {
+    if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+      c.set_isk_balance(balance);
+    }
+  }
+  refilter(state);
+  iced::Task::none()
 }

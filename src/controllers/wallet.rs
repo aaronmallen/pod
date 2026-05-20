@@ -27,80 +27,15 @@ pub fn update(
   services: &Services,
   corporations: &[Corporation],
 ) -> iced::Task<Message> {
-  // Collect type_ids for icon fetching before the message is consumed.
-  let market_entries: Option<&Vec<MarketEntry>> = match &message {
-    Message::TransactionsLoaded(entries) => Some(entries),
-    Message::CorpDataLoaded {
-      market, ..
-    } => Some(market),
-    _ => None,
-  };
-  let icon_type_ids: Option<Vec<i32>> = market_entries
-    .map(|entries| {
-      entries
-        .iter()
-        .map(|e| e.type_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .filter(|id| !state.item_icons.contains_key(id))
-        .collect::<Vec<_>>()
-    })
-    .filter(|ids| !ids.is_empty());
-
-  match &message {
-    Message::CharacterPicker(character_picker_msg) => {
-      if let pod_ui::components::character_picker::Message::Select(PickerSelection::Corporation(corp_id)) =
-        character_picker_msg
-      {
-        let corp_id = *corp_id;
-        let division = 1u8;
-        if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-          let corps = corporations.to_vec();
-          let _ = pod_ui::views::wallet::update(state, message);
-          recompute_derived(state);
-          return iced::Task::perform(
-            async move { fetch_corp_data(corp_id, division, corps, esi, db).await },
-            |(divisions, journal, market)| Message::CorpDataLoaded {
-              divisions,
-              journal,
-              market,
-            },
-          );
-        }
-      }
+  let icon_type_ids = compute_icon_type_ids(&message, state);
+  match message {
+    Message::CharacterPicker(msg) => update_character_picker(state, msg, corporations, services, icon_type_ids),
+    Message::DivisionSelected(div) => update_division_selected(state, div, corporations, services, icon_type_ids),
+    other => {
+      let base = pod_ui::views::wallet::update(state, other);
+      recompute_derived(state);
+      attach_icon_task(base, icon_type_ids, services)
     }
-    Message::DivisionSelected(div) => {
-      let div = *div;
-      if let Some(corp_id) = state.selected_corporation()
-        && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
-      {
-        let corps = corporations.to_vec();
-        let _ = pod_ui::views::wallet::update(state, message);
-        recompute_derived(state);
-        return iced::Task::perform(
-          async move { fetch_corp_data(corp_id, div, corps, esi, db).await },
-          |(divisions, journal, market)| Message::CorpDataLoaded {
-            divisions,
-            journal,
-            market,
-          },
-        );
-      }
-    }
-    _ => {}
-  }
-
-  let base_task = pod_ui::views::wallet::update(state, message);
-  recompute_derived(state);
-
-  if let (Some(type_ids), Some(esi), Some(db)) = (icon_type_ids, services.esi_client.clone(), services.db.clone()) {
-    let icon_task = iced::Task::perform(
-      async move { fetch_type_icons(type_ids, esi, db).await },
-      Message::ItemIconsLoaded,
-    );
-    iced::Task::batch([base_task, icon_task])
-  } else {
-    base_task
   }
 }
 
@@ -213,6 +148,22 @@ pub fn new(
   (state, tasks)
 }
 
+fn attach_icon_task(
+  base: iced::Task<Message>,
+  icon_type_ids: Option<Vec<i32>>,
+  services: &Services,
+) -> iced::Task<Message> {
+  if let (Some(type_ids), Some(esi), Some(db)) = (icon_type_ids, services.esi_client.clone(), services.db.clone()) {
+    let icon_task = iced::Task::perform(
+      async move { fetch_type_icons(type_ids, esi, db).await },
+      Message::ItemIconsLoaded,
+    );
+    iced::Task::batch([base, icon_task])
+  } else {
+    base
+  }
+}
+
 fn build_picker_entries(characters: &[Character]) -> Vec<CharacterEntry> {
   let mut v = vec![CharacterEntry {
     id: None,
@@ -247,6 +198,27 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
       }
     })
     .collect()
+}
+
+fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
+  let market_entries: Option<&Vec<MarketEntry>> = match message {
+    Message::TransactionsLoaded(entries) => Some(entries),
+    Message::CorpDataLoaded {
+      market, ..
+    } => Some(market),
+    _ => None,
+  };
+  market_entries
+    .map(|entries| {
+      entries
+        .iter()
+        .map(|e| e.type_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .filter(|id| !state.item_icons.contains_key(id))
+        .collect::<Vec<_>>()
+    })
+    .filter(|ids| !ids.is_empty())
 }
 
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
@@ -878,4 +850,59 @@ fn format_party_id(id: Option<i64>) -> String {
     Some(n) => format!("#{n}"),
     None => String::new(),
   }
+}
+
+fn update_character_picker(
+  state: &mut State,
+  msg: pod_ui::components::character_picker::Message,
+  corporations: &[Corporation],
+  services: &Services,
+  icon_type_ids: Option<Vec<i32>>,
+) -> iced::Task<Message> {
+  if let pod_ui::components::character_picker::Message::Select(PickerSelection::Corporation(corp_id)) = &msg
+    && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
+  {
+    let corp_id = *corp_id;
+    let corps = corporations.to_vec();
+    let _ = pod_ui::views::wallet::update(state, Message::CharacterPicker(msg));
+    recompute_derived(state);
+    return iced::Task::perform(
+      async move { fetch_corp_data(corp_id, 1, corps, esi, db).await },
+      |(divisions, journal, market)| Message::CorpDataLoaded {
+        divisions,
+        journal,
+        market,
+      },
+    );
+  }
+  let base = pod_ui::views::wallet::update(state, Message::CharacterPicker(msg));
+  recompute_derived(state);
+  attach_icon_task(base, icon_type_ids, services)
+}
+
+fn update_division_selected(
+  state: &mut State,
+  div: u8,
+  corporations: &[Corporation],
+  services: &Services,
+  icon_type_ids: Option<Vec<i32>>,
+) -> iced::Task<Message> {
+  if let Some(corp_id) = state.selected_corporation()
+    && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
+  {
+    let corps = corporations.to_vec();
+    let _ = pod_ui::views::wallet::update(state, Message::DivisionSelected(div));
+    recompute_derived(state);
+    return iced::Task::perform(
+      async move { fetch_corp_data(corp_id, div, corps, esi, db).await },
+      |(divisions, journal, market)| Message::CorpDataLoaded {
+        divisions,
+        journal,
+        market,
+      },
+    );
+  }
+  let base = pod_ui::views::wallet::update(state, Message::DivisionSelected(div));
+  recompute_derived(state);
+  attach_icon_task(base, icon_type_ids, services)
 }

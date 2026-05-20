@@ -38,6 +38,7 @@ repository = "https://www.github.com/aaronmallen/pod"
 arboard = "3"
 base64 = "0.22"
 bytes = "1"
+cargo-packager-updater = "0.2"
 chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
 getset = "0.1"
@@ -82,11 +83,9 @@ version = "2.0.0-rc"
 features = ["runtime-tokio-rustls", "sqlx-sqlite"]
 version = "2.0.0-rc"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-
 [dependencies]
 arboard.workspace = true
+cargo-packager-updater.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true
 iced.workspace = true
@@ -105,6 +104,9 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 zip.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
 
 [dev-dependencies]
 pretty_assertions.workspace = true

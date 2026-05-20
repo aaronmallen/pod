@@ -4,6 +4,7 @@ pub mod bootstrap;
 pub mod character;
 pub mod corporation;
 pub mod sde;
+pub mod updater;
 pub mod window_state;
 
 /// Shared database and ESI client handles passed to controllers.

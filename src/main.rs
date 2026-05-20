@@ -36,6 +36,7 @@ struct App {
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
   step_label: String,
   sync_step_size: f32,
+  update_state: services::updater::UpdateState,
   window_id: Option<window::Id>,
   window_position: Option<Point>,
   window_size: Size,
@@ -55,6 +56,7 @@ enum Message {
   Splash(splash_ctrl::Message),
   SkillPlan(window::Id, skill_plan_window::Message),
   Tick,
+  Updater(services::updater::Message),
   WindowMoved(window::Id, Point),
   WindowOpened(window::Id),
   WindowResized(window::Id, Size),
@@ -71,6 +73,7 @@ impl Default for App {
       plan_windows: HashMap::new(),
       step_label: "Opening database\u{2026}".to_string(),
       sync_step_size: 0.15,
+      update_state: services::updater::UpdateState::default(),
       window_id: None,
       window_position: None,
       window_size: Size::new(layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
@@ -159,7 +162,9 @@ fn subscription(app: &App) -> Subscription<Message> {
       let main_subs = main_ctrl::subscription(state).map(Message::Main);
       let eve_tick =
         iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Main(main_ctrl::Message::EveTimeTick));
-      iced::Subscription::batch([main_subs, eve_tick])
+      let update_check = iced::time::every(services::updater::check_interval())
+        .map(|_| Message::Updater(services::updater::Message::CheckRequested));
+      iced::Subscription::batch([main_subs, eve_tick, update_check])
     }
   };
 
@@ -296,13 +301,18 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             window::toggle_decorations(id),
             window::set_resizable(id, true),
             window::set_min_size(id, Some(Size::new(layout::WINDOW_MIN_WIDTH, layout::WINDOW_MIN_HEIGHT))),
+            services::updater::check().map(Message::Updater),
           ];
           if let Some(geo) = &saved {
             tasks.push(window::move_to(id, Point::new(geo.x, geo.y)));
           }
           Task::batch(tasks)
         } else {
-          Task::batch([task, init_task.map(Message::Main)])
+          Task::batch(vec![
+            task,
+            init_task.map(Message::Main),
+            services::updater::check().map(Message::Updater),
+          ])
         }
       } else {
         task
@@ -360,6 +370,33 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
         save_geometry(app);
       }
       task
+    }
+    Message::Updater(msg) => {
+      use services::updater::Message as UpdMsg;
+      match msg {
+        UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
+        UpdMsg::CheckComplete(Some(version)) => {
+          app.update_state = services::updater::UpdateState::UpdateAvailable(version);
+          Task::none()
+        }
+        UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed(_) => Task::none(),
+        UpdMsg::ApplyRequested => {
+          app.update_state = services::updater::UpdateState::Downloading;
+          services::updater::apply().map(Message::Updater)
+        }
+        UpdMsg::ApplyComplete => {
+          app.update_state = services::updater::UpdateState::ReadyToRestart;
+          Task::none()
+        }
+        UpdMsg::ApplyFailed(e) => {
+          app.update_state = services::updater::UpdateState::Error(e);
+          Task::none()
+        }
+        UpdMsg::RestartRequested => {
+          services::updater::restart();
+          Task::none()
+        }
+      }
     }
     Message::SkillPlan(window_id, msg) => {
       let is_save_completed = matches!(&msg, skill_plan_window::Message::SaveCompleted);

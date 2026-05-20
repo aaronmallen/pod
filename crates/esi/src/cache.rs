@@ -34,6 +34,7 @@ pub(crate) enum Store {
 
 impl Store {
   /// Retrieves the cached ETag and body for `url`, if present.
+  #[tracing::instrument(skip(self))]
   pub(crate) fn get(&self, url: &str) -> Option<(String, Bytes)> {
     match self {
       Self::Disk(cache) => cache.get(url),
@@ -42,6 +43,7 @@ impl Store {
   }
 
   /// Stores `body` along with its `etag` under `url`.
+  #[tracing::instrument(skip(self, etag, body))]
   pub(crate) fn insert(&self, url: &str, etag: &str, body: &Bytes) {
     match self {
       Self::Disk(cache) => cache.insert(url, etag, body),
@@ -70,6 +72,7 @@ impl DiskStore {
 
   /// Reads the cached ETag and body for `url` from disk, returning `None` on
   /// any I/O or parse error.
+  #[tracing::instrument(skip(self))]
   pub(crate) fn get(&self, url: &str) -> Option<(String, Bytes)> {
     self.sweep_stale();
     let path = self.file_path(url);
@@ -81,11 +84,19 @@ impl DiskStore {
   }
 
   /// Writes `body` and `etag` to disk; logs an error and continues on failure.
+  #[tracing::instrument(skip(self, etag, body))]
   pub(crate) fn insert(&self, url: &str, etag: &str, body: &Bytes) {
     if let Err(e) = self.try_store(url, etag, body) {
-      log::error!("disk cache write failed for {url}: {e}");
+      tracing::error!("disk cache write failed for {url}: {e}");
     }
     self.sweep_stale();
+  }
+
+  /// Returns the file path for a URL by hashing it with SHA-256.
+  fn file_path(&self, url: &str) -> PathBuf {
+    let hash = Sha256::digest(url.as_bytes());
+    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    self.path.join(hex)
   }
 
   /// Removes any cache files whose modification time exceeds [`MAX_CACHE_AGE`].
@@ -107,13 +118,6 @@ impl DiskStore {
     }
   }
 
-  /// Returns the file path for a URL by hashing it with SHA-256.
-  fn file_path(&self, url: &str) -> PathBuf {
-    let hash = Sha256::digest(url.as_bytes());
-    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    self.path.join(hex)
-  }
-
   /// Writes the ETag and body to the cache file, creating the directory if needed.
   fn try_store(&self, url: &str, etag: &str, body: &Bytes) -> std::io::Result<()> {
     std::fs::create_dir_all(&self.path)?;
@@ -132,6 +136,7 @@ pub(crate) struct MemoryStore {
 
 impl MemoryStore {
   /// Returns the cached ETag and body for `url`, or `None` if not present.
+  #[tracing::instrument(skip(self))]
   pub(crate) fn get(&self, url: &str) -> Option<(String, Bytes)> {
     self.sweep_stale();
     let map = self.entries.lock().ok()?;
@@ -140,6 +145,7 @@ impl MemoryStore {
   }
 
   /// Inserts or replaces the entry for `url` with the given `etag` and `body`.
+  #[tracing::instrument(skip(self, etag, body))]
   pub(crate) fn insert(&self, url: &str, etag: &str, body: &Bytes) {
     if let Ok(mut map) = self.entries.lock() {
       map.insert(url.to_owned(), (etag.to_owned(), body.to_owned(), SystemTime::now()));

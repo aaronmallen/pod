@@ -1421,3 +1421,333 @@ fn update_skill_picked(state: &mut State, skill_name: String, level: u8) -> iced
   update_dirty(state);
   iced::Task::none()
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::{SkillPlan, SkillPlanEntry};
+
+  use super::*;
+
+  fn make_entry(id: &str, skill: &str, level: u8, auto: bool) -> PlanEntry {
+    PlanEntry {
+      id: id.to_string(),
+      skill_name: skill.to_string(),
+      to_level: level,
+      priority: Priority::Normal,
+      note: None,
+      auto,
+    }
+  }
+
+  mod parse_import_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_roman_numeral_levels() {
+      let input = "Navigation V\nGunnery III\nShielding II\nSpaceship Command I\nWarp Drive Operation IV";
+      let result = parse_import_text(input);
+
+      assert_eq!(result.len(), 5);
+      assert!(result.contains(&("Navigation".to_string(), 5)));
+      assert!(result.contains(&("Gunnery".to_string(), 3)));
+      assert!(result.contains(&("Shielding".to_string(), 2)));
+      assert!(result.contains(&("Spaceship Command".to_string(), 1)));
+      assert!(result.contains(&("Warp Drive Operation".to_string(), 4)));
+    }
+
+    #[test]
+    fn it_parses_numeric_levels() {
+      let input = "Navigation 5\nGunnery 3";
+      let result = parse_import_text(input);
+
+      assert_eq!(result.len(), 2);
+      assert!(result.contains(&("Navigation".to_string(), 5)));
+      assert!(result.contains(&("Gunnery".to_string(), 3)));
+    }
+
+    #[test]
+    fn it_skips_empty_lines() {
+      let input = "Navigation V\n\n\nGunnery III\n";
+      let result = parse_import_text(input);
+
+      assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn it_returns_empty_for_blank_input() {
+      let result = parse_import_text("   \n\n  ");
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_rejects_numeric_level_out_of_range() {
+      let input = "Navigation 6\nGunnery 0";
+      let result = parse_import_text(input);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_handles_multi_word_skill_names() {
+      let input = "Caldari Battleship V";
+      let result = parse_import_text(input);
+
+      assert_eq!(result, vec![("Caldari Battleship".to_string(), 5)]);
+    }
+
+    #[test]
+    fn it_prefers_longer_roman_match_before_shorter() {
+      let input = "Bomb Deployment IV";
+      let result = parse_import_text(input);
+
+      assert_eq!(result, vec![("Bomb Deployment".to_string(), 4)]);
+    }
+  }
+
+  mod plan_snapshot {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_produces_just_name_for_empty_entries() {
+      let snap = plan_snapshot("My Plan", &[]);
+
+      assert_eq!(snap, "My Plan");
+    }
+
+    #[test]
+    fn it_includes_entry_fields() {
+      let entries = vec![make_entry("nav-1", "Navigation", 1, false)];
+      let snap = plan_snapshot("My Plan", &entries);
+
+      assert!(snap.contains("Navigation"));
+      assert!(snap.contains('1'.to_string().as_str()));
+    }
+
+    #[test]
+    fn different_names_produce_different_snapshots() {
+      let snap_a = plan_snapshot("Plan A", &[]);
+      let snap_b = plan_snapshot("Plan B", &[]);
+
+      assert_ne!(snap_a, snap_b);
+    }
+
+    #[test]
+    fn different_entries_produce_different_snapshots() {
+      let a = vec![make_entry("nav-1", "Navigation", 1, false)];
+      let b = vec![make_entry("nav-2", "Navigation", 2, false)];
+
+      assert_ne!(plan_snapshot("Plan", &a), plan_snapshot("Plan", &b));
+    }
+  }
+
+  mod collect_wishes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_non_auto_entries() {
+      let entries = vec![
+        make_entry("nav-1", "Navigation", 1, false),
+        make_entry("gun-3", "Gunnery", 3, false),
+      ];
+      let wishes = collect_wishes(&entries);
+
+      assert_eq!(wishes.len(), 2);
+      assert!(wishes.iter().any(|(n, l)| n == "Navigation" && *l == 1));
+      assert!(wishes.iter().any(|(n, l)| n == "Gunnery" && *l == 3));
+    }
+
+    #[test]
+    fn it_excludes_auto_entries() {
+      let entries = vec![
+        make_entry("nav-1", "Navigation", 1, true),
+        make_entry("gun-3", "Gunnery", 3, false),
+      ];
+      let wishes = collect_wishes(&entries);
+
+      assert_eq!(wishes.len(), 1);
+      assert!(wishes.iter().any(|(n, _)| n == "Gunnery"));
+    }
+
+    #[test]
+    fn it_keeps_highest_level_per_skill() {
+      let entries = vec![
+        make_entry("nav-2", "Navigation", 2, false),
+        make_entry("nav-4", "Navigation", 4, false),
+        make_entry("nav-1", "Navigation", 1, false),
+      ];
+      let wishes = collect_wishes(&entries);
+
+      assert_eq!(wishes.len(), 1);
+      assert_eq!(wishes[0], ("Navigation".to_string(), 4));
+    }
+
+    #[test]
+    fn it_returns_empty_for_all_auto_entries() {
+      let entries = vec![
+        make_entry("nav-1", "Navigation", 1, true),
+        make_entry("gun-3", "Gunnery", 3, true),
+      ];
+      let wishes = collect_wishes(&entries);
+
+      assert!(wishes.is_empty());
+    }
+  }
+
+  mod merge_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_preserves_priority_from_old_entry() {
+      let mut old = make_entry("nav-1", "Navigation", 1, false);
+      old.priority = Priority::High;
+      let new = make_entry("nav-1", "Navigation", 1, false);
+
+      let merged = merge_entries(vec![new], &[old]);
+
+      assert_eq!(merged.len(), 1);
+      assert!(matches!(merged[0].priority, Priority::High));
+    }
+
+    #[test]
+    fn it_preserves_note_from_old_entry() {
+      let mut old = make_entry("nav-1", "Navigation", 1, false);
+      old.note = Some("important".to_string());
+      let new = make_entry("nav-1", "Navigation", 1, false);
+
+      let merged = merge_entries(vec![new], &[old]);
+
+      assert_eq!(merged[0].note, Some("important".to_string()));
+    }
+
+    #[test]
+    fn it_uses_new_defaults_when_no_old_entry_exists() {
+      let new = make_entry("nav-1", "Navigation", 1, false);
+
+      let merged = merge_entries(vec![new], &[]);
+
+      assert_eq!(merged.len(), 1);
+      assert!(matches!(merged[0].priority, Priority::Normal));
+      assert!(merged[0].note.is_none());
+    }
+
+    #[test]
+    fn it_maintains_order_from_new_entries() {
+      let new_entries = vec![
+        make_entry("gun-1", "Gunnery", 1, false),
+        make_entry("nav-1", "Navigation", 1, false),
+        make_entry("shd-1", "Shielding", 1, false),
+      ];
+
+      let merged = merge_entries(new_entries, &[]);
+
+      assert_eq!(merged[0].skill_name, "Gunnery");
+      assert_eq!(merged[1].skill_name, "Navigation");
+      assert_eq!(merged[2].skill_name, "Shielding");
+    }
+  }
+
+  mod plan_entries_to_plan_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_plan_entry(id: &str, skill: &str, level: i32, priority: &str, auto: bool) -> SkillPlanEntry {
+      SkillPlanEntry {
+        auto,
+        id: id.to_string(),
+        note: None,
+        plan_id: "plan-001".to_string(),
+        position: 0,
+        priority: priority.to_string(),
+        skill_name: skill.to_string(),
+        to_level: level,
+      }
+    }
+
+    #[test]
+    fn it_converts_priority_low() {
+      let plan = SkillPlan {
+        character_id: 1,
+        created_at: 0,
+        entries: vec![make_plan_entry("e1", "Navigation", 1, "low", false)],
+        id: "plan-001".to_string(),
+        implant_set: "none".to_string(),
+        name: "Test".to_string(),
+        remap_json: None,
+        updated_at: 0,
+      };
+
+      let entries = plan_entries_to_plan_entries(&plan);
+
+      assert_eq!(entries.len(), 1);
+      assert!(matches!(entries[0].priority, Priority::Low));
+    }
+
+    #[test]
+    fn it_converts_priority_high() {
+      let plan = SkillPlan {
+        character_id: 1,
+        created_at: 0,
+        entries: vec![make_plan_entry("e1", "Navigation", 1, "high", false)],
+        id: "plan-001".to_string(),
+        implant_set: "none".to_string(),
+        name: "Test".to_string(),
+        remap_json: None,
+        updated_at: 0,
+      };
+
+      let entries = plan_entries_to_plan_entries(&plan);
+
+      assert!(matches!(entries[0].priority, Priority::High));
+    }
+
+    #[test]
+    fn it_defaults_unknown_priority_to_normal() {
+      let plan = SkillPlan {
+        character_id: 1,
+        created_at: 0,
+        entries: vec![make_plan_entry("e1", "Navigation", 1, "unknown", false)],
+        id: "plan-001".to_string(),
+        implant_set: "none".to_string(),
+        name: "Test".to_string(),
+        remap_json: None,
+        updated_at: 0,
+      };
+
+      let entries = plan_entries_to_plan_entries(&plan);
+
+      assert!(matches!(entries[0].priority, Priority::Normal));
+    }
+
+    #[test]
+    fn it_preserves_auto_flag() {
+      let plan = SkillPlan {
+        character_id: 1,
+        created_at: 0,
+        entries: vec![
+          make_plan_entry("e1", "Navigation", 1, "normal", false),
+          make_plan_entry("e2", "Spaceship Command", 1, "normal", true),
+        ],
+        id: "plan-001".to_string(),
+        implant_set: "none".to_string(),
+        name: "Test".to_string(),
+        remap_json: None,
+        updated_at: 0,
+      };
+
+      let entries = plan_entries_to_plan_entries(&plan);
+
+      assert!(!entries[0].auto);
+      assert!(entries[1].auto);
+    }
+  }
+}

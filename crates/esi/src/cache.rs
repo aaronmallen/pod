@@ -168,3 +168,141 @@ impl Clone for MemoryStore {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod memory_store {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_none_for_missing_key() {
+      let store = MemoryStore::default();
+
+      assert!(store.get("https://example.com/missing").is_none());
+    }
+
+    #[test]
+    fn it_inserts_and_retrieves_an_entry() {
+      let store = MemoryStore::default();
+      let body = Bytes::from(b"[1,2,3]".to_vec());
+
+      store.insert("https://example.com/items", "\"etag1\"", &body);
+      let result = store.get("https://example.com/items").unwrap();
+
+      assert_eq!(result.0, "\"etag1\"");
+      assert_eq!(result.1, body);
+    }
+
+    #[test]
+    fn it_overwrites_existing_entry() {
+      let store = MemoryStore::default();
+      let body1 = Bytes::from(b"old".to_vec());
+      let body2 = Bytes::from(b"new".to_vec());
+
+      store.insert("https://example.com/item", "\"v1\"", &body1);
+      store.insert("https://example.com/item", "\"v2\"", &body2);
+      let result = store.get("https://example.com/item").unwrap();
+
+      assert_eq!(result.0, "\"v2\"");
+      assert_eq!(result.1, body2);
+    }
+
+    #[test]
+    fn it_clones_correctly() {
+      let store = MemoryStore::default();
+      let body = Bytes::from(b"data".to_vec());
+      store.insert("https://example.com/x", "\"etag\"", &body);
+
+      let cloned = store.clone();
+
+      assert!(cloned.get("https://example.com/x").is_some());
+    }
+  }
+
+  mod disk_store {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_none_for_missing_key() {
+      let dir = std::env::temp_dir().join("pod_esi_cache_test_miss");
+      std::fs::create_dir_all(&dir).unwrap();
+      let store = DiskStore::new(dir);
+
+      assert!(store.get("https://example.com/missing").is_none());
+    }
+
+    #[test]
+    fn it_inserts_and_retrieves_an_entry() {
+      let dir = std::env::temp_dir().join("pod_esi_cache_test_rw");
+      std::fs::create_dir_all(&dir).unwrap();
+      let store = DiskStore::new(dir.clone());
+      let body = Bytes::from(b"cached body".to_vec());
+
+      store.insert("https://example.com/page", "\"etag-abc\"", &body);
+      let result = store.get("https://example.com/page").unwrap();
+
+      assert_eq!(result.0, "\"etag-abc\"");
+      assert_eq!(result.1, body);
+
+      let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn it_returns_none_after_stale_file_is_manually_removed() {
+      let dir = std::env::temp_dir().join("pod_esi_cache_test_stale2");
+      std::fs::create_dir_all(&dir).unwrap();
+      let store = DiskStore::new(dir.clone());
+      let body = Bytes::from(b"stale data".to_vec());
+      let url = "https://example.com/stale2";
+
+      store.insert(url, "\"e\"", &body);
+      assert!(store.get(url).is_some());
+
+      let hash = {
+        use sha2::{Digest, Sha256};
+        let h = Sha256::digest(url.as_bytes());
+        h.iter().map(|b| format!("{b:02x}")).collect::<String>()
+      };
+      let _ = std::fs::remove_file(dir.join(&hash));
+
+      assert!(store.get(url).is_none());
+      let _ = std::fs::remove_dir_all(&dir);
+    }
+  }
+
+  mod store {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_delegates_insert_and_get_to_memory_backend() {
+      let store = Store::Memory(MemoryStore::default());
+      let body = Bytes::from(b"hello".to_vec());
+
+      store.insert("https://example.com/m", "\"tag\"", &body);
+      let result = store.get("https://example.com/m").unwrap();
+
+      assert_eq!(result.1, body);
+    }
+
+    #[test]
+    fn it_delegates_insert_and_get_to_disk_backend() {
+      let dir = std::env::temp_dir().join("pod_esi_cache_test_store_disk");
+      let store = Store::Disk(DiskStore::new(dir.clone()));
+      let body = Bytes::from(b"disk data".to_vec());
+
+      store.insert("https://example.com/d", "\"dtag\"", &body);
+      let result = store.get("https://example.com/d").unwrap();
+
+      assert_eq!(result.1, body);
+      let _ = std::fs::remove_dir_all(&dir);
+    }
+  }
+}

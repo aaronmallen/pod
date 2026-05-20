@@ -12,6 +12,7 @@ depends = ["lint:**"]
 [tools]
 aube = "latest"
 "cargo:cargo-audit" = "latest"
+"cargo:rust-code-analysis-cli" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-packager" = "0.11.8"

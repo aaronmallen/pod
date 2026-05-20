@@ -1469,3 +1469,260 @@ fn update_wallet(state: &mut State, updates: Vec<(i64, Option<f64>)>) -> iced::T
   refilter(state);
   iced::Task::none()
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::{Character, Corporation};
+
+  use super::*;
+
+  fn make_character(id: i64, name: &str) -> Character {
+    Character::new(id, name)
+  }
+
+  fn make_corporation(id: i64, name: &str, ticker: &str) -> Corporation {
+    let mut corp = Corporation::new(id, name);
+    corp.set_ticker(ticker);
+    corp
+  }
+
+  mod reorder_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_moves_element_forward() {
+      let ids = vec![1i64, 2, 3, 4];
+      let result = reorder_ids(&ids, 1, 3);
+
+      assert_eq!(result, vec![2i64, 3, 1, 4]);
+    }
+
+    #[test]
+    fn it_moves_element_backward() {
+      let ids = vec![1i64, 2, 3, 4];
+      let result = reorder_ids(&ids, 4, 2);
+
+      assert_eq!(result, vec![1i64, 4, 2, 3]);
+    }
+
+    #[test]
+    fn it_is_no_op_when_dragging_to_same_position() {
+      let ids = vec![1i64, 2, 3];
+      let result = reorder_ids(&ids, 2, 2);
+
+      assert_eq!(result, vec![1i64, 2, 3]);
+    }
+
+    #[test]
+    fn it_handles_move_to_end() {
+      let ids = vec![1i64, 2, 3, 4];
+      let result = reorder_ids(&ids, 1, 4);
+
+      assert_eq!(result, vec![2i64, 3, 4, 1]);
+    }
+
+    #[test]
+    fn it_handles_move_to_start() {
+      let ids = vec![1i64, 2, 3, 4];
+      let result = reorder_ids(&ids, 4, 1);
+
+      assert_eq!(result, vec![4i64, 1, 2, 3]);
+    }
+  }
+
+  mod reorder_characters_by_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reorders_by_given_id_sequence() {
+      let mut chars = vec![
+        make_character(1, "Alpha"),
+        make_character(2, "Beta"),
+        make_character(3, "Gamma"),
+      ];
+      let order = vec![3i64, 1, 2];
+      reorder_characters_by_ids(&mut chars, &order);
+
+      assert_eq!(*chars[0].id(), 3);
+      assert_eq!(*chars[1].id(), 1);
+      assert_eq!(*chars[2].id(), 2);
+    }
+
+    #[test]
+    fn it_skips_ids_not_in_the_list() {
+      let mut chars = vec![make_character(1, "Alpha"), make_character(2, "Beta")];
+      let order = vec![1i64];
+      reorder_characters_by_ids(&mut chars, &order);
+
+      assert_eq!(chars.len(), 1);
+      assert_eq!(*chars[0].id(), 1);
+    }
+  }
+
+  mod filter_corporations {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn corp_with_alliance(id: i64, name: &str, ticker: &str, alliance: &str) -> Corporation {
+      let mut corp = make_corporation(id, name, ticker);
+      corp.set_alliance_name(Some(alliance.to_string()));
+      corp
+    }
+
+    #[test]
+    fn it_returns_all_when_query_is_empty() {
+      let corps = vec![
+        make_corporation(1, "Goonswarm Federation", "CONDI"),
+        make_corporation(2, "TEST Alliance Please Ignore", "TEST"),
+      ];
+      let result = filter_corporations(&corps, "");
+
+      assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn it_returns_all_when_query_is_whitespace() {
+      let corps = vec![make_corporation(1, "Goonswarm Federation", "CONDI")];
+      let result = filter_corporations(&corps, "   ");
+
+      assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn it_filters_by_name_case_insensitive() {
+      let corps = vec![
+        make_corporation(1, "Goonswarm Federation", "CONDI"),
+        make_corporation(2, "TEST Alliance Please Ignore", "TEST"),
+      ];
+      let result = filter_corporations(&corps, "goon");
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(*result[0].id(), 1);
+    }
+
+    #[test]
+    fn it_filters_by_ticker() {
+      let corps = vec![
+        make_corporation(1, "Goonswarm Federation", "CONDI"),
+        make_corporation(2, "TEST Alliance Please Ignore", "TEST"),
+      ];
+      let result = filter_corporations(&corps, "condi");
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(*result[0].id(), 1);
+    }
+
+    #[test]
+    fn it_filters_by_alliance_name() {
+      let corps = vec![
+        corp_with_alliance(1, "Some Corp", "SOME", "The Imperium"),
+        make_corporation(2, "Other Corp", "OTHR"),
+      ];
+      let result = filter_corporations(&corps, "imperium");
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(*result[0].id(), 1);
+    }
+
+    #[test]
+    fn it_returns_empty_when_no_match() {
+      let corps = vec![make_corporation(1, "Goonswarm", "CONDI")];
+      let result = filter_corporations(&corps, "zzz_no_match");
+
+      assert!(result.is_empty());
+    }
+  }
+
+  mod build_tag_corpus {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_for_no_characters() {
+      let corpus = build_tag_corpus(&[]);
+
+      assert!(corpus.is_empty());
+    }
+
+    #[test]
+    fn it_counts_tags_across_characters() {
+      let mut c1 = make_character(1, "Alpha");
+      *c1.tags_mut() = vec![(1, "pvp".to_string()), (2, "highsec".to_string())];
+      let mut c2 = make_character(2, "Beta");
+      *c2.tags_mut() = vec![(1, "pvp".to_string())];
+
+      let corpus = build_tag_corpus(&[c1, c2]);
+
+      let pvp = corpus.iter().find(|(name, _)| name == "pvp");
+      assert_eq!(pvp, Some(&("pvp".to_string(), 2)));
+      let highsec = corpus.iter().find(|(name, _)| name == "highsec");
+      assert_eq!(highsec, Some(&("highsec".to_string(), 1)));
+    }
+
+    #[test]
+    fn it_sorts_by_count_descending_then_name_ascending() {
+      let mut c1 = make_character(1, "Alpha");
+      *c1.tags_mut() = vec![(1, "rare".to_string())];
+      let mut c2 = make_character(2, "Beta");
+      *c2.tags_mut() = vec![(2, "common".to_string())];
+      let mut c3 = make_character(3, "Gamma");
+      *c3.tags_mut() = vec![(2, "common".to_string())];
+
+      let corpus = build_tag_corpus(&[c1, c2, c3]);
+
+      assert_eq!(corpus[0].0, "common");
+      assert_eq!(corpus[0].1, 2);
+      assert_eq!(corpus[1].0, "rare");
+      assert_eq!(corpus[1].1, 1);
+    }
+  }
+
+  mod build_corp_tag_corpus {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_for_no_corporations() {
+      let corpus = build_corp_tag_corpus(&[]);
+
+      assert!(corpus.is_empty());
+    }
+
+    #[test]
+    fn it_counts_tags_across_corporations() {
+      let mut c1 = make_corporation(1, "Corp A", "CA");
+      *c1.tags_mut() = vec![(1, "industrial".to_string()), (2, "sov".to_string())];
+      let mut c2 = make_corporation(2, "Corp B", "CB");
+      *c2.tags_mut() = vec![(1, "industrial".to_string())];
+
+      let corpus = build_corp_tag_corpus(&[c1, c2]);
+
+      let industrial = corpus.iter().find(|(name, _)| name == "industrial");
+      assert_eq!(industrial, Some(&("industrial".to_string(), 2)));
+      let sov = corpus.iter().find(|(name, _)| name == "sov");
+      assert_eq!(sov, Some(&("sov".to_string(), 1)));
+    }
+
+    #[test]
+    fn it_sorts_by_count_descending_then_name_ascending() {
+      let mut c1 = make_corporation(1, "Corp A", "CA");
+      *c1.tags_mut() = vec![(1, "mining".to_string())];
+      let mut c2 = make_corporation(2, "Corp B", "CB");
+      *c2.tags_mut() = vec![(2, "pvp".to_string())];
+      let mut c3 = make_corporation(3, "Corp C", "CC");
+      *c3.tags_mut() = vec![(2, "pvp".to_string())];
+
+      let corpus = build_corp_tag_corpus(&[c1, c2, c3]);
+
+      assert_eq!(corpus[0].0, "pvp");
+      assert_eq!(corpus[1].0, "mining");
+    }
+  }
+}

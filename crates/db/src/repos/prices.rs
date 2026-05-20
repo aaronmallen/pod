@@ -240,3 +240,237 @@ impl<'a> Repo<'a> {
     Ok(dates)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use chrono::{TimeZone, Utc};
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  fn utc(year: i32, month: u32, day: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(year, month, day, h, m, s).unwrap()
+  }
+
+  mod latest_price {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_no_data() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.latest_price(34).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_intraday_price_when_present() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let ts = utc(2025, 1, 1, 12, 0, 0);
+      repo.insert_price(34, 5.5, ts).await.unwrap();
+
+      let result = repo.latest_price(34).await.unwrap();
+      assert_eq!(result, Some(5.5));
+    }
+
+    #[tokio::test]
+    async fn returns_most_recent_intraday_when_multiple_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.insert_price(34, 5.5, utc(2025, 1, 1, 10, 0, 0)).await.unwrap();
+      repo.insert_price(34, 6.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      repo.insert_price(34, 5.8, utc(2025, 1, 1, 11, 0, 0)).await.unwrap();
+
+      let result = repo.latest_price(34).await.unwrap();
+      assert_eq!(result, Some(6.0));
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_history_when_no_intraday() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      use sea_orm::ActiveValue::{NotSet, Set};
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
+      HistEntity::insert(HistActive {
+        id: NotSet,
+        type_id: Set(34),
+        date: Set("2025-01-01".to_string()),
+        open: Set(5.0),
+        high: Set(6.0),
+        low: Set(4.5),
+        close: Set(5.9),
+        avg: Set(5.4),
+        sample_count: Set(10),
+      })
+      .exec(&db)
+      .await
+      .unwrap();
+
+      let result = repo.latest_price(34).await.unwrap();
+      assert_eq!(result, Some(5.9));
+    }
+
+    #[tokio::test]
+    async fn returns_most_recent_history_close_when_multiple() {
+      let db = setup_db().await;
+      use sea_orm::ActiveValue::Set;
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
+
+      for (date, close) in [("2025-01-01", 5.0_f64), ("2025-01-03", 7.0), ("2025-01-02", 6.0)] {
+        use sea_orm::ActiveValue::NotSet;
+        HistEntity::insert(HistActive {
+          id: NotSet,
+          type_id: Set(34),
+          date: Set(date.to_string()),
+          open: Set(close),
+          high: Set(close),
+          low: Set(close),
+          close: Set(close),
+          avg: Set(close),
+          sample_count: Set(1),
+        })
+        .exec(&db)
+        .await
+        .unwrap();
+      }
+
+      let repo = Repo::new(&db);
+      let result = repo.latest_price(34).await.unwrap();
+      assert_eq!(result, Some(7.0));
+    }
+  }
+
+  mod nav_history {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_char_ids_is_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.nav_history(&[], 30).await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_empty_when_fewer_than_two_data_points() {
+      let db = setup_db().await;
+      insert_character_and_asset(&db, 1, 34, 100).await;
+
+      use sea_orm::ActiveValue::{NotSet, Set};
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
+      HistEntity::insert(HistActive {
+        id: NotSet,
+        type_id: Set(34),
+        date: Set("2099-01-01".to_string()),
+        open: Set(5.0),
+        high: Set(5.0),
+        low: Set(5.0),
+        close: Set(5.0),
+        avg: Set(5.0),
+        sample_count: Set(1),
+      })
+      .exec(&db)
+      .await
+      .unwrap();
+
+      let repo = Repo::new(&db);
+      let result = repo.nav_history(&[1], 36500).await.unwrap();
+      assert!(result.is_empty());
+    }
+  }
+
+  mod dates_needing_aggregation {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_intraday_rows() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let before = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+      let result = repo.dates_needing_aggregation(before).await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_dates_strictly_before_cutoff() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      repo.insert_price(34, 5.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      repo.insert_price(34, 5.5, utc(2025, 1, 3, 12, 0, 0)).await.unwrap();
+
+      let before = NaiveDate::from_ymd_opt(2025, 1, 3).unwrap();
+      let result = repo.dates_needing_aggregation(before).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0], NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
+    }
+  }
+
+  mod insert_price {
+    use super::*;
+
+    #[tokio::test]
+    async fn inserts_price_row() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let ts = utc(2025, 1, 1, 12, 0, 0);
+      repo.insert_price(34, 5.5, ts).await.unwrap();
+
+      let result = repo.latest_price(34).await.unwrap();
+      assert!(result.is_some());
+    }
+  }
+
+  async fn insert_character_and_asset(db: &DatabaseConnection, char_id: i64, type_id: i32, qty: i32) {
+    use sea_orm::ActiveValue::Set;
+    crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
+      access_token: Set(String::new()),
+      charisma: Set(None),
+      corp_id: Set(0),
+      corp_name: Set(String::new()),
+      id: Set(char_id),
+      intelligence: Set(None),
+      isk_balance: Set(None),
+      location_docked: Set(None),
+      location_name: Set(None),
+      memory: Set(None),
+      name: Set(format!("Char {char_id}")),
+      perception: Set(None),
+      portrait_tone: Set(0),
+      refresh_token: Set(String::new()),
+      sort_order: Set(0),
+      token_expires_at: Set(0),
+      willpower: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+
+    use crate::entities::character_asset::{ActiveModel as AssetActive, Entity as AssetEntity};
+    AssetEntity::insert(AssetActive {
+      character_id: Set(char_id),
+      is_blueprint_copy: Set(None),
+      is_singleton: Set(false),
+      item_id: Set(type_id as i64 * 1000 + char_id),
+      location_flag: Set("Hangar".to_string()),
+      location_id: Set(60003760),
+      location_type: Set("station".to_string()),
+      quantity: Set(qty),
+      type_id: Set(type_id),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+  }
+}

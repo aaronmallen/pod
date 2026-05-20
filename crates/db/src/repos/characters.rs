@@ -598,3 +598,355 @@ impl<'a> Repo<'a> {
     Ok(rows.into_iter().map(Into::into).collect())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+  use crate::entities::character::ActiveModel as CharActive;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
+    use sea_orm::ActiveValue::Set;
+    crate::entities::character::Entity::insert(CharActive {
+      access_token: Set(String::new()),
+      charisma: Set(None),
+      corp_id: Set(0),
+      corp_name: Set(String::new()),
+      id: Set(id),
+      intelligence: Set(None),
+      isk_balance: Set(None),
+      location_docked: Set(None),
+      location_name: Set(None),
+      memory: Set(None),
+      name: Set(name.to_string()),
+      perception: Set(None),
+      portrait_tone: Set(0),
+      refresh_token: Set(String::new()),
+      sort_order: Set(0),
+      token_expires_at: Set(0),
+      willpower: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+  }
+
+  mod effective_attributes {
+    use pod_model::NeuralAttributes;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_character_does_not_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.effective_attributes(999).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_attributes_not_set() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      let repo = Repo::new(&db);
+      let result = repo.effective_attributes(1).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_when_all_five_attributes_are_set() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      let repo = Repo::new(&db);
+
+      let attrs = NeuralAttributes {
+        charisma: 20,
+        intelligence: 24,
+        memory: 22,
+        perception: 23,
+        willpower: 21,
+      };
+      repo.update_neural_attributes(1, &attrs).await.unwrap();
+
+      let result = repo.effective_attributes(1).await.unwrap();
+      assert!(result.is_some());
+      let got = result.unwrap();
+      assert_eq!(got.charisma, 20);
+      assert_eq!(got.intelligence, 24);
+      assert_eq!(got.memory, 22);
+      assert_eq!(got.perception, 23);
+      assert_eq!(got.willpower, 21);
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_only_some_attributes_are_set() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      let repo = Repo::new(&db);
+
+      use sea_orm::ActiveValue::Set;
+      crate::entities::character::Entity::update(CharActive {
+        id: Set(1),
+        charisma: Set(Some(20)),
+        intelligence: Set(Some(24)),
+        ..Default::default()
+      })
+      .exec(&db)
+      .await
+      .unwrap();
+
+      let result = repo.effective_attributes(1).await.unwrap();
+      assert!(result.is_none());
+    }
+  }
+
+  mod delete_stale_assets {
+    use pod_model::CharacterAsset;
+
+    use super::*;
+
+    async fn insert_asset(db: &DatabaseConnection, character_id: i64, item_id: i64) {
+      let asset = CharacterAsset {
+        item_id,
+        character_id,
+        type_id: 1,
+        location_id: 60003760,
+        location_type: "station".to_string(),
+        location_flag: "Hangar".to_string(),
+        quantity: 1,
+        is_singleton: false,
+        is_blueprint_copy: None,
+      };
+      let repo = Repo::new(db);
+      repo.upsert_assets(character_id, &[asset]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deletes_all_assets_when_keep_ids_empty() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      insert_asset(&db, 1, 100).await;
+      insert_asset(&db, 1, 200).await;
+
+      let repo = Repo::new(&db);
+      let deleted = repo.delete_stale_assets(1, &[]).await.unwrap();
+      assert_eq!(deleted, 2);
+    }
+
+    #[tokio::test]
+    async fn keeps_specified_ids_and_deletes_others() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      insert_asset(&db, 1, 100).await;
+      insert_asset(&db, 1, 200).await;
+      insert_asset(&db, 1, 300).await;
+
+      let repo = Repo::new(&db);
+      let deleted = repo.delete_stale_assets(1, &[100, 200]).await.unwrap();
+      assert_eq!(deleted, 1);
+
+      let remaining = repo.assets_for_character_ids(&[1]).await.unwrap();
+      assert_eq!(remaining.len(), 2);
+      let ids: Vec<i64> = remaining.iter().map(|a| a.item_id).collect();
+      assert!(ids.contains(&100));
+      assert!(ids.contains(&200));
+    }
+
+    #[tokio::test]
+    async fn returns_zero_when_no_assets_exist() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+
+      let repo = Repo::new(&db);
+      let deleted = repo.delete_stale_assets(1, &[]).await.unwrap();
+      assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn does_not_delete_assets_for_other_characters() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      insert_character(&db, 2, "Beta").await;
+      insert_asset(&db, 1, 100).await;
+      insert_asset(&db, 2, 200).await;
+
+      let repo = Repo::new(&db);
+      let deleted = repo.delete_stale_assets(1, &[]).await.unwrap();
+      assert_eq!(deleted, 1);
+
+      let remaining = repo.assets_for_character_ids(&[2]).await.unwrap();
+      assert_eq!(remaining.len(), 1);
+    }
+  }
+
+  mod find_and_upsert {
+    use super::*;
+
+    #[tokio::test]
+    async fn find_returns_none_for_missing_character() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find(999).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut character = pod_model::Character::new(1001, "Test Pilot");
+      character.set_corp_id(98000000).set_corp_name("Test Corp".to_string());
+
+      repo.upsert(&character).await.unwrap();
+
+      let result = repo.find(1001).await.unwrap();
+      assert!(result.is_some());
+      let found = result.unwrap();
+      assert_eq!(*found.id(), 1001);
+      assert_eq!(found.name(), "Test Pilot");
+    }
+
+    #[tokio::test]
+    async fn upsert_updates_existing_character() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut character = pod_model::Character::new(1001, "Test Pilot");
+      character.set_corp_id(98000000).set_corp_name("Old Corp".to_string());
+      repo.upsert(&character).await.unwrap();
+
+      let mut updated = pod_model::Character::new(1001, "Test Pilot");
+      updated.set_corp_id(98000001).set_corp_name("New Corp".to_string());
+      repo.upsert(&updated).await.unwrap();
+
+      let result = repo.find(1001).await.unwrap().unwrap();
+      assert_eq!(result.corp_name(), "New Corp");
+    }
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_characters() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_characters_ordered_by_sort_order() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut c1 = pod_model::Character::new(1001, "Alpha");
+      c1.set_sort_order(2);
+      let mut c2 = pod_model::Character::new(1002, "Beta");
+      c2.set_sort_order(1);
+
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+
+      let result = repo.all().await.unwrap();
+      assert_eq!(result.len(), 2);
+      assert_eq!(*result[0].id(), 1002);
+      assert_eq!(*result[1].id(), 1001);
+    }
+  }
+
+  mod delete {
+    use super::*;
+
+    #[tokio::test]
+    async fn delete_removes_the_character() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let character = pod_model::Character::new(1001, "To Delete");
+      repo.upsert(&character).await.unwrap();
+      assert!(repo.find(1001).await.unwrap().is_some());
+
+      repo.delete(1001).await.unwrap();
+      assert!(repo.find(1001).await.unwrap().is_none());
+    }
+  }
+
+  mod update_sort_orders {
+    use super::*;
+
+    #[tokio::test]
+    async fn updates_sort_order_for_each_pair() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let c1 = pod_model::Character::new(1001, "Alpha");
+      let c2 = pod_model::Character::new(1002, "Beta");
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+
+      repo.update_sort_orders(&[(1001, 5), (1002, 3)]).await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(*all[0].id(), 1002);
+      assert_eq!(*all[0].sort_order(), 3);
+      assert_eq!(*all[1].id(), 1001);
+      assert_eq!(*all[1].sort_order(), 5);
+    }
+  }
+
+  mod snoozed_mail {
+    use super::*;
+
+    #[tokio::test]
+    async fn expired_snoozed_mails_returns_only_past_deadline() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      let repo = Repo::new(&db);
+
+      repo.upsert_snoozed_mail(1, 100, "2025-01-01T00:00:00Z").await.unwrap();
+      repo.upsert_snoozed_mail(1, 200, "2099-01-01T00:00:00Z").await.unwrap();
+
+      let expired = repo.expired_snoozed_mails("2025-06-01T00:00:00Z").await.unwrap();
+      assert_eq!(expired.len(), 1);
+      assert_eq!(expired[0].mail_id, 100);
+    }
+
+    #[tokio::test]
+    async fn delete_snoozed_mail_removes_the_record() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      let repo = Repo::new(&db);
+
+      repo.upsert_snoozed_mail(1, 100, "2025-01-01T00:00:00Z").await.unwrap();
+      let all = repo.all_snoozed_mails().await.unwrap();
+      assert_eq!(all.len(), 1);
+
+      repo.delete_snoozed_mail(1, 100).await.unwrap();
+      let all = repo.all_snoozed_mails().await.unwrap();
+      assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_snoozed_mails_returns_all_records() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alpha").await;
+      insert_character(&db, 2, "Beta").await;
+      let repo = Repo::new(&db);
+
+      repo.upsert_snoozed_mail(1, 100, "2025-01-01T00:00:00Z").await.unwrap();
+      repo.upsert_snoozed_mail(2, 200, "2025-02-01T00:00:00Z").await.unwrap();
+
+      let all = repo.all_snoozed_mails().await.unwrap();
+      assert_eq!(all.len(), 2);
+    }
+  }
+}

@@ -247,3 +247,347 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  async fn insert_character(db: &DatabaseConnection, character_id: i64) {
+    use sea_orm::ActiveValue::Set;
+    crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
+      access_token: Set(String::new()),
+      charisma: Set(None),
+      corp_id: Set(0),
+      corp_name: Set(String::new()),
+      id: Set(character_id),
+      intelligence: Set(None),
+      isk_balance: Set(None),
+      location_docked: Set(None),
+      location_name: Set(None),
+      memory: Set(None),
+      name: Set("Test Character".to_string()),
+      perception: Set(None),
+      portrait_tone: Set(0),
+      refresh_token: Set(String::new()),
+      sort_order: Set(0),
+      token_expires_at: Set(0),
+      willpower: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+  }
+
+  mod active_clone_implant_bonus {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_no_active_clone_exists() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.active_clone_implant_bonus(1).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_zeroed_attrs_when_active_clone_has_no_implants() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 1,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      repo.upsert_for_character(&[(clone, vec![])]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap();
+      assert!(result.is_some());
+      let attrs = result.unwrap();
+      assert_eq!(attrs, NeuralAttributes::default());
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_only_inactive_clone_exists() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 2,
+        installed_at: None,
+        is_active: false,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      repo.upsert_for_character(&[(clone, vec![])]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn sums_perception_and_willpower_from_implants() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 3,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implant = ImplantModel {
+        attribute_bonus: r#"{"perception":4,"willpower":4}"#.to_string(),
+        clone_id: 3,
+        id: 0,
+        name: "Ocular Filter - Improved".to_string(),
+        slot: 1,
+        type_id: 10209,
+      };
+      repo.upsert_for_character(&[(clone, vec![implant])]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap().unwrap();
+      assert_eq!(result.perception, 4);
+      assert_eq!(result.willpower, 4);
+      assert_eq!(result.charisma, 0);
+      assert_eq!(result.intelligence, 0);
+      assert_eq!(result.memory, 0);
+    }
+
+    #[tokio::test]
+    async fn sums_all_five_attributes_across_multiple_implants() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 4,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implants = vec![
+        ImplantModel {
+          attribute_bonus: r#"{"charisma":3}"#.to_string(),
+          clone_id: 4,
+          id: 0,
+          name: "Implant A".to_string(),
+          slot: 1,
+          type_id: 1,
+        },
+        ImplantModel {
+          attribute_bonus: r#"{"intelligence":4,"memory":4}"#.to_string(),
+          clone_id: 4,
+          id: 0,
+          name: "Implant B".to_string(),
+          slot: 2,
+          type_id: 2,
+        },
+        ImplantModel {
+          attribute_bonus: r#"{"perception":4,"willpower":4}"#.to_string(),
+          clone_id: 4,
+          id: 0,
+          name: "Implant C".to_string(),
+          slot: 3,
+          type_id: 3,
+        },
+      ];
+      repo.upsert_for_character(&[(clone, implants)]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap().unwrap();
+      assert_eq!(result.charisma, 3);
+      assert_eq!(result.intelligence, 4);
+      assert_eq!(result.memory, 4);
+      assert_eq!(result.perception, 4);
+      assert_eq!(result.willpower, 4);
+    }
+
+    #[tokio::test]
+    async fn skips_implant_with_malformed_json() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 5,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implants = vec![
+        ImplantModel {
+          attribute_bonus: "not-valid-json".to_string(),
+          clone_id: 5,
+          id: 0,
+          name: "Bad Implant".to_string(),
+          slot: 1,
+          type_id: 99,
+        },
+        ImplantModel {
+          attribute_bonus: r#"{"intelligence":5}"#.to_string(),
+          clone_id: 5,
+          id: 0,
+          name: "Good Implant".to_string(),
+          slot: 2,
+          type_id: 100,
+        },
+      ];
+      repo.upsert_for_character(&[(clone, implants)]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap().unwrap();
+      assert_eq!(result.intelligence, 5);
+    }
+
+    #[tokio::test]
+    async fn skips_implant_where_bonus_is_not_object() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 6,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implant = ImplantModel {
+        attribute_bonus: "[1, 2, 3]".to_string(),
+        clone_id: 6,
+        id: 0,
+        name: "Array Implant".to_string(),
+        slot: 1,
+        type_id: 99,
+      };
+      repo.upsert_for_character(&[(clone, vec![implant])]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap().unwrap();
+      assert_eq!(result, NeuralAttributes::default());
+    }
+
+    #[tokio::test]
+    async fn skips_unknown_attribute_keys() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 7,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implant = ImplantModel {
+        attribute_bonus: r#"{"strength":5,"agility":3}"#.to_string(),
+        clone_id: 7,
+        id: 0,
+        name: "Unknown Attr Implant".to_string(),
+        slot: 1,
+        type_id: 99,
+      };
+      repo.upsert_for_character(&[(clone, vec![implant])]).await.unwrap();
+
+      let result = repo.active_clone_implant_bonus(1).await.unwrap().unwrap();
+      assert_eq!(result, NeuralAttributes::default());
+    }
+  }
+
+  mod find_for_character {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_clones_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find_for_character(99).await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_clone_with_its_implants() {
+      let db = setup_db().await;
+      insert_character(&db, 1).await;
+      let repo = Repo::new(&db);
+
+      let clone = CloneModel {
+        character_id: 1,
+        id: 10,
+        installed_at: None,
+        is_active: true,
+        location_id: 0,
+        name: None,
+        region_name: String::new(),
+        station_name: String::new(),
+        synced_at: "2025-01-01".to_string(),
+        system_id: 0,
+      };
+      let implant = ImplantModel {
+        attribute_bonus: r#"{"perception":4}"#.to_string(),
+        clone_id: 10,
+        id: 0,
+        name: "Ocular Filter".to_string(),
+        slot: 1,
+        type_id: 10209,
+      };
+      repo.upsert_for_character(&[(clone, vec![implant])]).await.unwrap();
+
+      let result = repo.find_for_character(1).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0.id, 10);
+      assert_eq!(result[0].1.len(), 1);
+      assert_eq!(result[0].1[0].slot, 1);
+    }
+  }
+}

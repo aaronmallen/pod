@@ -100,6 +100,22 @@ fn boot() -> (App, Task<Message>) {
 }
 
 fn main() -> iced::Result {
+  let log_dir = dir_spec::state_home()
+    .expect("cannot determine state home directory")
+    .join("pod/logs");
+  let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
+    .rotation(tracing_appender::rolling::Rotation::DAILY)
+    .filename_prefix("pod")
+    .max_log_files(7)
+    .build(&log_dir)
+    .expect("failed to initialize log file appender");
+  let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+  tracing_subscriber::fmt()
+    .with_ansi(false)
+    .with_max_level(tracing::Level::TRACE)
+    .with_writer(non_blocking)
+    .init();
+
   iced::daemon(boot, update, view)
     .title(|_app: &App, _window: window::Id| "Pod".to_string())
     .theme(|app: &App, window: window::Id| {

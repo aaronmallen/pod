@@ -6,6 +6,7 @@ use chrono::Utc;
 use iced::{Task, futures::SinkExt as _};
 use pod_esi::Client;
 use pod_model::{Character, CharacterAsset, CharacterAttributes, NeuralAttributes};
+use tracing::Instrument as _;
 
 use crate::services::character as character_service;
 
@@ -29,6 +30,7 @@ pub enum Message {
 }
 
 /// Continues after the database is ready: creates ESI client, loads characters, streams ESI sync.
+#[tracing::instrument(skip(db))]
 pub fn continue_after_db(db: pod_db::Repo) -> Task<Message> {
   let (tx, rx) = iced::futures::channel::mpsc::channel(64);
   tokio::spawn(run_continue(db, tx));
@@ -92,120 +94,124 @@ async fn run_esi_sync(db: pod_db::Repo, esi: pod_esi::Client, mut characters: Ve
   for character in characters.iter_mut() {
     let name = character.name().clone();
     let char_id = *character.id();
-
-    // Step 1: token refresh
-    step(tx, format!("Refreshing token for {name}\u{2026}")).await;
-    let token = match character_service::ensure_valid_token(character, &esi, &db).await {
-      Some(t) => t,
-      None => {
-        log::warn!("bootstrap: skipping {name} — token refresh failed");
-        for _ in 0..8 {
-          step(tx, format!("Skipping {name}\u{2026}")).await;
+    let span = tracing::info_span!("sync_character", character_id = char_id);
+    async {
+      // Step 1: token refresh
+      step(tx, format!("Refreshing token for {name}\u{2026}")).await;
+      let token = match character_service::ensure_valid_token(character, &esi, &db).await {
+        Some(t) => t,
+        None => {
+          tracing::warn!("bootstrap: skipping {name} — token refresh failed");
+          for _ in 0..8 {
+            step(tx, format!("Skipping {name}\u{2026}")).await;
+          }
+          return;
         }
-        continue;
-      }
-    };
-    // Keep the in-memory character in sync so downstream async tasks that call
-    // ensure_valid_token don't try to re-use an already-rotated refresh token.
-    character.set_access_token(token.clone());
-    character.set_token_expires_at(chrono::Utc::now().timestamp() + 1199);
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-
-    // Step 2: corp data
-    step(tx, format!("Syncing corp data for {name}\u{2026}")).await;
-    if *character.corp_id() > 0
-      && let Ok(detail) = esi.corporation(*character.corp_id()).detail().await
-    {
-      character.set_corp_name(detail.name.clone());
-      let _ = db
-        .characters()
-        .update_corp(char_id, *character.corp_id(), detail.name)
-        .await;
-    }
-
-    // Step 3: skills snapshot
-    step(tx, format!("Syncing skills for {name}\u{2026}")).await;
-    if let Ok(esi_skills) = char_client.skills().await {
-      let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
-      let _ = db.characters().upsert_skills(char_id, &skills).await;
-      *character.skills_mut() = skills;
-    }
-
-    // Step 4: skill queue — reconcile with already-synced skills
-    step(tx, format!("Syncing skill queue for {name}\u{2026}")).await;
-    if let Ok(queue) = char_client.skill_queue().await {
-      let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
-      let tq = character_service::build_training_queue(&queue, &merged);
-      let _ = db.characters().upsert_skills(char_id, &merged).await;
-      *character.skills_mut() = merged;
-      *character.training_queue_mut() = tq;
-    }
-
-    // Step 5: neural attributes
-    step(tx, format!("Syncing attributes for {name}\u{2026}")).await;
-    if let Ok(esi_attrs) = char_client.attributes().await {
-      let db_attrs = NeuralAttributes {
-        charisma: esi_attrs.charisma,
-        intelligence: esi_attrs.intelligence,
-        memory: esi_attrs.memory,
-        perception: esi_attrs.perception,
-        willpower: esi_attrs.willpower,
       };
-      let _ = db.characters().update_neural_attributes(char_id, &db_attrs).await;
-      character.set_attributes(CharacterAttributes {
-        charisma: esi_attrs.charisma,
-        intelligence: esi_attrs.intelligence,
-        memory: esi_attrs.memory,
-        perception: esi_attrs.perception,
-        willpower: esi_attrs.willpower,
-        bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
-        last_remap_date: esi_attrs.last_remap_date,
-        accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
-      });
+      // Keep the in-memory character in sync so downstream async tasks that call
+      // ensure_valid_token don't try to re-use an already-rotated refresh token.
+      character.set_access_token(token.clone());
+      character.set_token_expires_at(chrono::Utc::now().timestamp() + 1199);
+      let grant = character_service::refresh_grant(character, &token);
+      let char_client = esi.character(&grant);
+
+      // Step 2: corp data
+      step(tx, format!("Syncing corp data for {name}\u{2026}")).await;
+      if *character.corp_id() > 0
+        && let Ok(detail) = esi.corporation(*character.corp_id()).detail().await
+      {
+        character.set_corp_name(detail.name.clone());
+        let _ = db
+          .characters()
+          .update_corp(char_id, *character.corp_id(), detail.name)
+          .await;
+      }
+
+      // Step 3: skills snapshot
+      step(tx, format!("Syncing skills for {name}\u{2026}")).await;
+      if let Ok(esi_skills) = char_client.skills().await {
+        let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
+        let _ = db.characters().upsert_skills(char_id, &skills).await;
+        *character.skills_mut() = skills;
+      }
+
+      // Step 4: skill queue — reconcile with already-synced skills
+      step(tx, format!("Syncing skill queue for {name}\u{2026}")).await;
+      if let Ok(queue) = char_client.skill_queue().await {
+        let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
+        let tq = character_service::build_training_queue(&queue, &merged);
+        let _ = db.characters().upsert_skills(char_id, &merged).await;
+        *character.skills_mut() = merged;
+        *character.training_queue_mut() = tq;
+      }
+
+      // Step 5: neural attributes
+      step(tx, format!("Syncing attributes for {name}\u{2026}")).await;
+      if let Ok(esi_attrs) = char_client.attributes().await {
+        let db_attrs = NeuralAttributes {
+          charisma: esi_attrs.charisma,
+          intelligence: esi_attrs.intelligence,
+          memory: esi_attrs.memory,
+          perception: esi_attrs.perception,
+          willpower: esi_attrs.willpower,
+        };
+        let _ = db.characters().update_neural_attributes(char_id, &db_attrs).await;
+        character.set_attributes(CharacterAttributes {
+          charisma: esi_attrs.charisma,
+          intelligence: esi_attrs.intelligence,
+          memory: esi_attrs.memory,
+          perception: esi_attrs.perception,
+          willpower: esi_attrs.willpower,
+          bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
+          last_remap_date: esi_attrs.last_remap_date,
+          accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
+        });
+      }
+
+      // Step 6: wallet balance
+      step(tx, format!("Syncing wallet for {name}\u{2026}")).await;
+      if let Ok(balance) = char_client.wallet_balance().await {
+        let _ = db.characters().update_wallet(char_id, Some(balance.0)).await;
+        character.set_isk_balance(Some(balance.0));
+      }
+
+      // Step 7: assets
+      step(tx, format!("Syncing assets for {name}\u{2026}")).await;
+      if let Ok(raw) = char_client.assets().await {
+        let assets: Vec<CharacterAsset> = raw
+          .into_iter()
+          .map(|a| CharacterAsset {
+            item_id: a.item_id,
+            character_id: char_id,
+            type_id: a.type_id,
+            location_id: a.location_id,
+            location_type: a.location_type,
+            location_flag: a.location_flag,
+            quantity: a.quantity,
+            is_singleton: a.is_singleton,
+            is_blueprint_copy: a.is_blueprint_copy,
+          })
+          .collect();
+        let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+        let _ = db.characters().upsert_assets(char_id, &assets).await;
+        let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
+
+        cache_structure_names_from_assets(&assets, character, &grant, &esi, &db).await;
+      }
+
+      // Step 8: clones & implants
+      step(tx, format!("Syncing clones for {name}\u{2026}")).await;
+      let (clones_res, implants_res) = tokio::join!(char_client.clones(), char_client.implants());
+      sync_clones_to_db(char_id, clones_res, implants_res, &db).await;
+
+      // Step 9: portrait
+      step(tx, format!("Loading portrait for {name}\u{2026}")).await;
+      if let Ok(bytes) = esi.images().character_portrait(char_id, 256).await {
+        *character.portrait_data_mut() = Some(bytes);
+      }
     }
-
-    // Step 6: wallet balance
-    step(tx, format!("Syncing wallet for {name}\u{2026}")).await;
-    if let Ok(balance) = char_client.wallet_balance().await {
-      let _ = db.characters().update_wallet(char_id, Some(balance.0)).await;
-      character.set_isk_balance(Some(balance.0));
-    }
-
-    // Step 7: assets
-    step(tx, format!("Syncing assets for {name}\u{2026}")).await;
-    if let Ok(raw) = char_client.assets().await {
-      let assets: Vec<CharacterAsset> = raw
-        .into_iter()
-        .map(|a| CharacterAsset {
-          item_id: a.item_id,
-          character_id: char_id,
-          type_id: a.type_id,
-          location_id: a.location_id,
-          location_type: a.location_type,
-          location_flag: a.location_flag,
-          quantity: a.quantity,
-          is_singleton: a.is_singleton,
-          is_blueprint_copy: a.is_blueprint_copy,
-        })
-        .collect();
-      let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-      let _ = db.characters().upsert_assets(char_id, &assets).await;
-      let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
-
-      cache_structure_names_from_assets(&assets, character, &grant, &esi, &db).await;
-    }
-
-    // Step 8: clones & implants
-    step(tx, format!("Syncing clones for {name}\u{2026}")).await;
-    let (clones_res, implants_res) = tokio::join!(char_client.clones(), char_client.implants());
-    sync_clones_to_db(char_id, clones_res, implants_res, &db).await;
-
-    // Step 9: portrait
-    step(tx, format!("Loading portrait for {name}\u{2026}")).await;
-    if let Ok(bytes) = esi.images().character_portrait(char_id, 256).await {
-      *character.portrait_data_mut() = Some(bytes);
-    }
+    .instrument(span)
+    .await;
   }
 
   step(tx, "Fetching Jita prices\u{2026}".to_string()).await;
@@ -310,7 +316,7 @@ async fn cache_structure_names_from_assets(
     if let Ok(info) = esi.universe().structure(id).auth(grant).detail().await {
       resolved.push((id, info.name));
     } else {
-      log::debug!(
+      tracing::debug!(
         "bootstrap: could not resolve structure {} for character {}",
         id,
         character.name()
@@ -332,7 +338,7 @@ async fn sync_clones_to_db(
   let clones_data = match clones_res {
     Ok(c) => c,
     Err(e) => {
-      log::warn!("bootstrap: failed to fetch clones for character {char_id}: {e}");
+      tracing::warn!("bootstrap: failed to fetch clones for character {char_id}: {e}");
       return;
     }
   };
@@ -417,6 +423,7 @@ async fn sync_clones_to_db(
   let _ = db.clones().upsert_startup_clones(&clone_data).await;
 }
 
+#[tracing::instrument(skip(db, esi))]
 async fn sync_prices(db: &pod_db::Repo, esi: &pod_esi::Client) {
   let today = Utc::now().date_naive();
 
@@ -429,7 +436,7 @@ async fn sync_prices(db: &pod_db::Repo, esi: &pod_esi::Client) {
   let type_ids = match db.prices().types_to_track().await {
     Ok(ids) => ids,
     Err(e) => {
-      log::warn!("bootstrap: failed to get types to track: {e}");
+      tracing::warn!("bootstrap: failed to get types to track: {e}");
       return;
     }
   };
@@ -454,7 +461,7 @@ async fn sync_prices(db: &pod_db::Repo, esi: &pod_esi::Client) {
         }
         Ok(None) => {}
         Err(e) => {
-          log::warn!("bootstrap: price fetch failed for type {type_id}: {e}");
+          tracing::warn!("bootstrap: price fetch failed for type {type_id}: {e}");
         }
       }
     }));

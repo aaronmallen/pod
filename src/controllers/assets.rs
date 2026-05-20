@@ -220,6 +220,7 @@ fn humanize_flag(flag: &str) -> &'static str {
 /// is 0 when only a cached name is available (no ESI lookup was performed).
 ///
 /// Any ESI successes are written back to the DB cache so future loads are instant.
+#[tracing::instrument(skip_all)]
 async fn resolve_structure_names(
   locs: &[(i64, i64)],
   characters: &[Character],
@@ -272,7 +273,7 @@ async fn resolve_structure_names(
         continue;
       };
       let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
-        log::warn!("assets: token unavailable for character {char_id}, skipping structure {struct_id}");
+        tracing::warn!("assets: token unavailable for character {char_id}, skipping structure {struct_id}");
         continue;
       };
       let grant = character_service::refresh_grant(character, &token);
@@ -284,12 +285,12 @@ async fn resolve_structure_names(
           break;
         }
         Err(e) => {
-          log::warn!("assets: ESI structure {struct_id} failed for character {char_id}: {e}");
+          tracing::warn!("assets: ESI structure {struct_id} failed for character {char_id}: {e}");
         }
       }
     }
     if !resolved {
-      log::warn!("assets: could not resolve structure {struct_id} — will show as Location ID");
+      tracing::warn!("assets: could not resolve structure {struct_id} — will show as Location ID");
     }
   }
 

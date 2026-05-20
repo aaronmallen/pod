@@ -108,6 +108,7 @@ impl Client {
   }
 
   /// Fetches a single JSON resource, using a cached ETag to avoid unnecessary data transfer on 304 responses.
+  #[tracing::instrument(skip(self, token))]
   pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, Error> {
     self.rate_limit.check().await;
 
@@ -150,6 +151,7 @@ impl Client {
   ///
   /// Page 1 is fetched first to read the `X-Pages` header; remaining pages are dispatched in
   /// parallel via a `JoinSet`.
+  #[tracing::instrument(skip(self, token))]
   pub async fn get_json_paginated<T: DeserializeOwned + Send + 'static>(
     &self,
     url_base: &str,

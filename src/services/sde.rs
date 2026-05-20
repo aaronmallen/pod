@@ -14,6 +14,7 @@ use crate::services::bootstrap;
 
 /// Kicks off SDE download and seeding, streaming progress messages back to the
 /// bootstrap pipeline.
+#[tracing::instrument(skip(db))]
 pub fn seed(db: pod_db::Repo) -> Task<bootstrap::Message> {
   let (tx, rx) = iced::futures::channel::mpsc::channel(64);
   tokio::spawn(run_seed(db, tx));
@@ -31,6 +32,7 @@ async fn run_seed(db: pod_db::Repo, mut tx: iced::futures::channel::mpsc::Sender
   }
 }
 
+#[tracing::instrument(skip(db, tx))]
 async fn do_seed(
   db: pod_db::Repo,
   tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
@@ -213,6 +215,7 @@ fn write_stored_sde_version(version: &str) {
   std::fs::write(path, version).ok();
 }
 
+#[tracing::instrument]
 async fn read_yaml<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path) -> Result<T, String> {
   let path = path.to_owned();
   tokio::task::spawn_blocking(move || {
@@ -223,6 +226,7 @@ async fn read_yaml<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path)
   .map_err(|e| e.to_string())?
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_categories(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeCategoryEntry> = read_yaml(path).await?;
 
@@ -244,6 +248,7 @@ async fn seed_categories(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeGroupEntry> = read_yaml(path).await?;
 
@@ -265,6 +270,7 @@ async fn seed_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_market_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeMarketGroupEntry> = read_yaml(path).await?;
 
@@ -285,6 +291,7 @@ async fn seed_market_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_types(db: &pod_db::Repo, types_path: &Path, dogma_path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeTypeEntry> = read_yaml(types_path).await?;
   let dogma: HashMap<i32, SdeTypeDogmaEntry> = read_yaml(dogma_path).await?;
@@ -335,6 +342,7 @@ async fn seed_types(db: &pod_db::Repo, types_path: &Path, dogma_path: &Path) -> 
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_factions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeFactionEntry> = read_yaml(path).await?;
 
@@ -357,6 +365,7 @@ async fn seed_factions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_races(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeRaceEntry> = read_yaml(path).await?;
 
@@ -379,6 +388,7 @@ async fn seed_races(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_bloodlines(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeBloodlineEntry> = read_yaml(path).await?;
 
@@ -406,6 +416,7 @@ async fn seed_bloodlines(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_regions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeRegionMap> = read_yaml(path).await?;
 
@@ -425,6 +436,7 @@ async fn seed_regions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_constellations(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeConstellationMap> = read_yaml(path).await?;
 
@@ -448,6 +460,7 @@ async fn seed_constellations(db: &pod_db::Repo, path: &Path) -> Result<(), Strin
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_solar_systems(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeSolarSystemMap> = read_yaml(path).await?;
 
@@ -474,6 +487,7 @@ async fn seed_solar_systems(db: &pod_db::Repo, path: &Path) -> Result<(), String
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_stars(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeStarMap> = read_yaml(path).await?;
 
@@ -503,6 +517,7 @@ async fn seed_stars(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_planets(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdePlanetMap> = read_yaml(path).await?;
 
@@ -526,6 +541,7 @@ async fn seed_planets(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_stargates(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeStargateMap> = read_yaml(path).await?;
 
@@ -785,6 +801,7 @@ struct SdeCertEntry {
   skill_types: HashMap<i32, CertSkillLevel>,
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_certificates(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeCertEntry> = read_yaml(path).await?;
 
@@ -824,6 +841,7 @@ async fn seed_certificates(db: &pod_db::Repo, path: &Path) -> Result<(), String>
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
 async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let raw_bytes = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
   let raw: serde_yaml::Value =

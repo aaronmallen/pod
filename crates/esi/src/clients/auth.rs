@@ -130,6 +130,7 @@ impl<'a> Client<'a> {
   }
 
   /// Uses the refresh token in `grant` to obtain a new [`Grant`].
+  #[tracing::instrument(skip(self, grant), fields(character_id = grant.character_id()))]
   pub async fn refresh(&self, grant: &Grant) -> Result<Grant, Error> {
     let resp: TokenResponse = self
       .esi
@@ -262,12 +263,14 @@ mod tests {
     #[test]
     fn it_parses_character_id_from_valid_jwt() {
       let token = make_jwt("CHARACTER:EVE:12345678", "Test Character");
+
       assert_eq!(Client::parse_character_id(&token).unwrap(), 12345678);
     }
 
     #[test]
     fn it_returns_error_for_non_jwt() {
       let result = Client::parse_character_id("not-a-jwt");
+
       assert!(result.is_err());
     }
 
@@ -275,6 +278,7 @@ mod tests {
     fn it_returns_error_for_malformed_sub() {
       let token = make_jwt("BADINPUT", "Test Character");
       let result = Client::parse_character_id(&token);
+
       assert!(result.is_err());
     }
   }

@@ -51,6 +51,7 @@ jobs:
     needs: create-release
     runs-on: macos-latest
     env:
+      PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
@@ -168,6 +169,7 @@ jobs:
     needs: create-release
     runs-on: windows-latest
     env:
+      PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
@@ -227,6 +229,7 @@ jobs:
     needs: create-release
     runs-on: ubuntu-latest
     env:
+      PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v6
@@ -366,12 +369,12 @@ jobs:
           url = find_url(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz'))
           sig = read_sig(lambda n: 'aarch64' in n and n.endswith('.app.tar.gz.sig'))
           if url:
-              platforms['darwin-aarch64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
+              platforms['macos-aarch64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
 
           url = find_url(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz'))
           sig = read_sig(lambda n: ('x64' in n or 'x86_64' in n) and n.endswith('.app.tar.gz.sig'))
           if url:
-              platforms['darwin-x86_64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
+              platforms['macos-x86_64'] = {'url': url, 'signature': sig or '', 'format': 'app'}
 
           url = find_url(lambda n: n.endswith('.AppImage'))
           sig = read_sig(lambda n: n.endswith('.AppImage.sig'))

@@ -3,6 +3,8 @@ name: Release
 permissions:
   actions: write
   contents: write
+  id-token: write
+  pages: write
 
 on:
   push:

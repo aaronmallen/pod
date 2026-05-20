@@ -220,6 +220,7 @@ fn humanize_flag(flag: &str) -> &'static str {
 /// is 0 when only a cached name is available (no ESI lookup was performed).
 ///
 /// Any ESI successes are written back to the DB cache so future loads are instant.
+#[tracing::instrument(skip_all)]
 async fn resolve_structure_names(
   locs: &[(i64, i64)],
   characters: &[Character],

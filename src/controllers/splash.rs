@@ -60,7 +60,6 @@ pub fn handle_bootstrap(
     }
     bootstrap::Message::Error(e) => {
       tracing::error!("bootstrap error: {e}");
-      eprintln!("Bootstrap error: {e}");
       state.progress_target = 1.0;
       HandleResult::Splash(update(state, Message::LoadingComplete))
     }

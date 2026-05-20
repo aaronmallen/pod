@@ -1,6 +1,7 @@
 //! Application service layer: business-logic helpers shared across controllers.
 
 pub mod bootstrap;
+pub mod cache_cleaner;
 pub mod character;
 pub mod corporation;
 pub mod sde;

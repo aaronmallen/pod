@@ -228,6 +228,9 @@ impl State {
   }
 
   pub fn total_assets(&self) -> f64 {
+    if self.is_corp_selected() {
+      return 0.0;
+    }
     match self.selected_character() {
       None => self.characters.iter().map(|c| c.assets).sum(),
       Some(id) => self.characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.assets),
@@ -235,6 +238,9 @@ impl State {
   }
 
   pub fn total_escrow(&self) -> f64 {
+    if self.is_corp_selected() {
+      return 0.0;
+    }
     match self.selected_character() {
       None => self.characters.iter().map(|c| c.escrow).sum(),
       Some(id) => self.characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.escrow),

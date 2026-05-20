@@ -1,5 +1,7 @@
 //! Pod — EVE Online character manager entry point.
 
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod controllers;
 mod services;
 

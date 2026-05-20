@@ -1,4 +1,4 @@
-import type { Feature, Note, Platform, ReleaseData } from './types';
+import type { Feature, Platform, ReleaseData } from './types';
 
 export const FEATURES: Feature[] = [
   { id: 'characters', icon: 'characters', title: 'Characters', line: 'Roster overview with sheets, standings and clone state.' },
@@ -9,12 +9,6 @@ export const FEATURES: Feature[] = [
   { id: 'fitting',    icon: 'fitting',    title: 'Fitting',    line: 'Build, simulate and share fits offline. EFT-compatible.', soon: true },
 ];
 
-export const NOTES: Note[] = [
-  { tag: 'NEW', tone: 'plasma',  text: 'In-app auto-update: Pod checks for new versions on startup and every 4 hours. A dismissible banner lets you download, install, and restart in one click — no manual download required.' },
-  { tag: 'FIX', tone: 'success', text: 'Space Grotesk now renders correctly on Windows. Corrupted font files were causing all UI text to fall back to a symbol font.' },
-  { tag: 'FIX', tone: 'success', text: 'App no longer opens a console window on Windows at startup. Previously closing that window would silently terminate Pod.' },
-  { tag: 'FIX', tone: 'success', text: 'Splash transition no longer closes the app on Wayland / KDE Plasma 6. The main window now opens fresh with the correct settings instead of mutating the splash surface.' },
-];
 
 export const PLATFORMS: Platform[] = [
   {

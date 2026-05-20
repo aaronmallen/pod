@@ -1,5 +1,5 @@
 import { T } from '../tokens';
-import { NOTES } from '../data';
+import { NOTES } from '../generated/notes';
 import type { Release } from '../types';
 import { SectionHead } from './SectionHead';
 
@@ -33,7 +33,9 @@ export function Notes({ accent, release }: Props) {
             line={`${release.date}. Read the full log on GitHub.`}
           />
           <a
-            href="#"
+            href="https://github.com/aaronmallen/pod/blob/main/CHANGELOG.md"
+            target="_blank"
+            rel="noreferrer"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 10,
               marginTop: 28,

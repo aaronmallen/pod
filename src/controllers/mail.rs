@@ -102,95 +102,37 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   match message {
     Message::AccountPicker(msg) => {
       state.account_picker.update(msg);
+      iced::Task::none()
     }
     Message::FolderPane(folder_pane::Message::FolderSelected(folder)) => {
       state.selected_folder = folder;
       state.selected_message_id = None;
+      iced::Task::none()
     }
     Message::MessageList(message_list_pane::Message::CursorMoved(x, y)) => {
       state.cursor_pos = (x, y);
+      iced::Task::none()
     }
     Message::MessageList(message_list_pane::Message::MessageRightClicked(id)) => {
       state.context_menu = Some((id.clone(), state.cursor_pos.0, state.cursor_pos.1));
       state.selected_message_id = Some(id);
       state.snooze_popover_open = false;
+      iced::Task::none()
     }
     Message::MessageList(message_list_pane::Message::ContextMenuClose) => {
       state.context_menu = None;
+      iced::Task::none()
     }
     Message::MessageList(message_list_pane::Message::MessageSelected(id)) => {
-      state.context_menu = None;
-      state.snooze_popover_open = false;
-      state.selected_message_id = Some(id.clone());
-      if let Some(msg) = state.messages.iter().find(|m| m.id == id)
-        && msg.body.is_empty()
-      {
-        let char_id = msg.character_id;
-        let mail_id = msg.mail_id;
-        if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-          let chars = state.characters.clone();
-          return iced::Task::perform(
-            async move { fetch_mail_body(id, char_id, mail_id, chars, esi, db).await },
-            |(msg_id, body)| Message::MailBodyLoaded(msg_id, body),
-          );
-        }
-      }
+      update_message_selected(state, id, services)
     }
     Message::MessageList(message_list_pane::Message::SearchChanged(q)) => {
       state.search_query = q;
+      iced::Task::none()
     }
     Message::ReadingPane(reading_pane::Message::ReplyPressed)
-    | Message::ReadingPane(reading_pane::Message::ReplyAllPressed) => {
-      state.context_menu = None;
-      let Some(msg) = state
-        .selected_message_id
-        .as_ref()
-        .and_then(|id| state.messages.iter().find(|m| &m.id == id))
-      else {
-        return iced::Task::none();
-      };
-      let to = ComposeRecipient {
-        name: msg.from_name.clone(),
-        id: msg.from_id,
-      };
-      let subject = if msg.subject.starts_with("Re: ") {
-        msg.subject.clone()
-      } else {
-        format!("Re: {}", msg.subject)
-      };
-      state.compose_open = true;
-      state.compose.reset();
-      state.compose.to = vec![to];
-      state.compose.subject = subject;
-      state.compose.from_picker.selected = PickerSelection::Character(msg.character_id);
-      state.snooze_popover_open = false;
-    }
-    Message::ReadingPane(reading_pane::Message::ForwardPressed) => {
-      state.context_menu = None;
-      let Some(msg) = state
-        .selected_message_id
-        .as_ref()
-        .and_then(|id| state.messages.iter().find(|m| &m.id == id))
-      else {
-        return iced::Task::none();
-      };
-      let subject = if msg.subject.starts_with("Fwd: ") {
-        msg.subject.clone()
-      } else {
-        format!("Fwd: {}", msg.subject)
-      };
-      let body_text = if msg.body.is_empty() {
-        String::new()
-      } else {
-        format!("\n\n--- Forwarded message ---\n{}", msg.body.join("\n"))
-      };
-      state.compose_open = true;
-      state.compose.reset();
-      state.compose.subject = subject;
-      state.compose.body = iced::widget::text_editor::Content::with_text(&body_text);
-      state.compose.from_picker.selected = PickerSelection::Character(msg.character_id);
-      state.snooze_popover_open = false;
-    }
+    | Message::ReadingPane(reading_pane::Message::ReplyAllPressed) => update_reply(state),
+    Message::ReadingPane(reading_pane::Message::ForwardPressed) => update_forward(state),
     Message::ReadingPane(reading_pane::Message::StarToggle) => {
       state.context_menu = None;
       if let Some(id) = state.selected_message_id.clone()
@@ -198,228 +140,337 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       {
         msg.starred = !msg.starred;
       }
+      iced::Task::none()
     }
-    Message::ReadingPane(reading_pane::Message::ArchivePressed) => {
-      state.context_menu = None;
-      if let Some(id) = state.selected_message_id.clone() {
-        if let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) {
-          msg.folder = "archive".to_string();
-        }
-        state.selected_message_id = None;
-      }
-    }
-    Message::ReadingPane(reading_pane::Message::DeletePressed) => {
-      state.context_menu = None;
-      if let Some(id) = state.selected_message_id.take()
-        && let Some(pos) = state.messages.iter().position(|m| m.id == id)
-      {
-        let mail_id = state.messages[pos].mail_id;
-        let character_id = state.messages[pos].character_id;
-        state.messages.remove(pos);
-        state.selected_message_id = state
-          .messages
-          .get(pos)
-          .or_else(|| state.messages.last())
-          .map(|m| m.id.clone());
-        recompute_unread_counts(state);
-        if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-          let chars = state.characters.clone();
-          return iced::Task::perform(
-            async move {
-              let _ = db.characters().delete_mail_header(character_id, mail_id).await;
-              if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
-                && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
-              {
-                let grant = character_service::refresh_grant(character, &token);
-                let _ = esi.character(&grant).delete_mail(mail_id).await;
-              }
-            },
-            |_| Message::MailDeleted,
-          );
-        }
-      }
-    }
+    Message::ReadingPane(reading_pane::Message::ArchivePressed) => update_archive(state),
+    Message::ReadingPane(reading_pane::Message::DeletePressed) => update_delete(state, services),
     Message::ComposePressed => {
       let from_id = state.account_picker.selected.clone();
       state.compose_open = true;
       state.compose.reset();
       state.compose.from_picker.selected = from_id;
+      iced::Task::none()
     }
-    Message::Compose(compose_msg) => match &compose_msg {
-      compose_panel::Message::Close => {
-        state.compose_open = false;
-        state.compose.update(compose_msg);
-      }
-      compose_panel::Message::ToSearchChanged(val) => {
-        let val = val.clone();
-        state.compose.update(compose_msg);
-        if val.trim().len() >= 3
-          && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
-        {
-          let chars = state.characters.clone();
-          return iced::Task::perform(async move { search_recipients(val, chars, esi, db).await }, |results| {
-            Message::Compose(compose_panel::Message::ToSearchResults(results))
-          });
-        }
-      }
-      compose_panel::Message::CcSearchChanged(val) => {
-        let val = val.clone();
-        state.compose.update(compose_msg);
-        if val.trim().len() >= 3
-          && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
-        {
-          let chars = state.characters.clone();
-          return iced::Task::perform(async move { search_recipients(val, chars, esi, db).await }, |results| {
-            Message::Compose(compose_panel::Message::CcSearchResults(results))
-          });
-        }
-      }
-      compose_panel::Message::SendPressed => {
-        if state.compose.to.is_empty() || state.compose.subject.trim().is_empty() {
-          return iced::Task::none();
-        }
-        if state.compose.sending {
-          return iced::Task::none();
-        }
-
-        let Some(esi) = services.esi_client.clone() else {
-          state.compose.error = Some("Not connected to ESI".to_string());
-          return iced::Task::none();
-        };
-        let Some(db) = services.db.clone() else {
-          state.compose.error = Some("Database unavailable".to_string());
-          return iced::Task::none();
-        };
-
-        let from_id = state.compose.from_picker.selected_character_id().unwrap_or(0);
-        let to = state.compose.to.clone();
-        let cc = state.compose.cc.clone();
-        let subject = state.compose.subject.clone();
-        let body = state.compose.body.text();
-        let characters = state.characters.clone();
-
-        state.compose.update(compose_msg);
-
-        return iced::Task::perform(
-          async move { send_composed_mail(from_id, to, cc, subject, body, characters, esi, db).await },
-          |result| Message::Compose(compose_panel::Message::Sent(result)),
-        );
-      }
-      compose_panel::Message::Sent(Ok(_)) => {
-        state.compose_open = false;
-        state.compose.update(compose_msg);
-      }
-      _ => {
-        state.compose.update(compose_msg);
-      }
-    },
+    Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
     Message::MailDeleted => {
       recompute_unread_counts(state);
+      iced::Task::none()
     }
-    Message::ReadingPane(reading_pane::Message::SnoozedExpired(pairs)) => {
-      for (character_id, mail_id) in pairs {
-        let msg_id = format!("{character_id}-{mail_id}");
-        if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
-          msg.snoozed = None;
-          msg.unread = true;
-          msg.folder = "inbox".to_string();
-        }
-      }
-    }
+    Message::ReadingPane(reading_pane::Message::SnoozedExpired(pairs)) => update_snoozed_expired(state, pairs),
     Message::ReadingPane(reading_pane::Message::SnoozeToggle) => {
       state.context_menu = None;
       state.snooze_popover_open = !state.snooze_popover_open;
+      iced::Task::none()
     }
-    Message::ReadingPane(reading_pane::Message::SnoozeFailed(_)) => {}
-    Message::ReadingPane(reading_pane::Message::SnoozeSet(label)) => {
-      state.context_menu = None;
-      state.snooze_popover_open = false;
-      let Some(id) = state.selected_message_id.clone() else {
-        return iced::Task::none();
-      };
-      let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) else {
-        return iced::Task::none();
-      };
-      let character_id = msg.character_id;
-      let mail_id = msg.mail_id;
-      let adding = !label.is_empty();
-      let snooze_until = if adding { snooze_label_to_iso(&label) } else { None };
-      if adding {
-        msg.snoozed = Some(label);
-      } else {
-        msg.snoozed = None;
-      }
-      if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-        let chars = state.characters.clone();
-        return iced::Task::perform(
-          async move {
-            if adding {
-              if let Some(until) = &snooze_until {
-                let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
-              }
-            } else {
-              let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
-            }
-            apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await
-          },
-          |res| match res {
-            Ok(()) => Message::MailDeleted,
-            Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
-          },
-        );
-      }
-    }
-    Message::ReadingPane(reading_pane::Message::CheckSnoozed) => {
-      if let Some(db) = services.db.clone() {
-        let chars = state.characters.clone();
-        let esi = services.esi_client.clone();
-        return iced::Task::perform(async move { check_expired_snoozes(chars, esi, db).await }, |expired| {
-          Message::ReadingPane(reading_pane::Message::SnoozedExpired(expired))
-        });
-      }
-    }
-    Message::MailBodyLoaded(msg_id, paragraphs) => {
-      if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
-        msg.body = paragraphs;
-        msg.body_loaded = true;
-        msg.unread = false;
-      }
-    }
+    Message::ReadingPane(reading_pane::Message::SnoozeFailed(_)) => iced::Task::none(),
+    Message::ReadingPane(reading_pane::Message::SnoozeSet(label)) => update_snooze_set(state, label, services),
+    Message::ReadingPane(reading_pane::Message::CheckSnoozed) => update_check_snoozed(state, services),
+    Message::MailBodyLoaded(msg_id, paragraphs) => update_mail_body_loaded(state, msg_id, paragraphs),
     Message::PaneDragStart(pane) => {
       state.dragging_pane = Some(pane);
       state.last_drag_x = 0.0;
+      iced::Task::none()
     }
-    Message::PaneDrag(x) => {
-      if state.last_drag_x > 0.0 {
-        let delta = x - state.last_drag_x;
-        match state.dragging_pane {
-          Some(DraggingPane::FolderList) => {
-            state.folder_pane_width = (state.folder_pane_width + delta).max(80.0);
-          }
-          Some(DraggingPane::MessageReader) => {
-            state.message_list_width = (state.message_list_width + delta).max(100.0);
-          }
-          None => {}
-        }
-      }
-      state.last_drag_x = x;
-    }
+    Message::PaneDrag(x) => update_pane_drag(state, x),
     Message::PaneDragEnd => {
       state.dragging_pane = None;
       state.last_drag_x = 0.0;
+      iced::Task::none()
     }
-    Message::MailHeadersLoaded(messages) => {
-      let mut unread_by_char: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
-      for m in &messages {
-        if m.unread && m.folder != "sent" {
-          *unread_by_char.entry(m.character_id).or_insert(0) += 1;
+    Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
+  }
+}
+
+fn update_archive(state: &mut State) -> iced::Task<Message> {
+  state.context_menu = None;
+  if let Some(id) = state.selected_message_id.clone() {
+    if let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) {
+      msg.folder = "archive".to_string();
+    }
+    state.selected_message_id = None;
+  }
+  iced::Task::none()
+}
+
+fn update_check_snoozed(state: &mut State, services: &Services) -> iced::Task<Message> {
+  if let Some(db) = services.db.clone() {
+    let chars = state.characters.clone();
+    let esi = services.esi_client.clone();
+    return iced::Task::perform(async move { check_expired_snoozes(chars, esi, db).await }, |expired| {
+      Message::ReadingPane(reading_pane::Message::SnoozedExpired(expired))
+    });
+  }
+  iced::Task::none()
+}
+
+fn update_compose(state: &mut State, compose_msg: compose_panel::Message, services: &Services) -> iced::Task<Message> {
+  match &compose_msg {
+    compose_panel::Message::Close => {
+      state.compose_open = false;
+      state.compose.update(compose_msg);
+      iced::Task::none()
+    }
+    compose_panel::Message::ToSearchChanged(val) => {
+      let val = val.clone();
+      state.compose.update(compose_msg);
+      if val.trim().len() >= 3
+        && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
+      {
+        let chars = state.characters.clone();
+        return iced::Task::perform(async move { search_recipients(val, chars, esi, db).await }, |results| {
+          Message::Compose(compose_panel::Message::ToSearchResults(results))
+        });
+      }
+      iced::Task::none()
+    }
+    compose_panel::Message::CcSearchChanged(val) => {
+      let val = val.clone();
+      state.compose.update(compose_msg);
+      if val.trim().len() >= 3
+        && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
+      {
+        let chars = state.characters.clone();
+        return iced::Task::perform(async move { search_recipients(val, chars, esi, db).await }, |results| {
+          Message::Compose(compose_panel::Message::CcSearchResults(results))
+        });
+      }
+      iced::Task::none()
+    }
+    compose_panel::Message::SendPressed => {
+      if state.compose.to.is_empty() || state.compose.subject.trim().is_empty() {
+        return iced::Task::none();
+      }
+      if state.compose.sending {
+        return iced::Task::none();
+      }
+      let Some(esi) = services.esi_client.clone() else {
+        state.compose.error = Some("Not connected to ESI".to_string());
+        return iced::Task::none();
+      };
+      let Some(db) = services.db.clone() else {
+        state.compose.error = Some("Database unavailable".to_string());
+        return iced::Task::none();
+      };
+      let from_id = state.compose.from_picker.selected_character_id().unwrap_or(0);
+      let to = state.compose.to.clone();
+      let cc = state.compose.cc.clone();
+      let subject = state.compose.subject.clone();
+      let body = state.compose.body.text();
+      let characters = state.characters.clone();
+      state.compose.update(compose_msg);
+      iced::Task::perform(
+        async move { send_composed_mail(from_id, to, cc, subject, body, characters, esi, db).await },
+        |result| Message::Compose(compose_panel::Message::Sent(result)),
+      )
+    }
+    compose_panel::Message::Sent(Ok(_)) => {
+      state.compose_open = false;
+      state.compose.update(compose_msg);
+      iced::Task::none()
+    }
+    _ => {
+      state.compose.update(compose_msg);
+      iced::Task::none()
+    }
+  }
+}
+
+fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> {
+  state.context_menu = None;
+  if let Some(id) = state.selected_message_id.take()
+    && let Some(pos) = state.messages.iter().position(|m| m.id == id)
+  {
+    let mail_id = state.messages[pos].mail_id;
+    let character_id = state.messages[pos].character_id;
+    state.messages.remove(pos);
+    state.selected_message_id = state
+      .messages
+      .get(pos)
+      .or_else(|| state.messages.last())
+      .map(|m| m.id.clone());
+    recompute_unread_counts(state);
+    if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+      let chars = state.characters.clone();
+      return iced::Task::perform(
+        async move {
+          let _ = db.characters().delete_mail_header(character_id, mail_id).await;
+          if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
+            && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
+          {
+            let grant = character_service::refresh_grant(character, &token);
+            let _ = esi.character(&grant).delete_mail(mail_id).await;
+          }
+        },
+        |_| Message::MailDeleted,
+      );
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_forward(state: &mut State) -> iced::Task<Message> {
+  state.context_menu = None;
+  let Some(msg) = state
+    .selected_message_id
+    .as_ref()
+    .and_then(|id| state.messages.iter().find(|m| &m.id == id))
+  else {
+    return iced::Task::none();
+  };
+  let subject = if msg.subject.starts_with("Fwd: ") {
+    msg.subject.clone()
+  } else {
+    format!("Fwd: {}", msg.subject)
+  };
+  let body_text = if msg.body.is_empty() {
+    String::new()
+  } else {
+    format!("\n\n--- Forwarded message ---\n{}", msg.body.join("\n"))
+  };
+  state.compose_open = true;
+  state.compose.reset();
+  state.compose.subject = subject;
+  state.compose.body = iced::widget::text_editor::Content::with_text(&body_text);
+  state.compose.from_picker.selected = PickerSelection::Character(msg.character_id);
+  state.snooze_popover_open = false;
+  iced::Task::none()
+}
+
+fn update_mail_body_loaded(state: &mut State, msg_id: String, paragraphs: Vec<String>) -> iced::Task<Message> {
+  if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
+    msg.body = paragraphs;
+    msg.body_loaded = true;
+    msg.unread = false;
+  }
+  iced::Task::none()
+}
+
+fn update_mail_headers_loaded(state: &mut State, messages: Vec<MailMessage>) -> iced::Task<Message> {
+  let mut unread_by_char: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
+  for m in &messages {
+    if m.unread && m.folder != "sent" {
+      *unread_by_char.entry(m.character_id).or_insert(0) += 1;
+    }
+  }
+  for acct in &mut state.accounts {
+    acct.unread = *unread_by_char.get(&acct.id).unwrap_or(&0);
+  }
+  state.selected_message_id = messages.first().map(|m| m.id.clone());
+  state.messages = messages;
+  iced::Task::none()
+}
+
+fn update_message_selected(state: &mut State, id: String, services: &Services) -> iced::Task<Message> {
+  state.context_menu = None;
+  state.snooze_popover_open = false;
+  state.selected_message_id = Some(id.clone());
+  if let Some(msg) = state.messages.iter().find(|m| m.id == id)
+    && msg.body.is_empty()
+  {
+    let char_id = msg.character_id;
+    let mail_id = msg.mail_id;
+    if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+      let chars = state.characters.clone();
+      return iced::Task::perform(
+        async move { fetch_mail_body(id, char_id, mail_id, chars, esi, db).await },
+        |(msg_id, body)| Message::MailBodyLoaded(msg_id, body),
+      );
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_pane_drag(state: &mut State, x: f32) -> iced::Task<Message> {
+  if state.last_drag_x > 0.0 {
+    let delta = x - state.last_drag_x;
+    match state.dragging_pane {
+      Some(DraggingPane::FolderList) => {
+        state.folder_pane_width = (state.folder_pane_width + delta).max(80.0);
+      }
+      Some(DraggingPane::MessageReader) => {
+        state.message_list_width = (state.message_list_width + delta).max(100.0);
+      }
+      None => {}
+    }
+  }
+  state.last_drag_x = x;
+  iced::Task::none()
+}
+
+fn update_reply(state: &mut State) -> iced::Task<Message> {
+  state.context_menu = None;
+  let Some(msg) = state
+    .selected_message_id
+    .as_ref()
+    .and_then(|id| state.messages.iter().find(|m| &m.id == id))
+  else {
+    return iced::Task::none();
+  };
+  let to = ComposeRecipient {
+    name: msg.from_name.clone(),
+    id: msg.from_id,
+  };
+  let subject = if msg.subject.starts_with("Re: ") {
+    msg.subject.clone()
+  } else {
+    format!("Re: {}", msg.subject)
+  };
+  state.compose_open = true;
+  state.compose.reset();
+  state.compose.to = vec![to];
+  state.compose.subject = subject;
+  state.compose.from_picker.selected = PickerSelection::Character(msg.character_id);
+  state.snooze_popover_open = false;
+  iced::Task::none()
+}
+
+fn update_snooze_set(state: &mut State, label: String, services: &Services) -> iced::Task<Message> {
+  state.context_menu = None;
+  state.snooze_popover_open = false;
+  let Some(id) = state.selected_message_id.clone() else {
+    return iced::Task::none();
+  };
+  let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) else {
+    return iced::Task::none();
+  };
+  let character_id = msg.character_id;
+  let mail_id = msg.mail_id;
+  let adding = !label.is_empty();
+  let snooze_until = if adding { snooze_label_to_iso(&label) } else { None };
+  if adding {
+    msg.snoozed = Some(label);
+  } else {
+    msg.snoozed = None;
+  }
+  if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+    let chars = state.characters.clone();
+    return iced::Task::perform(
+      async move {
+        if adding {
+          if let Some(until) = &snooze_until {
+            let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
+          }
+        } else {
+          let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
         }
-      }
-      for acct in &mut state.accounts {
-        acct.unread = *unread_by_char.get(&acct.id).unwrap_or(&0);
-      }
-      state.selected_message_id = messages.first().map(|m| m.id.clone());
-      state.messages = messages;
+        apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await
+      },
+      |res| match res {
+        Ok(()) => Message::MailDeleted,
+        Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
+      },
+    );
+  }
+  iced::Task::none()
+}
+
+fn update_snoozed_expired(state: &mut State, pairs: Vec<(i64, i64)>) -> iced::Task<Message> {
+  for (character_id, mail_id) in pairs {
+    let msg_id = format!("{character_id}-{mail_id}");
+    if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
+      msg.snoozed = None;
+      msg.unread = true;
+      msg.folder = "inbox".to_string();
     }
   }
   iced::Task::none()

@@ -7,7 +7,7 @@ mod services;
 
 use std::collections::HashMap;
 
-use controllers::{main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
+use controllers::{about_window, main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
@@ -16,7 +16,7 @@ use pod_ui::{
   style::{spacing::layout, typography::bytes as font_bytes},
   views::{mail, main_window, skills, splash, wallet},
 };
-use services::Services;
+use services::{Services, menu};
 
 pub const ESI_CLIENT_ID: &str = "8fa6e582375c4633a100e9c0ffd37224";
 
@@ -30,6 +30,7 @@ pub enum WindowKind {
 }
 
 struct App {
+  about_window: Option<(window::Id, about_window::State)>,
   characters: Vec<Character>,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
@@ -53,8 +54,10 @@ enum AppPhase {
 
 #[derive(Clone, Debug)]
 enum Message {
+  AboutWindow(about_window::Message),
   Bootstrap(services::bootstrap::Message),
   Main(main_ctrl::Message),
+  Menu(menu::MenuMessage),
   SkillPlan(window::Id, skill_plan_window::Message),
   Splash(splash_ctrl::Message),
   Tick,
@@ -87,6 +90,7 @@ enum WindowEvent {
 impl Default for App {
   fn default() -> Self {
     Self {
+      about_window: None,
       characters: Vec::new(),
       db: None,
       esi_client: None,
@@ -105,7 +109,14 @@ impl Default for App {
   }
 }
 
+thread_local! {
+  static MENU: std::cell::OnceCell<muda::Menu> = std::cell::OnceCell::new();
+}
+
 fn boot() -> (App, Task<Message>) {
+  MENU.with(|m| {
+    m.get_or_init(menu::init);
+  });
   let splash_settings = window::Settings {
     size: Size::new(layout::SPLASH_WIDTH, layout::SPLASH_HEIGHT),
     decorations: false,
@@ -202,17 +213,27 @@ fn subscription(app: &App) -> Subscription<Message> {
     })
     .collect();
 
+  let menu_sub = menu::subscription().map(Message::Menu);
+
   Subscription::batch(
     std::iter::once(window_events)
       .chain(std::iter::once(tick))
+      .chain(std::iter::once(menu_sub))
       .chain(plan_subs),
   )
 }
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
   match message {
+    Message::AboutWindow(msg) => {
+      let Some((_, state)) = &mut app.about_window else {
+        return Task::none();
+      };
+      about_window::update(state, msg).map(Message::AboutWindow)
+    }
     Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::Main(msg) => update_main(app, msg),
+    Message::Menu(msg) => update_menu(app, msg),
     Message::SkillPlan(id, msg) => update_skill_plan(app, id, msg),
     Message::Splash(msg) => update_splash(app, SplashMessage::Splash(msg)),
     Message::Tick => update_splash(app, SplashMessage::Tick),
@@ -459,10 +480,31 @@ fn update_updater(app: &mut App, msg: UpdaterMessage) -> Task<Message> {
   }
 }
 
+fn update_menu(app: &mut App, msg: menu::MenuMessage) -> Task<Message> {
+  match msg {
+    menu::MenuMessage::AboutRequested => {
+      if let Some((id, _)) = &app.about_window {
+        return window::gain_focus(*id);
+      }
+      let (win_id, open_task) = window::open(about_window::settings());
+      app.about_window = Some((win_id, about_window::State::default()));
+      open_task.map(Message::WindowOpened)
+    }
+    menu::MenuMessage::CheckForUpdatesRequested => {
+      Task::done(Message::Updater(services::updater::Message::CheckRequested))
+    }
+    menu::MenuMessage::ClearCacheRequested => Task::future(services::cache_cleaner::clear_esi_cache()).discard(),
+  }
+}
+
 fn update_window_events(app: &mut App, id: window::Id, event: WindowEvent) -> Task<Message> {
   match event {
     WindowEvent::CloseRequested => {
       if app.plan_windows.remove(&id).is_some() {
+        return window::close(id);
+      }
+      if app.about_window.as_ref().map(|(wid, _)| *wid) == Some(id) {
+        app.about_window = None;
         return window::close(id);
       }
       Task::none()
@@ -535,7 +577,9 @@ fn save_geometry(app: &App) {
 fn disable_shadow(id: window::Id) -> Task<Message> {
   window::run(id, |w| {
     use window::raw_window_handle::RawWindowHandle;
-    let Ok(handle) = w.window_handle() else { return };
+    let Ok(handle) = w.window_handle() else {
+      return;
+    };
     let RawWindowHandle::AppKit(h) = handle.as_raw() else {
       return;
     };
@@ -558,6 +602,12 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
 fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
   if let Some(plan_state) = app.plan_windows.get(&window_id) {
     return skill_plan_window::view(plan_state).map(move |m| Message::SkillPlan(window_id, m));
+  }
+
+  if let Some((about_id, about_state)) = &app.about_window {
+    if window_id == *about_id {
+      return about_window::view(about_state).map(Message::AboutWindow);
+    }
   }
 
   match &app.phase {

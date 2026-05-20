@@ -88,6 +88,7 @@ impl Client {
         .await
         .map_err(|e| Error::Internal(e.to_string()))?;
     }
+    file.shutdown().await.map_err(|e| Error::Internal(e.to_string()))?;
     Ok(())
   }
 
@@ -662,9 +663,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
           .and(path("/anon"))
-          .respond_with(
-            ResponseTemplate::new(401).set_body_raw(r#"{"error":"Unauthorized"}"#, "application/json"),
-          )
+          .respond_with(ResponseTemplate::new(401).set_body_raw(r#"{"error":"Unauthorized"}"#, "application/json"))
           .mount(&server)
           .await;
         let client = make_client();
@@ -687,16 +686,16 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
           .and(path("/anon"))
-          .respond_with(
-            ResponseTemplate::new(200).set_body_raw(r#"{"result":"ok"}"#, "application/json"),
-          )
+          .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"result":"ok"}"#, "application/json"))
           .mount(&server)
           .await;
         let client = make_client();
         let url = format!("{}/anon", server.uri());
 
-        let result: serde_json::Value =
-          client.post_json_anon(&url, &serde_json::json!({"key": "val"})).await.unwrap();
+        let result: serde_json::Value = client
+          .post_json_anon(&url, &serde_json::json!({"key": "val"}))
+          .await
+          .unwrap();
 
         assert_eq!(result["result"], "ok");
       }

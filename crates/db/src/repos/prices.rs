@@ -297,8 +297,9 @@ mod tests {
       let db = setup_db().await;
       let repo = Repo::new(&db);
 
-      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
       use sea_orm::ActiveValue::{NotSet, Set};
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
       HistEntity::insert(HistActive {
         id: NotSet,
         type_id: Set(34),
@@ -321,8 +322,9 @@ mod tests {
     #[tokio::test]
     async fn returns_most_recent_history_close_when_multiple() {
       let db = setup_db().await;
-      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
       use sea_orm::ActiveValue::Set;
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
 
       for (date, close) in [("2025-01-01", 5.0_f64), ("2025-01-03", 7.0), ("2025-01-02", 6.0)] {
         use sea_orm::ActiveValue::NotSet;
@@ -364,8 +366,9 @@ mod tests {
       let db = setup_db().await;
       insert_character_and_asset(&db, 1, 34, 100).await;
 
-      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
       use sea_orm::ActiveValue::{NotSet, Set};
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
       HistEntity::insert(HistActive {
         id: NotSet,
         type_id: Set(34),

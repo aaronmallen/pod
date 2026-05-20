@@ -282,8 +282,9 @@ mod tests {
   static NEXT_ITEM_ID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(100_000);
 
   async fn insert_asset(db: &DatabaseConnection, character_id: i64, type_id: i32, location_id: i64, quantity: i32) {
-    use crate::entities::character_asset::{ActiveModel as AssetActive, Entity as AssetEntity};
     use sea_orm::ActiveValue::Set;
+
+    use crate::entities::character_asset::{ActiveModel as AssetActive, Entity as AssetEntity};
     let item_id = NEXT_ITEM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     AssetEntity::insert(AssetActive {
       character_id: Set(character_id),
@@ -317,7 +318,10 @@ mod tests {
       let db = setup_db().await;
       let repo = Repo::new(&db);
 
-      repo.create_stockpile("Supply Cache", None, None, &[(34, 1000), (35, 500)]).await.unwrap();
+      repo
+        .create_stockpile("Supply Cache", None, None, &[(34, 1000), (35, 500)])
+        .await
+        .unwrap();
 
       let result = repo.list_stockpiles().await.unwrap();
       assert_eq!(result.len(), 1);
@@ -361,8 +365,14 @@ mod tests {
       let db = setup_db().await;
       let repo = Repo::new(&db);
 
-      let id = repo.create_stockpile("Old Name", None, None, &[(34, 100)]).await.unwrap();
-      repo.update_stockpile(id, "New Name", None, None, &[(35, 200)]).await.unwrap();
+      let id = repo
+        .create_stockpile("Old Name", None, None, &[(34, 100)])
+        .await
+        .unwrap();
+      repo
+        .update_stockpile(id, "New Name", None, None, &[(35, 200)])
+        .await
+        .unwrap();
 
       let piles = repo.list_stockpiles().await.unwrap();
       let pile = piles.iter().find(|p| p.id == id).unwrap();
@@ -412,7 +422,10 @@ mod tests {
     async fn returns_zero_have_quantity_when_no_assets() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      let id = repo.create_stockpile("Unfilled", None, None, &[(34, 500)]).await.unwrap();
+      let id = repo
+        .create_stockpile("Unfilled", None, None, &[(34, 500)])
+        .await
+        .unwrap();
       let result = repo.stockpile_fill_status(id).await.unwrap();
       assert_eq!(result.len(), 1);
       assert_eq!(result[0].type_id, 34);

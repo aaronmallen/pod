@@ -55,3 +55,87 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  mod find_all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_icons() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(34, "64", vec![1, 2, 3]).await.unwrap();
+      repo.upsert(35, "64", vec![4, 5, 6]).await.unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_ids(&[], "64").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_matching_icons_for_variant() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(34, "64", vec![1, 2, 3]).await.unwrap();
+      repo.upsert(34, "32", vec![7, 8, 9]).await.unwrap();
+      repo.upsert(35, "64", vec![4, 5, 6]).await.unwrap();
+
+      let result = repo.find_by_ids(&[34], "64").await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0, 34);
+      assert_eq!(result[0].1, vec![1, 2, 3]);
+    }
+  }
+
+  mod upsert {
+    use super::*;
+
+    #[tokio::test]
+    async fn inserts_icon_data() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(34, "64", vec![1, 2, 3]).await.unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].2, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn updates_existing_icon_on_conflict() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(34, "64", vec![1, 2, 3]).await.unwrap();
+      repo.upsert(34, "64", vec![9, 8, 7]).await.unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].2, vec![9, 8, 7]);
+    }
+  }
+}

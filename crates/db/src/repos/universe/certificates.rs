@@ -97,6 +97,11 @@ impl<'a> Repo<'a> {
   }
 }
 
+/// Extracts and clamps a skill level from a raw integer.
+fn clamp_skill_level(v: i32) -> u8 {
+  v.clamp(0, 5) as u8
+}
+
 fn cert_from_row(row: crate::entities::certificate::Model) -> Certificate {
   #[derive(serde::Deserialize)]
   struct SkillEntry {
@@ -115,9 +120,171 @@ fn cert_from_row(row: crate::entities::certificate::Model) -> Certificate {
     skills: skills
       .into_iter()
       .map(|s| {
-        let clamp = |v: i32| v.clamp(0, 5) as u8;
-        (s.type_id, [clamp(s.basic), clamp(s.improved), clamp(s.advanced), clamp(s.elite)])
+        (
+          s.type_id,
+          [
+            clamp_skill_level(s.basic),
+            clamp_skill_level(s.improved),
+            clamp_skill_level(s.advanced),
+            clamp_skill_level(s.elite),
+          ],
+        )
       })
       .collect(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use pod_model::Certificate;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  fn make_cert(id: i32, name: &str) -> Certificate {
+    Certificate {
+      id,
+      name: name.to_string(),
+      description: None,
+      grade: 1,
+      skills: vec![],
+    }
+  }
+
+  mod clamp_skill_level {
+    use super::*;
+
+    #[test]
+    fn clamps_negative_to_zero() {
+      assert_eq!(clamp_skill_level(-1), 0);
+    }
+
+    #[test]
+    fn clamps_above_five_to_five() {
+      assert_eq!(clamp_skill_level(10), 5);
+    }
+
+    #[test]
+    fn passes_through_values_in_range() {
+      for v in 0..=5 {
+        assert_eq!(clamp_skill_level(v), v as u8);
+      }
+    }
+  }
+
+  mod find_all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_certs() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_certs_ordered_by_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo
+        .upsert_many(&[make_cert(2, "Zebra"), make_cert(1, "Alpha")])
+        .await
+        .unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 2);
+      assert_eq!(result[0].name, "Alpha");
+      assert_eq!(result[1].name, "Zebra");
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_matching_certs() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo
+        .upsert_many(&[make_cert(1, "Alpha"), make_cert(2, "Beta")])
+        .await
+        .unwrap();
+      let result = repo.find_by_ids(&[1]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 1);
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn inserts_certs_with_skills() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let cert = Certificate {
+        id: 1,
+        name: "Engineering".to_string(),
+        description: Some("Desc".to_string()),
+        grade: 2,
+        skills: vec![(3300, [1, 2, 3, 4])],
+      };
+      repo.upsert_many(&[cert]).await.unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].skills.len(), 1);
+      assert_eq!(result[0].skills[0].0, 3300);
+      assert_eq!(result[0].skills[0].1, [1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn updates_existing_cert_on_conflict() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[make_cert(1, "Old Name")]).await.unwrap();
+
+      let updated = Certificate {
+        id: 1,
+        name: "New Name".to_string(),
+        description: None,
+        grade: 3,
+        skills: vec![],
+      };
+      repo.upsert_many(&[updated]).await.unwrap();
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].name, "New Name");
+    }
+  }
+
+  mod upsert_ship_masteries {
+    use super::*;
+
+    #[tokio::test]
+    async fn inserts_mastery_entries() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_ship_masteries(&[(587, 1, vec![1, 2, 3])]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn updates_existing_mastery_on_conflict() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_ship_masteries(&[(587, 1, vec![1, 2])]).await.unwrap();
+      repo.upsert_ship_masteries(&[(587, 1, vec![5, 6, 7])]).await.unwrap();
+    }
   }
 }

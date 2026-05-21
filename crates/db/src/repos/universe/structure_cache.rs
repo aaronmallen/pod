@@ -73,3 +73,102 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_matching_structures() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(1000000000001, "Azbel One").await.unwrap();
+      repo.upsert(1000000000002, "Raitaru Two").await.unwrap();
+
+      let result = repo.find_by_ids(&[1000000000001]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0, 1000000000001);
+      assert_eq!(result[0].1, "Azbel One");
+    }
+
+    #[tokio::test]
+    async fn returns_empty_when_ids_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find_by_ids(&[9999999999]).await.unwrap();
+      assert!(result.is_empty());
+    }
+  }
+
+  mod upsert {
+    use super::*;
+
+    #[tokio::test]
+    async fn inserts_structure_with_no_solar_system() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(1000000000001, "My Citadel").await.unwrap();
+
+      let result = repo.find_by_ids(&[1000000000001]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].2, None);
+    }
+
+    #[tokio::test]
+    async fn updates_name_on_conflict() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(1000000000001, "Old Name").await.unwrap();
+      repo.upsert(1000000000001, "New Name").await.unwrap();
+
+      let result = repo.find_by_ids(&[1000000000001]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].1, "New Name");
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      let result = repo.find_by_ids(&[1]).await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_entries_with_solar_system_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let entries = vec![
+        (1000000000001_i64, "Azbel One".to_string(), Some(30000142_i64)),
+        (1000000000002_i64, "Raitaru Two".to_string(), None),
+      ];
+      repo.upsert_many(&entries).await.unwrap();
+
+      let result = repo.find_by_ids(&[1000000000001, 1000000000002]).await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+}

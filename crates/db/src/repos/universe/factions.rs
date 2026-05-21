@@ -88,3 +88,102 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::Faction;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  fn make_faction(id: i32, name: &str) -> Faction {
+    Faction::new(id, name)
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_factions() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_faction(1, "Caldari")).await.unwrap();
+      repo.upsert(&make_faction(2, "Gallente")).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find(999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_faction(500001, "Caldari")).await.unwrap();
+      let result = repo.find(500001).await.unwrap();
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 500001);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_name("Nonexistent").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_faction_by_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_faction(500001, "Caldari State")).await.unwrap();
+      assert!(repo.find_by_name("Caldari State").await.unwrap().is_some());
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_factions() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_faction(1, "Caldari"), make_faction(2, "Gallente")];
+      repo.upsert_many(&records).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+}

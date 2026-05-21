@@ -105,3 +105,126 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::SolarSystem;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    use sea_orm::ConnectionTrait;
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await.unwrap();
+    db
+  }
+
+  fn make_solar_system(id: i32, name: &str) -> SolarSystem {
+    SolarSystem::new(id, name)
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_systems() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_solar_system(1, "Jita")).await.unwrap();
+      repo.upsert(&make_solar_system(2, "Amarr")).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find(999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_solar_system(30000142, "Jita")).await.unwrap();
+      let result = repo.find(30000142).await.unwrap();
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 30000142);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_name("Nonexistent").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_system_by_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_solar_system(30000142, "Jita")).await.unwrap();
+      assert!(repo.find_by_name("Jita").await.unwrap().is_some());
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_matching_systems() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_solar_system(30000142, "Jita")).await.unwrap();
+      repo.upsert(&make_solar_system(30002187, "Amarr")).await.unwrap();
+      let result = repo.find_by_ids(&[30000142]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 30000142);
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_systems() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_solar_system(1, "Jita"), make_solar_system(2, "Amarr")];
+      repo.upsert_many(&records).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+}

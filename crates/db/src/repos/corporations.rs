@@ -97,3 +97,113 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  fn make_corp(id: i64, name: &str) -> Corporation {
+    let mut corp = Corporation::new(id, name);
+    corp.set_ticker("CORP".to_string());
+    corp
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_corporations() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_corporations() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      repo.upsert(&make_corp(1, "Alpha Corp")).await.unwrap();
+      repo.upsert(&make_corp(2, "Beta Corp")).await.unwrap();
+
+      let result = repo.all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod delete {
+    use super::*;
+
+    #[tokio::test]
+    async fn removes_the_corporation() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let corp = make_corp(98000000, "To Delete");
+      repo.upsert(&corp).await.unwrap();
+      assert!(repo.find(98000000).await.unwrap().is_some());
+
+      repo.delete(98000000).await.unwrap();
+      assert!(repo.find(98000000).await.unwrap().is_none());
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.find(9999).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let corp = make_corp(98000000, "Test Corp");
+      repo.upsert(&corp).await.unwrap();
+
+      let result = repo.find(98000000).await.unwrap();
+      assert!(result.is_some());
+      let found = result.unwrap();
+      assert_eq!(*found.id(), 98000000);
+      assert_eq!(found.name(), "Test Corp");
+    }
+  }
+
+  mod upsert {
+    use super::*;
+
+    #[tokio::test]
+    async fn updates_existing_corporation_on_conflict() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let corp = make_corp(98000000, "Old Name");
+      repo.upsert(&corp).await.unwrap();
+
+      let mut updated = make_corp(98000000, "New Name");
+      updated.set_member_count(500);
+      repo.upsert(&updated).await.unwrap();
+
+      let result = repo.find(98000000).await.unwrap().unwrap();
+      assert_eq!(result.name(), "New Name");
+      assert_eq!(*result.member_count(), 500);
+    }
+  }
+}

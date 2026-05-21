@@ -87,3 +87,126 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::ItemGroup;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    use sea_orm::ConnectionTrait;
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await.unwrap();
+    db
+  }
+
+  fn make_item_group(id: i32, name: &str) -> ItemGroup {
+    ItemGroup::new(id, 6, name)
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_groups() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_group(1, "Frigate")).await.unwrap();
+      repo.upsert(&make_item_group(2, "Cruiser")).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find(999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_group(25, "Frigate")).await.unwrap();
+      let result = repo.find(25).await.unwrap();
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 25);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_name("Nonexistent").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_group_by_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_group(25, "Frigate")).await.unwrap();
+      assert!(repo.find_by_name("Frigate").await.unwrap().is_some());
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_matching_groups() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_group(25, "Frigate")).await.unwrap();
+      repo.upsert(&make_item_group(26, "Cruiser")).await.unwrap();
+      let result = repo.find_by_ids(&[25]).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 25);
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_groups() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_item_group(1, "Frigate"), make_item_group(2, "Cruiser")];
+      repo.upsert_many(&records).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+}

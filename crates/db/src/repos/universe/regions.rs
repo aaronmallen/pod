@@ -78,3 +78,109 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::Region;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db
+  }
+
+  fn make_region(id: i32, name: &str) -> Region {
+    Region::new(id, name)
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_regions() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_regions_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_region(1, "Jita")).await.unwrap();
+      repo.upsert(&make_region(2, "Amarr")).await.unwrap();
+      let result = repo.all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find(999).await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_region(10, "The Forge")).await.unwrap();
+      let result = repo.find(10).await.unwrap();
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 10);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find_by_name("Nonexistent").await.unwrap();
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_region_by_exact_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_region(10, "The Forge")).await.unwrap();
+      let result = repo.find_by_name("The Forge").await.unwrap();
+      assert!(result.is_some());
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      let result = repo.all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_regions() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_region(1, "Forge"), make_region(2, "Lonetrek")];
+      repo.upsert_many(&records).await.unwrap();
+      let result = repo.all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+}

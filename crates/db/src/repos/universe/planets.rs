@@ -92,3 +92,104 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use pod_model::Planet;
+  use sea_orm::{Database, DatabaseConnection};
+
+  use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    use sea_orm::ConnectionTrait;
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await.unwrap();
+    db
+  }
+
+  fn make_planet(id: i32, name: &str) -> Planet {
+    Planet::new(id, name)
+  }
+
+  mod all {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_empty_when_no_planets() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_planet(1, "Jita IV")).await.unwrap();
+      repo.upsert(&make_planet(2, "Jita V")).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find(999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_planet(40009086, "Jita IV")).await.unwrap();
+      let result = repo.find(40009086).await.unwrap();
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 40009086);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      assert!(repo.find_by_name("Nonexistent").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn returns_planet_by_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_planet(1, "Jita IV")).await.unwrap();
+      assert!(repo.find_by_name("Jita IV").await.unwrap().is_some());
+    }
+  }
+
+  mod upsert_many {
+    use super::*;
+
+    #[tokio::test]
+    async fn does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert_many(&[]).await.unwrap();
+      assert!(repo.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inserts_multiple_planets() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_planet(1, "Planet A"), make_planet(2, "Planet B")];
+      repo.upsert_many(&records).await.unwrap();
+      assert_eq!(repo.all().await.unwrap().len(), 2);
+    }
+  }
+}

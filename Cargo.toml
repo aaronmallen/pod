@@ -89,6 +89,7 @@ arboard.workspace = true
 cargo-packager-updater.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true
+getset.workspace = true
 iced.workspace = true
 muda.workspace = true
 open.workspace = true

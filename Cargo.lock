@@ -4834,6 +4834,7 @@ dependencies = [
  "cargo-packager-updater",
  "chrono",
  "dir_spec",
+ "getset",
  "iced",
  "muda",
  "objc2 0.6.4",

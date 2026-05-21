@@ -97,3 +97,51 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut c = Model::new(20_000_020, "Kimotoro");
+      c.set_region_id(10_000_002);
+      assert!(!c.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut c = Model::new(20_000_020, "Kimotoro");
+      c.mark_persisted();
+      c.set_region_id(10_000_002);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut c = Model::new(20_000_020, "Kimotoro");
+      c.mark_persisted();
+      assert!(c.is_persisted());
+      assert!(!c.has_changes());
+    }
+  }
+
+  mod set_position {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = Model::new(20_000_020, "Kimotoro");
+      c.mark_persisted();
+      c.set_position(1.0, 2.0, 3.0);
+      assert!(c.has_changes());
+    }
+  }
+}

@@ -85,3 +85,61 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut m = Model::new(6, "Ship");
+      m.set_name("Starship");
+      assert!(!m.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut m = Model::new(6, "Ship");
+      m.mark_persisted();
+      m.set_name("Starship");
+      assert!(m.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut m = Model::new(6, "Ship");
+      m.mark_persisted();
+      assert!(m.is_persisted());
+      assert!(!m.has_changes());
+    }
+  }
+
+  mod publish_and_unpublish {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_unpublished_after_persist() {
+      let mut m = Model::new(6, "Ship");
+      m.mark_persisted();
+      m.unpublish();
+      assert!(!m.is_published());
+      assert!(m.has_changes());
+    }
+
+    #[test]
+    fn it_marks_dirty_when_published_after_persist() {
+      let mut m = Model::new(6, "Ship");
+      m.mark_persisted();
+      m.unpublish();
+      m.publish();
+      assert!(m.is_published());
+    }
+  }
+}

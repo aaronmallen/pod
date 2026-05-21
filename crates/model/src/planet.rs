@@ -110,3 +110,75 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.set_solar_system_id(30_000_142);
+      assert!(!p.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.mark_persisted();
+      p.set_solar_system_id(30_000_142);
+      assert!(p.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.mark_persisted();
+      assert!(p.is_persisted());
+      assert!(!p.has_changes());
+    }
+  }
+
+  mod set_item_type_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.mark_persisted();
+      p.set_item_type_id(13);
+      assert!(p.has_changes());
+    }
+  }
+
+  mod set_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.mark_persisted();
+      p.set_name("Updated Planet");
+      assert!(p.has_changes());
+    }
+  }
+
+  mod set_position {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut p = Model::new(40_009_081, "Jita IV");
+      p.mark_persisted();
+      p.set_position(1.0, 2.0, 3.0);
+      assert!(p.has_changes());
+    }
+  }
+}

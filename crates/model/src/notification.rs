@@ -47,75 +47,164 @@ pub enum NotificationCategory {
 /// rules ported from `tmp/design/character-detail-data.jsx`. Returns
 /// [`NotificationCategory::System`] for any unrecognized type.
 pub fn categorize_notif(notif_type: &str) -> NotificationCategory {
-  // Explicit overrides win before any prefix rule.
+  categorize_early_groups(notif_type)
+    .or_else(|| categorize_late_groups(notif_type))
+    .unwrap_or(NotificationCategory::System)
+}
+
+/// Checks explicit overrides and the first group of domain-prefix rules.
+fn categorize_early_groups(notif_type: &str) -> Option<NotificationCategory> {
+  categorize_override(notif_type)
+    .or_else(|| categorize_contract_notif(notif_type))
+    .or_else(|| categorize_insurance_notif(notif_type))
+    .or_else(|| categorize_clone_notif(notif_type))
+    .or_else(|| categorize_fw_notif(notif_type))
+    .or_else(|| categorize_standing_notif(notif_type))
+    .or_else(|| categorize_combat_notif(notif_type))
+    .or_else(|| categorize_mission_notif(notif_type))
+    .or_else(|| categorize_industry_notif(notif_type))
+}
+
+/// Checks the second group of domain-prefix rules, including war and structure.
+fn categorize_late_groups(notif_type: &str) -> Option<NotificationCategory> {
+  categorize_incursion_notif(notif_type)
+    .or_else(|| categorize_contact_notif(notif_type))
+    .or_else(|| categorize_market_notif(notif_type))
+    .or_else(|| categorize_reward_notif(notif_type))
+    .or_else(|| {
+      if notif_type.starts_with("FreelanceProject") {
+        Some(NotificationCategory::System)
+      } else {
+        None
+      }
+    })
+    .or_else(|| categorize_war_notif(notif_type))
+    .or_else(|| categorize_structure_notif(notif_type))
+    .or_else(|| categorize_corp_notif(notif_type))
+}
+
+/// Handles explicit type-string overrides that must win before any prefix rule.
+fn categorize_override(notif_type: &str) -> Option<NotificationCategory> {
   match notif_type {
-    "StructureCourierContractChanged" => return NotificationCategory::Contract,
-    "AllianceCapitalChanged" => return NotificationCategory::Alliance,
-    "AllWarCorpJoinedAllianceMsg" => return NotificationCategory::War,
-    "BattlePunishFriendlyFire" => return NotificationCategory::Combat,
-    "CombatOperationFinished" => return NotificationCategory::Combat,
-    "ContainerPasswordMsg" => return NotificationCategory::System,
-    "OldLscMessages" => return NotificationCategory::System,
-    "OperationFinished" => return NotificationCategory::Combat,
-    "TutorialMsg" => return NotificationCategory::System,
-    _ => {}
+    "AllianceCapitalChanged" => Some(NotificationCategory::Alliance),
+    "AllWarCorpJoinedAllianceMsg" => Some(NotificationCategory::War),
+    "BattlePunishFriendlyFire" => Some(NotificationCategory::Combat),
+    "CombatOperationFinished" => Some(NotificationCategory::Combat),
+    "ContainerPasswordMsg" => Some(NotificationCategory::System),
+    "OldLscMessages" => Some(NotificationCategory::System),
+    "OperationFinished" => Some(NotificationCategory::Combat),
+    "StructureCourierContractChanged" => Some(NotificationCategory::Contract),
+    "TutorialMsg" => Some(NotificationCategory::System),
+    _ => None,
   }
+}
 
-  // Specifics before generic prefixes.
+/// Classifies structure-courier contract notifications.
+fn categorize_contract_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("StructureCourier") {
-    return NotificationCategory::Contract;
+    Some(NotificationCategory::Contract)
+  } else {
+    None
   }
+}
 
+/// Classifies insurance notifications.
+fn categorize_insurance_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Insurance") {
-    return NotificationCategory::Insurance;
+    Some(NotificationCategory::Insurance)
+  } else {
+    None
   }
+}
 
+/// Classifies clone and jump-clone notifications.
+fn categorize_clone_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Clone") || notif_type.starts_with("JumpClone") {
-    return NotificationCategory::Clone;
+    Some(NotificationCategory::Clone)
+  } else {
+    None
   }
+}
 
+/// Classifies factional warfare notifications.
+fn categorize_fw_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("FW") || notif_type.starts_with("FacWar") {
-    return NotificationCategory::Fw;
+    Some(NotificationCategory::Fw)
+  } else {
+    None
   }
+}
 
+/// Classifies NPC standing change notifications.
+fn categorize_standing_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("NPCStandings") {
-    return NotificationCategory::Standing;
+    Some(NotificationCategory::Standing)
+  } else {
+    None
   }
+}
 
+/// Classifies combat, kill-report, and bounty notifications.
+fn categorize_combat_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Bounty") || notif_type.starts_with("KillReport") || notif_type.starts_with("KillRight") {
-    return NotificationCategory::Combat;
+    Some(NotificationCategory::Combat)
+  } else {
+    None
   }
+}
 
+/// Classifies agent mission and storyline notifications.
+fn categorize_mission_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Mission")
     || notif_type.starts_with("ResearchMission")
     || notif_type.starts_with("StoryLine")
     || notif_type.starts_with("AgentRetired")
   {
-    return NotificationCategory::Mission;
+    Some(NotificationCategory::Mission)
+  } else {
+    None
   }
+}
 
+/// Classifies industry, moon-mining, and manufacturing job notifications.
+fn categorize_industry_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Moonmining")
     || notif_type.starts_with("IndustryOperation")
     || notif_type.starts_with("IndustryTeam")
     || notif_type.starts_with("StructuresJobs")
   {
-    return NotificationCategory::Industry;
+    Some(NotificationCategory::Industry)
+  } else {
+    None
   }
+}
 
+/// Classifies incursion and invasion notifications.
+fn categorize_incursion_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Incursion")
     || notif_type.starts_with("Invasion")
     || notif_type.starts_with("DistrictAttacked")
     || notif_type.starts_with("DustApp")
     || notif_type.starts_with("ContractRegionChanged")
   {
-    return NotificationCategory::Incursion;
+    Some(NotificationCategory::Incursion)
+  } else {
+    None
   }
+}
 
+/// Classifies contact-list change notifications.
+fn categorize_contact_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Contact") || notif_type.starts_with("BuddyConnect") || notif_type.starts_with("LocateChar")
   {
-    return NotificationCategory::Contact;
+    Some(NotificationCategory::Contact)
+  } else {
+    None
   }
+}
 
+/// Classifies market, billing, and transaction notifications.
+fn categorize_market_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Bill")
     || notif_type.starts_with("Customs")
     || notif_type.starts_with("Raffle")
@@ -123,9 +212,14 @@ pub fn categorize_notif(notif_type: &str) -> NotificationCategory {
     || notif_type.starts_with("Transaction")
     || notif_type.starts_with("StructurePaint")
   {
-    return NotificationCategory::Market;
+    Some(NotificationCategory::Market)
+  } else {
+    None
   }
+}
 
+/// Classifies reward, gift, and seasonal-challenge notifications.
+fn categorize_reward_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("GameTime")
     || notif_type.starts_with("Gift")
     || notif_type.starts_with("DailyItemReward")
@@ -135,23 +229,27 @@ pub fn categorize_notif(notif_type: &str) -> NotificationCategory {
     || notif_type.starts_with("SeasonalChallenge")
     || notif_type.starts_with("ExpertSystem")
   {
-    return NotificationCategory::Reward;
+    Some(NotificationCategory::Reward)
+  } else {
+    None
   }
+}
 
-  if notif_type.starts_with("FreelanceProject") {
-    return NotificationCategory::System;
-  }
-
-  // War — contains "War", starts with "Ally" or "MercOffer", or contains "Surrender".
+/// Classifies war declaration and mercenary notifications.
+fn categorize_war_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.contains("War")
     || notif_type.starts_with("Ally")
     || notif_type.contains("Surrender")
     || notif_type.starts_with("MercOffer")
   {
-    return NotificationCategory::War;
+    Some(NotificationCategory::War)
+  } else {
+    None
   }
+}
 
-  // Structure / sovereignty / station / tower.
+/// Classifies structure, sovereignty, station, and tower notifications.
+fn categorize_structure_notif(notif_type: &str) -> Option<NotificationCategory> {
   if notif_type.starts_with("Sov")
     || notif_type.starts_with("Sovereignty")
     || notif_type.starts_with("Tower")
@@ -168,19 +266,23 @@ pub fn categorize_notif(notif_type: &str) -> NotificationCategory {
     || notif_type.starts_with("AllMaintenance")
     || notif_type.starts_with("AllStruc")
   {
-    return NotificationCategory::Structure;
+    Some(NotificationCategory::Structure)
+  } else {
+    None
   }
+}
 
-  // Corp catch-all (after war).
-  if notif_type.starts_with("CorporationGoal") || notif_type.starts_with("CorporationLeft") {
-    return NotificationCategory::Corp;
+/// Classifies corporation notifications.
+fn categorize_corp_notif(notif_type: &str) -> Option<NotificationCategory> {
+  if notif_type.starts_with("CorporationGoal")
+    || notif_type.starts_with("CorporationLeft")
+    || notif_type.starts_with("Char")
+    || notif_type.starts_with("Corp")
+  {
+    Some(NotificationCategory::Corp)
+  } else {
+    None
   }
-
-  if notif_type.starts_with("Char") || notif_type.starts_with("Corp") {
-    return NotificationCategory::Corp;
-  }
-
-  NotificationCategory::System
 }
 
 /// A notification received by a character from the EVE notification feed.
@@ -198,15 +300,15 @@ pub struct Notification {
   /// Unique notification identifier.
   #[get = "pub"]
   notification_id: i64,
+  /// Raw EVE notification type string.
+  #[get = "pub"]
+  notif_type: String,
   /// Sender entity ID, if available.
   #[get = "pub"]
   sender_id: Option<i64>,
   /// Sender entity type string, if available.
   #[get = "pub"]
   sender_type: Option<String>,
-  /// Raw EVE notification type string.
-  #[get = "pub"]
-  notif_type: String,
   /// ISO-8601 timestamp when the notification was sent.
   #[get = "pub"]
   timestamp: String,
@@ -288,64 +390,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_returns_war_for_war_declared() {
-      assert_eq!(categorize_notif("WarDeclared"), NotificationCategory::War);
-    }
-
-    #[test]
-    fn it_returns_contract_for_structure_courier_contract_changed() {
-      assert_eq!(
-        categorize_notif("StructureCourierContractChanged"),
-        NotificationCategory::Contract
-      );
-    }
-
-    #[test]
-    fn it_returns_system_for_tutorial_msg() {
-      assert_eq!(categorize_notif("TutorialMsg"), NotificationCategory::System);
-    }
-
-    #[test]
-    fn it_returns_combat_for_kill_report_final_blow() {
-      assert_eq!(categorize_notif("KillReportFinalBlow"), NotificationCategory::Combat);
-    }
-
-    #[test]
-    fn it_returns_standing_for_npc_standings_gained() {
-      assert_eq!(categorize_notif("NPCStandingsGained"), NotificationCategory::Standing);
-    }
-
-    #[test]
-    fn it_returns_system_for_unknown_future_type() {
-      assert_eq!(categorize_notif("UnknownFutureType"), NotificationCategory::System);
-    }
-
-    #[test]
     fn it_returns_alliance_for_alliance_capital_changed() {
       assert_eq!(
         categorize_notif("AllianceCapitalChanged"),
         NotificationCategory::Alliance
-      );
-    }
-
-    #[test]
-    fn it_returns_combat_for_combat_operation_finished() {
-      assert_eq!(
-        categorize_notif("CombatOperationFinished"),
-        NotificationCategory::Combat
-      );
-    }
-
-    #[test]
-    fn it_returns_system_for_old_lsc_messages() {
-      assert_eq!(categorize_notif("OldLscMessages"), NotificationCategory::System);
-    }
-
-    #[test]
-    fn it_returns_insurance_for_insurance_prefix() {
-      assert_eq!(
-        categorize_notif("InsuranceExpirationMsg"),
-        NotificationCategory::Insurance
       );
     }
 
@@ -360,13 +408,11 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_fw_for_fw_prefix() {
-      assert_eq!(categorize_notif("FWAllianceWarningMsg"), NotificationCategory::Fw);
-    }
-
-    #[test]
-    fn it_returns_fw_for_facwar_prefix() {
-      assert_eq!(categorize_notif("FacWarLPPayoutKill"), NotificationCategory::Fw);
+    fn it_returns_combat_for_battle_punish_friendly_fire() {
+      assert_eq!(
+        categorize_notif("BattlePunishFriendlyFire"),
+        NotificationCategory::Combat
+      );
     }
 
     #[test]
@@ -375,15 +421,139 @@ mod tests {
     }
 
     #[test]
+    fn it_returns_combat_for_combat_operation_finished() {
+      assert_eq!(
+        categorize_notif("CombatOperationFinished"),
+        NotificationCategory::Combat
+      );
+    }
+
+    #[test]
+    fn it_returns_combat_for_kill_report_final_blow() {
+      assert_eq!(categorize_notif("KillReportFinalBlow"), NotificationCategory::Combat);
+    }
+
+    #[test]
     fn it_returns_combat_for_kill_right_prefix() {
       assert_eq!(categorize_notif("KillRightAvailable"), NotificationCategory::Combat);
     }
 
     #[test]
-    fn it_returns_mission_for_mission_prefix() {
+    fn it_returns_combat_for_operation_finished() {
+      assert_eq!(categorize_notif("OperationFinished"), NotificationCategory::Combat);
+    }
+
+    #[test]
+    fn it_returns_contact_for_buddy_connect_prefix() {
       assert_eq!(
-        categorize_notif("MissionOfferExpirationMsg"),
-        NotificationCategory::Mission
+        categorize_notif("BuddyConnectContactAdd"),
+        NotificationCategory::Contact
+      );
+    }
+
+    #[test]
+    fn it_returns_contact_for_contact_prefix() {
+      assert_eq!(categorize_notif("ContactAdd"), NotificationCategory::Contact);
+    }
+
+    #[test]
+    fn it_returns_contact_for_locate_char_prefix() {
+      assert_eq!(categorize_notif("LocateCharMsg"), NotificationCategory::Contact);
+    }
+
+    #[test]
+    fn it_returns_contract_for_structure_courier_contract_changed() {
+      assert_eq!(
+        categorize_notif("StructureCourierContractChanged"),
+        NotificationCategory::Contract
+      );
+    }
+
+    #[test]
+    fn it_returns_contract_for_structure_courier_prefix() {
+      assert_eq!(
+        categorize_notif("StructureCourierContractFailed"),
+        NotificationCategory::Contract
+      );
+    }
+
+    #[test]
+    fn it_returns_corp_for_char_prefix() {
+      assert_eq!(categorize_notif("CharAppAcceptMsg"), NotificationCategory::Corp);
+    }
+
+    #[test]
+    fn it_returns_corp_for_corp_prefix() {
+      assert_eq!(categorize_notif("CorpAppNewMsg"), NotificationCategory::Corp);
+    }
+
+    #[test]
+    fn it_returns_corp_for_corporation_goal_prefix() {
+      assert_eq!(categorize_notif("CorporationGoalClosed"), NotificationCategory::Corp);
+    }
+
+    #[test]
+    fn it_returns_corp_for_corporation_left_prefix() {
+      assert_eq!(categorize_notif("CorporationLeft"), NotificationCategory::Corp);
+    }
+
+    #[test]
+    fn it_returns_fw_for_facwar_prefix() {
+      assert_eq!(categorize_notif("FacWarLPPayoutKill"), NotificationCategory::Fw);
+    }
+
+    #[test]
+    fn it_returns_fw_for_fw_prefix() {
+      assert_eq!(categorize_notif("FWAllianceWarningMsg"), NotificationCategory::Fw);
+    }
+
+    #[test]
+    fn it_returns_incursion_for_contract_region_changed_prefix() {
+      assert_eq!(
+        categorize_notif("ContractRegionChanged"),
+        NotificationCategory::Incursion
+      );
+    }
+
+    #[test]
+    fn it_returns_incursion_for_district_attacked_prefix() {
+      assert_eq!(categorize_notif("DistrictAttackedMsg"), NotificationCategory::Incursion);
+    }
+
+    #[test]
+    fn it_returns_incursion_for_dust_app_prefix() {
+      assert_eq!(categorize_notif("DustAppNotification"), NotificationCategory::Incursion);
+    }
+
+    #[test]
+    fn it_returns_incursion_for_incursion_prefix() {
+      assert_eq!(
+        categorize_notif("IncursionCompletedMsg"),
+        NotificationCategory::Incursion
+      );
+    }
+
+    #[test]
+    fn it_returns_incursion_for_invasion_prefix() {
+      assert_eq!(
+        categorize_notif("InvasionCompletionMsg"),
+        NotificationCategory::Incursion
+      );
+    }
+
+    #[test]
+    fn it_returns_industry_for_industry_operation_prefix() {
+      assert_eq!(
+        categorize_notif("IndustryOperationFinished"),
+        NotificationCategory::Industry
+      );
+    }
+
+    #[test]
+    fn it_returns_industry_for_industry_team_prefix() {
+      assert_eq!(
+        categorize_notif("IndustryTeamAuctionWon"),
+        NotificationCategory::Industry
       );
     }
 
@@ -396,16 +566,19 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_incursion_for_incursion_prefix() {
+    fn it_returns_industry_for_structures_jobs_prefix() {
       assert_eq!(
-        categorize_notif("IncursionCompletedMsg"),
-        NotificationCategory::Incursion
+        categorize_notif("StructuresJobsCancelled"),
+        NotificationCategory::Industry
       );
     }
 
     #[test]
-    fn it_returns_contact_for_contact_prefix() {
-      assert_eq!(categorize_notif("ContactAdd"), NotificationCategory::Contact);
+    fn it_returns_insurance_for_insurance_prefix() {
+      assert_eq!(
+        categorize_notif("InsuranceExpirationMsg"),
+        NotificationCategory::Insurance
+      );
     }
 
     #[test]
@@ -414,8 +587,206 @@ mod tests {
     }
 
     #[test]
+    fn it_returns_market_for_customs_prefix() {
+      assert_eq!(categorize_notif("CustomsMsg"), NotificationCategory::Market);
+    }
+
+    #[test]
+    fn it_returns_market_for_raffle_prefix() {
+      assert_eq!(categorize_notif("RaffleCreated"), NotificationCategory::Market);
+    }
+
+    #[test]
+    fn it_returns_market_for_reimbursement_prefix() {
+      assert_eq!(categorize_notif("ReimbursementMsg"), NotificationCategory::Market);
+    }
+
+    #[test]
+    fn it_returns_market_for_structure_paint_prefix() {
+      assert_eq!(
+        categorize_notif("StructurePaintPurchased"),
+        NotificationCategory::Market
+      );
+    }
+
+    #[test]
+    fn it_returns_market_for_transaction_prefix() {
+      assert_eq!(categorize_notif("TransactionReversalMsg"), NotificationCategory::Market);
+    }
+
+    #[test]
+    fn it_returns_mission_for_agent_retired_prefix() {
+      assert_eq!(
+        categorize_notif("AgentRetiredTrigravian"),
+        NotificationCategory::Mission
+      );
+    }
+
+    #[test]
+    fn it_returns_mission_for_mission_prefix() {
+      assert_eq!(
+        categorize_notif("MissionOfferExpirationMsg"),
+        NotificationCategory::Mission
+      );
+    }
+
+    #[test]
+    fn it_returns_mission_for_research_mission_prefix() {
+      assert_eq!(
+        categorize_notif("ResearchMissionAvailableMsg"),
+        NotificationCategory::Mission
+      );
+    }
+
+    #[test]
+    fn it_returns_mission_for_story_line_prefix() {
+      assert_eq!(
+        categorize_notif("StoryLineMissionAvailableMsg"),
+        NotificationCategory::Mission
+      );
+    }
+
+    #[test]
     fn it_returns_reward_for_daily_item_reward_prefix() {
       assert_eq!(categorize_notif("DailyItemRewardMsg"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_reward_for_expert_system_prefix() {
+      assert_eq!(categorize_notif("ExpertSystemExpired"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_reward_for_game_time_prefix() {
+      assert_eq!(categorize_notif("GameTimeAdded"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_reward_for_gift_prefix() {
+      assert_eq!(categorize_notif("GiftReceived"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_reward_for_lp_auto_redeemed_prefix() {
+      assert_eq!(categorize_notif("LPAutoRedeemed"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_reward_for_seasonal_challenge_prefix() {
+      assert_eq!(
+        categorize_notif("SeasonalChallengeCompleted"),
+        NotificationCategory::Reward
+      );
+    }
+
+    #[test]
+    fn it_returns_reward_for_skin_sequencing_prefix() {
+      assert_eq!(
+        categorize_notif("SkinSequencingCompleted"),
+        NotificationCategory::Reward
+      );
+    }
+
+    #[test]
+    fn it_returns_reward_for_sp_auto_redeemed_prefix() {
+      assert_eq!(categorize_notif("SPAutoRedeemed"), NotificationCategory::Reward);
+    }
+
+    #[test]
+    fn it_returns_standing_for_npc_standings_gained() {
+      assert_eq!(categorize_notif("NPCStandingsGained"), NotificationCategory::Standing);
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_anchoring_prefix() {
+      assert_eq!(categorize_notif("AllAnchoringMsg"), NotificationCategory::Structure);
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_maintenance_prefix() {
+      assert_eq!(
+        categorize_notif("AllMaintenanceBillMsg"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_struc_prefix() {
+      assert_eq!(categorize_notif("AllStructureOnline"), NotificationCategory::Structure);
+    }
+
+    #[test]
+    fn it_returns_structure_for_entosis_capture_prefix() {
+      assert_eq!(
+        categorize_notif("EntosisCaptureMsgStandard"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_ihub_prefix() {
+      assert_eq!(
+        categorize_notif("IHubDestroyedByBillFailure"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_infrastructure_prefix() {
+      assert_eq!(
+        categorize_notif("InfrastructureHubLowPower"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_mercenary_prefix() {
+      assert_eq!(
+        categorize_notif("MercenaryDenAttacked"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_orbital_prefix() {
+      assert_eq!(categorize_notif("OrbitalAttacked"), NotificationCategory::Structure);
+    }
+
+    #[test]
+    fn it_returns_structure_for_ownership_transferred_prefix() {
+      assert_eq!(
+        categorize_notif("OwnershipTransferred"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_skyhook_prefix() {
+      assert_eq!(categorize_notif("SkyhookDeployed"), NotificationCategory::Structure);
+    }
+
+    #[test]
+    fn it_returns_structure_for_sov_prefix() {
+      assert_eq!(
+        categorize_notif("SovCommandNodeEventStarted"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_sovereignty_prefix() {
+      assert_eq!(
+        categorize_notif("SovereigntyIHubBillLate"),
+        NotificationCategory::Structure
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_station_prefix() {
+      assert_eq!(
+        categorize_notif("StationAggressionMsg"),
+        NotificationCategory::Structure
+      );
     }
 
     #[test]
@@ -427,8 +798,51 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_corp_for_corp_prefix() {
-      assert_eq!(categorize_notif("CorpAppNewMsg"), NotificationCategory::Corp);
+    fn it_returns_structure_for_tower_prefix() {
+      assert_eq!(categorize_notif("TowerAlertMsg"), NotificationCategory::Structure);
+    }
+
+    #[test]
+    fn it_returns_system_for_container_password_msg() {
+      assert_eq!(categorize_notif("ContainerPasswordMsg"), NotificationCategory::System);
+    }
+
+    #[test]
+    fn it_returns_system_for_freelance_project_prefix() {
+      assert_eq!(categorize_notif("FreelanceProjectMsg"), NotificationCategory::System);
+    }
+
+    #[test]
+    fn it_returns_system_for_old_lsc_messages() {
+      assert_eq!(categorize_notif("OldLscMessages"), NotificationCategory::System);
+    }
+
+    #[test]
+    fn it_returns_system_for_tutorial_msg() {
+      assert_eq!(categorize_notif("TutorialMsg"), NotificationCategory::System);
+    }
+
+    #[test]
+    fn it_returns_system_for_unknown_future_type() {
+      assert_eq!(categorize_notif("UnknownFutureType"), NotificationCategory::System);
+    }
+
+    #[test]
+    fn it_returns_war_for_all_war_corp_joined_alliance_msg() {
+      assert_eq!(
+        categorize_notif("AllWarCorpJoinedAllianceMsg"),
+        NotificationCategory::War
+      );
+    }
+
+    #[test]
+    fn it_returns_war_for_ally_prefix() {
+      assert_eq!(categorize_notif("AllyJoinedWarDefMsg"), NotificationCategory::War);
+    }
+
+    #[test]
+    fn it_returns_war_for_merc_offer_prefix() {
+      assert_eq!(categorize_notif("MercOfferMsg"), NotificationCategory::War);
     }
 
     #[test]
@@ -437,11 +851,8 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_structure_for_contract_on_structure_courier_prefix() {
-      assert_eq!(
-        categorize_notif("StructureCourierContractFailed"),
-        NotificationCategory::Contract
-      );
+    fn it_returns_war_for_war_declared() {
+      assert_eq!(categorize_notif("WarDeclared"), NotificationCategory::War);
     }
   }
 }

@@ -76,6 +76,44 @@ pub use wallet_journal_entry::Model as WalletJournalEntry;
 pub use wallet_transaction::Model as WalletTransaction;
 
 /// Returns the subset of `required` scopes that are absent from `granted`.
-pub fn missing_scopes<'a>(granted: &[&str], required: &[&'static str]) -> Vec<&'static str> {
+pub fn missing_scopes(granted: &[&str], required: &[&'static str]) -> Vec<&'static str> {
   required.iter().copied().filter(|s| !granted.contains(s)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod missing_scopes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_all_required_when_granted_is_empty() {
+      let granted: &[&str] = &[];
+      let required: &[&'static str] = &["esi-mail.read", "esi-skills.read"];
+
+      assert_eq!(
+        missing_scopes(granted, required),
+        vec!["esi-mail.read", "esi-skills.read"]
+      );
+    }
+
+    #[test]
+    fn it_returns_empty_when_all_granted() {
+      let granted = &["esi-mail.read", "esi-skills.read"];
+      let required: &[&'static str] = &["esi-mail.read", "esi-skills.read"];
+
+      assert_eq!(missing_scopes(granted, required), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn it_returns_only_missing_scopes() {
+      let granted = &["esi-mail.read"];
+      let required: &[&'static str] = &["esi-mail.read", "esi-skills.read"];
+
+      assert_eq!(missing_scopes(granted, required), vec!["esi-skills.read"]);
+    }
+  }
 }

@@ -136,3 +136,46 @@ impl KillEntry {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn make_kill() -> KillEntry {
+    KillEntry::new(
+      123_456_789,
+      true,
+      "Rifter",
+      "Victim McVictimface",
+      "Test Corp",
+      "Jita",
+      0.9,
+      150_000_000.0,
+      3,
+      true,
+      "2024-01-15T12:30:00Z",
+    )
+  }
+
+  mod set_is_kill {
+    use super::*;
+
+    #[test]
+    fn it_sets_kill_flag_to_false_for_loss() {
+      let mut k = make_kill();
+      k.set_is_kill(false);
+      assert!(!k.is_kill());
+    }
+  }
+
+  mod set_value_isk {
+    use super::*;
+
+    #[test]
+    fn it_sets_the_isk_value() {
+      let mut k = make_kill();
+      k.set_value_isk(200_000_000.0);
+      assert_eq!(*k.value_isk(), 200_000_000.0_f64);
+    }
+  }
+}

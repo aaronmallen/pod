@@ -75,3 +75,34 @@ impl Standing {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod standing {
+    use super::*;
+
+    mod set_effective {
+      use super::*;
+
+      #[test]
+      fn it_sets_the_effective_standing() {
+        let mut s = Standing::new(3_008_413, FromType::Agent, "Yumi Kikuko", 0.5, 0.75);
+        s.set_effective(1.0);
+        assert_eq!(*s.effective(), 1.0_f32);
+      }
+    }
+
+    mod set_from_type {
+      use super::*;
+
+      #[test]
+      fn it_sets_the_from_type() {
+        let mut s = Standing::new(3_008_413, FromType::Agent, "Yumi Kikuko", 0.5, 0.75);
+        s.set_from_type(FromType::Corp);
+        assert_eq!(*s.from_type(), FromType::Corp);
+      }
+    }
+  }
+}

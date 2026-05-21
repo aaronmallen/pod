@@ -261,3 +261,179 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn make_item_type() -> Model {
+    let mut m = Model::new(587, "Rifter");
+    m.set_item_group_id(25)
+      .set_description("A fast frigate hull.")
+      .set_published(true);
+    m
+  }
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut m = make_item_type();
+      m.set_description("Updated.");
+      assert!(!m.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_description("Updated.");
+      assert!(m.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      assert!(m.is_persisted());
+      assert!(!m.has_changes());
+    }
+  }
+
+  mod set_mass {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_mass(Some(1_500_000.0));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_capacity {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_capacity(Some(100.0));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_graphic_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_graphic_id(Some(1234));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_icon_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_icon_id(Some(5678));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_item_group_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_item_group_id(26);
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_market_group_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_market_group_id(Some(4));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_packaged_volume {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_packaged_volume(Some(2500.0));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_portion_size {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_portion_size(Some(1));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_published {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_published(false);
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_radius {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_radius(Some(50.0));
+      assert!(m.has_changes());
+    }
+  }
+
+  mod set_volume {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut m = make_item_type();
+      m.mark_persisted();
+      m.set_volume(Some(2500.0));
+      assert!(m.has_changes());
+    }
+  }
+}

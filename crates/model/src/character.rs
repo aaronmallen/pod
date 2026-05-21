@@ -336,20 +336,85 @@ mod tests {
     c
   }
 
+  fn make_active_skill(start_time: i64, end_time: i64) -> CharacterSkill {
+    CharacterSkill {
+      active_level: 4,
+      character_id: 1,
+      is_active_training: true,
+      skill_id: 3300,
+      skill_name: Some("Caldari Frigate".into()),
+      skillpoints: 135_765,
+      trained_level: 4,
+      training_end_time: Some(end_time),
+      training_level_end_sp: None,
+      training_level_start_sp: None,
+      training_start_sp: None,
+      training_start_time: Some(start_time),
+    }
+  }
+
   mod access_token_expired {
     use super::*;
-
-    #[test]
-    fn it_returns_true_for_epoch_zero() {
-      let c = make_character(None);
-      assert!(c.access_token_expired());
-    }
 
     #[test]
     fn it_returns_false_for_far_future() {
       let mut c = make_character(None);
       c.set_token_expires_at((SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600) as i64);
       assert!(!c.access_token_expired());
+    }
+
+    #[test]
+    fn it_returns_true_for_epoch_zero() {
+      let c = make_character(None);
+      assert!(c.access_token_expired());
+    }
+  }
+
+  mod granted_scopes_list {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_for_none() {
+      let c = make_character(None);
+
+      assert_eq!(c.granted_scopes_list(), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn it_returns_empty_for_empty_string() {
+      let mut c = make_character(None);
+      c.set_granted_scopes(Some(String::new()));
+
+      assert_eq!(c.granted_scopes_list(), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn it_splits_space_separated_scopes() {
+      let mut c = make_character(None);
+      c.set_granted_scopes(Some("esi-mail.read esi-skills.read".into()));
+
+      assert_eq!(c.granted_scopes_list(), vec!["esi-mail.read", "esi-skills.read"]);
+    }
+  }
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut c = make_character(None);
+      c.set_name("New Name");
+      assert!(!c.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_name("New Name");
+      assert!(c.has_changes());
     }
   }
 
@@ -371,6 +436,18 @@ mod tests {
     }
 
     #[test]
+    fn it_formats_negative() {
+      let c = make_character(Some(-500_000.0));
+      assert_eq!(c.isk_formatted(), "-500.0K");
+    }
+
+    #[test]
+    fn it_formats_small_amount() {
+      let c = make_character(Some(42.0));
+      assert_eq!(c.isk_formatted(), "42");
+    }
+
+    #[test]
     fn it_formats_thousands() {
       let c = make_character(Some(78_400.0));
       assert_eq!(c.isk_formatted(), "78.4K");
@@ -380,6 +457,195 @@ mod tests {
     fn it_returns_dash_when_no_balance() {
       let c = make_character(None);
       assert_eq!(c.isk_formatted(), "\u{2014}");
+    }
+  }
+
+  mod set_corp_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_corp_id(1_000_002);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_corp_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_corp_name("New Corp");
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_granted_scopes {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_granted_scopes(Some("esi-mail.read".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_isk_balance {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_isk_balance(Some(1_000_000.0));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_location_docked {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_location_docked(Some(true));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_location_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_location_name(Some("Jita IV - Moon 4".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_portrait_tone {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_portrait_tone(200);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_sort_order {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_character(None);
+      c.mark_persisted();
+      c.set_sort_order(5);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod training_percent {
+    use super::*;
+
+    #[test]
+    fn it_returns_none_when_no_active_training() {
+      let c = make_character(None);
+      assert!(c.training_percent().is_none());
+    }
+
+    #[test]
+    fn it_returns_none_when_skill_has_no_times() {
+      let mut c = make_character(None);
+      let skill = CharacterSkill {
+        active_level: 4,
+        character_id: 1,
+        is_active_training: true,
+        skill_id: 3300,
+        skill_name: None,
+        skillpoints: 0,
+        trained_level: 4,
+        training_end_time: None,
+        training_level_end_sp: None,
+        training_level_start_sp: None,
+        training_start_sp: None,
+        training_start_time: None,
+      };
+      *c.skills_mut() = vec![skill];
+
+      assert!(c.training_percent().is_none());
+    }
+
+    #[test]
+    fn it_returns_one_when_zero_duration() {
+      let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+      let mut c = make_character(None);
+      let mut skill = make_active_skill(now, now);
+      skill.training_level_start_sp = Some(0);
+      skill.training_level_end_sp = Some(0);
+      skill.training_start_sp = Some(0);
+      *c.skills_mut() = vec![skill];
+
+      assert_eq!(c.training_percent(), Some(1.0));
+    }
+
+    #[test]
+    fn it_clamps_to_one_when_past_end() {
+      let past = 1_000_000_i64;
+      let mut c = make_character(None);
+      let skill = make_active_skill(past, past + 10);
+      *c.skills_mut() = vec![skill];
+
+      let pct = c.training_percent().unwrap();
+      assert_eq!(pct, 1.0);
+    }
+
+    #[test]
+    fn it_returns_zero_when_not_yet_started() {
+      let future = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64 + 10_000;
+      let mut c = make_character(None);
+      let skill = make_active_skill(future, future + 10_000);
+      *c.skills_mut() = vec![skill];
+
+      let pct = c.training_percent().unwrap();
+      assert_eq!(pct, 0.0);
+    }
+
+    #[test]
+    fn it_returns_one_for_sp_path_with_zero_level_range() {
+      let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+      let mut c = make_character(None);
+      let mut skill = make_active_skill(now - 100, now + 100);
+      skill.training_level_start_sp = Some(1000);
+      skill.training_level_end_sp = Some(1000);
+      skill.training_start_sp = Some(1000);
+      *c.skills_mut() = vec![skill];
+
+      assert_eq!(c.training_percent(), Some(1.0));
+    }
+
+    #[test]
+    fn it_returns_one_for_sp_path_with_zero_run_duration() {
+      let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+      let mut c = make_character(None);
+      let mut skill = make_active_skill(now, now);
+      skill.training_level_start_sp = Some(0);
+      skill.training_level_end_sp = Some(1000);
+      skill.training_start_sp = Some(0);
+      *c.skills_mut() = vec![skill];
+
+      assert_eq!(c.training_percent(), Some(1.0));
     }
   }
 }

@@ -142,3 +142,35 @@ impl Clone {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod clone {
+    use super::*;
+
+    mod set_implants {
+      use super::*;
+
+      #[test]
+      fn it_sets_the_implant_list() {
+        let mut c = Clone::new("Alpha", "Jita IV", 30_000_142, "The Forge");
+        let implant = CloneImplant::new(1, 9942, "Memory Augmentation - Basic", "+3 Memory");
+        c.set_implants(vec![implant]);
+        assert_eq!(c.implants().len(), 1);
+      }
+    }
+
+    mod set_is_active {
+      use super::*;
+
+      #[test]
+      fn it_sets_active_flag() {
+        let mut c = Clone::new("Alpha", "Jita IV", 30_000_142, "The Forge");
+        c.set_is_active(true);
+        assert!(*c.is_active());
+      }
+    }
+  }
+}

@@ -355,4 +355,184 @@ mod tests {
       assert!(c.has_changes());
     }
   }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      assert!(c.is_persisted());
+      assert!(!c.has_changes());
+    }
+  }
+
+  mod set_alliance_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_alliance_id(Some(99_000_001));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_member_count {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_member_count(500);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_alliance_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_alliance_name(Some("Test Alliance".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_auth_character_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_auth_character_id(90_000_002);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_ceo_character_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_ceo_character_id(90_000_002);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_date_founded {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_date_founded(Some("2003-05-06".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_description {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_description(Some("A test corporation.".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_faction_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_faction_id(Some(500_001));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_home_station_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_home_station_id(Some(60_003_760));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_shares {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_shares(Some(1_000_000));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_tax_rate {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_tax_rate(0.1);
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_ticker {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_ticker("TST2");
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_url {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_url(Some("https://example.com".into()));
+      assert!(c.has_changes());
+    }
+  }
+
+  mod set_war_eligible {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut c = make_corp();
+      c.mark_persisted();
+      c.set_war_eligible(Some(true));
+      assert!(c.has_changes());
+    }
+  }
 }

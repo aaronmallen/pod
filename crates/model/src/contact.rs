@@ -120,3 +120,34 @@ impl Contact {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod contact {
+    use super::*;
+
+    mod set_is_watchlist {
+      use super::*;
+
+      #[test]
+      fn it_sets_the_watchlist_flag() {
+        let mut c = Contact::new(90_000_001, "Test Pilot", ContactType::Character, 5.0);
+        c.set_is_watchlist(true);
+        assert!(*c.is_watchlist());
+      }
+    }
+
+    mod set_standing {
+      use super::*;
+
+      #[test]
+      fn it_sets_the_standing() {
+        let mut c = Contact::new(90_000_001, "Test Pilot", ContactType::Character, 5.0);
+        c.set_standing(-5.0);
+        assert_eq!(*c.standing(), -5.0_f32);
+      }
+    }
+  }
+}

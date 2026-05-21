@@ -128,3 +128,87 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.set_solar_system_id(30_000_142);
+      assert!(!g.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      g.set_solar_system_id(30_000_142);
+      assert!(g.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      assert!(g.is_persisted());
+      assert!(!g.has_changes());
+    }
+  }
+
+  mod set_destination {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      g.set_destination(50_001_248, 30_000_144);
+      assert!(g.has_changes());
+    }
+  }
+
+  mod set_item_type_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      g.set_item_type_id(16);
+      assert!(g.has_changes());
+    }
+  }
+
+  mod set_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      g.set_name("Stargate (Jita)");
+      assert!(g.has_changes());
+    }
+  }
+
+  mod set_position {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut g = Model::new(50_001_247, "Stargate (Perimeter)");
+      g.mark_persisted();
+      g.set_position(1.0, 2.0, 3.0);
+      assert!(g.has_changes());
+    }
+  }
+}

@@ -30,3 +30,50 @@ impl Model {
     self.is_active_training
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod is_training {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_when_active() {
+      let skill = Model {
+        active_level: 4,
+        character_id: 1,
+        is_active_training: true,
+        skill_id: 3300,
+        skill_name: None,
+        skillpoints: 0,
+        trained_level: 4,
+        training_end_time: None,
+        training_level_end_sp: None,
+        training_level_start_sp: None,
+        training_start_sp: None,
+        training_start_time: None,
+      };
+      assert!(skill.is_training());
+    }
+
+    #[test]
+    fn it_returns_false_when_not_active() {
+      let skill = Model {
+        active_level: 5,
+        character_id: 1,
+        is_active_training: false,
+        skill_id: 3300,
+        skill_name: None,
+        skillpoints: 135_765,
+        trained_level: 5,
+        training_end_time: None,
+        training_level_end_sp: None,
+        training_level_start_sp: None,
+        training_start_sp: None,
+        training_start_time: None,
+      };
+      assert!(!skill.is_training());
+    }
+  }
+}

@@ -188,3 +188,123 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.set_solar_system_id(30_000_142);
+      assert!(!s.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_solar_system_id(30_000_142);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      assert!(s.is_persisted());
+      assert!(!s.has_changes());
+    }
+  }
+
+  mod set_item_type_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_item_type_id(1529);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_max_dockable_ship_volume {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_max_dockable_ship_volume(50_000_000.0);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_office_rental_cost {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_office_rental_cost(100_000.0);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_owner_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_owner_id(Some(1_000_035));
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_position {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_position(1.0, 2.0, 3.0);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_reprocessing_efficiency {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_reprocessing_efficiency(0.5);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_reprocessing_stations_take {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_reprocessing_stations_take(0.025);
+      assert!(s.has_changes());
+    }
+  }
+}

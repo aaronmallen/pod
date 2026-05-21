@@ -95,3 +95,63 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut g = Model::new(25, 6, "Frigates");
+      g.set_name("Updated Frigates");
+      assert!(!g.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut g = Model::new(25, 6, "Frigates");
+      g.mark_persisted();
+      g.set_name("Updated Frigates");
+      assert!(g.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut g = Model::new(25, 6, "Frigates");
+      g.mark_persisted();
+      assert!(g.is_persisted());
+      assert!(!g.has_changes());
+    }
+  }
+
+  mod publish_and_unpublish {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_unpublished_after_persist() {
+      let mut g = Model::new(25, 6, "Frigates");
+      g.mark_persisted();
+      g.unpublish();
+      assert!(!g.is_published());
+      assert!(g.has_changes());
+    }
+
+    #[test]
+    fn it_marks_dirty_when_published_after_persist() {
+      let mut g = Model::new(25, 6, "Frigates");
+      g.mark_persisted();
+      g.unpublish();
+      let _ = g.has_changes();
+      g.mark_persisted();
+      g.publish();
+      assert!(g.is_published());
+    }
+  }
+}

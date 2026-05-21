@@ -148,3 +148,111 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut s = Model::new(40_009_082, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.set_age(4_600_000_000);
+      assert!(!s.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut s = Model::new(40_009_082, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      s.mark_persisted();
+      s.set_age(4_600_000_000);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      assert!(s.is_persisted());
+      assert!(!s.has_changes());
+    }
+  }
+
+  mod set_item_type_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_item_type_id(3800);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_luminosity {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_luminosity(1.0);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_radius {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_radius(695_700_000);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_solar_system_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_solar_system_id(30_000_142);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_spectral_class {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_spectral_class("G2V");
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_temperature {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(40_009_082, "Sol");
+      s.mark_persisted();
+      s.set_temperature(5_778);
+      assert!(s.has_changes());
+    }
+  }
+}

@@ -74,3 +74,39 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut r = Model::new(10_000_002, "The Forge");
+      r.set_description(Some("A region of New Eden.".into()));
+      assert!(!r.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut r = Model::new(10_000_002, "The Forge");
+      r.mark_persisted();
+      r.set_description(Some("A region of New Eden.".into()));
+      assert!(r.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut r = Model::new(10_000_002, "The Forge");
+      r.mark_persisted();
+      assert!(r.is_persisted());
+      assert!(!r.has_changes());
+    }
+  }
+}

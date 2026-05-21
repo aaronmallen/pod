@@ -147,3 +147,87 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.set_security_status(0.9459);
+      assert!(!s.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      s.set_security_status(0.9459);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      assert!(s.is_persisted());
+      assert!(!s.has_changes());
+    }
+  }
+
+  mod set_constellation_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      s.set_constellation_id(20_000_020);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_position {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      s.set_position(1.0, 2.0, 3.0);
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_security_class {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      s.set_security_class(Some("A".into()));
+      assert!(s.has_changes());
+    }
+  }
+
+  mod set_star_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut s = Model::new(30_000_142, "Jita");
+      s.mark_persisted();
+      s.set_star_id(Some(40_009_080));
+      assert!(s.has_changes());
+    }
+  }
+}

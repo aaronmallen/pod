@@ -106,3 +106,87 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.set_size_factor(0.5);
+      assert!(!f.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      f.set_size_factor(0.5);
+      assert!(f.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      assert!(f.is_persisted());
+      assert!(!f.has_changes());
+    }
+  }
+
+  mod set_description {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      f.set_description("A corporate state.");
+      assert!(f.has_changes());
+    }
+  }
+
+  mod set_is_unique {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      f.set_is_unique(true);
+      assert!(f.has_changes());
+    }
+  }
+
+  mod set_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      f.set_name("Updated Name");
+      assert!(f.has_changes());
+    }
+  }
+
+  mod set_solar_system_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut f = Model::new(500_001, "Caldari State");
+      f.mark_persisted();
+      f.set_solar_system_id(Some(30_000_142));
+      assert!(f.has_changes());
+    }
+  }
+}

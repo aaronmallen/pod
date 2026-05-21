@@ -174,3 +174,161 @@ impl Model {
     self
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn make_bloodline() -> Model {
+    let mut b = Model::new(1, "Achura");
+    b.set_race_id(1)
+      .set_corporation_id(1000033)
+      .set_ship_item_type_id(601)
+      .set_description("Achura bloodline description")
+      .set_charisma(6)
+      .set_intelligence(10)
+      .set_memory(9)
+      .set_perception(9)
+      .set_will_power(8);
+    b
+  }
+
+  mod has_changes {
+    use super::*;
+
+    #[test]
+    fn it_returns_false_before_persist() {
+      let mut b = make_bloodline();
+      b.set_charisma(7);
+      assert!(!b.has_changes());
+    }
+
+    #[test]
+    fn it_returns_true_after_persist_and_mutation() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_charisma(7);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod mark_persisted {
+    use super::*;
+
+    #[test]
+    fn it_marks_model_as_persisted_without_dirtying() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      assert!(b.is_persisted());
+      assert!(!b.has_changes());
+    }
+  }
+
+  mod set_corporation_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_corporation_id(1_000_001);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_description {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_description("Updated description.");
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_intelligence {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_intelligence(11);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_memory {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_memory(10);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_name {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_name("New Name");
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_perception {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_perception(10);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_race_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_race_id(2);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_ship_item_type_id {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_ship_item_type_id(602);
+      assert!(b.has_changes());
+    }
+  }
+
+  mod set_will_power {
+    use super::*;
+
+    #[test]
+    fn it_marks_dirty_when_persisted() {
+      let mut b = make_bloodline();
+      b.mark_persisted();
+      b.set_will_power(9);
+      assert!(b.has_changes());
+    }
+  }
+}

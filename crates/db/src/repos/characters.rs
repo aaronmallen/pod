@@ -833,6 +833,42 @@ mod tests {
       let result = repo.find(1001).await.unwrap().unwrap();
       assert_eq!(result.corp_name(), "New Corp");
     }
+
+    #[tokio::test]
+    async fn second_upsert_for_same_character_id_yields_one_row_with_updated_token() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut first = pod_model::Character::new(1001, "Test Pilot");
+      first
+        .set_access_token("token-v1")
+        .set_refresh_token("refresh-v1")
+        .set_granted_scopes(Some("esi-skills.read_skills.v1".to_string()))
+        .set_corp_id(98000000)
+        .set_corp_name("Test Corp".to_string());
+      repo.upsert(&first).await.unwrap();
+
+      let mut second = pod_model::Character::new(1001, "Test Pilot");
+      second
+        .set_access_token("token-v2")
+        .set_refresh_token("refresh-v2")
+        .set_granted_scopes(Some(
+          "esi-skills.read_skills.v1 esi-wallet.read_character_wallet.v1".to_string(),
+        ))
+        .set_corp_id(98000000)
+        .set_corp_name("Test Corp".to_string());
+      repo.upsert(&second).await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(all.len(), 1);
+      let found = repo.find(1001).await.unwrap().unwrap();
+      assert_eq!(found.access_token(), "token-v2");
+      assert_eq!(found.refresh_token(), "refresh-v2");
+      assert_eq!(
+        found.granted_scopes().as_deref(),
+        Some("esi-skills.read_skills.v1 esi-wallet.read_character_wallet.v1")
+      );
+    }
   }
 
   mod all {

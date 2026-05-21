@@ -1081,15 +1081,20 @@ fn update_character_card(state: &mut State, msg: characters_tab::Message, servic
       iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
     }
     characters_tab::Message::CharacterAdded(character) => {
-      if state.all_characters.iter().any(|c| c.id() == character.id()) {
-        state.add_status = None;
-        return iced::Task::none();
-      }
       if let Some(bytes) = character.portrait_data() {
         state
           .character_pane
           .portrait_handles
           .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      }
+      if let Some(existing) = state.all_characters.iter_mut().find(|c| c.id() == character.id()) {
+        existing.set_access_token(character.access_token().clone());
+        existing.set_refresh_token(character.refresh_token().clone());
+        existing.set_token_expires_at(*character.token_expires_at());
+        existing.set_granted_scopes(character.granted_scopes().clone());
+        state.add_status = None;
+        refilter(state);
+        return iced::Task::none();
       }
       state.all_characters.push(character);
       state.add_status = None;
@@ -1777,7 +1782,7 @@ mod tests {
       }
 
       #[test]
-      fn it_is_no_op_when_character_already_exists() {
+      fn it_does_not_add_a_duplicate_when_character_already_exists() {
         let mut state = make_state(vec![make_character(1, "Alpha")]);
         let services = make_services();
 
@@ -1791,7 +1796,34 @@ mod tests {
       }
 
       #[test]
-      fn it_clears_add_status_on_duplicate() {
+      fn it_updates_token_on_reauth_for_existing_character() {
+        let mut existing = make_character(1, "Alpha");
+        existing.set_access_token("old-token");
+        let mut state = make_state(vec![existing]);
+        let services = make_services();
+
+        let mut reauthed = make_character(1, "Alpha");
+        reauthed.set_access_token("new-token");
+        reauthed.set_refresh_token("new-refresh");
+        reauthed.set_granted_scopes(Some("esi-skills.read_skills.v1".to_string()));
+
+        let _ = update_character_card(
+          &mut state,
+          characters_tab::Message::CharacterAdded(reauthed),
+          &services,
+        );
+
+        assert_eq!(state.all_characters.len(), 1);
+        assert_eq!(state.all_characters[0].access_token(), "new-token");
+        assert_eq!(state.all_characters[0].refresh_token(), "new-refresh");
+        assert_eq!(
+          state.all_characters[0].granted_scopes().as_deref(),
+          Some("esi-skills.read_skills.v1")
+        );
+      }
+
+      #[test]
+      fn it_clears_add_status_on_reauth() {
         let mut state = make_state(vec![make_character(1, "Alpha")]);
         state.add_status = Some("Waiting for browser login\u{2026}".to_string());
         let services = make_services();

@@ -31,8 +31,6 @@ pub struct Model {
   pub location_name: Option<String>,
   /// ESI effective memory (base + current implants), if synced.
   pub memory: Option<i32>,
-  /// Space-separated ESI scopes granted to this character's token, if known.
-  pub granted_scopes: Option<String>,
   /// EVE character name.
   pub name: String,
   /// ESI effective perception (base + current implants), if synced.

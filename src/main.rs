@@ -480,7 +480,7 @@ fn update_updater(app: &mut App, msg: UpdaterMessage) -> Task<Message> {
           app.update_state = services::updater::UpdateState::UpdateAvailable(version);
           Task::none()
         }
-        UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed(_) => Task::none(),
+        UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed => Task::none(),
         UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
         UpdMsg::RestartRequested => {
           services::updater::restart();

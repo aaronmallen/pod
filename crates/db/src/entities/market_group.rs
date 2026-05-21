@@ -5,6 +5,7 @@ use sea_orm::{Set, prelude::*};
 
 /// Link definition that traverses the parent–child relationship in reverse,
 /// yielding child market groups from a given parent.
+#[allow(dead_code)]
 pub struct ChildrenLink;
 
 impl Linked for ChildrenLink {

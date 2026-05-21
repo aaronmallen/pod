@@ -27,7 +27,9 @@ pub fn skills_for_mastery(
       };
       for &(type_id, levels) in &cert.skills {
         let level = levels[prof_idx];
-        let Some(name) = lookup(type_id) else { continue };
+        let Some(name) = lookup(type_id) else {
+          continue;
+        };
         let entry = by_name.entry(name).or_insert(0);
         if level > *entry {
           *entry = level;

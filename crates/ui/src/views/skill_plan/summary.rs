@@ -336,7 +336,7 @@ fn attr_optimization_section<'a>(
   show_remap: bool,
   remap_cooldown_days: i32,
   remap_available: bool,
-  bonus_remaps: u32,
+  _bonus_remaps: u32,
   clone_data_missing: bool,
 ) -> Element<'a, Message> {
   let mut items: Vec<Element<'_, Message>> = Vec::new();

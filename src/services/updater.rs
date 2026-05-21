@@ -36,7 +36,7 @@ pub enum Message {
   /// Update check completed; `Some(version)` if a newer version is available.
   CheckComplete(Option<String>),
   /// Update check encountered a network or parse error.
-  CheckFailed(String),
+  CheckFailed,
   /// A periodic or startup check has been triggered.
   CheckRequested,
   /// User requested the app to restart into the newly installed version.
@@ -73,7 +73,7 @@ pub fn check() -> Task<Message> {
       }
       Err(e) => {
         warn!(error = %e, "update check failed");
-        Message::CheckFailed(e)
+        Message::CheckFailed
       }
     },
   )

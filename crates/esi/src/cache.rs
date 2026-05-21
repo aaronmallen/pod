@@ -110,7 +110,9 @@ impl DiskStore {
       if !meta.is_file() {
         continue;
       }
-      let Ok(modified) = meta.modified() else { continue };
+      let Ok(modified) = meta.modified() else {
+        continue;
+      };
       let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
       if age > MAX_CACHE_AGE {
         std::fs::remove_file(entry.path()).ok();

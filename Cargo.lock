@@ -4853,6 +4853,7 @@ name = "pod"
 version = "0.3.1"
 dependencies = [
  "arboard",
+ "base64",
  "cargo-packager-updater",
  "chrono",
  "dir_spec",

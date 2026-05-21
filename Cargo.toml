@@ -88,6 +88,7 @@ version = "2.0.0-rc"
 
 [dependencies]
 arboard.workspace = true
+base64.workspace = true
 cargo-packager-updater.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true

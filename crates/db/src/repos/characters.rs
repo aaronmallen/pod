@@ -122,6 +122,16 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
+  pub async fn update_granted_scopes(&self, character_id: i64, scopes: &str) -> Result<(), Error> {
+    let active = CharacterActive {
+      id: ActiveValue::Set(character_id),
+      granted_scopes: ActiveValue::Set(Some(scopes.to_string())),
+      ..Default::default()
+    };
+    CharacterEntity::update(active).exec(self.db).await?;
+    Ok(())
+  }
+
   /// Updates only the wallet balance for a character.
   pub async fn update_wallet(&self, character_id: i64, isk_balance: Option<f64>) -> Result<(), Error> {
     let active = CharacterActive {

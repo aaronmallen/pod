@@ -189,6 +189,52 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
   Some(new_grant.access_token().clone())
 }
 
+/// Decodes the payload of an EVE SSO JWT access token and returns the granted
+/// scopes as a space-separated string. Returns `None` if the token cannot be
+/// decoded or contains no scopes.
+///
+/// EVE's `scp` claim is a string when one scope is granted and an array when
+/// multiple scopes are granted.
+fn scopes_from_access_token(token: &str) -> Option<String> {
+  use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+  let payload_b64 = token.split('.').nth(1)?;
+  let bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+  let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+
+  match json.get("scp")? {
+    serde_json::Value::String(s) => Some(s.clone()),
+    serde_json::Value::Array(arr) => {
+      let scopes: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+      if scopes.is_empty() {
+        None
+      } else {
+        Some(scopes.join(" "))
+      }
+    }
+    _ => None,
+  }
+}
+
+/// Backfills `granted_scopes` for a character whose token predates the column.
+/// Decodes the access token JWT locally — no network call required.
+pub async fn backfill_granted_scopes(character: &mut Character, access_token: &str, db: &pod_db::Repo) {
+  if character.granted_scopes().as_deref().is_some_and(|s| !s.is_empty()) {
+    return;
+  }
+  let Some(scopes) = scopes_from_access_token(access_token) else {
+    return;
+  };
+  if db
+    .characters()
+    .update_granted_scopes(*character.id(), &scopes)
+    .await
+    .is_ok()
+  {
+    character.set_granted_scopes(Some(scopes));
+  }
+}
+
 /// Fetches a character portrait from the EVE image server, returning the raw PNG bytes.
 pub async fn fetch_portrait(character_id: i64, esi: &pod_esi::Client) -> Option<Vec<u8>> {
   esi.images().character_portrait(character_id, 256).await.ok()

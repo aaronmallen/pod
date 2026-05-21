@@ -1,68 +1,40 @@
 //! Repository for item type persistence.
 
+use std::collections::HashMap;
+
 use pod_model::{ItemType, ItemTypeSummary};
-use sea_orm::{
-  ColumnTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement,
-  sea_query::OnConflict,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Order, sea_query::OnConflict};
 use validator::Validate;
 
 use crate::{
   Error,
-  entities::item_type::{ActiveModel, Column, Entity},
+  entities::{
+    dogma_attribute,
+    item_group::{Column as GroupColumn, Entity as GroupEntity},
+    item_type::{ActiveModel, Column, Entity},
+    ship_mastery_cert::{Column as MasteryColumn, Entity as MasteryEntity},
+  },
 };
 
-#[derive(Debug, FromQueryResult)]
-struct ShipSummaryRow {
-  id: i32,
-  name: String,
-  group_name: String,
-  dogma_attributes: String,
-  mastery_1: Option<String>,
-  mastery_2: Option<String>,
-  mastery_3: Option<String>,
-  mastery_4: Option<String>,
-  mastery_5: Option<String>,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct ModuleSummaryRow {
-  id: i32,
-  name: String,
-  group_name: String,
-  dogma_attributes: String,
-}
-
-#[derive(serde::Deserialize)]
-struct DogmaAttr {
-  attribute_id: i32,
-  value: f64,
-}
-
-fn parse_skill_requirements(dogma_json: &str) -> Vec<(i32, u8)> {
-  let attrs: Vec<DogmaAttr> = serde_json::from_str(dogma_json).unwrap_or_default();
-
+fn skill_reqs_from_attrs(attrs: &[dogma_attribute::Entry]) -> Vec<(i32, u8)> {
   let skill_attr_pairs = [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)];
   let mut result = Vec::new();
-
   for (type_attr_id, level_attr_id) in skill_attr_pairs {
-    let type_id = attrs
-      .iter()
-      .find(|a| a.attribute_id == type_attr_id)
-      .map(|a| a.value as i32);
-    let level = attrs
-      .iter()
-      .find(|a| a.attribute_id == level_attr_id)
-      .map(|a| a.value as u8);
-
+    let type_id = attrs.iter().find(|a| a.attribute_id == type_attr_id).map(|a| a.value as i32);
+    let level = attrs.iter().find(|a| a.attribute_id == level_attr_id).map(|a| a.value as u8);
     if let (Some(tid), Some(lvl)) = (type_id, level) {
       if tid > 0 && lvl > 0 {
         result.push((tid, lvl));
       }
     }
   }
-
   result
+}
+
+#[cfg(test)]
+fn parse_skill_requirements(dogma_json: &str) -> Vec<(i32, u8)> {
+  let attrs: Vec<dogma_attribute::Entry> = serde_json::from_str(dogma_json).unwrap_or_default();
+  skill_reqs_from_attrs(&attrs)
 }
 
 fn parse_cert_ids(json: Option<&String>) -> Vec<i32> {
@@ -72,23 +44,18 @@ fn parse_cert_ids(json: Option<&String>) -> Vec<i32> {
   }
 }
 
-#[derive(Debug, FromQueryResult)]
-struct SkillNameRow {
-  id: i32,
-  name: String,
-}
-
-async fn resolve_skill_names(db: &DatabaseConnection, type_ids: &[i32]) -> std::collections::HashMap<i32, String> {
+async fn resolve_skill_names(db: &DatabaseConnection, type_ids: &[i32]) -> HashMap<i32, String> {
   if type_ids.is_empty() {
-    return std::collections::HashMap::new();
+    return HashMap::new();
   }
-  let placeholders = type_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
-  let sql = format!("SELECT id, name FROM item_types WHERE id IN ({})", placeholders);
-  let rows = SkillNameRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, sql))
+  Entity::find()
+    .filter(Column::Id.is_in(type_ids.to_vec()))
     .all(db)
     .await
-    .unwrap_or_default();
-  rows.into_iter().map(|r| (r.id, r.name)).collect()
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.id, r.name))
+    .collect()
 }
 
 /// Repository for item type CRUD operations.
@@ -106,70 +73,72 @@ impl<'a> Repo<'a> {
 
   /// Returns published ships whose name matches the given search string (case-insensitive).
   pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
-    let rows = ShipSummaryRow::find_by_statement(Statement::from_sql_and_values(
-      DbBackend::Sqlite,
-      r#"
-        SELECT
-          it.id,
-          it.name,
-          ig.name AS group_name,
-          COALESCE(it.dogma_attributes, '[]') AS dogma_attributes,
-          smc1.cert_ids_json AS mastery_1,
-          smc2.cert_ids_json AS mastery_2,
-          smc3.cert_ids_json AS mastery_3,
-          smc4.cert_ids_json AS mastery_4,
-          smc5.cert_ids_json AS mastery_5
-        FROM item_types it
-        JOIN item_groups ig ON it.item_group_id = ig.id
-        LEFT JOIN ship_mastery_certs smc1 ON smc1.ship_id = it.id AND smc1.mastery_level = 1
-        LEFT JOIN ship_mastery_certs smc2 ON smc2.ship_id = it.id AND smc2.mastery_level = 2
-        LEFT JOIN ship_mastery_certs smc3 ON smc3.ship_id = it.id AND smc3.mastery_level = 3
-        LEFT JOIN ship_mastery_certs smc4 ON smc4.ship_id = it.id AND smc4.mastery_level = 4
-        LEFT JOIN ship_mastery_certs smc5 ON smc5.ship_id = it.id AND smc5.mastery_level = 5
-        WHERE ig.item_category_id = 6
-          AND it.published = 1
-          AND LOWER(it.name) LIKE LOWER('%' || ? || '%')
-        ORDER BY ig.name, it.name
-      "#,
-      [format!("{}", search).into()],
-    ))
-    .all(self.db)
-    .await?;
-
-    let raw: Vec<(ShipSummaryRow, Vec<(i32, u8)>)> = rows
+    let ship_groups: HashMap<i32, String> = GroupEntity::find()
+      .filter(GroupColumn::ItemCategoryId.eq(6))
+      .all(self.db)
+      .await?
       .into_iter()
-      .map(|row| {
-        let reqs = parse_skill_requirements(&row.dogma_attributes);
-        (row, reqs)
+      .map(|g| (g.id, g.name))
+      .collect();
+
+    let group_ids: Vec<i32> = ship_groups.keys().copied().collect();
+    let mut items = Entity::find()
+      .filter(Column::ItemGroupId.is_in(group_ids))
+      .filter(Column::Published.eq(true))
+      .filter(Column::Name.contains(search))
+      .order_by(Column::Name, Order::Asc)
+      .all(self.db)
+      .await?;
+    items.sort_by(|a, b| {
+      let ga = ship_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let gb = ship_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
+    });
+
+    let type_ids: Vec<i32> = items.iter().map(|t| t.id).collect();
+    let mastery_rows = MasteryEntity::find()
+      .filter(MasteryColumn::ShipId.is_in(type_ids))
+      .all(self.db)
+      .await?;
+
+    let mut mastery_map: HashMap<i32, HashMap<i32, String>> = HashMap::new();
+    for row in mastery_rows {
+      mastery_map.entry(row.ship_id).or_default().insert(row.mastery_level, row.cert_ids_json);
+    }
+
+    let raw: Vec<_> = items
+      .iter()
+      .map(|item| {
+        let reqs = skill_reqs_from_attrs(&item.dogma_attributes.0);
+        (item, reqs)
       })
       .collect();
 
-    let all_type_ids: Vec<i32> = raw
+    let all_skill_ids: Vec<i32> = raw
       .iter()
       .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
       .collect::<std::collections::HashSet<_>>()
       .into_iter()
       .collect();
-    let names = resolve_skill_names(self.db, &all_type_ids).await;
+    let names = resolve_skill_names(self.db, &all_skill_ids).await;
 
     Ok(
       raw
         .into_iter()
-        .map(|(row, reqs)| ItemTypeSummary {
-          id: row.id,
-          name: row.name,
-          group_name: row.group_name,
-          skill_requirements: reqs
-            .into_iter()
-            .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
-            .collect(),
-          mastery_cert_ids: vec![
-            parse_cert_ids(row.mastery_1.as_ref()),
-            parse_cert_ids(row.mastery_2.as_ref()),
-            parse_cert_ids(row.mastery_3.as_ref()),
-            parse_cert_ids(row.mastery_4.as_ref()),
-            parse_cert_ids(row.mastery_5.as_ref()),
-          ],
+        .map(|(item, reqs)| {
+          let mastery = mastery_map.get(&item.id);
+          ItemTypeSummary {
+            id: item.id,
+            name: item.name.clone(),
+            group_name: ship_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
+            skill_requirements: reqs
+              .into_iter()
+              .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
+              .collect(),
+            mastery_cert_ids: (1..=5)
+              .map(|lvl| parse_cert_ids(mastery.and_then(|m| m.get(&lvl))))
+              .collect(),
+          }
         })
         .collect(),
     )
@@ -178,45 +147,51 @@ impl<'a> Repo<'a> {
   /// Returns published modules whose name matches the given search string (case-insensitive).
   /// Only modules that have at least one skill requirement are returned.
   pub async fn find_modules(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
-    let rows = ModuleSummaryRow::find_by_statement(Statement::from_sql_and_values(
-      DbBackend::Sqlite,
-      r#"
-        SELECT it.id, it.name, ig.name AS group_name, COALESCE(it.dogma_attributes, '[]') AS dogma_attributes
-        FROM item_types it
-        JOIN item_groups ig ON it.item_group_id = ig.id
-        WHERE ig.item_category_id = 7
-          AND it.published = 1
-          AND LOWER(it.name) LIKE LOWER('%' || ? || '%')
-        ORDER BY ig.name, it.name
-      "#,
-      [format!("{}", search).into()],
-    ))
-    .all(self.db)
-    .await?;
-
-    let raw: Vec<(ModuleSummaryRow, Vec<(i32, u8)>)> = rows
+    let module_groups: HashMap<i32, String> = GroupEntity::find()
+      .filter(GroupColumn::ItemCategoryId.eq(7))
+      .all(self.db)
+      .await?
       .into_iter()
-      .filter_map(|row| {
-        let reqs = parse_skill_requirements(&row.dogma_attributes);
-        if reqs.is_empty() { None } else { Some((row, reqs)) }
+      .map(|g| (g.id, g.name))
+      .collect();
+
+    let group_ids: Vec<i32> = module_groups.keys().copied().collect();
+    let mut items = Entity::find()
+      .filter(Column::ItemGroupId.is_in(group_ids))
+      .filter(Column::Published.eq(true))
+      .filter(Column::Name.contains(search))
+      .order_by(Column::Name, Order::Asc)
+      .all(self.db)
+      .await?;
+    items.sort_by(|a, b| {
+      let ga = module_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let gb = module_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
+    });
+
+    let raw: Vec<_> = items
+      .iter()
+      .filter_map(|item| {
+        let reqs = skill_reqs_from_attrs(&item.dogma_attributes.0);
+        if reqs.is_empty() { None } else { Some((item, reqs)) }
       })
       .collect();
 
-    let all_type_ids: Vec<i32> = raw
+    let all_skill_ids: Vec<i32> = raw
       .iter()
       .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
       .collect::<std::collections::HashSet<_>>()
       .into_iter()
       .collect();
-    let names = resolve_skill_names(self.db, &all_type_ids).await;
+    let names = resolve_skill_names(self.db, &all_skill_ids).await;
 
     Ok(
       raw
         .into_iter()
-        .map(|(row, reqs)| ItemTypeSummary {
-          id: row.id,
-          name: row.name,
-          group_name: row.group_name,
+        .map(|(item, reqs)| ItemTypeSummary {
+          id: item.id,
+          name: item.name.clone(),
+          group_name: module_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
           skill_requirements: reqs
             .into_iter()
             .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
@@ -229,73 +204,49 @@ impl<'a> Repo<'a> {
 
   /// Returns all published skills (EVE category 16) grouped by item group.
   pub async fn find_skill_groups(&self) -> Result<Vec<pod_model::SkillGroupDef>, Error> {
-    #[derive(Debug, FromQueryResult)]
-    struct SkillRow {
-      id: i32,
-      name: String,
-      group_id: i32,
-      group_name: String,
-      dogma_attributes: String,
-    }
-
-    let rows = SkillRow::find_by_statement(Statement::from_string(
-      DbBackend::Sqlite,
-      r#"
-        SELECT it.id, it.name, ig.id AS group_id, ig.name AS group_name,
-          COALESCE(it.dogma_attributes, '[]') AS dogma_attributes
-        FROM item_types it
-        JOIN item_groups ig ON it.item_group_id = ig.id
-        WHERE ig.item_category_id = 16
-          AND it.published = 1
-        ORDER BY ig.name, it.name
-      "#,
-    ))
-    .all(self.db)
-    .await?;
-
-    let raw: Vec<(SkillRow, u8, u8, u8, Vec<(i32, u8)>)> = rows
+    let skill_groups: HashMap<i32, String> = GroupEntity::find()
+      .filter(GroupColumn::ItemCategoryId.eq(16))
+      .all(self.db)
+      .await?
       .into_iter()
-      .map(|row| {
-        let attrs: Vec<DogmaAttr> = serde_json::from_str(&row.dogma_attributes).unwrap_or_default();
-        let rank = attrs
-          .iter()
-          .find(|a| a.attribute_id == 275)
-          .map(|a| a.value as u8)
-          .unwrap_or(1);
-        let primary_id = attrs
-          .iter()
-          .find(|a| a.attribute_id == 180)
-          .map(|a| a.value as u8)
-          .unwrap_or(167);
-        let secondary_id = attrs
-          .iter()
-          .find(|a| a.attribute_id == 181)
-          .map(|a| a.value as u8)
-          .unwrap_or(168);
-        let prereqs = parse_skill_requirements(&row.dogma_attributes);
-        (row, rank, primary_id, secondary_id, prereqs)
-      })
+      .map(|g| (g.id, g.name))
       .collect();
 
-    let all_prereq_ids: Vec<i32> = raw
+    let group_ids: Vec<i32> = skill_groups.keys().copied().collect();
+    let mut items = Entity::find()
+      .filter(Column::ItemGroupId.is_in(group_ids))
+      .filter(Column::Published.eq(true))
+      .order_by(Column::Name, Order::Asc)
+      .all(self.db)
+      .await?;
+    items.sort_by(|a, b| {
+      let ga = skill_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let gb = skill_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
+    });
+
+    let all_prereq_ids: Vec<i32> = items
       .iter()
-      .flat_map(|(_, _, _, _, prereqs)| prereqs.iter().map(|&(tid, _)| tid))
+      .flat_map(|item| skill_reqs_from_attrs(&item.dogma_attributes.0).into_iter().map(|(tid, _)| tid))
       .collect::<std::collections::HashSet<_>>()
       .into_iter()
       .collect();
-
     let prereq_names = resolve_skill_names(self.db, &all_prereq_ids).await;
 
     let mut groups: Vec<pod_model::SkillGroupDef> = Vec::new();
-    for (row, rank, primary_id, secondary_id, prereq_ids) in raw {
-      let prereqs: Vec<(String, u8)> = prereq_ids
+    for item in items {
+      let attrs = &item.dogma_attributes.0;
+      let rank = attrs.iter().find(|a| a.attribute_id == 275).map(|a| a.value as u8).unwrap_or(1);
+      let primary_id = attrs.iter().find(|a| a.attribute_id == 180).map(|a| a.value as u8).unwrap_or(167);
+      let secondary_id = attrs.iter().find(|a| a.attribute_id == 181).map(|a| a.value as u8).unwrap_or(168);
+      let prereqs: Vec<(String, u8)> = skill_reqs_from_attrs(attrs)
         .into_iter()
         .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
         .collect();
 
       let skill = pod_model::SkillDef {
-        type_id: row.id,
-        name: row.name,
+        type_id: item.id,
+        name: item.name,
         rank,
         level: 0,
         sp: 0,
@@ -304,12 +255,13 @@ impl<'a> Repo<'a> {
         prereqs,
       };
 
-      let group_id_str = row.group_id.to_string();
+      let group_id_str = item.item_group_id.to_string();
+      let group_name = skill_groups.get(&item.item_group_id).cloned().unwrap_or_default();
       match groups.iter_mut().find(|g| g.id == group_id_str) {
         Some(group) => group.skills.push(skill),
         None => groups.push(pod_model::SkillGroupDef {
           id: group_id_str,
-          name: row.group_name,
+          name: group_name,
           skills: vec![skill],
         }),
       }

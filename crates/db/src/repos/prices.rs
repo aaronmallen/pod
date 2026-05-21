@@ -1,11 +1,11 @@
 //! Repository for intraday price observations and daily OHLC aggregates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use sea_orm::{
-  ActiveValue, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, Order,
-  QueryFilter, QueryOrder, Statement,
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder,
+  sea_query::OnConflict,
 };
 
 use crate::{
@@ -17,26 +17,6 @@ use crate::{
   },
 };
 
-#[derive(Debug, FromQueryResult)]
-struct TypeIdRow {
-  type_id: i32,
-}
-
-
-#[derive(Debug, FromQueryResult)]
-struct DateRow {
-  date: String,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct PriceSummaryRow {
-  open: f64,
-  high: f64,
-  low: f64,
-  close: f64,
-  avg: f64,
-  sample_count: i32,
-}
 
 /// Repository for type price intraday observations and daily OHLC aggregation.
 pub struct Repo<'a> {
@@ -92,15 +72,21 @@ impl<'a> Repo<'a> {
   /// The set is the UNION of type IDs present in `character_assets` and
   /// `type_price_histories`.
   pub async fn types_to_track(&self) -> Result<Vec<i32>, Error> {
-    let sql = "
-      SELECT type_id FROM character_assets
-      UNION
-      SELECT type_id FROM type_price_histories
-    ";
-    let rows = TypeIdRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, sql))
+    let asset_ids: HashSet<i32> = AssetEntity::find()
       .all(self.db)
-      .await?;
-    Ok(rows.into_iter().map(|r| r.type_id).collect())
+      .await?
+      .into_iter()
+      .map(|a| a.type_id)
+      .collect();
+
+    let history_ids: HashSet<i32> = HistoryEntity::find()
+      .all(self.db)
+      .await?
+      .into_iter()
+      .map(|h| h.type_id)
+      .collect();
+
+    Ok(asset_ids.union(&history_ids).copied().collect())
   }
 
   /// Aggregates all intraday `type_prices` rows for `date` into OHLC history
@@ -109,72 +95,69 @@ impl<'a> Repo<'a> {
   /// For each type that has rows on `date`, computes open (first fetched),
   /// high (max), low (min), close (last fetched), avg (mean), and
   /// sample_count, then upserts into `type_price_histories`. Processed
-  /// intraday rows are deleted after the upsert.
+  /// intraday rows are deleted after all upserts complete.
   pub async fn aggregate_and_prune(&self, date: NaiveDate) -> Result<(), Error> {
     let date_str = date.format("%Y-%m-%d").to_string();
+    let next_str = (date + Duration::days(1)).format("%Y-%m-%d").to_string();
 
-    let type_ids_sql = format!("SELECT DISTINCT type_id FROM type_prices WHERE fetched_at LIKE '{date_str}%'");
-    let type_id_rows = TypeIdRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, type_ids_sql))
+    let rows = PriceEntity::find()
+      .filter(PriceColumn::FetchedAt.gte(&date_str))
+      .filter(PriceColumn::FetchedAt.lt(&next_str))
+      .order_by(PriceColumn::FetchedAt, Order::Asc)
       .all(self.db)
       .await?;
 
-    for row in type_id_rows {
-      let tid = row.type_id;
+    if rows.is_empty() {
+      return Ok(());
+    }
 
-      let summary_sql = format!(
-        "
-        SELECT
-          (SELECT price FROM type_prices WHERE type_id = {tid} AND fetched_at LIKE '{date_str}%' ORDER BY fetched_at ASC LIMIT 1) AS open,
-          MAX(price) AS high,
-          MIN(price) AS low,
-          (SELECT price FROM type_prices WHERE type_id = {tid} AND fetched_at LIKE '{date_str}%' ORDER BY fetched_at DESC LIMIT 1) AS close,
-          AVG(price) AS avg,
-          COUNT(*) AS sample_count
-        FROM type_prices
-        WHERE type_id = {tid} AND fetched_at LIKE '{date_str}%'
-        "
-      );
+    let mut by_type: HashMap<i32, Vec<f64>> = HashMap::new();
+    for row in &rows {
+      by_type.entry(row.type_id).or_default().push(row.price);
+    }
 
-      let summaries = PriceSummaryRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, summary_sql))
-        .all(self.db)
-        .await?;
-
-      let Some(summary) = summaries.into_iter().next() else {
-        continue;
-      };
+    for (tid, samples) in by_type {
+      let open = *samples.first().unwrap_or(&0.0);
+      let close = *samples.last().unwrap_or(&0.0);
+      let high = samples.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+      let low = samples.iter().cloned().fold(f64::INFINITY, f64::min);
+      let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+      let sample_count = samples.len() as i32;
 
       let active = HistoryActive {
         id: ActiveValue::NotSet,
         type_id: ActiveValue::Set(tid),
         date: ActiveValue::Set(date_str.clone()),
-        open: ActiveValue::Set(summary.open),
-        high: ActiveValue::Set(summary.high),
-        low: ActiveValue::Set(summary.low),
-        close: ActiveValue::Set(summary.close),
-        avg: ActiveValue::Set(summary.avg),
-        sample_count: ActiveValue::Set(summary.sample_count),
+        open: ActiveValue::Set(open),
+        high: ActiveValue::Set(high),
+        low: ActiveValue::Set(low),
+        close: ActiveValue::Set(close),
+        avg: ActiveValue::Set(avg),
+        sample_count: ActiveValue::Set(sample_count),
       };
 
-      let upsert_sql = format!(
-        "
-        INSERT INTO type_price_histories (type_id, date, open, high, low, close, avg, sample_count)
-        VALUES ({}, '{}', {}, {}, {}, {}, {}, {})
-        ON CONFLICT (type_id, date) DO UPDATE SET
-          open = excluded.open,
-          high = excluded.high,
-          low = excluded.low,
-          close = excluded.close,
-          avg = excluded.avg,
-          sample_count = excluded.sample_count
-        ",
-        tid, date_str, summary.open, summary.high, summary.low, summary.close, summary.avg, summary.sample_count,
-      );
-      let _ = active;
-      self.db.execute_unprepared(&upsert_sql).await?;
-
-      let delete_sql = format!("DELETE FROM type_prices WHERE type_id = {tid} AND fetched_at LIKE '{date_str}%'");
-      self.db.execute_unprepared(&delete_sql).await?;
+      HistoryEntity::insert(active)
+        .on_conflict(
+          OnConflict::columns([HistoryColumn::TypeId, HistoryColumn::Date])
+            .update_columns([
+              HistoryColumn::Open,
+              HistoryColumn::High,
+              HistoryColumn::Low,
+              HistoryColumn::Close,
+              HistoryColumn::Avg,
+              HistoryColumn::SampleCount,
+            ])
+            .to_owned(),
+        )
+        .exec(self.db)
+        .await?;
     }
+
+    PriceEntity::delete_many()
+      .filter(PriceColumn::FetchedAt.gte(&date_str))
+      .filter(PriceColumn::FetchedAt.lt(&next_str))
+      .exec(self.db)
+      .await?;
 
     Ok(())
   }
@@ -256,19 +239,22 @@ impl<'a> Repo<'a> {
   /// `before_date` (used to discover which dates need EOD aggregation).
   pub async fn dates_needing_aggregation(&self, before_date: NaiveDate) -> Result<Vec<NaiveDate>, Error> {
     let before_str = before_date.format("%Y-%m-%d").to_string();
-    let sql = format!(
-      "SELECT DISTINCT substr(fetched_at, 1, 10) AS date FROM type_prices WHERE substr(fetched_at, 1, 10) < '{before_str}'"
-    );
-    let rows = DateRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, sql))
+
+    let rows = PriceEntity::find()
+      .filter(PriceColumn::FetchedAt.lt(&before_str))
       .all(self.db)
       .await?;
-    let mut dates = Vec::new();
-    for r in rows {
-      if let Ok(d) = NaiveDate::parse_from_str(&r.date, "%Y-%m-%d") {
-        dates.push(d);
+
+    let mut dates: HashSet<NaiveDate> = HashSet::new();
+    for row in rows {
+      if let Some(d) = row.fetched_at.get(..10).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()) {
+        dates.insert(d);
       }
     }
-    Ok(dates)
+
+    let mut sorted: Vec<NaiveDate> = dates.into_iter().collect();
+    sorted.sort();
+    Ok(sorted)
   }
 }
 

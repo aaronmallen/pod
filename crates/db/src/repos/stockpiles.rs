@@ -1,12 +1,14 @@
 //! Repository for stockpile persistence.
 
-use sea_orm::{
-  ActiveValue, ColumnTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement,
-};
+use std::collections::HashMap;
+
+use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::{
   Error,
   entities::{
+    character_asset::{Column as AssetColumn, Entity as AssetEntity},
+    item_type::{Column as TypeColumn, Entity as TypeEntity},
     stockpile::{ActiveModel as StockpileActive, Entity as StockpileEntity},
     stockpile_item::{ActiveModel as ItemActive, Column as ItemColumn, Entity as ItemEntity},
   },
@@ -49,14 +51,6 @@ pub struct StockpileItemStatus {
   pub have_quantity: i64,
   /// Human-readable item name from item_types.
   pub type_name: String,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct FillRow {
-  type_id: i32,
-  target_quantity: i32,
-  have_quantity: i64,
-  type_name: String,
 }
 
 /// Repository for stockpile CRUD operations.
@@ -173,58 +167,45 @@ impl<'a> Repo<'a> {
       return Ok(Vec::new());
     }
 
-    let loc_filter = if pile.location_id.is_some() {
-      " AND ca.location_id = ?"
-    } else {
-      ""
-    };
-    let char_filter = if pile.character_id.is_some() {
-      " AND ca.character_id = ?"
-    } else {
-      ""
-    };
+    let type_ids: Vec<i32> = items.iter().map(|i| i.type_id).collect();
 
-    let sql = format!(
-      r#"
-      SELECT
-        si.type_id,
-        si.target_quantity,
-        COALESCE(SUM(ca.quantity), 0) AS have_quantity,
-        COALESCE(it.name, 'Type ' || CAST(si.type_id AS TEXT)) AS type_name
-      FROM stockpile_items si
-      LEFT JOIN character_assets ca
-        ON ca.type_id = si.type_id{loc_filter}{char_filter}
-      LEFT JOIN item_types it ON it.id = si.type_id
-      WHERE si.stockpile_id = ?
-      GROUP BY si.type_id, si.target_quantity, it.name
-      ORDER BY it.name
-      "#,
-    );
-
-    let mut bind_values: Vec<sea_orm::Value> = Vec::new();
+    let mut asset_query = AssetEntity::find().filter(AssetColumn::TypeId.is_in(type_ids.clone()));
     if let Some(loc) = pile.location_id {
-      bind_values.push(loc.into());
+      asset_query = asset_query.filter(AssetColumn::LocationId.eq(loc));
     }
-    if let Some(char) = pile.character_id {
-      bind_values.push(char.into());
+    if let Some(char_id) = pile.character_id {
+      asset_query = asset_query.filter(AssetColumn::CharacterId.eq(char_id));
     }
-    bind_values.push(pile.id.into());
+    let assets = asset_query.all(self.db).await?;
 
-    let rows = FillRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, bind_values))
+    let mut qty_by_type: HashMap<i32, i64> = HashMap::new();
+    for asset in assets {
+      *qty_by_type.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
+    }
+
+    let type_name_map: HashMap<i32, String> = TypeEntity::find()
+      .filter(TypeColumn::Id.is_in(type_ids))
       .all(self.db)
-      .await?;
+      .await?
+      .into_iter()
+      .map(|t| (t.id, t.name))
+      .collect();
 
-    Ok(
-      rows
-        .into_iter()
-        .map(|r| StockpileItemStatus {
-          type_id: r.type_id,
-          target_quantity: r.target_quantity,
-          have_quantity: r.have_quantity,
-          type_name: r.type_name,
-        })
-        .collect(),
-    )
+    let mut result: Vec<StockpileItemStatus> = items
+      .iter()
+      .map(|item| StockpileItemStatus {
+        type_id: item.type_id,
+        target_quantity: item.target_quantity,
+        have_quantity: *qty_by_type.get(&item.type_id).unwrap_or(&0),
+        type_name: type_name_map
+          .get(&item.type_id)
+          .cloned()
+          .unwrap_or_else(|| format!("Type {}", item.type_id)),
+      })
+      .collect();
+    result.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+
+    Ok(result)
   }
 
   async fn insert_items(&self, stockpile_id: i64, items: &[(i32, i32)]) -> Result<(), Error> {

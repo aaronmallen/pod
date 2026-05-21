@@ -1,26 +1,15 @@
 //! Repository for EVE certificate and ship mastery persistence.
 
 use pod_model::Certificate;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, Value};
+use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Order, sea_query::OnConflict};
 
-use crate::Error;
-
-#[derive(Debug, FromQueryResult)]
-struct CertRow {
-  id: i32,
-  name: String,
-  grade: i32,
-  skills_json: String,
-}
-
-#[derive(serde::Deserialize)]
-struct SkillEntry {
-  type_id: i32,
-  basic: i32,
-  improved: i32,
-  advanced: i32,
-  elite: i32,
-}
+use crate::{
+  Error,
+  entities::{
+    certificate::{ActiveModel as CertActive, Column as CertColumn, Entity as CertEntity},
+    ship_mastery_cert::{ActiveModel as MasteryActive, Column as MasteryColumn, Entity as MasteryEntity},
+  },
+};
 
 pub struct Repo<'a> {
   db: &'a DatabaseConnection,
@@ -34,13 +23,10 @@ impl<'a> Repo<'a> {
   }
 
   pub async fn find_all(&self) -> Result<Vec<Certificate>, Error> {
-    let rows = CertRow::find_by_statement(Statement::from_sql_and_values(
-      DbBackend::Sqlite,
-      "SELECT id, name, grade, skills_json FROM certificates ORDER BY name",
-      [],
-    ))
-    .all(self.db)
-    .await?;
+    let rows = CertEntity::find()
+      .order_by(CertColumn::Name, Order::Asc)
+      .all(self.db)
+      .await?;
     Ok(rows.into_iter().map(cert_from_row).collect())
   }
 
@@ -48,10 +34,8 @@ impl<'a> Repo<'a> {
     if ids.is_empty() {
       return Ok(vec![]);
     }
-    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!("SELECT id, name, grade, skills_json FROM certificates WHERE id IN ({placeholders})");
-    let values: Vec<Value> = ids.iter().map(|&id| id.into()).collect();
-    let rows = CertRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+    let rows = CertEntity::find()
+      .filter(CertColumn::Id.is_in(ids.to_vec()))
       .all(self.db)
       .await?;
     Ok(rows.into_iter().map(cert_from_row).collect())
@@ -63,26 +47,29 @@ impl<'a> Repo<'a> {
         &cert
           .skills
           .iter()
-          .map(|(t, lvls)| serde_json::json!({"type_id": t, "basic": lvls[0], "improved": lvls[1], "advanced": lvls[2], "elite": lvls[3]}))
+          .map(|(t, lvls)| {
+            serde_json::json!({"type_id": t, "basic": lvls[0], "improved": lvls[1], "advanced": lvls[2], "elite": lvls[3]})
+          })
           .collect::<Vec<_>>(),
       )
       .unwrap_or_else(|_| "[]".to_string());
 
-      let desc = cert
-        .description
-        .as_deref()
-        .map(|d| format!("'{}'", d.replace('\'', "''")))
-        .unwrap_or_else(|| "NULL".to_string());
+      let active = CertActive {
+        id: ActiveValue::Set(cert.id),
+        name: ActiveValue::Set(cert.name.clone()),
+        description: ActiveValue::Set(cert.description.clone()),
+        grade: ActiveValue::Set(cert.grade as i32),
+        skills_json: ActiveValue::Set(skills_json),
+      };
 
-      let sql = format!(
-        "INSERT OR REPLACE INTO certificates (id, name, description, grade, skills_json) VALUES ({}, '{}', {}, {}, '{}')",
-        cert.id,
-        cert.name.replace('\'', "''"),
-        desc,
-        cert.grade as i32,
-        skills_json.replace('\'', "''"),
-      );
-      self.db.execute_unprepared(&sql).await?;
+      CertEntity::insert(active)
+        .on_conflict(
+          OnConflict::column(CertColumn::Id)
+            .update_columns([CertColumn::Name, CertColumn::Description, CertColumn::Grade, CertColumn::SkillsJson])
+            .to_owned(),
+        )
+        .exec(self.db)
+        .await?;
     }
     Ok(())
   }
@@ -90,30 +77,46 @@ impl<'a> Repo<'a> {
   pub async fn upsert_ship_masteries(&self, entries: &[(i32, i32, Vec<i32>)]) -> Result<(), Error> {
     for (ship_id, mastery_level, cert_ids) in entries {
       let cert_ids_json = serde_json::to_string(cert_ids).unwrap_or_else(|_| "[]".to_string());
-      let sql = format!(
-        "INSERT OR REPLACE INTO ship_mastery_certs (ship_id, mastery_level, cert_ids_json) VALUES ({ship_id}, {mastery_level}, '{cert_ids_json}')"
-      );
-      self.db.execute_unprepared(&sql).await?;
+
+      let active = MasteryActive {
+        ship_id: ActiveValue::Set(*ship_id),
+        mastery_level: ActiveValue::Set(*mastery_level),
+        cert_ids_json: ActiveValue::Set(cert_ids_json),
+      };
+
+      MasteryEntity::insert(active)
+        .on_conflict(
+          OnConflict::columns([MasteryColumn::ShipId, MasteryColumn::MasteryLevel])
+            .update_column(MasteryColumn::CertIdsJson)
+            .to_owned(),
+        )
+        .exec(self.db)
+        .await?;
     }
     Ok(())
   }
 }
 
-fn cert_from_row(row: CertRow) -> Certificate {
+fn cert_from_row(row: crate::entities::certificate::Model) -> Certificate {
+  #[derive(serde::Deserialize)]
+  struct SkillEntry {
+    type_id: i32,
+    basic: i32,
+    improved: i32,
+    advanced: i32,
+    elite: i32,
+  }
   let skills: Vec<SkillEntry> = serde_json::from_str(&row.skills_json).unwrap_or_default();
   Certificate {
     id: row.id,
     name: row.name,
-    description: None,
+    description: row.description,
     grade: row.grade.max(0) as u8,
     skills: skills
       .into_iter()
       .map(|s| {
         let clamp = |v: i32| v.clamp(0, 5) as u8;
-        (
-          s.type_id,
-          [clamp(s.basic), clamp(s.improved), clamp(s.advanced), clamp(s.elite)],
-        )
+        (s.type_id, [clamp(s.basic), clamp(s.improved), clamp(s.advanced), clamp(s.elite)])
       })
       .collect(),
   }

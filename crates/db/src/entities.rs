@@ -1,6 +1,7 @@
 //! SeaORM entity definitions for all database tables.
 
 pub mod bloodline;
+pub mod certificate;
 pub mod character;
 pub mod character_asset;
 pub mod character_clone;
@@ -27,6 +28,7 @@ pub mod planet;
 pub mod race;
 pub mod region;
 pub mod service;
+pub mod ship_mastery_cert;
 pub mod skill_plan;
 pub mod skill_plan_entry;
 pub mod snoozed_mail;

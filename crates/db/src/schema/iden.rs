@@ -178,6 +178,7 @@ pub enum Characters {
   Charisma,
   CorpId,
   CorpName,
+  GrantedScopes,
   Id,
   Intelligence,
   IskBalance,

@@ -759,6 +759,11 @@ async fn add_character(
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_secs() as i64)
     .unwrap_or(0);
+  let granted_scopes = if grant.scopes().is_empty() {
+    None
+  } else {
+    Some(grant.scopes().join(" "))
+  };
   let portrait_tone = (character_id % 360) as i32;
   let refresh_token = grant.refresh_token().clone();
 
@@ -827,6 +832,7 @@ async fn add_character(
     .set_access_token(access_token)
     .set_corp_id(corp_id)
     .set_corp_name(corp_name)
+    .set_granted_scopes(granted_scopes)
     .set_isk_balance(isk_balance)
     .set_location_docked(location_docked)
     .set_location_name(location_name)

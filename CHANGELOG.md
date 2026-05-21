@@ -7,6 +7,46 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Added
+
+- Ten user-facing feature flags replace the previous prototype
+  set: `clone_monitoring`, `contacts`, `combat_log`,
+  `eve_notifications`, `standings`, `location_tracking`,
+  `skill_monitoring`, `mail`, `wallet`, and `asset_tracking`.
+  All flags default to enabled.
+- ESI OAuth scopes are now split between character and corporation
+  flows. Corp wallet (`contracts`, `orders`, `wallet`) and corp
+  asset scopes are only requested when their corresponding feature
+  flags are enabled, so characters are never prompted for scopes
+  they do not need.
+- `granted_scopes` column on the characters table records which
+  OAuth scopes were actually granted during authentication.
+- On first launch after upgrading, granted scopes are backfilled
+  for existing characters by decoding the current access token
+  JWT locally — no network round-trip or re-authentication
+  required.
+- Nav items (Assets, Skills, Wallet, Mail) and character detail
+  tabs (Clones, Contacts, Kill Log, Notifications, Standings) are
+  hidden when their corresponding feature flag is disabled.
+- When a character's granted scopes do not cover what the active
+  feature set requires, each affected tab shows a scope-gap
+  indicator with a **Re-authorize** button that restarts the OAuth
+  flow for that character requesting the missing scopes.
+- Background ESI fetch tasks and the location-refresh task are
+  suppressed for disabled features, reducing unnecessary API
+  calls.
+
+### Fixed
+
+- Settings changes now take effect immediately without restarting
+  the app. The `ConfigUpdated` message was not propagating to the
+  in-process config, so toggles appeared to save but reverted on
+  next view.
+- Re-authenticating a character now updates the existing row in
+  place instead of inserting a duplicate record.
+
 ## [0.3.1]
 
 ### Fixed
@@ -83,7 +123,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.3.1...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/aaronmallen/pod/compare/0.3.1...0.4.0
 [0.3.1]: https://github.com/aaronmallen/pod/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/aaronmallen/pod/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/aaronmallen/pod/compare/26.5.20...0.2.0

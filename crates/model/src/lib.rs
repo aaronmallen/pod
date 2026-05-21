@@ -74,3 +74,8 @@ pub use stargate::Model as Stargate;
 pub use station::Model as Station;
 pub use wallet_journal_entry::Model as WalletJournalEntry;
 pub use wallet_transaction::Model as WalletTransaction;
+
+/// Returns the subset of `required` scopes that are absent from `granted`.
+pub fn missing_scopes<'a>(granted: &[&str], required: &[&'static str]) -> Vec<&'static str> {
+  required.iter().copied().filter(|s| !granted.contains(s)).collect()
+}

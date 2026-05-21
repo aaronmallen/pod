@@ -11,13 +11,20 @@ use pod_ui::{
 
 use crate::services::{Services, character as character_service};
 
-/// Creates a new character detail state and fires 5 parallel ESI fetch tasks.
+/// Creates a new character detail state and fires ESI fetch tasks for enabled features.
 pub fn new(
   character_id: i64,
   character: Character,
   all_characters: Vec<Character>,
   services: &Services,
 ) -> (State, iced::Task<Message>) {
+  let features = services.config.features();
+  let feat_clone_monitoring = *features.clone_monitoring();
+  let feat_contacts = *features.contacts();
+  let feat_combat_log = *features.combat_log();
+  let feat_eve_notifications = *features.eve_notifications();
+  let feat_standings = *features.standings();
+
   let picker_entries: Vec<CharacterEntry> = all_characters
     .into_iter()
     .map(|c| CharacterEntry {
@@ -34,14 +41,36 @@ pub fn new(
     .show_all(false);
   picker.selected = PickerSelection::Character(character_id);
 
+  let first_enabled_tab = if feat_clone_monitoring {
+    Tab::Clones
+  } else if feat_contacts {
+    Tab::Contacts
+  } else if feat_combat_log {
+    Tab::Killlog
+  } else if feat_eve_notifications {
+    Tab::Notifications
+  } else if feat_standings {
+    Tab::Standings
+  } else {
+    Tab::Clones
+  };
+
   let state = State {
-    active_tab: Tab::default(),
+    active_tab: first_enabled_tab,
     character: character.clone(),
     character_id,
     clones: LoadState::Loading,
     contact_filter: Default::default(),
     contact_labels: Vec::new(),
     contacts: LoadState::Loading,
+    feat_clone_monitoring,
+    feat_contacts,
+    feat_combat_log,
+    feat_eve_notifications,
+    feat_location_tracking: *features.location_tracking(),
+    feat_skill_monitoring: *features.skill_monitoring(),
+    feat_standings,
+    feat_wallet: *features.wallet(),
     filtered_contacts: Vec::new(),
     filtered_killlog: Vec::new(),
     filtered_notifications: Vec::new(),
@@ -57,13 +86,23 @@ pub fn new(
   };
 
   let task = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-    iced::Task::batch([
-      clones_task(character.clone(), esi.clone(), db.clone()),
-      contacts_task(character.clone(), esi.clone(), db.clone()),
-      killlog_task(character.clone(), esi.clone(), db.clone()),
-      notifications_task(character.clone(), esi.clone(), db.clone()),
-      standings_task(character.clone(), esi.clone(), db.clone()),
-    ])
+    let mut tasks = Vec::new();
+    if feat_clone_monitoring {
+      tasks.push(clones_task(character.clone(), esi.clone(), db.clone()));
+    }
+    if feat_contacts {
+      tasks.push(contacts_task(character.clone(), esi.clone(), db.clone()));
+    }
+    if feat_combat_log {
+      tasks.push(killlog_task(character.clone(), esi.clone(), db.clone()));
+    }
+    if feat_eve_notifications {
+      tasks.push(notifications_task(character.clone(), esi.clone(), db.clone()));
+    }
+    if feat_standings {
+      tasks.push(standings_task(character.clone(), esi.clone(), db.clone()));
+    }
+    iced::Task::batch(tasks)
   } else {
     iced::Task::none()
   };
@@ -197,6 +236,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       state.standings = LoadState::Error(e);
       iced::Task::none()
     }
+    Message::ReauthorizeCharacter(_) => iced::Task::none(),
   }
 }
 

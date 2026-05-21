@@ -122,6 +122,16 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
+  pub async fn update_granted_scopes(&self, character_id: i64, scopes: &str) -> Result<(), Error> {
+    let active = CharacterActive {
+      id: ActiveValue::Set(character_id),
+      granted_scopes: ActiveValue::Set(Some(scopes.to_string())),
+      ..Default::default()
+    };
+    CharacterEntity::update(active).exec(self.db).await?;
+    Ok(())
+  }
+
   /// Updates only the wallet balance for a character.
   pub async fn update_wallet(&self, character_id: i64, isk_balance: Option<f64>) -> Result<(), Error> {
     let active = CharacterActive {
@@ -153,6 +163,7 @@ impl<'a> Repo<'a> {
       name: ActiveValue::Set(character.name().clone()),
       corp_id: ActiveValue::Set(*character.corp_id()),
       corp_name: ActiveValue::Set(character.corp_name().clone()),
+      granted_scopes: ActiveValue::Set(character.granted_scopes().clone()),
       portrait_tone: ActiveValue::Set(*character.portrait_tone()),
       access_token: ActiveValue::Set(character.access_token().clone()),
       refresh_token: ActiveValue::Set(character.refresh_token().clone()),
@@ -174,6 +185,7 @@ impl<'a> Repo<'a> {
             CharacterColumn::Name,
             CharacterColumn::CorpId,
             CharacterColumn::CorpName,
+            CharacterColumn::GrantedScopes,
             CharacterColumn::PortraitTone,
             CharacterColumn::AccessToken,
             CharacterColumn::RefreshToken,
@@ -619,6 +631,7 @@ mod tests {
       charisma: Set(None),
       corp_id: Set(0),
       corp_name: Set(String::new()),
+      granted_scopes: Set(None),
       id: Set(id),
       intelligence: Set(None),
       isk_balance: Set(None),
@@ -829,6 +842,42 @@ mod tests {
 
       let result = repo.find(1001).await.unwrap().unwrap();
       assert_eq!(result.corp_name(), "New Corp");
+    }
+
+    #[tokio::test]
+    async fn second_upsert_for_same_character_id_yields_one_row_with_updated_token() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut first = pod_model::Character::new(1001, "Test Pilot");
+      first
+        .set_access_token("token-v1")
+        .set_refresh_token("refresh-v1")
+        .set_granted_scopes(Some("esi-skills.read_skills.v1".to_string()))
+        .set_corp_id(98000000)
+        .set_corp_name("Test Corp".to_string());
+      repo.upsert(&first).await.unwrap();
+
+      let mut second = pod_model::Character::new(1001, "Test Pilot");
+      second
+        .set_access_token("token-v2")
+        .set_refresh_token("refresh-v2")
+        .set_granted_scopes(Some(
+          "esi-skills.read_skills.v1 esi-wallet.read_character_wallet.v1".to_string(),
+        ))
+        .set_corp_id(98000000)
+        .set_corp_name("Test Corp".to_string());
+      repo.upsert(&second).await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(all.len(), 1);
+      let found = repo.find(1001).await.unwrap().unwrap();
+      assert_eq!(found.access_token(), "token-v2");
+      assert_eq!(found.refresh_token(), "refresh-v2");
+      assert_eq!(
+        found.granted_scopes().as_deref(),
+        Some("esi-skills.read_skills.v1 esi-wallet.read_character_wallet.v1")
+      );
     }
   }
 

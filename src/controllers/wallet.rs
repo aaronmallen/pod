@@ -55,6 +55,7 @@ pub fn new(
       liquid: c.isk_balance().unwrap_or(0.0),
       assets: 0.0,
       escrow: 0.0,
+      granted_scopes: c.granted_scopes().clone(),
       portrait_tone: *c.portrait_tone() as u16,
       portrait_handle: c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone())),
     })

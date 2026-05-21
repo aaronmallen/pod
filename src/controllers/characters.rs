@@ -22,17 +22,6 @@ use pod_ui::{
 
 use crate::services::{Services, character as character_service, corporation as corporation_service};
 
-/// Corp-level ESI scopes requested during the Add Corporation OAuth flow.
-const CORP_SCOPES: &[&str] = &[
-  pod_esi::scopes::Scopes::ASSETS_READ_CORPORATION_ASSETS,
-  pod_esi::scopes::Scopes::CONTRACTS_READ_CORPORATION_CONTRACTS,
-  pod_esi::scopes::Scopes::CORPORATIONS_READ_CORPORATION_MEMBERSHIP,
-  pod_esi::scopes::Scopes::CORPORATIONS_TRACK_MEMBERS,
-  pod_esi::scopes::Scopes::INDUSTRY_READ_CORPORATION_JOBS,
-  pod_esi::scopes::Scopes::MARKETS_READ_CORPORATION_ORDERS,
-  pod_esi::scopes::Scopes::WALLET_READ_CORPORATION_WALLETS,
-];
-
 /// Creates a new characters controller state and a startup task that loads tags per character.
 pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Task<Message>) {
   let portrait_handles = characters
@@ -44,6 +33,7 @@ pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Tas
     })
     .collect();
 
+  let features = services.config.features();
   let mut pane_state = characters_tab::State::new();
   pane_state.portrait_handles = portrait_handles;
 
@@ -59,6 +49,9 @@ pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Tas
     confirm_remove_corporation: None,
     corporation_pane: Default::default(),
     corporations: Vec::new(),
+    feat_location_tracking: *features.location_tracking(),
+    feat_skill_monitoring: *features.skill_monitoring(),
+    feat_wallet: *features.wallet(),
     header: Default::default(),
     search_filter: search_filter::State::new(),
     tag_corpus: Vec::new(),
@@ -205,20 +198,37 @@ fn reorder_characters_by_ids(characters: &mut Vec<Character>, order: &[i64]) {
 /// character public/corp (3600 s), corp public (3600 s).
 /// Keyboard subscriptions are added based on which overlay is active.
 pub fn subscription(state: &State) -> Subscription<Message> {
-  let mut subs: Vec<Subscription<Message>> = vec![
-    iced::time::every(std::time::Duration::from_secs(60))
-      .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(120))
-      .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(300))
-      .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
+  let mut subs: Vec<Subscription<Message>> = Vec::new();
+
+  if state.feat_location_tracking {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(60))
+        .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
+    );
+  }
+
+  if state.feat_skill_monitoring {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(120))
+        .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
+    );
+  }
+
+  if state.feat_wallet {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(300))
+        .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
+    );
+  }
+
+  subs.extend([
     iced::time::every(std::time::Duration::from_secs(300))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick)),
-  ];
+  ]);
 
   if state.character_pane.dragging_id.is_some() {
     subs.push(drag_release_subscription());
@@ -770,6 +780,11 @@ async fn add_character(
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_secs() as i64)
     .unwrap_or(0);
+  let granted_scopes = if grant.scopes().is_empty() {
+    None
+  } else {
+    Some(grant.scopes().join(" "))
+  };
   let portrait_tone = (character_id % 360) as i32;
   let refresh_token = grant.refresh_token().clone();
 
@@ -838,6 +853,7 @@ async fn add_character(
     .set_access_token(access_token)
     .set_corp_id(corp_id)
     .set_corp_name(corp_name)
+    .set_granted_scopes(granted_scopes)
     .set_isk_balance(isk_balance)
     .set_location_docked(location_docked)
     .set_location_name(location_name)
@@ -889,6 +905,19 @@ async fn add_character(
   }
 
   Ok(character)
+}
+
+/// Runs the OAuth flow for re-authorizing an existing character with updated scopes.
+///
+/// Behaves identically to `add_character`; the upsert in the DB ensures the
+/// existing record is updated rather than a duplicate being created.
+pub async fn reauthorize_character(
+  esi: pod_esi::Client,
+  verifier: String,
+  oauth_state: String,
+  db: Option<pod_db::Repo>,
+) -> Result<Character, String> {
+  add_character(esi, verifier, oauth_state, db).await
 }
 
 async fn add_corporation(
@@ -1086,15 +1115,20 @@ fn update_character_card(state: &mut State, msg: characters_tab::Message, servic
       iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
     }
     characters_tab::Message::CharacterAdded(character) => {
-      if state.all_characters.iter().any(|c| c.id() == character.id()) {
-        state.add_status = None;
-        return iced::Task::none();
-      }
       if let Some(bytes) = character.portrait_data() {
         state
           .character_pane
           .portrait_handles
           .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      }
+      if let Some(existing) = state.all_characters.iter_mut().find(|c| c.id() == character.id()) {
+        existing.set_access_token(character.access_token().clone());
+        existing.set_refresh_token(character.refresh_token().clone());
+        existing.set_token_expires_at(*character.token_expires_at());
+        existing.set_granted_scopes(character.granted_scopes().clone());
+        state.add_status = None;
+        refilter(state);
+        return iced::Task::none();
       }
       state.all_characters.push(character);
       state.add_status = None;
@@ -1393,7 +1427,8 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
         state.add_status = Some("ESI client not available".to_string());
         return iced::Task::none();
       };
-      let (url, verifier, oauth_state) = esi.auth().sign_in(CORP_SCOPES, "http://127.0.0.1:47823/callback");
+      let corp_scopes = services.config.features().required_scopes_for_corporation();
+      let (url, verifier, oauth_state) = esi.auth().sign_in(&corp_scopes, "http://127.0.0.1:47823/callback");
       let _ = open::that_detached(&url);
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
@@ -1492,6 +1527,7 @@ mod tests {
 
   fn make_services() -> Services {
     Services {
+      config: crate::config::Settings::default(),
       db: None,
       esi_client: None,
     }
@@ -1510,6 +1546,9 @@ mod tests {
       confirm_remove_corporation: None,
       corporation_pane: Default::default(),
       corporations: Vec::new(),
+      feat_location_tracking: true,
+      feat_skill_monitoring: true,
+      feat_wallet: true,
       header: Default::default(),
       search_filter: search_filter::State::new(),
       tag_corpus: Vec::new(),
@@ -1780,7 +1819,7 @@ mod tests {
       }
 
       #[test]
-      fn it_is_no_op_when_character_already_exists() {
+      fn it_does_not_add_a_duplicate_when_character_already_exists() {
         let mut state = make_state(vec![make_character(1, "Alpha")]);
         let services = make_services();
 
@@ -1794,7 +1833,30 @@ mod tests {
       }
 
       #[test]
-      fn it_clears_add_status_on_duplicate() {
+      fn it_updates_token_on_reauth_for_existing_character() {
+        let mut existing = make_character(1, "Alpha");
+        existing.set_access_token("old-token");
+        let mut state = make_state(vec![existing]);
+        let services = make_services();
+
+        let mut reauthed = make_character(1, "Alpha");
+        reauthed.set_access_token("new-token");
+        reauthed.set_refresh_token("new-refresh");
+        reauthed.set_granted_scopes(Some("esi-skills.read_skills.v1".to_string()));
+
+        let _ = update_character_card(&mut state, characters_tab::Message::CharacterAdded(reauthed), &services);
+
+        assert_eq!(state.all_characters.len(), 1);
+        assert_eq!(state.all_characters[0].access_token(), "new-token");
+        assert_eq!(state.all_characters[0].refresh_token(), "new-refresh");
+        assert_eq!(
+          state.all_characters[0].granted_scopes().as_deref(),
+          Some("esi-skills.read_skills.v1")
+        );
+      }
+
+      #[test]
+      fn it_clears_add_status_on_reauth() {
         let mut state = make_state(vec![make_character(1, "Alpha")]);
         state.add_status = Some("Waiting for browser login\u{2026}".to_string());
         let services = make_services();

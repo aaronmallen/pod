@@ -13,9 +13,10 @@ use iced::{
   Background, Border, Element, Event, Length, Padding, Subscription, Theme, keyboard, mouse,
   widget::{Space, button, column, container, image, mouse_area, row, stack, text},
 };
+use pod_model::missing_scopes;
 
 use crate::{
-  components::{CharacterPicker, ComposePanel, Icon, character_picker, compose_panel},
+  components::{CharacterPicker, ComposePanel, Icon, ScopeMissing, character_picker, compose_panel, scope_missing},
   style::{
     color, spacing,
     typography::{body, mono},
@@ -96,6 +97,7 @@ pub enum Message {
   PaneDragEnd,
   PaneDragStart(DraggingPane),
   ReadingPane(reading_pane::Message),
+  ReauthorizeCharacter(i64),
 }
 
 /// Runtime state for the mail controller.
@@ -216,6 +218,19 @@ impl<'a> Component<'a> {
   /// Consume the builder and return the finished [`Element`].
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
+
+    let account_id = state.current_account_id();
+    if account_id != 0 {
+      if let Some(character) = state.characters.iter().find(|c| *c.id() == account_id) {
+        let granted = character.granted_scopes_list();
+        if !missing_scopes(&granted, &["esi-mail.read_mail.v1"]).is_empty() {
+          return ScopeMissing::new(account_id, "mail").render().map(|m| match m {
+            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+          });
+        }
+      }
+    }
+
     let folder_w = effective_folder_width(state, self.window_width);
     let msg_w = effective_message_list_width(state, self.window_width, folder_w);
 

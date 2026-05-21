@@ -114,6 +114,7 @@ async fn run_esi_sync(db: pod_db::Repo, esi: pod_esi::Client, mut characters: Ve
       // ensure_valid_token don't try to re-use an already-rotated refresh token.
       character.set_access_token(token.clone());
       character.set_token_expires_at(chrono::Utc::now().timestamp() + 1199);
+      character_service::backfill_granted_scopes(character, &token, &db).await;
       let grant = character_service::refresh_grant(character, &token);
       let char_client = esi.character(&grant);
 

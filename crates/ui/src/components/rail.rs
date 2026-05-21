@@ -13,9 +13,12 @@ const POD_MARK_SVG: &[u8] = include_bytes!("../../../../assets/logo/pod-mark.svg
 /// Pure layout component for the left navigation rail.
 ///
 /// Accepts pre-built navigation item elements and renders them in a
-/// vertical column below the Pod mark logo. Emits no messages of its
-/// own — all interactivity is encoded in the passed-in elements.
+/// vertical column below the Pod mark logo. An optional `bottom_item`
+/// element is pinned to the bottom of the rail above the right border.
+/// Emits no messages of its own — all interactivity is encoded in the
+/// passed-in elements.
 pub struct Component<'a, MSG: Clone + 'a> {
+  bottom_item: Option<Element<'a, MSG>>,
   nav_items: Vec<Element<'a, MSG>>,
 }
 
@@ -23,8 +26,15 @@ impl<'a, MSG: Clone + 'a> Component<'a, MSG> {
   /// Create a new rail with the given navigation item elements.
   pub fn new(nav_items: Vec<Element<'a, MSG>>) -> Self {
     Self {
+      bottom_item: None,
       nav_items,
     }
+  }
+
+  /// Pin an element to the bottom of the rail (e.g. a settings cog button).
+  pub fn bottom_item(mut self, el: Element<'a, MSG>) -> Self {
+    self.bottom_item = Some(el);
+    self
   }
 
   /// Render the rail into an [`Element`].
@@ -55,21 +65,31 @@ impl<'a, MSG: Clone + 'a> Component<'a, MSG> {
       })
       .align_x(Horizontal::Center);
 
-    let rail = container(
-      column([
-        logo_header.into(),
-        nav_col.into(),
-        Space::new().height(Length::Fill).into(),
-      ])
-      .align_x(Horizontal::Center)
-      .height(Length::Fill),
-    )
-    .width(spacing::layout::RAIL_WIDTH)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::NAVIGATION)),
-      ..container::Style::default()
-    });
+    let mut col_items: Vec<Element<'a, MSG>> = vec![
+      logo_header.into(),
+      nav_col.into(),
+      Space::new().height(Length::Fill).into(),
+    ];
+
+    if let Some(bottom) = self.bottom_item {
+      col_items.push(
+        container(bottom)
+          .padding(Padding {
+            bottom: spacing::SPACE_4,
+            ..Padding::ZERO
+          })
+          .align_x(Horizontal::Center)
+          .into(),
+      );
+    }
+
+    let rail = container(column(col_items).align_x(Horizontal::Center).height(Length::Fill))
+      .width(spacing::layout::RAIL_WIDTH)
+      .height(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::NAVIGATION)),
+        ..container::Style::default()
+      });
 
     let right_border = container(Space::new().width(1.0).height(Length::Fill))
       .width(1.0)

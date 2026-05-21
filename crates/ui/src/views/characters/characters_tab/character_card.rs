@@ -39,6 +39,8 @@ pub enum Message {
 
 pub struct Component<'a> {
   character: &'a Character,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
   is_dragging: bool,
   is_elevated: bool,
   is_hover_target: bool,
@@ -49,11 +51,23 @@ impl<'a> Component<'a> {
   pub fn new(character: &'a Character) -> Self {
     Self {
       character,
+      feat_skill_monitoring: true,
+      feat_wallet: true,
       is_dragging: false,
       is_elevated: false,
       is_hover_target: false,
       portrait_handle: None,
     }
+  }
+
+  pub fn feat_skill_monitoring(mut self, v: bool) -> Self {
+    self.feat_skill_monitoring = v;
+    self
+  }
+
+  pub fn feat_wallet(mut self, v: bool) -> Self {
+    self.feat_wallet = v;
+    self
   }
 
   pub fn is_dragging(mut self, v: bool) -> Self {
@@ -100,26 +114,27 @@ impl<'a> Component<'a> {
         .into();
     }
 
+    let feat_skill_monitoring = self.feat_skill_monitoring;
+    let feat_wallet = self.feat_wallet;
+
     let portrait = CharacterPortrait::new(self.character)
       .portrait_handle(self.portrait_handle)
       .render::<Message>();
 
     let identity = identity_row(self.character);
     let tags = tags_row(self.character);
-    let training = training_row(self.character, id);
-    let location_wallet = stats_row(self.character, id);
 
-    let card_content = column([
-      portrait,
-      identity,
-      tags,
-      components::Separator::horizontal().render(),
-      training,
-      components::Separator::horizontal().render(),
-      location_wallet,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let mut card_rows: Vec<Element<'a, Message>> = vec![portrait, identity, tags];
+
+    if feat_skill_monitoring {
+      card_rows.push(components::Separator::horizontal().render());
+      card_rows.push(training_row(self.character, id));
+    }
+
+    card_rows.push(components::Separator::horizontal().render());
+    card_rows.push(stats_row(self.character, id, feat_wallet));
+
+    let card_content = column(card_rows).width(Length::Fill).height(Length::Fill);
 
     let border_color = if is_hover_target {
       color::accent::PLASMA
@@ -218,17 +233,22 @@ fn training_row<'a>(character: &'a Character, id: i64) -> Element<'a, Message> {
     .into()
 }
 
-fn stats_row<'a>(character: &'a Character, id: i64) -> Element<'a, Message> {
+fn stats_row<'a>(character: &'a Character, id: i64, feat_wallet: bool) -> Element<'a, Message> {
   let location = character.location_name().as_deref();
-  row([
-    CharacterLocation::new(location).render::<Message>(),
-    stat_divider(),
-    mouse_area(CharacterWallet::new(character).render::<Message>())
-      .on_press(Message::WalletPressed(id))
-      .interaction(iced::mouse::Interaction::Pointer)
-      .into(),
-  ])
-  .into()
+  let location_el = CharacterLocation::new(location).render::<Message>();
+  if feat_wallet {
+    row([
+      location_el,
+      stat_divider(),
+      mouse_area(CharacterWallet::new(character).render::<Message>())
+        .on_press(Message::WalletPressed(id))
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into(),
+    ])
+    .into()
+  } else {
+    row([location_el]).into()
+  }
 }
 
 fn stat_divider<'a>() -> Element<'a, Message> {

@@ -16,6 +16,8 @@ pub struct Model {
   pub corp_id: i64,
   /// Name of the corporation the character belongs to.
   pub corp_name: String,
+  /// Space-separated ESI scopes granted to this character's token, if known.
+  pub granted_scopes: Option<String>,
   /// Unique EVE character ID.
   #[sea_orm(primary_key, auto_increment = false)]
   pub id: i64,
@@ -55,6 +57,7 @@ impl From<Model> for Character {
       .set_access_token(entity.access_token)
       .set_corp_id(entity.corp_id)
       .set_corp_name(entity.corp_name)
+      .set_granted_scopes(entity.granted_scopes)
       .set_isk_balance(entity.isk_balance)
       .set_location_docked(entity.location_docked)
       .set_location_name(entity.location_name)
@@ -74,6 +77,7 @@ impl From<ModelEx> for Character {
       .set_access_token(entity.access_token)
       .set_corp_id(entity.corp_id)
       .set_corp_name(entity.corp_name)
+      .set_granted_scopes(entity.granted_scopes)
       .set_isk_balance(entity.isk_balance)
       .set_location_docked(entity.location_docked)
       .set_location_name(entity.location_name)
@@ -93,6 +97,7 @@ impl From<Character> for ActiveModel {
       charisma: ActiveValue::NotSet,
       corp_id: Set(*model.corp_id()),
       corp_name: Set(model.corp_name().clone()),
+      granted_scopes: Set(model.granted_scopes().clone()),
       id: Set(*model.id()),
       intelligence: ActiveValue::NotSet,
       isk_balance: Set(*model.isk_balance()),
@@ -117,6 +122,7 @@ impl From<Character> for ActiveModelEx {
       charisma: ActiveValue::NotSet,
       corp_id: Set(*model.corp_id()),
       corp_name: Set(model.corp_name().clone()),
+      granted_scopes: Set(model.granted_scopes().clone()),
       id: Set(*model.id()),
       intelligence: ActiveValue::NotSet,
       isk_balance: Set(*model.isk_balance()),

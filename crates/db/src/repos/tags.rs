@@ -148,6 +148,7 @@ mod tests {
       charisma: Set(None),
       corp_id: Set(0),
       corp_name: Set(String::new()),
+      granted_scopes: Set(None),
       id: Set(id),
       intelligence: Set(None),
       isk_balance: Set(None),

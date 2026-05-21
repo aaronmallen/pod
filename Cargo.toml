@@ -41,6 +41,7 @@ bytes = "1"
 cargo-packager-updater = "0.2"
 chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
+figment = { features = ["toml"], version = "0.10" }
 getset = "0.1"
 libsqlite3-sys = { features = ["bundled"], version = "0" }
 muda = "0.19"
@@ -59,6 +60,7 @@ serde_yaml = "0.9"
 sha2 = "0.11"
 thiserror = "2"
 tokio = { features = ["full"], version = "1" }
+toml = "0.8"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { features = ["env-filter", "fmt"], version = "0.3" }
@@ -86,9 +88,12 @@ version = "2.0.0-rc"
 
 [dependencies]
 arboard.workspace = true
+base64.workspace = true
 cargo-packager-updater.workspace = true
 chrono.workspace = true
 dir_spec.workspace = true
+figment.workspace = true
+getset.workspace = true
 iced.workspace = true
 muda.workspace = true
 open.workspace = true
@@ -101,7 +106,9 @@ rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true

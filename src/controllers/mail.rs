@@ -178,6 +178,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       iced::Task::none()
     }
     Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
+    Message::ReauthorizeCharacter(_) => iced::Task::none(),
   }
 }
 

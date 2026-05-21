@@ -39,6 +39,9 @@ pub struct Model {
   #[get = "pub"]
   corp_name: String,
   dirty: bool,
+  /// Space-separated ESI scopes granted to this character's OAuth token.
+  #[get = "pub"]
+  granted_scopes: Option<String>,
   /// Unique EVE character ID.
   #[get = "pub"]
   id: i64,
@@ -95,6 +98,7 @@ impl Model {
       corp_id: 0,
       corp_name: String::new(),
       dirty: false,
+      granted_scopes: None,
       id,
       isk_balance: None,
       location_docked: None,
@@ -109,6 +113,14 @@ impl Model {
       tags: Vec::new(),
       token_expires_at: 0,
       training_queue: Vec::new(),
+    }
+  }
+
+  /// Returns the granted scopes as a list, treating `None` as empty.
+  pub fn granted_scopes_list(&self) -> Vec<&str> {
+    match &self.granted_scopes {
+      Some(s) if !s.is_empty() => s.split(' ').collect(),
+      _ => Vec::new(),
     }
   }
 
@@ -180,6 +192,15 @@ impl Model {
   /// Sets the corporation name, marking the model dirty if already persisted.
   pub fn set_corp_name(&mut self, corp_name: impl Into<String>) -> &mut Self {
     self.corp_name = corp_name.into();
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets the granted ESI scopes, marking the model dirty if already persisted.
+  pub fn set_granted_scopes(&mut self, granted_scopes: Option<String>) -> &mut Self {
+    self.granted_scopes = granted_scopes;
     if self.persisted {
       self.dirty = true;
     }

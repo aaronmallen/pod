@@ -22,17 +22,6 @@ use pod_ui::{
 
 use crate::services::{Services, character as character_service, corporation as corporation_service};
 
-/// Corp-level ESI scopes requested during the Add Corporation OAuth flow.
-const CORP_SCOPES: &[&str] = &[
-  pod_esi::scopes::Scopes::ASSETS_READ_CORPORATION_ASSETS,
-  pod_esi::scopes::Scopes::CONTRACTS_READ_CORPORATION_CONTRACTS,
-  pod_esi::scopes::Scopes::CORPORATIONS_READ_CORPORATION_MEMBERSHIP,
-  pod_esi::scopes::Scopes::CORPORATIONS_TRACK_MEMBERS,
-  pod_esi::scopes::Scopes::INDUSTRY_READ_CORPORATION_JOBS,
-  pod_esi::scopes::Scopes::MARKETS_READ_CORPORATION_ORDERS,
-  pod_esi::scopes::Scopes::WALLET_READ_CORPORATION_WALLETS,
-];
-
 /// Creates a new characters controller state and a startup task that loads tags per character.
 pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Task<Message>) {
   let portrait_handles = characters
@@ -1393,7 +1382,8 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
         state.add_status = Some("ESI client not available".to_string());
         return iced::Task::none();
       };
-      let (url, verifier, oauth_state) = esi.auth().sign_in(CORP_SCOPES, "http://127.0.0.1:47823/callback");
+      let corp_scopes = services.config.features().required_scopes_for_corporation();
+      let (url, verifier, oauth_state) = esi.auth().sign_in(&corp_scopes, "http://127.0.0.1:47823/callback");
       let _ = open::that_detached(&url);
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
@@ -1492,6 +1482,7 @@ mod tests {
 
   fn make_services() -> Services {
     Services {
+      config: crate::config::Settings::default(),
       db: None,
       esi_client: None,
     }

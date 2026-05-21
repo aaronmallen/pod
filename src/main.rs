@@ -33,6 +33,7 @@ pub enum WindowKind {
 struct App {
   about_window: Option<(window::Id, about_window::State)>,
   characters: Vec<Character>,
+  config: config::Settings,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
   phase: AppPhase,
@@ -93,6 +94,7 @@ impl Default for App {
     Self {
       about_window: None,
       characters: Vec::new(),
+      config: config::Settings::default(),
       db: None,
       esi_client: None,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
@@ -128,6 +130,7 @@ fn boot() -> (App, Task<Message>) {
   };
   let (main_window_id, open_task) = window::open(splash_settings);
   let app = App {
+    config: config::load().unwrap_or_default(),
     window_id: Some(main_window_id),
     ..App::default()
   };
@@ -291,10 +294,15 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     return Task::none();
   };
   let services = Services {
+    config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
   };
-  let task = main_ctrl::update(state, msg, &services).map(Message::Main);
+  let (task, new_config) = main_ctrl::update(state, msg, &services);
+  if let Some(cfg) = new_config {
+    app.config = cfg;
+  }
+  let task = task.map(Message::Main);
   if is_mail_pane_drag_end || is_skills_pane_drag_end || is_wallet_pane_drag_end {
     save_geometry(app);
   }
@@ -305,6 +313,7 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
   let is_pane_drag_end = matches!(&msg, skill_plan_window::Message::PaneDragEnd);
   let is_save_completed = matches!(&msg, skill_plan_window::Message::SaveCompleted);
   let services = Services {
+    config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
   };
@@ -371,6 +380,7 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
       let task = splash_ctrl::update(state, inner.clone()).map(Message::Splash);
       if transitioning {
         let services = Services {
+          config: app.config.clone(),
           db: app.db.clone(),
           esi_client: app.esi_client.clone(),
         };

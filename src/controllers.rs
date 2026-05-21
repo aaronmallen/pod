@@ -6,6 +6,7 @@ pub mod character_detail;
 pub mod characters;
 pub mod mail;
 pub mod main_window;
+pub mod settings;
 pub mod skill_plan_window;
 pub mod skills;
 pub mod splash;

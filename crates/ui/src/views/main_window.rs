@@ -1,12 +1,12 @@
 use iced::{
   Element, Length,
-  widget::{column, mouse_area, row},
+  widget::{column, mouse_area, row, stack},
 };
 use pod_model::{Character, Corporation};
 
 use crate::{
   components::{self, Icon, NavButton},
-  views::{assets, character_detail, characters, mail, skills, wallet},
+  views::{assets, character_detail, characters, mail, settings, skills, wallet},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,6 +14,7 @@ pub enum Nav {
   Assets,
   Characters,
   Mail,
+  Settings,
   Skills,
   Wallet,
 }
@@ -23,6 +24,7 @@ pub enum ActiveView {
   CharacterDetail(character_detail::State),
   Characters(characters::State),
   Mail(mail::State),
+  Settings(settings::State),
   Skills(skills::State),
   Wallet(wallet::State),
 }
@@ -42,11 +44,14 @@ pub enum Message {
   Assets(assets::Message),
   CharacterDetail(character_detail::Message),
   Characters(characters::Message),
+  DismissToast,
   EveTimeTick,
   HoverNav(Option<Nav>),
   Mail(mail::Message),
   Navigate(Nav),
   RefreshAll,
+  Settings(settings::Message),
+  ShowToast(String),
   Skills(skills::Message),
   StatusBar(components::status_bar::Message),
   Wallet(wallet::Message),
@@ -65,6 +70,7 @@ pub struct State {
   pub refresh_successes: u8,
   pub skills_left_pane_width: f32,
   pub sync: components::status_bar::SyncState,
+  pub toast: Option<String>,
   pub wallet_right_rail_width: f32,
 }
 
@@ -118,9 +124,25 @@ impl<'a> Component<'a> {
       nav_item(Icon::assets(), Nav::Assets, false),
     ];
 
-    let rail_el = components::rail::Component::new(nav_items).render();
+    let settings_btn = mouse_area(
+      NavButton::new(
+        Icon::settings(),
+        active == Nav::Settings,
+        hovered == Some(Nav::Settings),
+        false,
+        Message::Navigate(Nav::Settings),
+      )
+      .render(),
+    )
+    .on_enter(Message::HoverNav(Some(Nav::Settings)))
+    .on_exit(Message::HoverNav(None))
+    .into();
 
-    let content: Element<'a, Message> = match &self.state.active_view {
+    let rail_el = components::rail::Component::new(nav_items)
+      .bottom_item(settings_btn)
+      .render();
+
+    let view: Element<'a, Message> = match &self.state.active_view {
       ActiveView::Assets(s) => assets::Component::new(s).render().map(Message::Assets),
       ActiveView::CharacterDetail(s) => character_detail::Component::new(s)
         .render()
@@ -133,6 +155,7 @@ impl<'a> Component<'a> {
         .window_width(self.window_width)
         .render()
         .map(Message::Mail),
+      ActiveView::Settings(s) => settings::Component::new(s).render().map(Message::Settings),
       ActiveView::Skills(s) => skills::Component::new(s)
         .window_width(self.window_width)
         .render()
@@ -141,6 +164,15 @@ impl<'a> Component<'a> {
         .window_width(self.window_width)
         .render()
         .map(Message::Wallet),
+    };
+
+    let content: Element<'a, Message> = if let Some(toast_msg) = &self.state.toast {
+      stack([view, components::Toast::new(toast_msg).render()])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    } else {
+      view
     };
 
     let bar = components::status_bar::Component::new()

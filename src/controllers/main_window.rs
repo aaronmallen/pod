@@ -5,13 +5,13 @@ use pod_model::{Character, CharacterSkill, Corporation};
 pub use pod_ui::views::main_window::{ActiveView, Message, Nav, State};
 use pod_ui::{
   components::{character_picker, status_bar},
-  views::{assets, character_detail, characters, mail, skills, wallet},
+  views::{assets, character_detail, characters, mail, settings, skills, wallet},
 };
 
 use crate::{
   controllers::{
     assets as assets_ctrl, character_detail as character_detail_ctrl, characters as characters_ctrl, mail as mail_ctrl,
-    skills as skills_ctrl, wallet as wallet_ctrl,
+    settings as settings_ctrl, skills as skills_ctrl, wallet as wallet_ctrl,
   },
   services::Services,
 };
@@ -39,6 +39,7 @@ pub fn new(
     refresh_successes: 0,
     skills_left_pane_width: skills_left_pane_width.unwrap_or(700.0),
     sync: status_bar::SyncState::default(),
+    toast: None,
     wallet_right_rail_width: wallet_right_rail_width.unwrap_or(220.0),
   };
   (state, chars_task.map(Message::Characters))
@@ -50,6 +51,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     ActiveView::Assets(s) => assets::subscription(s).map(Message::Assets),
     ActiveView::Characters(chars_state) => characters_ctrl::subscription(chars_state).map(Message::Characters),
     ActiveView::Mail(s) => mail::subscription(s).map(Message::Mail),
+    ActiveView::Settings(_) => Subscription::none(),
     ActiveView::Skills(s) => skills_ctrl::subscription(s).map(Message::Skills),
     ActiveView::Wallet(s) => wallet::subscription(s).map(Message::Wallet),
     _ => Subscription::none(),
@@ -57,25 +59,48 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 }
 
 /// Processes a main window message and returns a task.
-pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+///
+/// Returns `(task, Option<new_config>)` — the config is `Some` whenever a
+/// settings toggle or reset just ran, so the caller can update `app.config`.
+pub fn update(
+  state: &mut State,
+  message: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
   match message {
-    Message::Assets(msg) => update_assets(state, msg, services),
-    Message::CharacterDetail(msg) => update_character_detail(state, msg, services),
-    Message::Characters(msg) => update_characters(state, msg, services),
+    Message::Assets(msg) => (update_assets(state, msg, services), None),
+    Message::CharacterDetail(msg) => (update_character_detail(state, msg, services), None),
+    Message::Characters(msg) => (update_characters(state, msg, services), None),
+    Message::DismissToast => {
+      state.toast = None;
+      (iced::Task::none(), None)
+    }
     Message::EveTimeTick => {
       state.eve_time = utc_time_string();
-      iced::Task::none()
+      (iced::Task::none(), None)
     }
     Message::HoverNav(nav) => {
       state.hovered_nav = nav;
-      iced::Task::none()
+      (iced::Task::none(), None)
     }
-    Message::Mail(msg) => update_mail(state, msg, services),
-    Message::Navigate(nav) => update_navigate(state, nav, services),
-    Message::RefreshAll => update_refresh_all(state, services),
-    Message::Skills(msg) => update_skills(state, msg, services),
-    Message::StatusBar(status_bar::Message::RefreshPressed) => update(state, Message::RefreshAll, services),
-    Message::Wallet(msg) => update_wallet(state, msg, services),
+    Message::Mail(msg) => (update_mail(state, msg, services), None),
+    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
+    Message::RefreshAll => (update_refresh_all(state, services), None),
+    Message::Settings(msg) => update_settings(state, msg, services),
+    Message::ShowToast(msg) => {
+      state.toast = Some(msg);
+      let task = iced::Task::perform(
+        async { tokio::time::sleep(std::time::Duration::from_millis(2500)).await },
+        |()| Message::DismissToast,
+      );
+      (task, None)
+    }
+    Message::Skills(msg) => (update_skills(state, msg, services), None),
+    Message::StatusBar(status_bar::Message::RefreshPressed) => {
+      let (task, cfg) = update(state, Message::RefreshAll, services);
+      (task, cfg)
+    }
+    Message::Wallet(msg) => (update_wallet(state, msg, services), None),
   }
 }
 
@@ -391,6 +416,11 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
       state.active_view = ActiveView::Mail(s);
       task.map(Message::Mail)
     }
+    Nav::Settings => {
+      let (s, task) = settings_ctrl::new(services.config.features());
+      state.active_view = ActiveView::Settings(s);
+      task.map(Message::Settings)
+    }
     Nav::Skills => {
       let (s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
       state.active_view = ActiveView::Skills(s);
@@ -420,6 +450,29 @@ fn update_refresh_all(state: &mut State, services: &Services) -> iced::Task<Mess
     characters_ctrl::skill_queue_refresh_task(chars_state, services).map(Message::Characters),
     characters_ctrl::wallet_refresh_task(chars_state, services).map(Message::Characters),
   ])
+}
+
+fn update_settings(
+  state: &mut State,
+  msg: settings::Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  let is_save = matches!(
+    &msg,
+    settings::Message::ToggleFeature(_) | settings::Message::ResetDefaults
+  );
+  let ActiveView::Settings(s) = &mut state.active_view else {
+    return (iced::Task::none(), None);
+  };
+  let settings_task = settings_ctrl::update(s, msg, services).map(Message::Settings);
+  let new_config = if is_save {
+    let cfg = settings_ctrl::updated_config(s, &services.config);
+    let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
+    return (iced::Task::batch([settings_task, toast_task]), Some(cfg));
+  } else {
+    None
+  };
+  (settings_task, new_config)
 }
 
 fn update_skills(state: &mut State, msg: skills::Message, services: &Services) -> iced::Task<Message> {
@@ -461,6 +514,24 @@ fn update_wallet(state: &mut State, msg: wallet::Message, services: &Services) -
   task
 }
 
+fn trigger_reauth(services: &Services) -> iced::Task<Message> {
+  let Some(esi) = services.esi_client.clone() else {
+    return iced::Task::none();
+  };
+  let scopes = services.config.features().required_scopes_for_character();
+  let (url, verifier, oauth_state) = esi.auth().sign_in(&scopes, "http://127.0.0.1:47823/callback");
+  let _ = open::that_detached(&url);
+  let db = services.db.clone();
+  iced::Task::perform(
+    async move { characters_ctrl::reauthorize_character(esi, verifier, oauth_state, db).await },
+    |result| match result {
+      Ok(character) => Message::Characters(characters::Message::CharactersTab(
+        pod_ui::views::characters::characters_tab::Message::CharacterAdded(character),
+      )),
+      Err(_) => Message::Characters(characters::Message::TagsApplied),
+    },
+  )
+}
 fn utc_time_string() -> String {
   let secs = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)

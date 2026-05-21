@@ -121,11 +121,15 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
     return assets_ctrl::fetch_corp_assets(corp_id, s, services).map(Message::Assets);
   }
   if let assets::Message::RefreshNavHistory = &msg {
-    if let Some(db) = services.db.clone() {
+    if let (Some(db), Some(esi)) = (services.db.clone(), services.esi_client.clone()) {
       let char_ids: Vec<i64> = s.characters.iter().map(|c| *c.id()).collect();
-      return iced::Task::perform(assets_ctrl::nav_history(db, char_ids, 90), |data| {
-        Message::Assets(assets::Message::NavHistoryLoaded(data))
-      });
+      return iced::Task::perform(
+        async move {
+          crate::services::prices::sync(&db, &esi).await;
+          assets_ctrl::nav_history(db, char_ids, 90).await
+        },
+        |data| Message::Assets(assets::Message::NavHistoryLoaded(data)),
+      );
     }
     return iced::Task::none();
   }

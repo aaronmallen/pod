@@ -1,6 +1,8 @@
 //! Repository for intraday price observations and daily OHLC aggregates.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use std::collections::HashMap;
+
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use sea_orm::{
   ActiveValue, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, Order,
   QueryFilter, QueryOrder, Statement,
@@ -9,6 +11,7 @@ use sea_orm::{
 use crate::{
   Error,
   entities::{
+    character_asset::{Column as AssetColumn, Entity as AssetEntity},
     type_price::{ActiveModel as PriceActive, Column as PriceColumn, Entity as PriceEntity},
     type_price_history::{ActiveModel as HistoryActive, Column as HistoryColumn, Entity as HistoryEntity},
   },
@@ -19,11 +22,6 @@ struct TypeIdRow {
   type_id: i32,
 }
 
-#[derive(Debug, FromQueryResult)]
-struct NavDayRow {
-  date: String,
-  nav: f64,
-}
 
 #[derive(Debug, FromQueryResult)]
 struct DateRow {
@@ -181,38 +179,71 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
-  /// Returns NAV history for the given character IDs going back `days` calendar days.
+  /// Returns NAV history for the given character IDs going back `days` calendar days,
+  /// plus a synthetic data point for today using the latest intraday prices.
   ///
-  /// For each date in `type_price_histories`, computes NAV =
-  /// sum(close * quantity) across all `character_assets` rows whose
-  /// `type_id` has a price entry on that date and whose `character_id` is
-  /// in `char_ids`. Returns rows sorted by date ascending. Returns an empty
-  /// vec if the result has fewer than 2 data points.
+  /// Computes NAV = sum(price * quantity) per day, sorted ascending. Returns an
+  /// empty vec if fewer than 2 data points exist.
   pub async fn nav_history(&self, char_ids: &[i64], days: u32) -> Result<Vec<(NaiveDate, f64)>, Error> {
     if char_ids.is_empty() {
       return Ok(Vec::new());
     }
 
-    let ids_csv = char_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
-    let sql = format!(
-      "
-      SELECT h.date AS date, SUM(h.close * a.quantity) AS nav
-      FROM type_price_histories h
-      JOIN character_assets a ON a.type_id = h.type_id AND a.character_id IN ({ids_csv})
-      WHERE h.date >= date('now', '-{days} days')
-      GROUP BY h.date
-      ORDER BY h.date ASC
-      "
-    );
-
-    let rows = NavDayRow::find_by_statement(Statement::from_string(DbBackend::Sqlite, sql))
+    let assets = AssetEntity::find()
+      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
       .all(self.db)
       .await?;
 
-    let mut result: Vec<(NaiveDate, f64)> = rows
-      .into_iter()
-      .filter_map(|r| NaiveDate::parse_from_str(&r.date, "%Y-%m-%d").ok().map(|d| (d, r.nav)))
-      .collect();
+    if assets.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let mut qty_map: HashMap<i32, i64> = HashMap::new();
+    for asset in &assets {
+      *qty_map.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
+    }
+    let tracked: Vec<i32> = qty_map.keys().copied().collect();
+
+    let cutoff_str = (Utc::now().date_naive() - Duration::days(days as i64))
+      .format("%Y-%m-%d")
+      .to_string();
+
+    let histories = HistoryEntity::find()
+      .filter(HistoryColumn::TypeId.is_in(tracked.clone()))
+      .filter(HistoryColumn::Date.gte(cutoff_str))
+      .all(self.db)
+      .await?;
+
+    let mut nav_by_date: HashMap<NaiveDate, f64> = HashMap::new();
+    for h in &histories {
+      if let (Ok(date), Some(&qty)) = (NaiveDate::parse_from_str(&h.date, "%Y-%m-%d"), qty_map.get(&h.type_id)) {
+        *nav_by_date.entry(date).or_insert(0.0) += h.close * qty as f64;
+      }
+    }
+
+    // Synthetic today point from latest intraday prices.
+    let intraday = PriceEntity::find()
+      .filter(PriceColumn::TypeId.is_in(tracked))
+      .order_by(PriceColumn::FetchedAt, Order::Desc)
+      .all(self.db)
+      .await?;
+
+    let mut latest_prices: HashMap<i32, f64> = HashMap::new();
+    for p in intraday {
+      latest_prices.entry(p.type_id).or_insert(p.price);
+    }
+
+    let today_nav: f64 = latest_prices
+      .iter()
+      .filter_map(|(tid, price)| qty_map.get(tid).map(|&qty| price * qty as f64))
+      .sum();
+
+    if today_nav > 0.0 {
+      nav_by_date.insert(Utc::now().date_naive(), today_nav);
+    }
+
+    let mut result: Vec<(NaiveDate, f64)> = nav_by_date.into_iter().collect();
+    result.sort_by_key(|(d, _)| *d);
 
     if result.len() < 2 {
       result.clear();

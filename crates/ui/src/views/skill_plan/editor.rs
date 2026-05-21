@@ -113,15 +113,22 @@ impl<'a> EditorHeader<'a> {
     let import_trigger = button(
       row([
         text("Import").font(body::REGULAR).size(13.0).into(),
-        components::Separator::vertical().render(),
+        container(Space::new().width(1.0).height(14.0))
+          .width(1.0)
+          .height(14.0)
+          .style(|_| container::Style {
+            background: Some(Background::Color(color::border::SUBTLE)),
+            ..container::Style::default()
+          })
+          .into(),
         text("\u{25be}").font(body::REGULAR).size(13.0).into(),
       ])
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center),
     )
     .padding(Padding {
-      top: 7.0,
-      bottom: 7.0,
+      top: 8.0,
+      bottom: 8.0,
       left: 12.0,
       right: 12.0,
     })
@@ -146,15 +153,22 @@ impl<'a> EditorHeader<'a> {
     let export_trigger = button(
       row([
         text("Export").font(body::REGULAR).size(13.0).into(),
-        components::Separator::vertical().render(),
+        container(Space::new().width(1.0).height(14.0))
+          .width(1.0)
+          .height(14.0)
+          .style(|_| container::Style {
+            background: Some(Background::Color(color::border::SUBTLE)),
+            ..container::Style::default()
+          })
+          .into(),
         text("\u{25be}").font(body::REGULAR).size(13.0).into(),
       ])
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center),
     )
     .padding(Padding {
-      top: 7.0,
-      bottom: 7.0,
+      top: 8.0,
+      bottom: 8.0,
       left: 12.0,
       right: 12.0,
     })

@@ -47,11 +47,7 @@ impl Client {
     if (200u16..300).contains(&status) {
       return Ok(resp.bytes().await?.to_vec());
     }
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-    Err(api_error(resp).await)
+    Err(self.map_error_status(status, resp).await)
   }
 
   /// Streams the response at `url` directly to a file at `dest`.
@@ -59,8 +55,6 @@ impl Client {
   /// `timeout_secs` sets a per-request deadline — use a long value (e.g. 600)
   /// for large downloads where the default request timeout would be too short.
   pub async fn download_to_file(&self, url: &str, dest: &std::path::Path, timeout_secs: u64) -> Result<(), Error> {
-    use tokio::io::AsyncWriteExt as _;
-
     self.rate_limit.check().await;
     let mut resp = self
       .inner
@@ -79,17 +73,7 @@ impl Client {
       return Err(api_error(resp).await);
     }
 
-    let mut file = tokio::fs::File::create(dest)
-      .await
-      .map_err(|e| Error::Internal(e.to_string()))?;
-    while let Some(chunk) = resp.chunk().await? {
-      file
-        .write_all(&chunk)
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
-    }
-    file.shutdown().await.map_err(|e| Error::Internal(e.to_string()))?;
-    Ok(())
+    stream_response_to_file(&mut resp, dest).await
   }
 
   /// Sends an authenticated DELETE request and discards the response body.
@@ -99,13 +83,9 @@ impl Client {
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
     if (200u16..300).contains(&status) {
-      Ok(())
-    } else if status == 420 {
-      let secs = retry_after_secs(&resp);
-      Err(self.rate_limit.handle_420(secs).await)
-    } else {
-      Err(api_error(resp).await)
+      return Ok(());
     }
+    Err(self.map_error_status(status, resp).await)
   }
 
   /// Fetches a single JSON resource, using a cached ETag to avoid unnecessary data transfer on 304 responses.
@@ -132,20 +112,10 @@ impl Client {
     }
 
     if (200u16..300).contains(&status) {
-      let etag = etag_value(&resp);
-      let body = resp.bytes().await?;
-      if let Some(tag) = etag {
-        self.cache.insert(url, &tag, &body);
-      }
-      return Ok(serde_json::from_slice(&body)?);
+      return self.consume_json_with_etag(url, resp).await;
     }
 
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-
-    Err(api_error(resp).await)
+    Err(self.map_error_status(status, resp).await)
   }
 
   /// Fetches all pages of a paginated ESI endpoint concurrently and merges them into a single `Vec`.
@@ -178,29 +148,13 @@ impl Client {
       return Err(api_error(resp).await);
     }
 
-    let total_pages = resp
-      .headers()
-      .get(ESI_PAGES_HEADER)
-      .and_then(|v| v.to_str().ok())
-      .and_then(|s| s.parse::<u32>().ok())
-      .unwrap_or(1);
-
+    let total_pages = parse_x_pages_header(&resp);
     let body = resp.bytes().await?;
     let mut results: Vec<T> = serde_json::from_slice(&body)?;
 
     if total_pages > 1 {
-      let mut set = tokio::task::JoinSet::new();
-      for page in 2..=total_pages {
-        let http = self.inner.clone();
-        let rate_limit = Arc::clone(&self.rate_limit);
-        let url = UrlBuilder::new(url_base).param("page", page.to_string()).build();
-        let token = token.map(|t| t.to_owned());
-        set.spawn(Self::fetch_page(http, rate_limit, url, token));
-      }
-      while let Some(result) = set.join_next().await {
-        let page = result.map_err(|e| Error::Internal(e.to_string()))??;
-        results.extend(page);
-      }
+      let remaining = self.fetch_remaining_pages(url_base, token, total_pages).await?;
+      results.extend(remaining);
     }
 
     Ok(results)
@@ -215,11 +169,7 @@ impl Client {
     if (200u16..300).contains(&status) {
       return Ok(());
     }
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-    Err(api_error(resp).await)
+    Err(self.map_error_status(status, resp).await)
   }
 
   /// Sends an unauthenticated form-encoded POST and deserializes the JSON response.
@@ -227,16 +177,7 @@ impl Client {
     self.rate_limit.check().await;
     let resp = self.inner.post(url).form(body).send().await?;
     self.rate_limit.update_from_response(&resp);
-    let status = resp.status().as_u16();
-    if (200u16..300).contains(&status) {
-      let bytes = resp.bytes().await?;
-      return Ok(serde_json::from_slice(&bytes)?);
-    }
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-    Err(api_error(resp).await)
+    consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an authenticated JSON POST and deserializes the JSON response.
@@ -249,16 +190,7 @@ impl Client {
     self.rate_limit.check().await;
     let resp = self.inner.post(url).bearer_auth(token).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
-    let status = resp.status().as_u16();
-    if (200u16..300).contains(&status) {
-      let bytes = resp.bytes().await?;
-      return Ok(serde_json::from_slice(&bytes)?);
-    }
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-    Err(api_error(resp).await)
+    consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an unauthenticated JSON POST and deserializes the JSON response.
@@ -266,16 +198,7 @@ impl Client {
     self.rate_limit.check().await;
     let resp = self.inner.post(url).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
-    let status = resp.status().as_u16();
-    if (200u16..300).contains(&status) {
-      let bytes = resp.bytes().await?;
-      return Ok(serde_json::from_slice(&bytes)?);
-    }
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
-    }
-    Err(api_error(resp).await)
+    consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an authenticated JSON PUT and discards the response body.
@@ -287,11 +210,54 @@ impl Client {
     if (200u16..300).contains(&status) {
       return Ok(());
     }
+    Err(self.map_error_status(status, resp).await)
+  }
+
+  /// Reads the `ETag` from `resp`, stores the body in the cache under `url`, and
+  /// deserializes the body as `T`.
+  async fn consume_json_with_etag<T: DeserializeOwned>(&self, url: &str, resp: reqwest::Response) -> Result<T, Error> {
+    let etag = etag_value(&resp);
+    let body = resp.bytes().await?;
+    if let Some(tag) = etag {
+      self.cache.insert(url, &tag, &body);
+    }
+    Ok(serde_json::from_slice(&body)?)
+  }
+
+  /// Fetches pages 2..=`total_pages` in parallel via a `JoinSet` and returns the merged results.
+  async fn fetch_remaining_pages<T: DeserializeOwned + Send + 'static>(
+    &self,
+    url_base: &str,
+    token: Option<&str>,
+    total_pages: u32,
+  ) -> Result<Vec<T>, Error> {
+    let mut set = tokio::task::JoinSet::new();
+    for page in 2..=total_pages {
+      let http = self.inner.clone();
+      let rate_limit = Arc::clone(&self.rate_limit);
+      let url = UrlBuilder::new(url_base).param("page", page.to_string()).build();
+      let token = token.map(|t| t.to_owned());
+      set.spawn(Self::fetch_page(http, rate_limit, url, token));
+    }
+    let mut results = Vec::new();
+    while let Some(result) = set.join_next().await {
+      let page = result.map_err(|e| Error::Internal(e.to_string()))??;
+      results.extend(page);
+    }
+    Ok(results)
+  }
+
+  /// Maps a non-2xx status code to the appropriate error variant.
+  ///
+  /// Returns a 420-derived [`Error::RateLimit`] (after sleeping the prescribed
+  /// back-off) or an [`Error::Api`] for any other status.
+  async fn map_error_status(&self, status: u16, resp: reqwest::Response) -> Error {
     if status == 420 {
       let secs = retry_after_secs(&resp);
-      return Err(self.rate_limit.handle_420(secs).await);
+      self.rate_limit.handle_420(secs).await
+    } else {
+      api_error(resp).await
     }
-    Err(api_error(resp).await)
   }
 
   /// Fetches a single page of a paginated ESI endpoint and deserializes it as `Vec<T>`.
@@ -311,16 +277,7 @@ impl Client {
     }
     let resp = req.send().await.map_err(Error::from)?;
     rate_limit.update_from_response(&resp);
-    let status = resp.status().as_u16();
-    if status == 420 {
-      let secs = retry_after_secs(&resp);
-      return Err(rate_limit.handle_420(secs).await);
-    }
-    if !(200u16..300).contains(&status) {
-      return Err(api_error(resp).await);
-    }
-    let body = resp.bytes().await.map_err(Error::from)?;
-    serde_json::from_slice(&body).map_err(Error::from)
+    consume_json_response(resp, &rate_limit).await
   }
 }
 
@@ -490,6 +447,24 @@ async fn api_error(resp: reqwest::Response) -> Error {
   }
 }
 
+/// Classifies `resp` by status code and either deserializes the JSON body as `T` (2xx),
+/// sleeps and returns [`Error::RateLimit`] (420), or returns [`Error::Api`] (other).
+async fn consume_json_response<T: DeserializeOwned>(
+  resp: reqwest::Response,
+  rate_limit: &RateLimiter,
+) -> Result<T, Error> {
+  let status = resp.status().as_u16();
+  if (200u16..300).contains(&status) {
+    let body = resp.bytes().await?;
+    return Ok(serde_json::from_slice(&body)?);
+  }
+  if status == 420 {
+    let secs = retry_after_secs(&resp);
+    return Err(rate_limit.handle_420(secs).await);
+  }
+  Err(api_error(resp).await)
+}
+
 /// Extracts the `ETag` header value from a response, if present.
 fn etag_value(resp: &reqwest::Response) -> Option<String> {
   resp
@@ -497,6 +472,16 @@ fn etag_value(resp: &reqwest::Response) -> Option<String> {
     .get("ETag")
     .and_then(|v| v.to_str().ok())
     .map(|s| s.to_owned())
+}
+
+/// Reads the `X-Pages` header from `resp` and parses it as a `u32`, defaulting to 1.
+fn parse_x_pages_header(resp: &reqwest::Response) -> u32 {
+  resp
+    .headers()
+    .get(ESI_PAGES_HEADER)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|s| s.parse::<u32>().ok())
+    .unwrap_or(1)
 }
 
 /// Reads the `Retry-After` header and returns its value in seconds, defaulting to 60.
@@ -507,6 +492,22 @@ fn retry_after_secs(resp: &reqwest::Response) -> u64 {
     .and_then(|v| v.to_str().ok())
     .and_then(|s| s.parse::<u64>().ok())
     .unwrap_or(60)
+}
+
+/// Streams `resp` body chunks to `dest`, writing each chunk as it arrives.
+async fn stream_response_to_file(resp: &mut reqwest::Response, dest: &std::path::Path) -> Result<(), Error> {
+  use tokio::io::AsyncWriteExt as _;
+
+  let mut file = tokio::fs::File::create(dest)
+    .await
+    .map_err(|e| Error::Internal(e.to_string()))?;
+  while let Some(chunk) = resp.chunk().await? {
+    file
+      .write_all(&chunk)
+      .await
+      .map_err(|e| Error::Internal(e.to_string()))?;
+  }
+  file.shutdown().await.map_err(|e| Error::Internal(e.to_string()))
 }
 
 #[cfg(test)]
@@ -1140,6 +1141,130 @@ mod tests {
 
         assert!(result.is_ok());
       }
+    }
+  }
+
+  mod consume_json_response {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+
+    fn make_rate_limiter() -> Arc<RateLimiter> {
+      Arc::new(RateLimiter::new())
+    }
+
+    #[tokio::test]
+    async fn it_deserializes_body_on_2xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/data"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":7}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let rl = make_rate_limiter();
+      let resp = reqwest::Client::new()
+        .get(format!("{}/data", server.uri()))
+        .send()
+        .await
+        .unwrap();
+
+      let result: serde_json::Value = consume_json_response(resp, &rl).await.unwrap();
+
+      assert_eq!(result["value"], 7);
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_4xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/data"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw(r#"{"error":"Not Found"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let rl = make_rate_limiter();
+      let resp = reqwest::Client::new()
+        .get(format!("{}/data", server.uri()))
+        .send()
+        .await
+        .unwrap();
+
+      let result: Result<serde_json::Value, _> = consume_json_response(resp, &rl).await;
+
+      assert!(matches!(
+        result,
+        Err(Error::Api {
+          status: 404,
+          ..
+        })
+      ));
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_5xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/data"))
+        .respond_with(ResponseTemplate::new(500).set_body_raw(r#"{"error":"Server Error"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let rl = make_rate_limiter();
+      let resp = reqwest::Client::new()
+        .get(format!("{}/data", server.uri()))
+        .send()
+        .await
+        .unwrap();
+
+      let result: Result<serde_json::Value, _> = consume_json_response(resp, &rl).await;
+
+      assert!(matches!(
+        result,
+        Err(Error::Api {
+          status: 500,
+          ..
+        })
+      ));
+    }
+  }
+
+  mod parse_x_pages_header {
+    use pretty_assertions::assert_eq;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::*;
+
+    async fn get_response_with_header(header: Option<&str>) -> reqwest::Response {
+      let server = MockServer::start().await;
+      let mut template = ResponseTemplate::new(200).set_body_raw("[]", "application/json");
+      if let Some(v) = header {
+        template = template.insert_header("X-Pages", v);
+      }
+      Mock::given(method("GET")).respond_with(template).mount(&server).await;
+      reqwest::Client::new().get(server.uri()).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_returns_parsed_value_when_header_is_present() {
+      let resp = get_response_with_header(Some("5")).await;
+
+      assert_eq!(parse_x_pages_header(&resp), 5);
+    }
+
+    #[tokio::test]
+    async fn it_returns_one_when_header_is_absent() {
+      let resp = get_response_with_header(None).await;
+
+      assert_eq!(parse_x_pages_header(&resp), 1);
+    }
+
+    #[tokio::test]
+    async fn it_returns_one_when_header_is_not_numeric() {
+      let resp = get_response_with_header(Some("abc")).await;
+
+      assert_eq!(parse_x_pages_header(&resp), 1);
     }
   }
 

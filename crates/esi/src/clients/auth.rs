@@ -46,36 +46,11 @@ impl<'a> Client<'a> {
       .map_err(|e| Error::Internal(format!("read failed: {e}")))?;
 
     let request = String::from_utf8_lossy(&buf[..n]);
-    let first_line = request
-      .lines()
-      .next()
-      .ok_or_else(|| Error::Internal("empty HTTP request".into()))?;
-
-    // First line is "GET /?code=...&state=... HTTP/1.1"
-    let path = first_line
-      .split_whitespace()
-      .nth(1)
-      .ok_or_else(|| Error::Internal("malformed HTTP request".into()))?;
-
-    let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
-
-    let mut code = None;
-    let mut state = None;
-    for pair in query.split('&') {
-      if let Some((k, v)) = pair.split_once('=') {
-        match k {
-          "code" => code = Some(v.to_owned()),
-          "state" => state = Some(v.to_owned()),
-          _ => {}
-        }
-      }
-    }
+    let (code, state) = parse_oauth_callback(&request)?;
 
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAuthorized. You may close this tab.";
     let _ = stream.write_all(response.as_bytes()).await;
 
-    let code = code.ok_or_else(|| Error::Internal("missing code in callback".into()))?;
-    let state = state.ok_or_else(|| Error::Internal("missing state in callback".into()))?;
     Ok((code, state))
   }
 
@@ -173,12 +148,7 @@ impl<'a> Client<'a> {
   fn build_grant(&self, resp: TokenResponse) -> Result<Grant, Error> {
     let character_id = Self::parse_character_id(&resp.access_token)?;
     let claims = Self::decode_jwt_claims(&resp.access_token)?;
-    let scopes = match claims.scp {
-      None => vec![],
-      Some(serde_json::Value::String(s)) => vec![s],
-      Some(serde_json::Value::Array(arr)) => arr.into_iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
-      Some(_) => vec![],
-    };
+    let scopes = extract_scopes(claims.scp);
     let expires_at = SystemTime::now() + Duration::from_secs(resp.expires_in);
     Ok(Grant::new(
       resp.access_token,
@@ -219,14 +189,67 @@ struct JwtClaims {
 
 /// Decodes a base64url-encoded string, accepting both padded and unpadded input.
 fn decode_base64url(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
-  // Strip any existing padding and add correct padding for standard decode
-  let stripped = s.trim_end_matches('=');
-  let padded = match stripped.len() % 4 {
+  let padded = pad_base64url(s.trim_end_matches('='));
+  base64::engine::general_purpose::URL_SAFE.decode(padded)
+}
+
+/// Normalizes the `scp` JWT claim into a `Vec<String>`.
+///
+/// - `None` or `null` → empty vec
+/// - `String` → single-element vec
+/// - `Array` → all string elements, non-strings filtered out
+/// - Any other JSON value → empty vec
+fn extract_scopes(scp: Option<serde_json::Value>) -> Vec<String> {
+  match scp {
+    None => vec![],
+    Some(serde_json::Value::String(s)) => vec![s],
+    Some(serde_json::Value::Array(arr)) => arr.into_iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+    Some(_) => vec![],
+  }
+}
+
+/// Adds the correct `=` padding to a stripped base64url string.
+fn pad_base64url(stripped: &str) -> String {
+  match stripped.len() % 4 {
     2 => format!("{stripped}=="),
     3 => format!("{stripped}="),
     _ => stripped.to_owned(),
-  };
-  base64::engine::general_purpose::URL_SAFE.decode(padded)
+  }
+}
+
+/// Parses the first HTTP request line from `request` and extracts the `code` and `state`
+/// OAuth2 callback query parameters.
+fn parse_oauth_callback(request: &str) -> Result<(String, String), Error> {
+  let first_line = request
+    .lines()
+    .next()
+    .ok_or_else(|| Error::Internal("empty HTTP request".into()))?;
+
+  let path = first_line
+    .split_whitespace()
+    .nth(1)
+    .ok_or_else(|| Error::Internal("malformed HTTP request".into()))?;
+
+  let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
+  extract_query_params(query)
+}
+
+/// Scans `&`-delimited key=value pairs for `code` and `state` and returns them as a tuple.
+fn extract_query_params(query: &str) -> Result<(String, String), Error> {
+  let mut code = None;
+  let mut state = None;
+  for pair in query.split('&') {
+    if let Some((k, v)) = pair.split_once('=') {
+      match k {
+        "code" => code = Some(v.to_owned()),
+        "state" => state = Some(v.to_owned()),
+        _ => {}
+      }
+    }
+  }
+  let code = code.ok_or_else(|| Error::Internal("missing code in callback".into()))?;
+  let state = state.ok_or_else(|| Error::Internal("missing state in callback".into()))?;
+  Ok((code, state))
 }
 
 #[cfg(test)]
@@ -397,6 +420,88 @@ mod tests {
     }
   }
 
+  mod extract_query_params {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_extracts_code_and_state() {
+      let (code, state) = extract_query_params("code=abc123&state=xyz").unwrap();
+
+      assert_eq!(code, "abc123");
+      assert_eq!(state, "xyz");
+    }
+
+    #[test]
+    fn it_extracts_with_reversed_param_order() {
+      let (code, state) = extract_query_params("state=xyz&code=abc123").unwrap();
+
+      assert_eq!(code, "abc123");
+      assert_eq!(state, "xyz");
+    }
+
+    #[test]
+    fn it_returns_error_when_code_is_missing() {
+      let result = extract_query_params("state=xyz");
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_returns_error_when_state_is_missing() {
+      let result = extract_query_params("code=abc123");
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_returns_error_on_empty_query() {
+      let result = extract_query_params("");
+
+      assert!(result.is_err());
+    }
+  }
+
+  mod extract_scopes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_vec_for_none() {
+      assert_eq!(extract_scopes(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn it_returns_single_element_for_string_value() {
+      let scp = Some(serde_json::Value::String("esi-skills.read_skills.v1".to_owned()));
+
+      assert_eq!(extract_scopes(scp), vec!["esi-skills.read_skills.v1"]);
+    }
+
+    #[test]
+    fn it_returns_all_strings_for_array_value() {
+      let scp = Some(serde_json::json!([
+        "esi-skills.read_skills.v1",
+        "esi-wallet.read_character_wallet.v1"
+      ]));
+
+      let result = extract_scopes(scp);
+
+      assert_eq!(result.len(), 2);
+      assert!(result.contains(&"esi-skills.read_skills.v1".to_owned()));
+      assert!(result.contains(&"esi-wallet.read_character_wallet.v1".to_owned()));
+    }
+
+    #[test]
+    fn it_returns_empty_vec_for_non_string_non_array_value() {
+      let scp = Some(serde_json::Value::Bool(true));
+
+      assert_eq!(extract_scopes(scp), Vec::<String>::new());
+    }
+  }
+
   mod generate_state {
     use super::*;
 
@@ -437,6 +542,30 @@ mod tests {
     }
   }
 
+  mod pad_base64url {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_adds_two_padding_chars_when_remainder_is_two() {
+      // "ab" has length 2, 2 % 4 == 2
+      assert_eq!(pad_base64url("ab"), "ab==");
+    }
+
+    #[test]
+    fn it_adds_one_padding_char_when_remainder_is_three() {
+      // "abc" has length 3, 3 % 4 == 3
+      assert_eq!(pad_base64url("abc"), "abc=");
+    }
+
+    #[test]
+    fn it_leaves_string_unchanged_when_already_aligned() {
+      // "abcd" has length 4, 4 % 4 == 0
+      assert_eq!(pad_base64url("abcd"), "abcd");
+    }
+  }
+
   mod parse_character_id {
     use pretty_assertions::assert_eq;
 
@@ -460,6 +589,47 @@ mod tests {
     fn it_returns_error_for_malformed_sub() {
       let token = make_jwt("BADINPUT", "Test Character");
       let result = Client::parse_character_id(&token);
+
+      assert!(result.is_err());
+    }
+  }
+
+  mod parse_oauth_callback {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_extracts_code_and_state_from_get_request() {
+      let request = "GET /?code=mycode&state=mystate HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+      let (code, state) = parse_oauth_callback(request).unwrap();
+
+      assert_eq!(code, "mycode");
+      assert_eq!(state, "mystate");
+    }
+
+    #[test]
+    fn it_returns_error_on_empty_request() {
+      let result = parse_oauth_callback("");
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_returns_error_when_path_has_no_query_string() {
+      let request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+      let result = parse_oauth_callback(request);
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_returns_error_when_code_is_missing_from_query() {
+      let request = "GET /?state=only HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+      let result = parse_oauth_callback(request);
 
       assert!(result.is_err());
     }

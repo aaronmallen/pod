@@ -43,7 +43,7 @@ chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
 getset = "0.1"
 libsqlite3-sys = { features = ["bundled"], version = "0" }
-muda = "0.15"
+muda = "0.19"
 open = "5"
 pod-db = { path = "crates/db", version = "0.1" }
 pod-esi = { features = ["pod-model"], path = "crates/esi", version = "0.1" }

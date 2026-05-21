@@ -25,6 +25,7 @@ pub fn new(
   mail_message_list_width: Option<f32>,
   wallet_right_rail_width: Option<f32>,
 ) -> (State, iced::Task<Message>) {
+  let features = services.config.features();
   let (chars_state, chars_task) = characters_ctrl::new(characters.clone(), services);
   let state = State {
     active_nav: Nav::Characters,
@@ -33,6 +34,10 @@ pub fn new(
     corporations: Vec::new(),
     esi_connected: true,
     eve_time: utc_time_string(),
+    feat_asset_tracking: *features.asset_tracking(),
+    feat_mail: *features.mail(),
+    feat_skill_monitoring: *features.skill_monitoring(),
+    feat_wallet: *features.wallet(),
     hovered_nav: None,
     mail_folder_pane_width: mail_folder_pane_width.unwrap_or(240.0),
     mail_message_list_width: mail_message_list_width.unwrap_or(380.0),
@@ -105,6 +110,9 @@ pub fn update(
 }
 
 fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
+  if let assets::Message::ReauthorizeCharacter(_) = &msg {
+    return trigger_reauth(services);
+  }
   let ActiveView::Assets(s) = &mut state.active_view else {
     return iced::Task::none();
   };
@@ -242,6 +250,9 @@ fn update_character_detail(
         character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
       state.active_view = ActiveView::CharacterDetail(detail_state);
       return detail_task.map(Message::CharacterDetail);
+    }
+    character_detail::Message::ReauthorizeCharacter(_char_id) => {
+      return trigger_reauth(services);
     }
     _ => {}
   }
@@ -381,6 +392,9 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
 }
 
 fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> iced::Task<Message> {
+  if let mail::Message::ReauthorizeCharacter(_) = &msg {
+    return trigger_reauth(services);
+  }
   let is_drag_end = matches!(&msg, mail::Message::PaneDragEnd);
   let ActiveView::Mail(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -461,21 +475,54 @@ fn update_settings(
     &msg,
     settings::Message::ToggleFeature(_) | settings::Message::ResetDefaults
   );
-  let ActiveView::Settings(s) = &mut state.active_view else {
-    return (iced::Task::none(), None);
+
+  let (settings_task, updated_cfg) = {
+    let ActiveView::Settings(s) = &mut state.active_view else {
+      return (iced::Task::none(), None);
+    };
+    let task = settings_ctrl::update(s, msg, services).map(Message::Settings);
+    let cfg = if is_save {
+      Some(settings_ctrl::updated_config(s, &services.config))
+    } else {
+      None
+    };
+    (task, cfg)
   };
-  let settings_task = settings_ctrl::update(s, msg, services).map(Message::Settings);
-  let new_config = if is_save {
-    let cfg = settings_ctrl::updated_config(s, &services.config);
+
+  if let Some(cfg) = updated_cfg {
+    let features = cfg.features();
+    state.feat_asset_tracking = *features.asset_tracking();
+    state.feat_mail = *features.mail();
+    state.feat_skill_monitoring = *features.skill_monitoring();
+    state.feat_wallet = *features.wallet();
+
+    let hidden_nav = matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
+      || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
+      || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
+      || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet;
+
+    if hidden_nav {
+      state.active_nav = Nav::Characters;
+      let (chars_state, chars_task) = characters_ctrl::new(state.characters.clone(), services);
+      state.active_view = ActiveView::Characters(chars_state);
+      let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
+      return (
+        iced::Task::batch([settings_task, chars_task.map(Message::Characters), toast_task]),
+        Some(cfg),
+      );
+    }
+
     let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
     return (iced::Task::batch([settings_task, toast_task]), Some(cfg));
-  } else {
-    None
-  };
-  (settings_task, new_config)
+  }
+
+  (settings_task, None)
 }
 
 fn update_skills(state: &mut State, msg: skills::Message, services: &Services) -> iced::Task<Message> {
+  if let skills::Message::ReauthorizeCharacter(_) = &msg {
+    return trigger_reauth(services);
+  }
   let is_drag_end = matches!(&msg, skills::Message::PaneDragEnd);
   let ActiveView::Skills(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -502,6 +549,9 @@ fn update_sync_state(state: &mut State, had_updates: bool) {
 }
 
 fn update_wallet(state: &mut State, msg: wallet::Message, services: &Services) -> iced::Task<Message> {
+  if let wallet::Message::ReauthorizeCharacter(_) = &msg {
+    return trigger_reauth(services);
+  }
   let is_drag_end = matches!(&msg, wallet::Message::PaneDragEnd);
   let corporations = state.corporations.clone();
   let ActiveView::Wallet(s) = &mut state.active_view else {

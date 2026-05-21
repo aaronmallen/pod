@@ -64,6 +64,10 @@ pub struct State {
   pub corporations: Vec<Corporation>,
   pub esi_connected: bool,
   pub eve_time: String,
+  pub feat_asset_tracking: bool,
+  pub feat_mail: bool,
+  pub feat_skill_monitoring: bool,
+  pub feat_wallet: bool,
   pub hovered_nav: Option<Nav>,
   pub mail_folder_pane_width: f32,
   pub mail_message_list_width: f32,
@@ -116,13 +120,19 @@ impl<'a> Component<'a> {
       .into()
     };
 
-    let nav_items: Vec<Element<'a, Message>> = vec![
-      nav_item(Icon::characters(), Nav::Characters, false),
-      nav_item(Icon::skills(), Nav::Skills, false),
-      nav_item(Icon::mail(), Nav::Mail, unread_mail > 0),
-      nav_item(Icon::wallet(), Nav::Wallet, false),
-      nav_item(Icon::assets(), Nav::Assets, false),
-    ];
+    let mut nav_items: Vec<Element<'a, Message>> = vec![nav_item(Icon::characters(), Nav::Characters, false)];
+    if self.state.feat_skill_monitoring {
+      nav_items.push(nav_item(Icon::skills(), Nav::Skills, false));
+    }
+    if self.state.feat_mail {
+      nav_items.push(nav_item(Icon::mail(), Nav::Mail, unread_mail > 0));
+    }
+    if self.state.feat_wallet {
+      nav_items.push(nav_item(Icon::wallet(), Nav::Wallet, false));
+    }
+    if self.state.feat_asset_tracking {
+      nav_items.push(nav_item(Icon::assets(), Nav::Assets, false));
+    }
 
     let settings_btn = mouse_area(
       NavButton::new(

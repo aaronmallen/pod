@@ -204,6 +204,8 @@ pub enum Message {
 
 pub struct Component<'a> {
   characters: Vec<&'a Character>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
   state: &'a State,
   window_width: f32,
   pane_height: f32,
@@ -213,10 +215,22 @@ impl<'a> Component<'a> {
   pub fn new(characters: Vec<&'a Character>, state: &'a State) -> Self {
     Self {
       characters,
+      feat_skill_monitoring: true,
+      feat_wallet: true,
       state,
       window_width: spacing::layout::WINDOW_DEFAULT_WIDTH,
       pane_height: spacing::layout::WINDOW_DEFAULT_HEIGHT,
     }
+  }
+
+  pub fn feat_skill_monitoring(mut self, v: bool) -> Self {
+    self.feat_skill_monitoring = v;
+    self
+  }
+
+  pub fn feat_wallet(mut self, v: bool) -> Self {
+    self.feat_wallet = v;
+    self
   }
 
   pub fn window_width(mut self, width: f32) -> Self {
@@ -234,6 +248,8 @@ impl<'a> Component<'a> {
     let dragging_id = self.state.dragging_id;
     let cursor = self.state.cursor_position;
     let window_width = self.window_width;
+    let feat_skill_monitoring = self.feat_skill_monitoring;
+    let feat_wallet = self.feat_wallet;
 
     // Extract ghost character data before consuming self in render_grid().
     // Both references carry lifetime 'a so they outlive the move.
@@ -242,7 +258,7 @@ impl<'a> Component<'a> {
     let ghost_handle: Option<&'a iced::widget::image::Handle> =
       dragging_id.and_then(|id| self.state.portrait_handles.get(&id));
 
-    let grid = self.render_grid();
+    let grid = self.render_grid(feat_skill_monitoring, feat_wallet);
 
     let mut layers: Vec<Element<'a, Message>> = vec![grid];
 
@@ -283,7 +299,7 @@ impl<'a> Component<'a> {
     }
   }
 
-  fn render_grid(self) -> Element<'a, Message> {
+  fn render_grid(self, feat_skill_monitoring: bool, feat_wallet: bool) -> Element<'a, Message> {
     let cols = if self.window_width >= 1000.0 {
       3
     } else if self.window_width >= 700.0 {
@@ -305,6 +321,8 @@ impl<'a> Component<'a> {
           let id = *c.id();
           CharacterCard::new(c)
             .portrait_handle(portrait_handles.get(&id))
+            .feat_skill_monitoring(feat_skill_monitoring)
+            .feat_wallet(feat_wallet)
             .is_dragging(dragging_id == Some(id))
             .is_hover_target(dragging_id.is_some() && drag_hover == Some(id) && dragging_id != Some(id))
             .render()

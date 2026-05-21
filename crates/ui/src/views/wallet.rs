@@ -19,10 +19,11 @@ use iced::{
 pub use main_panel::Component as MainPanel;
 pub use mappings::journal_type_glyph;
 pub use net_worth_hero::Component as NetWorthHero;
+use pod_model::missing_scopes;
 pub use right_rail::Component as RightRail;
 
 use crate::{
-  components::{CharacterPicker, character_picker},
+  components::{CharacterPicker, ScopeMissing, character_picker, scope_missing},
   format,
   style::{color, spacing},
 };
@@ -36,6 +37,7 @@ pub struct WalletCharacter {
   pub liquid: f64,
   pub assets: f64,
   pub escrow: f64,
+  pub granted_scopes: Option<String>,
   pub portrait_tone: u16,
   pub portrait_handle: Option<image::Handle>,
 }
@@ -160,6 +162,7 @@ pub enum DraggingPane {
 #[derive(Clone, Debug)]
 pub enum Message {
   AllCorpBalancesLoaded(Vec<(i64, f64)>),
+  ReauthorizeCharacter(i64),
   AssetValuesLoaded(Vec<(i64, f64)>),
   CharacterPicker(character_picker::Message),
   ContractsLoaded(Vec<ContractEntry>),
@@ -318,6 +321,7 @@ fn effective_right_rail_width(state: &State, window_width: f32) -> f32 {
 /// Processes a wallet message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
+    Message::ReauthorizeCharacter(_) => {}
     Message::AllCorpBalancesLoaded(balances) => {
       state.all_corp_balances = balances;
     }
@@ -437,6 +441,23 @@ impl<'a> Component<'a> {
     use iced::widget::stack;
 
     let state = self.state;
+
+    if let Some(char_id) = state.selected_character() {
+      if let Some(wc) = state.characters.iter().find(|c| c.id == char_id) {
+        let granted_str = wc.granted_scopes.as_deref().unwrap_or("");
+        let granted: Vec<&str> = if granted_str.is_empty() {
+          Vec::new()
+        } else {
+          granted_str.split(' ').collect()
+        };
+        if !missing_scopes(&granted, &["esi-wallet.read_character_wallet.v1"]).is_empty() {
+          return ScopeMissing::new(char_id, "wallet").render().map(|m| match m {
+            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+          });
+        }
+      }
+    }
+
     let right_w = effective_right_rail_width(state, self.window_width);
 
     let header = Header::new(state).render();

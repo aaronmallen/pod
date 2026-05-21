@@ -14,11 +14,11 @@ use iced::{
 };
 use pod_model::{
   Character, CharacterClone, CharacterContact, CharacterContactLabel, CharacterKillEntry, CharacterNotification,
-  CharacterStanding,
+  CharacterStanding, missing_scopes,
 };
 
 use crate::{
-  components::{TabStrip, character_picker},
+  components::{ScopeMissing, TabStrip, character_picker, scope_missing},
   style::{color, spacing, typography as font},
 };
 
@@ -140,6 +140,8 @@ pub enum Message {
   NotificationRead(i64),
   /// A message from the character picker component.
   Picker(character_picker::Message),
+  /// Re-authorize the character (scope gap detected in a tab).
+  ReauthorizeCharacter(i64),
   /// Ship icon bytes finished loading; keyed by type_id.
   ShipIconsLoaded(Vec<(i32, Vec<u8>)>),
   /// Standings finished loading.
@@ -183,6 +185,22 @@ pub struct State {
   pub contact_labels: Vec<CharacterContactLabel>,
   /// Loaded contacts.
   pub contacts: LoadState<Vec<CharacterContact>>,
+  /// Feature: clone_monitoring enabled.
+  pub feat_clone_monitoring: bool,
+  /// Feature: contacts enabled.
+  pub feat_contacts: bool,
+  /// Feature: combat_log enabled.
+  pub feat_combat_log: bool,
+  /// Feature: eve_notifications enabled.
+  pub feat_eve_notifications: bool,
+  /// Feature: location_tracking enabled.
+  pub feat_location_tracking: bool,
+  /// Feature: skill_monitoring enabled.
+  pub feat_skill_monitoring: bool,
+  /// Feature: standings enabled.
+  pub feat_standings: bool,
+  /// Feature: wallet enabled.
+  pub feat_wallet: bool,
   /// Pre-filtered contacts for the contacts tab (updated by controller on load/filter change).
   pub filtered_contacts: Vec<CharacterContact>,
   /// Pre-filtered kill/loss entries for the killlog tab (updated by controller on load/filter change).
@@ -247,28 +265,31 @@ fn detail_header(state: &State) -> Element<'_, Message> {
   };
 
   let sp_stat = head_stat("Total SP", &sp_formatted);
-  let isk_stat = head_stat("Liquid", &isk_formatted);
-  let location_stat = head_stat("Location", &location_name);
+
+  let mut row_items: Vec<Element<'_, Message>> = vec![picker, divider().into(), sp_stat];
+
+  if state.feat_wallet {
+    row_items.push(divider().into());
+    row_items.push(head_stat("Liquid", &isk_formatted));
+  }
+
+  if state.feat_location_tracking {
+    row_items.push(divider().into());
+    row_items.push(head_stat("Location", &location_name));
+  }
+
+  row_items.push(Space::new().width(Length::Fill).into());
 
   container(
-    row([
-      picker,
-      divider().into(),
-      sp_stat,
-      divider().into(),
-      isk_stat,
-      divider().into(),
-      location_stat,
-      Space::new().width(Length::Fill).into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center)
-    .spacing(spacing::SPACE_4)
-    .padding(Padding {
-      top: 0.0,
-      bottom: 0.0,
-      left: spacing::SPACE_7,
-      right: spacing::SPACE_7,
-    }),
+    row(row_items)
+      .align_y(iced::alignment::Vertical::Center)
+      .spacing(spacing::SPACE_4)
+      .padding(Padding {
+        top: 0.0,
+        bottom: 0.0,
+        left: spacing::SPACE_7,
+        right: spacing::SPACE_7,
+      }),
   )
   .width(Length::Fill)
   .center_y(spacing::layout::HEADER_HEIGHT)
@@ -329,39 +350,36 @@ fn detail_tab_strip(state: &State) -> Element<'_, Message> {
     _ => None,
   };
 
-  let tabs = [
-    (Tab::Clones, "Clones", clones_count, 0usize),
-    (Tab::Contacts, "Contacts", contacts_count, 0),
-    (Tab::Killlog, "Kill log", killlog_count, 0),
+  let all_tabs = [
+    (Tab::Clones, "Clones", clones_count, 0usize, state.feat_clone_monitoring),
+    (Tab::Contacts, "Contacts", contacts_count, 0, state.feat_contacts),
+    (Tab::Killlog, "Kill log", killlog_count, 0, state.feat_combat_log),
     (
       Tab::Notifications,
       "Notifications",
       notifications_count,
       unread_notifications,
+      state.feat_eve_notifications,
     ),
-    (Tab::Standings, "Standings", standings_count, 0),
+    (Tab::Standings, "Standings", standings_count, 0, state.feat_standings),
   ];
 
-  let active_index = tabs
+  let visible_tabs: Vec<_> = all_tabs.iter().filter(|(_, _, _, _, enabled)| *enabled).collect();
+
+  let active_index = visible_tabs
     .iter()
-    .position(|(tab, _, _, _)| *tab == state.active_tab)
+    .position(|(tab, _, _, _, _)| *tab == state.active_tab)
     .unwrap_or(0);
 
-  let items = tabs
+  let items = visible_tabs
     .iter()
-    .map(|(_, label, count, _)| crate::components::tab_strip::TabItem {
+    .map(|(_, label, count, _, _)| crate::components::tab_strip::TabItem {
       label: label.to_string(),
       count: *count,
     })
     .collect();
 
-  let tab_ordering = [
-    Tab::Clones,
-    Tab::Contacts,
-    Tab::Killlog,
-    Tab::Notifications,
-    Tab::Standings,
-  ];
+  let tab_ordering: Vec<Tab> = visible_tabs.iter().map(|(tab, _, _, _, _)| *tab).collect();
 
   TabStrip::new(items)
     .active(active_index)
@@ -369,25 +387,68 @@ fn detail_tab_strip(state: &State) -> Element<'_, Message> {
 }
 
 fn tab_content(state: &State) -> Element<'_, Message> {
+  let granted = state.character.granted_scopes_list();
+  let char_id = state.character_id;
+
   match state.active_tab {
-    Tab::Clones => clones_tab::Component::new(&state.clones, &state.implant_icons).render(),
+    Tab::Clones => {
+      let required: &[&'static str] = &["esi-clones.read_clones.v1", "esi-clones.read_implants.v1"];
+      if !missing_scopes(&granted, required).is_empty() {
+        return ScopeMissing::new(char_id, "clone monitoring")
+          .render()
+          .map(|m| match m {
+            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+          });
+      }
+      clones_tab::Component::new(&state.clones, &state.implant_icons).render()
+    }
     Tab::Contacts => {
+      let required: &[&'static str] = &["esi-characters.read_contacts.v1"];
+      if !missing_scopes(&granted, required).is_empty() {
+        return ScopeMissing::new(char_id, "contacts").render().map(|m| match m {
+          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+        });
+      }
       contacts_tab::Component::new(&state.contacts, &state.filtered_contacts, &state.contact_filter).render()
     }
-    Tab::Killlog => killlog_tab::Component::new(
-      &state.killlog,
-      &state.filtered_killlog,
-      &state.killlog_filter,
-      &state.ship_icons,
-    )
-    .render(),
-    Tab::Notifications => notifications_tab::Component::new(
-      &state.notifications,
-      &state.filtered_notifications,
-      state.unread_notification_count,
-      &state.notifications_filter,
-    )
-    .render(),
-    Tab::Standings => standings_tab::Component::new(&state.standings).render(),
+    Tab::Killlog => {
+      let required: &[&'static str] = &["esi-killmails.read_killmails.v1"];
+      if !missing_scopes(&granted, required).is_empty() {
+        return ScopeMissing::new(char_id, "kill log").render().map(|m| match m {
+          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+        });
+      }
+      killlog_tab::Component::new(
+        &state.killlog,
+        &state.filtered_killlog,
+        &state.killlog_filter,
+        &state.ship_icons,
+      )
+      .render()
+    }
+    Tab::Notifications => {
+      let required: &[&'static str] = &["esi-characters.read_notifications.v1"];
+      if !missing_scopes(&granted, required).is_empty() {
+        return ScopeMissing::new(char_id, "notifications").render().map(|m| match m {
+          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+        });
+      }
+      notifications_tab::Component::new(
+        &state.notifications,
+        &state.filtered_notifications,
+        state.unread_notification_count,
+        &state.notifications_filter,
+      )
+      .render()
+    }
+    Tab::Standings => {
+      let required: &[&'static str] = &["esi-characters.read_standings.v1"];
+      if !missing_scopes(&granted, required).is_empty() {
+        return ScopeMissing::new(char_id, "standings").render().map(|m| match m {
+          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+        });
+      }
+      standings_tab::Component::new(&state.standings).render()
+    }
   }
 }

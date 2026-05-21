@@ -14,12 +14,12 @@ use iced::{
   Background, Element, Event, Length, Padding, Subscription, mouse,
   widget::{Space, column, container, mouse_area, row, scrollable},
 };
-use pod_model::{AttrKey, Character, SkillGroupDef, SkillPlan};
+use pod_model::{AttrKey, Character, SkillGroupDef, SkillPlan, missing_scopes};
 pub use right_panel::Component as RightPanel;
 pub use warning_strip::Component as WarningStrip;
 
 use crate::{
-  components::{CharacterPicker, character_picker},
+  components::{CharacterPicker, ScopeMissing, character_picker, scope_missing},
   style::spacing,
 };
 
@@ -93,6 +93,7 @@ pub enum Message {
   PaneDragEnd,
   PaneDragStart,
   Picker(character_picker::Message),
+  ReauthorizeCharacter(i64),
   RightPanel(right_panel::Message),
   PlansTabOpened,
   PlansLoaded(Vec<SkillPlan>),
@@ -163,7 +164,8 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     | Message::PlanOpenRequested(_)
     | Message::PlanNewRequested
     | Message::PlanFromQueueRequested
-    | Message::PlanDeleteConfirmed(_) => {}
+    | Message::PlanDeleteConfirmed(_)
+    | Message::ReauthorizeCharacter(_) => {}
   }
   iced::Task::none()
 }
@@ -257,6 +259,23 @@ impl<'a> Component<'a> {
 
   /// Consume the builder and return the finished [`Element`].
   pub fn render(self) -> Element<'a, Message> {
+    if let Some(char_id) = self.state.selected_char_id().checked_sub(0).filter(|&id| id != 0) {
+      if let Some(character) = self.state.characters.iter().find(|c| *c.id() == char_id) {
+        let granted = character.granted_scopes_list();
+        if !missing_scopes(
+          &granted,
+          &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
+        )
+        .is_empty()
+        {
+          return ScopeMissing::new(char_id, "skill monitoring")
+            .render()
+            .map(|m| match m {
+              scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+            });
+        }
+      }
+    }
     view(self.state, self.window_width)
   }
 }

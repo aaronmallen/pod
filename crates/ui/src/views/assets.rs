@@ -17,13 +17,14 @@ use iced::{
   widget::{column, container, image},
 };
 pub use main_panel::Component as MainPanel;
-use pod_model::{Character, Corporation};
+use pod_model::{Character, Corporation, missing_scopes};
 pub use sidebar::Component as Sidebar;
 
 use crate::{
   components::{
-    CharacterPicker,
+    CharacterPicker, ScopeMissing,
     character_picker::{self, CharacterEntry, CorporationEntry},
+    scope_missing,
   },
   style::{color, spacing},
 };
@@ -285,6 +286,7 @@ pub enum Message {
   LocationSelected(Option<String>),
   NavHistoryLoaded(Vec<(NaiveDate, f64)>),
   Picker(character_picker::Message),
+  ReauthorizeCharacter(i64),
   RefreshNavHistory,
   StockpilesLoaded(Vec<StockpileWithStatus>),
   StockpilesTab(stockpiles_tab::Message),
@@ -676,6 +678,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       state.values_loading = false;
     }
     Message::ValuesTab(_msg) => {}
+    Message::ReauthorizeCharacter(_) => {}
   }
   iced::Task::none()
 }
@@ -773,6 +776,18 @@ impl<'a> Component<'a> {
     use iced::{Background, widget::stack};
 
     let state = self.state;
+
+    if let Some(char_id) = state.selected_character() {
+      if let Some(character) = state.characters.iter().find(|c| *c.id() == char_id) {
+        let granted = character.granted_scopes_list();
+        if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
+          return ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
+            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+          });
+        }
+      }
+    }
+
     let header_el = Header::new(state).render();
     let main_el = MainPanel::new(state).render();
 

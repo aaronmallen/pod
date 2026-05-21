@@ -33,6 +33,7 @@ pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Tas
     })
     .collect();
 
+  let features = services.config.features();
   let mut pane_state = characters_tab::State::new();
   pane_state.portrait_handles = portrait_handles;
 
@@ -48,6 +49,9 @@ pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Tas
     confirm_remove_corporation: None,
     corporation_pane: Default::default(),
     corporations: Vec::new(),
+    feat_location_tracking: *features.location_tracking(),
+    feat_skill_monitoring: *features.skill_monitoring(),
+    feat_wallet: *features.wallet(),
     header: Default::default(),
     search_filter: search_filter::State::new(),
     tag_corpus: Vec::new(),
@@ -194,20 +198,37 @@ fn reorder_characters_by_ids(characters: &mut Vec<Character>, order: &[i64]) {
 /// character public/corp (3600 s), corp public (3600 s).
 /// Keyboard subscriptions are added based on which overlay is active.
 pub fn subscription(state: &State) -> Subscription<Message> {
-  let mut subs: Vec<Subscription<Message>> = vec![
-    iced::time::every(std::time::Duration::from_secs(60))
-      .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(120))
-      .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(300))
-      .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
+  let mut subs: Vec<Subscription<Message>> = Vec::new();
+
+  if state.feat_location_tracking {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(60))
+        .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
+    );
+  }
+
+  if state.feat_skill_monitoring {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(120))
+        .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
+    );
+  }
+
+  if state.feat_wallet {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(300))
+        .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
+    );
+  }
+
+  subs.extend([
     iced::time::every(std::time::Duration::from_secs(300))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick)),
-  ];
+  ]);
 
   if state.character_pane.dragging_id.is_some() {
     subs.push(drag_release_subscription());
@@ -886,6 +907,19 @@ async fn add_character(
   Ok(character)
 }
 
+/// Runs the OAuth flow for re-authorizing an existing character with updated scopes.
+///
+/// Behaves identically to `add_character`; the upsert in the DB ensures the
+/// existing record is updated rather than a duplicate being created.
+pub async fn reauthorize_character(
+  esi: pod_esi::Client,
+  verifier: String,
+  oauth_state: String,
+  db: Option<pod_db::Repo>,
+) -> Result<Character, String> {
+  add_character(esi, verifier, oauth_state, db).await
+}
+
 async fn add_corporation(
   esi: pod_esi::Client,
   verifier: String,
@@ -1512,6 +1546,9 @@ mod tests {
       confirm_remove_corporation: None,
       corporation_pane: Default::default(),
       corporations: Vec::new(),
+      feat_location_tracking: true,
+      feat_skill_monitoring: true,
+      feat_wallet: true,
       header: Default::default(),
       search_filter: search_filter::State::new(),
       tag_corpus: Vec::new(),
@@ -1807,11 +1844,7 @@ mod tests {
         reauthed.set_refresh_token("new-refresh");
         reauthed.set_granted_scopes(Some("esi-skills.read_skills.v1".to_string()));
 
-        let _ = update_character_card(
-          &mut state,
-          characters_tab::Message::CharacterAdded(reauthed),
-          &services,
-        );
+        let _ = update_character_card(&mut state, characters_tab::Message::CharacterAdded(reauthed), &services);
 
         assert_eq!(state.all_characters.len(), 1);
         assert_eq!(state.all_characters[0].access_token(), "new-token");

@@ -73,6 +73,12 @@ pub struct State {
   pub corporation_pane: corporations_tab::State,
   /// Filtered corporation list (may equal all_corporations).
   pub corporations: Vec<Corporation>,
+  /// Feature: location_tracking enabled.
+  pub feat_location_tracking: bool,
+  /// Feature: skill_monitoring enabled.
+  pub feat_skill_monitoring: bool,
+  /// Feature: wallet enabled.
+  pub feat_wallet: bool,
   /// Header state.
   pub header: header::State,
   /// Search filter state.
@@ -97,6 +103,9 @@ impl State {
       confirm_remove: None,
       confirm_remove_corporation: None,
       corporation_pane: corporations_tab::State::default(),
+      feat_location_tracking: true,
+      feat_skill_monitoring: true,
+      feat_wallet: true,
       corporations: Vec::new(),
       header: header::State,
       search_filter: search_filter::State::new(),
@@ -302,6 +311,8 @@ fn render_tab_content<'a>(
       } else {
         let pane_h = (window_height - spacing::layout::HEADER_HEIGHT - spacing::SPACE_8 * 2.0).max(0.0);
         CharacterPane::new(visible, &state.character_pane)
+          .feat_skill_monitoring(state.feat_skill_monitoring)
+          .feat_wallet(state.feat_wallet)
           .window_width(window_width)
           .pane_height(pane_h)
           .render()

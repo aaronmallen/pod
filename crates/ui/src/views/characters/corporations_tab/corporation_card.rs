@@ -89,6 +89,218 @@ impl<'a> Component<'a> {
   }
 }
 
+fn ceo_column<'a>(ceo_name: Option<&str>) -> iced::widget::Container<'a, Message> {
+  let ceo_label = text("CEO")
+    .font(typography::mono::REGULAR)
+    .size(9.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    });
+
+  let ceo_str = ceo_name.unwrap_or("—").to_string();
+  let ceo_val = text(ceo_str)
+    .font(typography::body::REGULAR)
+    .size(13.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+
+  container(column([ceo_label.into(), ceo_val.into()]).spacing(spacing::SPACE_1))
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_3,
+    })
+    .width(Length::FillPortion(1))
+}
+
+fn format_members(n: i32) -> String {
+  if n >= 1_000_000 {
+    format!("{:.1}M", n as f64 / 1_000_000.0)
+  } else if n >= 1_000 {
+    let thousands = n / 1_000;
+    let remainder = n % 1_000;
+    format!("{thousands},{remainder:03}")
+  } else {
+    n.to_string()
+  }
+}
+
+fn hq_column<'a>(corporation: &'a Corporation) -> iced::widget::Container<'a, Message> {
+  let hq_label = text("HQ")
+    .font(typography::mono::REGULAR)
+    .size(9.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    });
+
+  let hq_str = corporation.hq_name().as_deref().unwrap_or("—").to_string();
+  let hq_color = if corporation.hq_name().is_some() {
+    color::text::PRIMARY
+  } else {
+    color::text::TERTIARY
+  };
+  let hq_val = text(hq_str)
+    .font(typography::body::REGULAR)
+    .size(13.0)
+    .style(move |_| iced::widget::text::Style {
+      color: Some(hq_color),
+    });
+
+  container(column([hq_label.into(), hq_val.into()]).spacing(spacing::SPACE_1))
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::FillPortion(1))
+}
+
+fn render_ceo_hq<'a>(corporation: &'a Corporation, ceo_name: Option<&str>) -> Element<'a, Message> {
+  let ceo_col = ceo_column(ceo_name);
+  let hq_col = hq_column(corporation);
+
+  row([ceo_col.into(), stat_divider(), hq_col.into()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn render_identity<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
+  let name_el = text(corporation.name())
+    .font(typography::body::MEDIUM)
+    .size(17.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+
+  let alliance_str = corporation
+    .alliance_name()
+    .as_deref()
+    .unwrap_or("No alliance")
+    .to_uppercase();
+  let alliance_el = text(alliance_str)
+    .font(typography::mono::REGULAR)
+    .size(10.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    });
+
+  container(column([name_el.into(), alliance_el.into()]).spacing(spacing::SPACE_1))
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn render_logo<'a>(corp: &'a Corporation, handle: Option<&'a image::Handle>) -> Element<'a, Message> {
+  match handle {
+    Some(h) => container(image(h).width(72.0).height(72.0))
+      .width(72.0)
+      .height(72.0)
+      .style(|_| container::Style {
+        border: Border {
+          color: color::border::SUBTLE,
+          radius: radius::PANEL.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into(),
+    None => {
+      let initial = corp.ticker().chars().next().map(|c| c.to_string()).unwrap_or_default();
+      container(
+        text(initial)
+          .size(24.0)
+          .font(typography::mono::MEDIUM)
+          .style(|_| iced::widget::text::Style {
+            color: Some(color::accent::PLASMA),
+          }),
+      )
+      .width(72.0)
+      .height(72.0)
+      .center_x(72.0)
+      .center_y(72.0)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::BASE)),
+        border: Border {
+          color: color::border::SUBTLE,
+          radius: radius::PANEL.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+    }
+  }
+}
+
+fn render_stats<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
+  let labels_row = stats_labels_row();
+  let values_row = stats_values_row(corporation);
+
+  container(column([labels_row.into(), values_row.into()]).spacing(8.0))
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
+  let id = *corporation.id();
+
+  let plus_btn = button(
+    text("+")
+      .font(typography::body::MEDIUM)
+      .size(13.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 4.0,
+    right: 4.0,
+  })
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08))),
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: radius::FULL.into(),
+      width: 1.0,
+    },
+    ..button::Style::default()
+  })
+  .on_press(Message::TagsPressed(id));
+
+  let mut items: Vec<Element<'a, Message>> = corporation
+    .tags()
+    .iter()
+    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
+    .collect();
+  items.push(plus_btn.into());
+
+  container(row(items).spacing(spacing::SPACE_1).wrap())
+    .padding(Padding {
+      top: 0.0,
+      bottom: 10.0,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
 fn render_ticker_plate<'a>(corp: &'a Corporation, icon_handle: Option<&'a image::Handle>) -> Element<'a, Message> {
   let logo = render_logo(corp, icon_handle);
 
@@ -139,91 +351,14 @@ fn render_ticker_plate<'a>(corp: &'a Corporation, icon_handle: Option<&'a image:
   .into()
 }
 
-fn render_logo<'a>(corp: &'a Corporation, handle: Option<&'a image::Handle>) -> Element<'a, Message> {
-  match handle {
-    Some(h) => container(image(h).width(72.0).height(72.0))
-      .width(72.0)
-      .height(72.0)
-      .style(|_| container::Style {
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: radius::PANEL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    None => {
-      let initial = corp.ticker().chars().next().map(|c| c.to_string()).unwrap_or_default();
-      container(
-        text(initial)
-          .size(24.0)
-          .font(typography::mono::MEDIUM)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .width(72.0)
-      .height(72.0)
-      .center_x(72.0)
-      .center_y(72.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: radius::PANEL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
-    }
-  }
-}
-
-fn render_identity<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
-  let name_el = text(corporation.name())
-    .font(typography::body::MEDIUM)
-    .size(17.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::PRIMARY),
-    });
-
-  let alliance_str = corporation
-    .alliance_name()
-    .as_deref()
-    .unwrap_or("No alliance")
-    .to_uppercase();
-  let alliance_el = text(alliance_str)
-    .font(typography::mono::REGULAR)
-    .size(10.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
-  container(column([name_el.into(), alliance_el.into()]).spacing(spacing::SPACE_1))
-    .padding(Padding {
-      top: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_2_5,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
+fn stat_divider<'a>() -> Element<'a, Message> {
+  container(iced::widget::Space::new().height(Length::Fill))
+    .width(1.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
     })
-    .width(Length::Fill)
-    .into()
-}
-
-fn render_stats<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
-  let labels_row = stats_labels_row();
-  let values_row = stats_values_row(corporation);
-
-  container(column([labels_row.into(), values_row.into()]).spacing(8.0))
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
     .into()
 }
 
@@ -272,139 +407,4 @@ fn stats_values_row<'a>(corporation: &Corporation) -> iced::widget::Row<'a, Mess
     iced::widget::Space::new().width(Length::Fill).into(),
     tax_val.into(),
   ])
-}
-
-fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
-  let id = *corporation.id();
-
-  let plus_btn = button(
-    text("+")
-      .font(typography::body::MEDIUM)
-      .size(13.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 2.0,
-    bottom: 2.0,
-    left: 4.0,
-    right: 4.0,
-  })
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08))),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: radius::FULL.into(),
-      width: 1.0,
-    },
-    ..button::Style::default()
-  })
-  .on_press(Message::TagsPressed(id));
-
-  let mut items: Vec<Element<'a, Message>> = corporation
-    .tags()
-    .iter()
-    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
-    .collect();
-  items.push(plus_btn.into());
-
-  container(row(items).spacing(spacing::SPACE_1).wrap())
-    .padding(Padding {
-      top: 0.0,
-      bottom: 10.0,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-fn render_ceo_hq<'a>(corporation: &'a Corporation, ceo_name: Option<&str>) -> Element<'a, Message> {
-  let ceo_col = ceo_column(ceo_name);
-  let hq_col = hq_column(corporation);
-
-  row([ceo_col.into(), stat_divider(), hq_col.into()])
-    .width(Length::Fill)
-    .into()
-}
-
-fn ceo_column<'a>(ceo_name: Option<&str>) -> iced::widget::Container<'a, Message> {
-  let ceo_label = text("CEO")
-    .font(typography::mono::REGULAR)
-    .size(9.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
-  let ceo_str = ceo_name.unwrap_or("—").to_string();
-  let ceo_val = text(ceo_str)
-    .font(typography::body::REGULAR)
-    .size(13.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::PRIMARY),
-    });
-
-  container(column([ceo_label.into(), ceo_val.into()]).spacing(spacing::SPACE_1))
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_3,
-    })
-    .width(Length::FillPortion(1))
-}
-
-fn hq_column<'a>(corporation: &'a Corporation) -> iced::widget::Container<'a, Message> {
-  let hq_label = text("HQ")
-    .font(typography::mono::REGULAR)
-    .size(9.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
-  let hq_str = corporation.hq_name().as_deref().unwrap_or("—").to_string();
-  let hq_color = if corporation.hq_name().is_some() {
-    color::text::PRIMARY
-  } else {
-    color::text::TERTIARY
-  };
-  let hq_val = text(hq_str)
-    .font(typography::body::REGULAR)
-    .size(13.0)
-    .style(move |_| iced::widget::text::Style {
-      color: Some(hq_color),
-    });
-
-  container(column([hq_label.into(), hq_val.into()]).spacing(spacing::SPACE_1))
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::FillPortion(1))
-}
-
-fn stat_divider<'a>() -> Element<'a, Message> {
-  container(iced::widget::Space::new().height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn format_members(n: i32) -> String {
-  if n >= 1_000_000 {
-    format!("{:.1}M", n as f64 / 1_000_000.0)
-  } else if n >= 1_000 {
-    let thousands = n / 1_000;
-    let remainder = n % 1_000;
-    format!("{thousands},{remainder:03}")
-  } else {
-    n.to_string()
-  }
 }

@@ -334,16 +334,6 @@ impl<'a> Component<'a> {
   }
 }
 
-fn grid_cols(window_width: f32) -> usize {
-  if window_width >= 1000.0 {
-    3
-  } else if window_width >= 700.0 {
-    2
-  } else {
-    1
-  }
-}
-
 fn build_grid_rows<'a>(
   characters: Vec<&'a Character>,
   cols: usize,
@@ -381,26 +371,22 @@ fn build_grid_rows<'a>(
   grid_rows
 }
 
-fn ghost_overlay<'a>(
-  ghost_c: &'a Character,
-  ghost_handle: Option<&'a iced::widget::image::Handle>,
-  cursor: Point,
-  window_width: f32,
-) -> Element<'a, Message> {
-  let cols = grid_cols(window_width);
-  let effective_width = window_width.min(spacing::layout::GRID_MAX_WIDTH);
-  let card_width = (effective_width - spacing::SPACE_8 * 2.0 - spacing::SPACE_4 * (cols - 1) as f32) / cols as f32;
+fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
+  let mut bg = color::surface::RAISED;
+  bg.a = 0.96;
 
-  let ghost_left = (cursor.x - card_width / 2.0).max(0.0);
-  let ghost_top = (cursor.y - spacing::layout::CHARACTER_CARD_HEIGHT * 0.3).max(0.0);
-
-  container(container(ghost_element(ghost_c, ghost_handle)).width(card_width))
+  container(content)
     .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-      top: ghost_top,
-      left: ghost_left,
-      ..Padding::ZERO
+    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: color::border::DEFAULT,
+        radius: radius::PANEL.into(),
+        width: 1.0,
+      },
+      shadow: shadow::POPOVER,
+      ..container::Style::default()
     })
     .into()
 }
@@ -444,24 +430,47 @@ fn ghost_element<'a>(
   ghost_card_container(card_content)
 }
 
-fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
-  let mut bg = color::surface::RAISED;
-  bg.a = 0.96;
+fn ghost_overlay<'a>(
+  ghost_c: &'a Character,
+  ghost_handle: Option<&'a iced::widget::image::Handle>,
+  cursor: Point,
+  window_width: f32,
+) -> Element<'a, Message> {
+  let cols = grid_cols(window_width);
+  let effective_width = window_width.min(spacing::layout::GRID_MAX_WIDTH);
+  let card_width = (effective_width - spacing::SPACE_8 * 2.0 - spacing::SPACE_4 * (cols - 1) as f32) / cols as f32;
 
-  container(content)
+  let ghost_left = (cursor.x - card_width / 2.0).max(0.0);
+  let ghost_top = (cursor.y - spacing::layout::CHARACTER_CARD_HEIGHT * 0.3).max(0.0);
+
+  container(container(ghost_element(ghost_c, ghost_handle)).width(card_width))
     .width(Length::Fill)
-    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(bg)),
-      border: Border {
-        color: color::border::DEFAULT,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      shadow: shadow::POPOVER,
-      ..container::Style::default()
+    .height(Length::Fill)
+    .padding(Padding {
+      top: ghost_top,
+      left: ghost_left,
+      ..Padding::ZERO
     })
     .into()
+}
+
+fn ghost_stats<'a>(character: &'a Character) -> Element<'a, Message> {
+  let location = character.location_name().as_deref();
+  let divider: Element<'a, Message> = container(iced::widget::Space::new().height(Length::Fill))
+    .width(1.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
+    .into();
+
+  row([
+    character_card::CharacterLocation::new(location).render::<Message>(),
+    divider,
+    character_card::CharacterWallet::new(character).render::<Message>(),
+  ])
+  .into()
 }
 
 fn ghost_tags<'a>(character: &'a Character) -> Element<'a, Message> {
@@ -488,21 +497,12 @@ fn ghost_tags<'a>(character: &'a Character) -> Element<'a, Message> {
   }
 }
 
-fn ghost_stats<'a>(character: &'a Character) -> Element<'a, Message> {
-  let location = character.location_name().as_deref();
-  let divider: Element<'a, Message> = container(iced::widget::Space::new().height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into();
-
-  row([
-    character_card::CharacterLocation::new(location).render::<Message>(),
-    divider,
-    character_card::CharacterWallet::new(character).render::<Message>(),
-  ])
-  .into()
+fn grid_cols(window_width: f32) -> usize {
+  if window_width >= 1000.0 {
+    3
+  } else if window_width >= 700.0 {
+    2
+  } else {
+    1
+  }
 }

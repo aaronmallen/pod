@@ -182,16 +182,6 @@ impl<'a> Component<'a> {
   }
 }
 
-fn corp_grid_cols(window_width: f32) -> usize {
-  if window_width >= 1000.0 {
-    3
-  } else if window_width >= 700.0 {
-    2
-  } else {
-    1
-  }
-}
-
 fn build_corp_grid_rows<'a>(
   corporations: Vec<&'a Corporation>,
   cols: usize,
@@ -223,4 +213,14 @@ fn build_corp_grid_rows<'a>(
   }
 
   grid_rows
+}
+
+fn corp_grid_cols(window_width: f32) -> usize {
+  if window_width >= 1000.0 {
+    3
+  } else if window_width >= 700.0 {
+    2
+  } else {
+    1
+  }
 }

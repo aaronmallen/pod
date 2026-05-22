@@ -124,6 +124,21 @@ fn count_label(filtered: bool, visible: usize, total: usize) -> String {
   }
 }
 
+fn render_add_corporation_button() -> Element<'static, Message> {
+  use crate::{components, style::spacing};
+
+  components::Button::ghost(
+    row([
+      text("+").font(typography::body::MEDIUM).size(13.0).into(),
+      text("Add corporation").font(typography::body::MEDIUM).size(13.0).into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .on_press(Message::AddCorporation)
+  .into()
+}
+
 fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> Element<'static, Message> {
   let tab_btn = tab_button(label, count, is_active, on_press);
   let underline = tab_underline(is_active);
@@ -186,19 +201,4 @@ fn tab_underline(is_active: bool) -> container::Container<'static, Message> {
       },
       ..container::Style::default()
     })
-}
-
-fn render_add_corporation_button() -> Element<'static, Message> {
-  use crate::{components, style::spacing};
-
-  components::Button::ghost(
-    row([
-      text("+").font(typography::body::MEDIUM).size(13.0).into(),
-      text("Add corporation").font(typography::body::MEDIUM).size(13.0).into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .on_press(Message::AddCorporation)
-  .into()
 }

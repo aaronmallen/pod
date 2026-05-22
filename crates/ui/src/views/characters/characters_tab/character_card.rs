@@ -117,24 +117,6 @@ impl<'a> Component<'a> {
   }
 }
 
-fn drag_placeholder<'a>() -> Element<'a, Message> {
-  let mut bg = color::surface::RAISED;
-  bg.a = 0.2;
-  container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::Fill)
-    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(bg)),
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
 fn build_card_content<'a>(
   character: &'a Character,
   portrait_handle: Option<&'a iced::widget::image::Handle>,
@@ -187,6 +169,24 @@ fn card_container<'a>(
     })
 }
 
+fn drag_placeholder<'a>() -> Element<'a, Message> {
+  let mut bg = color::surface::RAISED;
+  bg.a = 0.2;
+  container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+    .width(Length::Fill)
+    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: radius::PANEL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
 fn identity_row<'a>(character: &'a Character) -> Element<'a, Message> {
   let id = *character.id();
   mouse_area(
@@ -198,6 +198,35 @@ fn identity_row<'a>(character: &'a Character) -> Element<'a, Message> {
   .on_press(Message::NamePressed(id))
   .interaction(iced::mouse::Interaction::Pointer)
   .into()
+}
+
+fn stat_divider<'a>() -> Element<'a, Message> {
+  container(iced::widget::Space::new().height(Length::Fill))
+    .width(1.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn stats_row<'a>(character: &'a Character, id: i64, feat_wallet: bool) -> Element<'a, Message> {
+  let location = character.location_name().as_deref();
+  let location_el = CharacterLocation::new(location).render::<Message>();
+  if feat_wallet {
+    row([
+      location_el,
+      stat_divider(),
+      mouse_area(CharacterWallet::new(character).render::<Message>())
+        .on_press(Message::WalletPressed(id))
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into(),
+    ])
+    .into()
+  } else {
+    row([location_el]).into()
+  }
 }
 
 fn tags_row<'a>(character: &'a Character) -> Element<'a, Message> {
@@ -249,34 +278,5 @@ fn training_row<'a>(character: &'a Character, id: i64) -> Element<'a, Message> {
   mouse_area(CharacterSkillTraining::new(character).render::<Message>())
     .on_press(Message::SkillTrainingPressed(id))
     .interaction(iced::mouse::Interaction::Pointer)
-    .into()
-}
-
-fn stats_row<'a>(character: &'a Character, id: i64, feat_wallet: bool) -> Element<'a, Message> {
-  let location = character.location_name().as_deref();
-  let location_el = CharacterLocation::new(location).render::<Message>();
-  if feat_wallet {
-    row([
-      location_el,
-      stat_divider(),
-      mouse_area(CharacterWallet::new(character).render::<Message>())
-        .on_press(Message::WalletPressed(id))
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into(),
-    ])
-    .into()
-  } else {
-    row([location_el]).into()
-  }
-}
-
-fn stat_divider<'a>() -> Element<'a, Message> {
-  container(iced::widget::Space::new().height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
     .into()
 }

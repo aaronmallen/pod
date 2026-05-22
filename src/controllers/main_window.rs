@@ -16,6 +16,24 @@ use crate::{
   services::Services,
 };
 
+/// Replaces a character in-place by ID and propagates the update to the active view.
+pub fn apply_synced_character(state: &mut State, character: Character) {
+  let Some(idx) = state.characters.iter().position(|c| *c.id() == *character.id()) else {
+    return;
+  };
+  state.characters[idx] = character.clone();
+  let updated = state.characters.clone();
+  match &mut state.active_view {
+    ActiveView::Skills(s) => skills_ctrl::refresh_characters(s, updated),
+    ActiveView::Characters(s) => {
+      if let Some(ci) = s.all_characters.iter().position(|c| *c.id() == *character.id()) {
+        s.all_characters[ci] = character;
+      }
+    }
+    _ => {}
+  }
+}
+
 /// Creates a new shell state and a startup task that initializes the default view.
 pub fn new(
   characters: Vec<Character>,
@@ -48,6 +66,11 @@ pub fn new(
     wallet_right_rail_width: wallet_right_rail_width.unwrap_or(220.0),
   };
   (state, chars_task.map(Message::Characters))
+}
+
+/// Opens the OAuth re-authorization flow for a character with an expired or missing token.
+pub fn reauth(services: &Services) -> iced::Task<Message> {
+  trigger_reauth(services)
 }
 
 /// Returns background subscriptions for the currently active view.

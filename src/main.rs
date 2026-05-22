@@ -56,6 +56,7 @@ enum AppPhase {
 #[derive(Clone, Debug)]
 enum Message {
   AboutWindow(about_window::Message),
+  BackgroundSync(services::bootstrap::Message),
   Bootstrap(services::bootstrap::Message),
   Main(main_ctrl::Message),
   Menu(menu::MenuMessage),
@@ -233,6 +234,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
       };
       about_window::update(state, msg).map(Message::AboutWindow)
     }
+    Message::BackgroundSync(msg) => update_background_sync(app, msg),
     Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::Main(msg) => update_main(app, msg),
     Message::Menu(msg) => update_menu(app, msg),
@@ -245,6 +247,33 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     Message::WindowMoved(id, pt) => update_window_events(app, id, WindowEvent::Moved(pt)),
     Message::WindowOpened(id) => update_window_events(app, id, WindowEvent::Opened),
     Message::WindowResized(id, sz) => update_window_events(app, id, WindowEvent::Resized(sz)),
+  }
+}
+
+fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> Task<Message> {
+  use services::bootstrap::Message as BootMsg;
+  match msg {
+    BootMsg::CharacterSynced(character) => {
+      if let Some(idx) = app.characters.iter().position(|c| *c.id() == *character.id()) {
+        app.characters[idx] = character.clone();
+      }
+      if let AppPhase::Main(state) = &mut app.phase {
+        main_ctrl::apply_synced_character(state, character);
+      }
+      Task::none()
+    }
+    BootMsg::TokenRefreshFailed(_) => {
+      let AppPhase::Main(_) = &app.phase else {
+        return Task::none();
+      };
+      let services = Services {
+        config: app.config.clone(),
+        db: app.db.clone(),
+        esi_client: app.esi_client.clone(),
+      };
+      main_ctrl::reauth(&services).map(Message::Main)
+    }
+    _ => Task::none(),
   }
 }
 
@@ -425,6 +454,10 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
           open_task.map(Message::WindowOpened),
           services::updater::check().map(Message::Updater),
         ];
+        if let (Some(db), Some(esi)) = (app.db.clone(), app.esi_client.clone()) {
+          tasks
+            .push(services::bootstrap::sync_characters(db, esi, app.characters.clone()).map(Message::BackgroundSync));
+        }
         if let Some(id) = splash_id {
           tasks.push(window::close(id));
         }

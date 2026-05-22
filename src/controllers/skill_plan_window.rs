@@ -142,147 +142,22 @@ pub fn new(
 /// Processes a skill plan window message and returns a task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
-    Message::AllCertsLoaded(certs) => {
-      state.picker_certs = certs;
-      state.certs_loaded = true;
-      iced::Task::none()
-    }
-    Message::AttrsLoaded {
-      base_attrs,
-      current_effective_attrs,
-      clone_data_missing,
-    } => update_attrs_loaded(state, base_attrs, current_effective_attrs, clone_data_missing),
-    Message::CancelClose => {
-      state.confirm_close = false;
-      iced::Task::none()
-    }
-    Message::CertificatesLoaded(certs) => {
-      state.certificates = certs.into_iter().map(|c| (c.id, c)).collect();
-      iced::Task::none()
-    }
-    Message::CertProficiencyChanged(cert_id, prof) => {
-      state.cert_proficiency_selection.insert(cert_id, prof);
-      iced::Task::none()
-    }
-    Message::CertSelected(cert_id, _name, prof) => update_cert_selected(state, cert_id, prof),
-    Message::CloseRequested => update_close(state),
-    Message::ConfirmClose => iced::window::close(state.window_id),
-    Message::EntryDragEnd => update_entry_drag_end(state),
-    Message::EntryDragHover(id) => {
-      if state.dragging_entry_id.is_some() {
-        state.drag_hover_entry_id = Some(id);
-      }
-      iced::Task::none()
-    }
-    Message::EntryDragStart(id) => {
-      state.dragging_entry_id = Some(id);
-      state.drag_hover_entry_id = None;
-      iced::Task::none()
-    }
-    Message::EntryNoteChanged(id, note) => update_entry_note(state, id, note),
-    Message::EntryPriorityChanged(id, priority) => {
-      if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id) {
-        entry.priority = priority;
-        update_dirty(state);
-      }
-      iced::Task::none()
-    }
-    Message::EntryRemoved(id) => {
-      state.entries.retain(|e| e.id != id);
-      recompute(state);
-      update_dirty(state);
-      iced::Task::none()
-    }
-    Message::ExportDropdownToggled => {
-      state.export_dropdown_open = !state.export_dropdown_open;
-      state.import_dropdown_open = false;
-      iced::Task::none()
-    }
-    Message::ExportPathChosen(None) => iced::Task::none(),
-    Message::ExportPathChosen(Some(path)) => update_export_path_chosen(state, path),
-    Message::ExportToClipboard => update_export_clipboard(state),
-    Message::ExportToFile => update_export_file(state),
-    Message::ImplantSetChanged(set) => update_implant_set(state, set),
-    Message::ImplantSuggestionsToggled => update_implant_suggestions(state),
-    Message::ImportDropdownToggled => {
-      state.import_dropdown_open = !state.import_dropdown_open;
-      state.export_dropdown_open = false;
-      iced::Task::none()
-    }
-    Message::ImportFromClipboard => update_import_clipboard(state),
-    Message::ImportFromFile => update_import_file(state),
-    Message::ImportPathChosen(None) => iced::Task::none(),
-    Message::ImportPathChosen(Some(path)) => update_import_path_chosen(state, path),
-    Message::ModuleSelected(type_id, _module_name) => {
-      let Some(module) = state.picker_modules.iter().find(|m| m.id == type_id) else {
-        return iced::Task::none();
-      };
-      merge_wishes_into_plan(state, skills_for_module(&module.skill_requirements));
-      iced::Task::none()
-    }
-    Message::ModulesLoaded(modules) => {
-      state.picker_modules = modules;
-      state.modules_loaded = true;
-      iced::Task::none()
-    }
-    Message::NameChanged(name) => {
-      state.plan_name = name;
-      update_dirty(state);
-      iced::Task::none()
-    }
-    Message::OptimizerCompleted(result) => {
-      state.optimizer_running = false;
-      state.optimizer_result = result;
-      iced::Task::none()
-    }
-    Message::OptimizerRequested => update_optimizer_request(state),
-    Message::PaneDrag(x) => update_pane_drag(state, x),
-    Message::PaneDragEnd => {
-      state.dragging_pane = None;
-      iced::Task::none()
-    }
-    Message::PaneDragStart(edge) => {
-      state.dragging_pane = Some(edge);
-      state.last_drag_x = 0.0;
-      iced::Task::none()
-    }
-    Message::PickerGroupToggled(name) => {
-      if state.picker_expanded_groups.contains(&name) {
-        state.picker_expanded_groups.remove(&name);
-      } else {
-        state.picker_expanded_groups.insert(name);
-      }
-      iced::Task::none()
-    }
-    Message::PickerSearchChanged(q) => update_picker_search(state, q),
-    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
-    Message::PickerToggled => {
-      state.picker_open = !state.picker_open;
-      iced::Task::none()
-    }
-    Message::PlanLoaded(None) => {
-      state.plan_name = "Untitled plan".to_string();
-      state.entries = Vec::new();
-      state.saved_snapshot = plan_snapshot(&state.plan_name, &[]);
-      state.dirty = false;
-      recompute(state);
-      iced::Task::none()
-    }
-    Message::PlanLoaded(Some(plan)) => update_plan_loaded(state, plan),
-    Message::SaveCompleted => {
-      state.saved_snapshot = plan_snapshot(&state.plan_name, &state.entries);
-      state.dirty = false;
-      iced::Task::none()
-    }
-    Message::SaveRequested => update_save(state, services),
-    Message::ShipMasteryChanged(type_id, level) => {
-      state.ship_mastery_selection.insert(type_id, level);
-      iced::Task::none()
-    }
-    Message::ShipSelected(type_id, _ship_name, mastery) => update_ship_selected(state, type_id, mastery),
-    Message::ShipsLoaded(ships) => update_ships_loaded(state, ships, services),
-    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
-    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
+    Message::AllCertsLoaded(_)
+    | Message::CertificatesLoaded(_)
+    | Message::CertProficiencyChanged(_, _)
+    | Message::CertSelected(_, _, _)
+    | Message::ModuleSelected(_, _)
+    | Message::ModulesLoaded(_)
+    | Message::PickerGroupToggled(_)
+    | Message::PickerSearchChanged(_)
+    | Message::PickerTabChanged(_)
+    | Message::PickerToggled
+    | Message::ShipMasteryChanged(_, _)
+    | Message::ShipSelected(_, _, _)
+    | Message::ShipsLoaded(_)
+    | Message::SkillGroupsLoaded(_)
+    | Message::SkillPicked(_, _) => update_picker_messages(state, message, services),
+    _ => update_plan_messages(state, message, services),
   }
 }
 
@@ -320,34 +195,7 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
     2 => state.picker_module_search.as_str(),
     _ => state.picker_search.as_str(),
   };
-
-  let picker_col: Option<iced::Element<'_, Message>> = if state.picker_open {
-    Some(
-      container(
-        SkillPicker::new(
-          &state.skill_groups,
-          &state.planned_levels,
-          active_search,
-          &state.picker_expanded_groups,
-        )
-        .tab(state.picker_tab)
-        .ships(&state.picker_ships, &state.ship_mastery_selection, state.ships_loaded)
-        .modules(&state.picker_modules, state.modules_loaded)
-        .certs(
-          &state.picker_certs,
-          &state.cert_proficiency_selection,
-          state.certs_loaded,
-        )
-        .render(),
-      )
-      .width(Length::Fixed(state.picker_pane_width))
-      .height(Length::Fill)
-      .into(),
-    )
-  } else {
-    None
-  };
-
+  let picker_col = view_picker_col(state, active_search);
   let editor_col = PlanEditor::new(
     &state.plan_name,
     state.dirty,
@@ -360,99 +208,9 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
     state.drag_hover_entry_id.as_deref(),
   )
   .render();
-
-  let summary_col = PlanSummary::new(
-    &state.computed,
-    &state.base_attrs,
-    &state.eff,
-    &state.implant_bonus,
-    state.implant_set,
-    state.optimizer_result.as_ref(),
-    state.optimizer_running,
-    state.show_remap,
-    state.show_implant_suggestions,
-    &state.implant_savings,
-    state.remap_cooldown_days,
-    state.remap_available,
-    state.bonus_remaps,
-  )
-  .clone_data_missing(state.clone_data_missing)
-  .render();
-
-  let summary_container = container(summary_col)
-    .width(Length::Fixed(state.summary_pane_width))
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: 0.0.into(),
-        width: 0.0,
-      },
-      ..container::Style::default()
-    });
-
-  let summary_divider: Element<'_, Message> = mouse_area(
-    container(Space::new())
-      .width(6.0)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      }),
-  )
-  .on_press(Message::PaneDragStart(PaneEdge::Summary))
-  .interaction(iced::mouse::Interaction::ResizingHorizontally)
-  .into();
-
-  let mut cols: Vec<Element<'_, Message>> = Vec::new();
-  if let Some(picker) = picker_col {
-    let picker_divider: Element<'_, Message> = mouse_area(
-      container(Space::new())
-        .width(6.0)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::border::SUBTLE)),
-          ..container::Style::default()
-        }),
-    )
-    .on_press(Message::PaneDragStart(PaneEdge::Picker))
-    .interaction(iced::mouse::Interaction::ResizingHorizontally)
-    .into();
-    cols.push(picker);
-    cols.push(picker_divider);
-  }
-  cols.push(editor_col);
-  cols.push(summary_divider);
-  cols.push(summary_container.into());
-
-  let main_row = row(cols).height(Length::Fill).width(Length::Fill);
-
-  let base_view: Element<'_, Message> = container(main_row)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      ..container::Style::default()
-    })
-    .into();
-
-  let base_view = if state.dragging_pane.is_some() {
-    let capture_overlay = mouse_area(
-      container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-          background: Some(Background::Color(Color::TRANSPARENT)),
-          ..container::Style::default()
-        }),
-    )
-    .interaction(iced::mouse::Interaction::ResizingHorizontally);
-    iced::widget::stack([base_view, capture_overlay.into()]).into()
-  } else {
-    base_view
-  };
-
+  let (summary_divider, summary_container) = view_summary_panel(state);
+  let base_view = view_main_content(picker_col, editor_col, summary_divider, summary_container);
+  let base_view = maybe_drag_overlay(state, base_view);
   if state.confirm_close {
     modal_overlay(base_view, confirm_close_modal())
   } else {
@@ -510,38 +268,30 @@ fn confirm_close_modal() -> Element<'static, Message> {
       color: Some(color::text::SECONDARY),
     });
 
-  let discard_btn = button(
-    text("Discard")
-      .font(body::MEDIUM)
-      .size(13.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::status::DANGER),
-      }),
-  )
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
-  .on_press(Message::ConfirmClose)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.12)))
-      }
-      _ => Some(Background::Color(Color::TRANSPARENT)),
-    },
-    border: Border {
-      color: color::status::DANGER,
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: color::status::DANGER,
-    ..button::Style::default()
-  });
+  let btn_row = row([
+    Space::new().width(Length::Fill).into(),
+    confirm_cancel_btn().into(),
+    Space::new().width(spacing::SPACE_2).into(),
+    confirm_discard_btn().into(),
+  ])
+  .align_y(Vertical::Center);
 
-  let cancel_btn = button(
+  container(
+    column([
+      title.into(),
+      Space::new().height(spacing::SPACE_3).into(),
+      body_text.into(),
+      Space::new().height(spacing::SPACE_4).into(),
+      btn_row.into(),
+    ])
+    .width(Length::Fill),
+  )
+  .padding(Padding::new(24.0))
+  .into()
+}
+
+fn confirm_cancel_btn() -> iced::widget::Button<'static, Message> {
+  button(
     text("Cancel")
       .font(body::REGULAR)
       .size(13.0)
@@ -570,28 +320,170 @@ fn confirm_close_modal() -> Element<'static, Message> {
     },
     text_color: color::text::SECONDARY,
     ..button::Style::default()
-  });
+  })
+}
 
-  let btn_row = row([
-    Space::new().width(Length::Fill).into(),
-    cancel_btn.into(),
-    Space::new().width(spacing::SPACE_2).into(),
-    discard_btn.into(),
-  ])
-  .align_y(Vertical::Center);
-
-  container(
-    column([
-      title.into(),
-      Space::new().height(spacing::SPACE_3).into(),
-      body_text.into(),
-      Space::new().height(spacing::SPACE_4).into(),
-      btn_row.into(),
-    ])
-    .width(Length::Fill),
+fn confirm_discard_btn() -> iced::widget::Button<'static, Message> {
+  button(
+    text("Discard")
+      .font(body::MEDIUM)
+      .size(13.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::status::DANGER),
+      }),
   )
-  .padding(Padding::new(24.0))
-  .into()
+  .padding(Padding {
+    top: 8.0,
+    bottom: 8.0,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
+  })
+  .on_press(Message::ConfirmClose)
+  .style(|_, status| button::Style {
+    background: match status {
+      button::Status::Hovered | button::Status::Pressed => {
+        Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.12)))
+      }
+      _ => Some(Background::Color(Color::TRANSPARENT)),
+    },
+    border: Border {
+      color: color::status::DANGER,
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: color::status::DANGER,
+    ..button::Style::default()
+  })
+}
+
+fn view_picker_col<'a>(state: &'a State, active_search: &'a str) -> Option<Element<'a, Message>> {
+  if !state.picker_open {
+    return None;
+  }
+  Some(
+    container(
+      SkillPicker::new(
+        &state.skill_groups,
+        &state.planned_levels,
+        active_search,
+        &state.picker_expanded_groups,
+      )
+      .tab(state.picker_tab)
+      .ships(&state.picker_ships, &state.ship_mastery_selection, state.ships_loaded)
+      .modules(&state.picker_modules, state.modules_loaded)
+      .certs(
+        &state.picker_certs,
+        &state.cert_proficiency_selection,
+        state.certs_loaded,
+      )
+      .render(),
+    )
+    .width(Length::Fixed(state.picker_pane_width))
+    .height(Length::Fill)
+    .into(),
+  )
+}
+
+fn view_summary_panel(state: &State) -> (Element<'_, Message>, container::Container<'_, Message>) {
+  let summary_col = PlanSummary::new(
+    &state.computed,
+    &state.base_attrs,
+    &state.eff,
+    &state.implant_bonus,
+    state.implant_set,
+    state.optimizer_result.as_ref(),
+    state.optimizer_running,
+    state.show_remap,
+    state.show_implant_suggestions,
+    &state.implant_savings,
+    state.remap_cooldown_days,
+    state.remap_available,
+    state.bonus_remaps,
+  )
+  .clone_data_missing(state.clone_data_missing)
+  .render();
+
+  let summary_container = container(summary_col)
+    .width(Length::Fixed(state.summary_pane_width))
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: 0.0.into(),
+        width: 0.0,
+      },
+      ..container::Style::default()
+    });
+
+  let summary_divider: Element<'_, Message> = mouse_area(
+    container(Space::new())
+      .width(6.0)
+      .height(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::border::SUBTLE)),
+        ..container::Style::default()
+      }),
+  )
+  .on_press(Message::PaneDragStart(PaneEdge::Summary))
+  .interaction(iced::mouse::Interaction::ResizingHorizontally)
+  .into();
+
+  (summary_divider, summary_container)
+}
+
+fn view_main_content<'a>(
+  picker_col: Option<Element<'a, Message>>,
+  editor_col: Element<'a, Message>,
+  summary_divider: Element<'a, Message>,
+  summary_container: container::Container<'a, Message>,
+) -> Element<'a, Message> {
+  let mut cols: Vec<Element<'_, Message>> = Vec::new();
+  if let Some(picker) = picker_col {
+    let picker_divider: Element<'_, Message> = mouse_area(
+      container(Space::new())
+        .width(6.0)
+        .height(Length::Fill)
+        .style(|_| container::Style {
+          background: Some(Background::Color(color::border::SUBTLE)),
+          ..container::Style::default()
+        }),
+    )
+    .on_press(Message::PaneDragStart(PaneEdge::Picker))
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into();
+    cols.push(picker);
+    cols.push(picker_divider);
+  }
+  cols.push(editor_col);
+  cols.push(summary_divider);
+  cols.push(summary_container.into());
+  let main_row = row(cols).height(Length::Fill).width(Length::Fill);
+  container(main_row)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn maybe_drag_overlay<'a>(state: &State, base_view: Element<'a, Message>) -> Element<'a, Message> {
+  if state.dragging_pane.is_none() {
+    return base_view;
+  }
+  let capture_overlay = mouse_area(
+    container(Space::new())
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        ..container::Style::default()
+      }),
+  )
+  .interaction(iced::mouse::Interaction::ResizingHorizontally);
+  iced::widget::stack([base_view, capture_overlay.into()]).into()
 }
 
 fn recompute(state: &mut State) {
@@ -804,12 +696,37 @@ fn uuid_v4() -> String {
   )
 }
 
-fn new_from_existing(p: NewParams, plan_id: String, db: Option<pod_db::Repo>) -> (State, iced::Task<Message>) {
-  let state = State {
+fn blank_state(
+  p: NewParams,
+  plan_id: Option<String>,
+  plan_name: String,
+  saved_snapshot: String,
+  picker_open: bool,
+  pending_from_queue: Option<Vec<(String, u8)>>,
+) -> State {
+  State {
+    plan_id,
+    plan_name,
+    picker_open,
+    saved_snapshot,
+    pending_from_queue,
+    remap_available: true,
+    computed: ComputedPlan::default(),
+    ..blank_state_zeroed(p)
+  }
+}
+
+/// Builds a zeroed/default `State` from `NewParams`.
+///
+/// This function is intentionally larger than 50 lines because `State` has
+/// 47 fields — each requires exactly one line in a struct literal, which
+/// rustfmt enforces. All logic is trivially CC=1.
+fn blank_state_zeroed(p: NewParams) -> State {
+  State {
     window_id: p.window_id,
     character_id: p.character_id,
-    plan_id: Some(plan_id.clone()),
-    plan_name: "Loading\u{2026}".to_string(),
+    plan_id: None,
+    plan_name: String::new(),
     entries: Vec::new(),
     picker_open: false,
     picker_search: String::new(),
@@ -830,7 +747,7 @@ fn new_from_existing(p: NewParams, plan_id: String, db: Option<pod_db::Repo>) ->
     clone_data_missing: p.clone_data_missing,
     implant_bonus: p.implant_bonus,
     remap_cooldown_days: 0,
-    remap_available: true,
+    remap_available: false,
     bonus_remaps: 0,
     computed: ComputedPlan::default(),
     eff: p.eff,
@@ -856,7 +773,26 @@ fn new_from_existing(p: NewParams, plan_id: String, db: Option<pod_db::Repo>) ->
     cert_proficiency_selection: HashMap::new(),
     skill_groups: Vec::new(),
     pending_from_queue: None,
-  };
+  }
+}
+
+fn load_skill_groups_task(db: &pod_db::Repo) -> iced::Task<Message> {
+  let db = db.clone();
+  iced::Task::perform(
+    async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
+    Message::SkillGroupsLoaded,
+  )
+}
+
+fn new_from_existing(p: NewParams, plan_id: String, db: Option<pod_db::Repo>) -> (State, iced::Task<Message>) {
+  let state = blank_state(
+    p,
+    Some(plan_id.clone()),
+    "Loading\u{2026}".to_string(),
+    String::new(),
+    false,
+    None,
+  );
   let plan_task = if let Some(db) = db.clone() {
     iced::Task::perform(
       async move { db.skill_plans().find(&plan_id).await.ok().flatten() },
@@ -865,146 +801,30 @@ fn new_from_existing(p: NewParams, plan_id: String, db: Option<pod_db::Repo>) ->
   } else {
     iced::Task::perform(async { None }, Message::PlanLoaded)
   };
-  let groups_task = if let Some(db) = db {
-    iced::Task::perform(
-      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
-      Message::SkillGroupsLoaded,
-    )
-  } else {
-    iced::Task::none()
-  };
+  let groups_task = db.as_ref().map(load_skill_groups_task).unwrap_or_else(iced::Task::none);
   (state, iced::Task::batch([plan_task, groups_task]))
 }
 
 fn new_from_queue(p: NewParams, items: Vec<(String, u8)>, db: Option<pod_db::Repo>) -> (State, iced::Task<Message>) {
   let plan_name = "Plan from queue".to_string();
   let snapshot = plan_snapshot(&plan_name, &[]);
-  let mut state = State {
-    window_id: p.window_id,
-    character_id: p.character_id,
-    plan_id: None,
-    plan_name,
-    entries: Vec::new(),
-    picker_open: false,
-    picker_search: String::new(),
-    picker_expanded_groups: HashSet::new(),
-    dirty: false,
-    saved_snapshot: snapshot,
-    implant_set: ImplantSet::None,
-    optimizer_result: None,
-    optimizer_running: false,
-    show_remap: false,
-    show_implant_suggestions: false,
-    import_dropdown_open: false,
-    export_dropdown_open: false,
-    confirm_close: false,
-    note_expanded: None,
-    base_attrs: p.base_attrs,
-    current_effective_attrs: p.current_effective_attrs,
-    clone_data_missing: p.clone_data_missing,
-    implant_bonus: p.implant_bonus,
-    remap_cooldown_days: 0,
-    remap_available: true,
-    bonus_remaps: 0,
-    computed: ComputedPlan::default(),
-    eff: p.eff,
-    implant_savings: Vec::new(),
-    planned_levels: HashMap::new(),
-    picker_pane_width: p.picker_pane_width,
-    summary_pane_width: p.summary_pane_width,
-    dragging_pane: None,
-    last_drag_x: 0.0,
-    dragging_entry_id: None,
-    drag_hover_entry_id: None,
-    picker_tab: 0,
-    picker_ships: Vec::new(),
-    picker_modules: Vec::new(),
-    certificates: HashMap::new(),
-    ship_mastery_selection: HashMap::new(),
-    picker_ship_search: String::new(),
-    picker_module_search: String::new(),
-    ships_loaded: false,
-    modules_loaded: false,
-    picker_certs: Vec::new(),
-    certs_loaded: false,
-    cert_proficiency_selection: HashMap::new(),
-    skill_groups: Vec::new(),
-    pending_from_queue: Some(items),
-  };
+  let mut state = blank_state(p, None, plan_name, snapshot, false, Some(items));
   recompute(&mut state);
-  let task = if let Some(db) = db {
-    iced::Task::perform(
-      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
-      Message::SkillGroupsLoaded,
-    )
-  } else {
-    iced::Task::none()
-  };
+  let task = db.as_ref().map(load_skill_groups_task).unwrap_or_else(iced::Task::none);
   (state, task)
 }
 
 fn new_fresh(p: NewParams, db: Option<pod_db::Repo>) -> (State, iced::Task<Message>) {
-  let state = State {
-    window_id: p.window_id,
-    character_id: p.character_id,
-    plan_id: None,
-    plan_name: "Untitled plan".to_string(),
-    entries: Vec::new(),
-    picker_open: true,
-    picker_search: String::new(),
-    picker_expanded_groups: HashSet::new(),
-    dirty: false,
-    saved_snapshot: plan_snapshot("Untitled plan", &[]),
-    implant_set: ImplantSet::None,
-    optimizer_result: None,
-    optimizer_running: false,
-    show_remap: false,
-    show_implant_suggestions: false,
-    import_dropdown_open: false,
-    export_dropdown_open: false,
-    confirm_close: false,
-    note_expanded: None,
-    base_attrs: p.base_attrs,
-    current_effective_attrs: p.current_effective_attrs,
-    clone_data_missing: p.clone_data_missing,
-    implant_bonus: p.implant_bonus,
-    remap_cooldown_days: 0,
-    remap_available: true,
-    bonus_remaps: 0,
-    computed: ComputedPlan::default(),
-    eff: p.eff,
-    implant_savings: Vec::new(),
-    planned_levels: HashMap::new(),
-    picker_pane_width: p.picker_pane_width,
-    summary_pane_width: p.summary_pane_width,
-    dragging_pane: None,
-    last_drag_x: 0.0,
-    dragging_entry_id: None,
-    drag_hover_entry_id: None,
-    picker_tab: 0,
-    picker_ships: Vec::new(),
-    picker_modules: Vec::new(),
-    certificates: HashMap::new(),
-    ship_mastery_selection: HashMap::new(),
-    picker_ship_search: String::new(),
-    picker_module_search: String::new(),
-    ships_loaded: false,
-    modules_loaded: false,
-    picker_certs: Vec::new(),
-    certs_loaded: false,
-    cert_proficiency_selection: HashMap::new(),
-    skill_groups: Vec::new(),
-    pending_from_queue: None,
-  };
-  let task = if let Some(db) = db {
-    iced::Task::perform(
-      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
-      Message::SkillGroupsLoaded,
-    )
-  } else {
-    iced::Task::none()
-  };
+  let snapshot = plan_snapshot("Untitled plan", &[]);
+  let state = blank_state(p, None, "Untitled plan".to_string(), snapshot, true, None);
+  let task = db.as_ref().map(load_skill_groups_task).unwrap_or_else(iced::Task::none);
   (state, task)
+}
+
+fn update_all_certs_loaded(state: &mut State, certs: Vec<Certificate>) -> iced::Task<Message> {
+  state.picker_certs = certs;
+  state.certs_loaded = true;
+  iced::Task::none()
 }
 
 fn update_attrs_loaded(
@@ -1019,6 +839,16 @@ fn update_attrs_loaded(
   state.implant_bonus = ImplantBonus::default();
   state.implant_set = ImplantSet::None;
   recompute(state);
+  iced::Task::none()
+}
+
+fn update_cancel_close(state: &mut State) -> iced::Task<Message> {
+  state.confirm_close = false;
+  iced::Task::none()
+}
+
+fn update_cert_proficiency_changed(state: &mut State, cert_id: i32, prof: u8) -> iced::Task<Message> {
+  state.cert_proficiency_selection.insert(cert_id, prof);
   iced::Task::none()
 }
 
@@ -1048,6 +878,11 @@ fn update_cert_selected(state: &mut State, cert_id: i32, prof: u8) -> iced::Task
   iced::Task::none()
 }
 
+fn update_certificates_loaded(state: &mut State, certs: Vec<Certificate>) -> iced::Task<Message> {
+  state.certificates = certs.into_iter().map(|c| (c.id, c)).collect();
+  iced::Task::none()
+}
+
 fn update_close(state: &mut State) -> iced::Task<Message> {
   if state.dirty {
     state.confirm_close = true;
@@ -1073,6 +908,19 @@ fn update_entry_drag_end(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn update_entry_drag_hover(state: &mut State, id: String) -> iced::Task<Message> {
+  if state.dragging_entry_id.is_some() {
+    state.drag_hover_entry_id = Some(id);
+  }
+  iced::Task::none()
+}
+
+fn update_entry_drag_start(state: &mut State, id: String) -> iced::Task<Message> {
+  state.dragging_entry_id = Some(id);
+  state.drag_hover_entry_id = None;
+  iced::Task::none()
+}
+
 fn update_entry_note(state: &mut State, id: String, note: String) -> iced::Task<Message> {
   if note.is_empty() {
     if state.note_expanded.as_deref() == Some(&id) {
@@ -1090,6 +938,21 @@ fn update_entry_note(state: &mut State, id: String, note: String) -> iced::Task<
     entry.note = Some(note);
     update_dirty(state);
   }
+  iced::Task::none()
+}
+
+fn update_entry_priority_changed(state: &mut State, id: String, priority: Priority) -> iced::Task<Message> {
+  if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id) {
+    entry.priority = priority;
+    update_dirty(state);
+  }
+  iced::Task::none()
+}
+
+fn update_entry_removed(state: &mut State, id: String) -> iced::Task<Message> {
+  state.entries.retain(|e| e.id != id);
+  recompute(state);
+  update_dirty(state);
   iced::Task::none()
 }
 
@@ -1113,6 +976,12 @@ fn update_export_clipboard(state: &mut State) -> iced::Task<Message> {
     .collect();
   let content = lines.join("\n");
   let _ = arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content));
+  iced::Task::none()
+}
+
+fn update_export_dropdown_toggled(state: &mut State) -> iced::Task<Message> {
+  state.export_dropdown_open = !state.export_dropdown_open;
+  state.import_dropdown_open = false;
   iced::Task::none()
 }
 
@@ -1211,6 +1080,12 @@ fn update_import_clipboard(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn update_import_dropdown_toggled(state: &mut State) -> iced::Task<Message> {
+  state.import_dropdown_open = !state.import_dropdown_open;
+  state.export_dropdown_open = false;
+  iced::Task::none()
+}
+
 fn update_import_file(state: &mut State) -> iced::Task<Message> {
   state.import_dropdown_open = false;
   iced::Task::perform(
@@ -1245,6 +1120,32 @@ fn update_import_path_chosen(state: &mut State, path: std::path::PathBuf) -> ice
   iced::Task::none()
 }
 
+fn update_module_selected(state: &mut State, type_id: i32) -> iced::Task<Message> {
+  let Some(module) = state.picker_modules.iter().find(|m| m.id == type_id) else {
+    return iced::Task::none();
+  };
+  merge_wishes_into_plan(state, skills_for_module(&module.skill_requirements));
+  iced::Task::none()
+}
+
+fn update_modules_loaded(state: &mut State, modules: Vec<ItemTypeSummary>) -> iced::Task<Message> {
+  state.picker_modules = modules;
+  state.modules_loaded = true;
+  iced::Task::none()
+}
+
+fn update_name_changed(state: &mut State, name: String) -> iced::Task<Message> {
+  state.plan_name = name;
+  update_dirty(state);
+  iced::Task::none()
+}
+
+fn update_optimizer_completed(state: &mut State, result: Option<RemapResult>) -> iced::Task<Message> {
+  state.optimizer_running = false;
+  state.optimizer_result = result;
+  iced::Task::none()
+}
+
 fn update_optimizer_request(state: &mut State) -> iced::Task<Message> {
   state.show_remap = true;
   state.optimizer_running = true;
@@ -1275,6 +1176,47 @@ fn update_pane_drag(state: &mut State, x: f32) -> iced::Task<Message> {
     state.last_drag_x = x;
   }
   iced::Task::none()
+}
+
+fn update_pane_drag_end(state: &mut State) -> iced::Task<Message> {
+  state.dragging_pane = None;
+  iced::Task::none()
+}
+
+fn update_pane_drag_start(state: &mut State, edge: PaneEdge) -> iced::Task<Message> {
+  state.dragging_pane = Some(edge);
+  state.last_drag_x = 0.0;
+  iced::Task::none()
+}
+
+fn update_picker_group_toggled(state: &mut State, name: String) -> iced::Task<Message> {
+  if state.picker_expanded_groups.contains(&name) {
+    state.picker_expanded_groups.remove(&name);
+  } else {
+    state.picker_expanded_groups.insert(name);
+  }
+  iced::Task::none()
+}
+
+fn update_picker_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::AllCertsLoaded(certs) => update_all_certs_loaded(state, certs),
+    Message::CertificatesLoaded(certs) => update_certificates_loaded(state, certs),
+    Message::CertProficiencyChanged(cert_id, prof) => update_cert_proficiency_changed(state, cert_id, prof),
+    Message::CertSelected(cert_id, _name, prof) => update_cert_selected(state, cert_id, prof),
+    Message::ModuleSelected(type_id, _name) => update_module_selected(state, type_id),
+    Message::ModulesLoaded(modules) => update_modules_loaded(state, modules),
+    Message::PickerGroupToggled(name) => update_picker_group_toggled(state, name),
+    Message::PickerSearchChanged(q) => update_picker_search(state, q),
+    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
+    Message::PickerToggled => update_picker_toggled(state),
+    Message::ShipMasteryChanged(type_id, level) => update_ship_mastery_changed(state, type_id, level),
+    Message::ShipSelected(type_id, _name, mastery) => update_ship_selected(state, type_id, mastery),
+    Message::ShipsLoaded(ships) => update_ships_loaded(state, ships, services),
+    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
+    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
+    _ => iced::Task::none(),
+  }
 }
 
 fn update_picker_search(state: &mut State, q: String) -> iced::Task<Message> {
@@ -1318,6 +1260,25 @@ fn update_picker_tab(state: &mut State, tab: usize, services: &Services) -> iced
   iced::Task::none()
 }
 
+fn update_picker_toggled(state: &mut State) -> iced::Task<Message> {
+  state.picker_open = !state.picker_open;
+  iced::Task::none()
+}
+
+fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::EntryDragEnd => update_entry_drag_end(state),
+    Message::EntryDragHover(id) => update_entry_drag_hover(state, id),
+    Message::EntryDragStart(id) => update_entry_drag_start(state, id),
+    Message::EntryNoteChanged(id, note) => update_entry_note(state, id, note),
+    Message::EntryPriorityChanged(id, priority) => update_entry_priority_changed(state, id, priority),
+    Message::EntryRemoved(id) => update_entry_removed(state, id),
+    Message::PlanLoaded(None) => update_plan_loaded_none(state),
+    Message::PlanLoaded(Some(plan)) => update_plan_loaded(state, plan),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_plan_loaded(state: &mut State, plan: pod_model::SkillPlan) -> iced::Task<Message> {
   state.plan_name = plan.name.clone();
   state.plan_id = Some(plan.id.clone());
@@ -1326,6 +1287,62 @@ fn update_plan_loaded(state: &mut State, plan: pod_model::SkillPlan) -> iced::Ta
   state.dirty = false;
   recompute(state);
   iced::Task::none()
+}
+
+fn update_plan_loaded_none(state: &mut State) -> iced::Task<Message> {
+  state.plan_name = "Untitled plan".to_string();
+  state.entries = Vec::new();
+  state.saved_snapshot = plan_snapshot(&state.plan_name, &[]);
+  state.dirty = false;
+  recompute(state);
+  iced::Task::none()
+}
+
+fn update_plan_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::EntryDragEnd
+    | Message::EntryDragHover(_)
+    | Message::EntryDragStart(_)
+    | Message::EntryNoteChanged(_, _)
+    | Message::EntryPriorityChanged(_, _)
+    | Message::EntryRemoved(_)
+    | Message::PlanLoaded(_) => update_plan_entry_messages(state, message),
+    _ => update_plan_ui_messages(state, message, services),
+  }
+}
+
+fn update_plan_ui_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::AttrsLoaded {
+      base_attrs,
+      current_effective_attrs,
+      clone_data_missing,
+    } => update_attrs_loaded(state, base_attrs, current_effective_attrs, clone_data_missing),
+    Message::CancelClose => update_cancel_close(state),
+    Message::CloseRequested => update_close(state),
+    Message::ConfirmClose => iced::window::close(state.window_id),
+    Message::ExportDropdownToggled => update_export_dropdown_toggled(state),
+    Message::ExportPathChosen(None) => iced::Task::none(),
+    Message::ExportPathChosen(Some(path)) => update_export_path_chosen(state, path),
+    Message::ExportToClipboard => update_export_clipboard(state),
+    Message::ExportToFile => update_export_file(state),
+    Message::ImplantSetChanged(set) => update_implant_set(state, set),
+    Message::ImplantSuggestionsToggled => update_implant_suggestions(state),
+    Message::ImportDropdownToggled => update_import_dropdown_toggled(state),
+    Message::ImportFromClipboard => update_import_clipboard(state),
+    Message::ImportFromFile => update_import_file(state),
+    Message::ImportPathChosen(None) => iced::Task::none(),
+    Message::ImportPathChosen(Some(path)) => update_import_path_chosen(state, path),
+    Message::NameChanged(name) => update_name_changed(state, name),
+    Message::OptimizerCompleted(result) => update_optimizer_completed(state, result),
+    Message::OptimizerRequested => update_optimizer_request(state),
+    Message::PaneDrag(x) => update_pane_drag(state, x),
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart(edge) => update_pane_drag_start(state, edge),
+    Message::SaveCompleted => update_save_completed(state),
+    Message::SaveRequested => update_save(state, services),
+    _ => iced::Task::none(),
+  }
 }
 
 fn update_save(state: &mut State, services: &Services) -> iced::Task<Message> {
@@ -1343,6 +1360,17 @@ fn update_save(state: &mut State, services: &Services) -> iced::Task<Message> {
     },
     |_| Message::SaveCompleted,
   )
+}
+
+fn update_save_completed(state: &mut State) -> iced::Task<Message> {
+  state.saved_snapshot = plan_snapshot(&state.plan_name, &state.entries);
+  state.dirty = false;
+  iced::Task::none()
+}
+
+fn update_ship_mastery_changed(state: &mut State, type_id: i32, level: u8) -> iced::Task<Message> {
+  state.ship_mastery_selection.insert(type_id, level);
+  iced::Task::none()
 }
 
 fn update_ship_selected(state: &mut State, type_id: i32, mastery: u8) -> iced::Task<Message> {

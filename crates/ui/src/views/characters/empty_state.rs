@@ -11,6 +11,12 @@ pub struct Component<'a> {
   add_status: Option<&'a str>,
 }
 
+impl<'a> Default for Component<'a> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl<'a> Component<'a> {
   pub fn new() -> Self {
     Self {

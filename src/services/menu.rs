@@ -9,6 +9,7 @@ pub const CLEAR_CACHE_ID: &str = "menu_clear_cache";
 
 /// Messages produced by the native menu.
 #[derive(Clone, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum MenuMessage {
   AboutRequested,
   CheckForUpdatesRequested,

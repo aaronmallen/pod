@@ -4,6 +4,21 @@ import { SectionHead } from './SectionHead';
 
 const ENTRIES: { question: string; answer: React.ReactNode }[] = [
   {
+    question: "Why does Pod request so many EVE Online permissions?",
+    answer: (
+      <>
+        Every permission Pod requests is tied directly to a feature you can
+        see and control. We never ask for access we don&apos;t use.
+        <br/><br/>
+        If you&apos;d like to limit what Pod can access, open{' '}
+        <strong>Settings</strong> before signing in and disable any features
+        you don&apos;t need. Pod will only request permissions for the
+        features that are turned on — so you stay in control of what you
+        share.
+      </>
+    ),
+  },
+  {
     question: "The app says it's damaged on macOS",
     answer: (
       <>

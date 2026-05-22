@@ -97,3 +97,25 @@ impl<'a> Repo<'a> {
     type_icons::Repo::new(self.connection)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use sea_orm::Database;
+
+  use super::*;
+
+  mod new {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_constructs_with_db_connection() {
+      let db = Database::connect("sqlite::memory:").await.unwrap();
+      crate::migrations::run(&db).await.unwrap();
+
+      let repo = Repo::new(&db);
+      let result = repo.bloodlines().all().await.unwrap();
+
+      assert!(result.is_empty());
+    }
+  }
+}

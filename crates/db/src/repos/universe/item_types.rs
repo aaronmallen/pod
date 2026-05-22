@@ -472,7 +472,188 @@ impl<'a> Repo<'a> {
 
 #[cfg(test)]
 mod tests {
+  use pod_model::ItemType;
+  use sea_orm::{Database, DatabaseConnection};
+
   use super::*;
+
+  async fn setup_db() -> DatabaseConnection {
+    use sea_orm::ConnectionTrait;
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await.unwrap();
+    db
+  }
+
+  fn make_item_type(id: i32, name: &str) -> ItemType {
+    ItemType::new(id, name)
+  }
+
+  mod all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_records() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.all().await.unwrap();
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_all_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_type(1, "Tritanium")).await.unwrap();
+      repo.upsert(&make_item_type(2, "Pyerite")).await.unwrap();
+
+      let result = repo.all().await.unwrap();
+
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod find {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.find(999).await.unwrap();
+
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_some_after_upsert() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_type(34, "Tritanium")).await.unwrap();
+
+      let result = repo.find(34).await.unwrap();
+
+      assert!(result.is_some());
+      assert_eq!(*result.unwrap().id(), 34);
+    }
+  }
+
+  mod find_by_name {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.find_by_name("Nonexistent").await.unwrap();
+
+      assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_item_by_exact_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_type(34, "Tritanium")).await.unwrap();
+
+      let result = repo.find_by_name("Tritanium").await.unwrap();
+
+      assert!(result.is_some());
+    }
+  }
+
+  mod find_by_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.find_by_ids(&[]).await.unwrap();
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_matching_rows() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_type(34, "Tritanium")).await.unwrap();
+      repo.upsert(&make_item_type(35, "Pyerite")).await.unwrap();
+
+      let result = repo.find_by_ids(&[34, 999]).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 34);
+    }
+  }
+
+  mod upsert_many {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_does_nothing_when_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      repo.upsert_many(&[]).await.unwrap();
+
+      let result = repo.all().await.unwrap();
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_multiple_records() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![make_item_type(34, "Tritanium"), make_item_type(35, "Pyerite")];
+
+      repo.upsert_many(&records).await.unwrap();
+
+      let result = repo.all().await.unwrap();
+      assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod implant_data_for_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.implant_data_for_ids(&[]).await.unwrap();
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_data_for_existing_type() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_item_type(10001, "Ocular Filter")).await.unwrap();
+
+      let result = repo.implant_data_for_ids(&[10001]).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0, 10001);
+      assert_eq!(result[0].3, "Ocular Filter");
+    }
+  }
 
   mod parse_skill_requirements {
     use super::*;

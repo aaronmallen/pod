@@ -349,8 +349,62 @@ fn build_grid_rows<'a>(
   feat_skill_monitoring: bool,
   feat_wallet: bool,
 ) -> Vec<Element<'a, Message>> {
-  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
+  let is_dragging = dragging_id.is_some();
 
+  if cols < 3 || characters.is_empty() {
+    return build_grid_rows_responsive(
+      characters,
+      cols,
+      portrait_handles,
+      dragging_id,
+      drag_hover,
+      feat_skill_monitoring,
+      feat_wallet,
+    );
+  }
+
+  let max_slot = characters.iter().map(|c| *c.sort_order()).max().unwrap_or(0);
+  let row_count = (max_slot / 3 + 2) as usize;
+
+  let slot_map: HashMap<i32, &Character> = characters.iter().map(|c| (*c.sort_order(), *c)).collect();
+
+  let mut grid_rows: Vec<Element<'a, Message>> = Vec::with_capacity(row_count);
+  for row_idx in 0..row_count {
+    let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(3);
+    for col_idx in 0i32..3 {
+      let slot = row_idx as i32 * 3 + col_idx;
+      if let Some(c) = slot_map.get(&slot) {
+        let id = *c.id();
+        cells.push(
+          CharacterCard::new(c)
+            .portrait_handle(portrait_handles.get(&id))
+            .feat_skill_monitoring(feat_skill_monitoring)
+            .feat_wallet(feat_wallet)
+            .is_dragging(dragging_id == Some(id))
+            .is_hover_target(is_dragging && drag_hover == Some(id) && dragging_id != Some(id))
+            .render()
+            .map(move |msg| Message::Card(id, msg)),
+        );
+      } else {
+        cells.push(empty_slot_placeholder(is_dragging));
+      }
+    }
+    grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
+  }
+
+  grid_rows
+}
+
+fn build_grid_rows_responsive<'a>(
+  characters: Vec<&'a Character>,
+  cols: usize,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i64>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Vec<Element<'a, Message>> {
+  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
   for chunk in characters.chunks(cols) {
     let mut cells: Vec<Element<'a, Message>> = chunk
       .iter()
@@ -366,15 +420,33 @@ fn build_grid_rows<'a>(
           .map(move |msg| Message::Card(id, msg))
       })
       .collect();
-
     while cells.len() < cols {
       cells.push(iced::widget::Space::new().width(Length::Fill).into());
     }
-
     grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
   }
-
   grid_rows
+}
+
+fn empty_slot_placeholder<'a>(is_dragging: bool) -> Element<'a, Message> {
+  container(iced::widget::Space::new().width(Length::Fill))
+    .width(Length::Fill)
+    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
+    .style(move |_| {
+      if is_dragging {
+        container::Style {
+          border: Border {
+            color: color::border::SUBTLE,
+            radius: radius::PANEL.into(),
+            width: 1.0,
+          },
+          ..container::Style::default()
+        }
+      } else {
+        container::Style::default()
+      }
+    })
+    .into()
 }
 
 fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {

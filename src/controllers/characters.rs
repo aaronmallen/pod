@@ -1260,7 +1260,10 @@ fn handle_character_tags_pressed(state: &mut State, char_id: i64) -> iced::Task<
     let input_id = modal.input_id.clone();
     state.tag_modal = Some(modal);
     recompute_tag_corpus(state);
-    return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+    let saved_offset = state.character_pane.scroll_offset();
+    let focus = iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+    let restore = iced::widget::operation::scroll_to(characters_tab::GRID_SCROLL_ID.clone(), saved_offset);
+    return focus.chain(restore);
   }
   iced::Task::none()
 }

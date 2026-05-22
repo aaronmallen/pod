@@ -15,7 +15,8 @@ use pod_model::{Character, CharacterSkill, TrainingQueueEntry};
 
 use crate::style::{color, radius, shadow, spacing};
 
-static GRID_SCROLL_ID: std::sync::LazyLock<Id> = std::sync::LazyLock::new(|| Id::new("character-grid"));
+/// Scroll ID for the character grid; exposed so controllers can programmatically restore scroll position.
+pub static GRID_SCROLL_ID: std::sync::LazyLock<Id> = std::sync::LazyLock::new(|| Id::new("character-grid"));
 
 pub struct State {
   pub portrait_handles: HashMap<i64, iced::widget::image::Handle>,
@@ -36,6 +37,11 @@ impl State {
       drag_hover: None,
       scroll_offset: scrollable::AbsoluteOffset::default(),
     }
+  }
+
+  /// Returns the current scroll position of the character grid.
+  pub fn scroll_offset(&self) -> scrollable::AbsoluteOffset {
+    self.scroll_offset
   }
 
   pub fn update(&mut self, msg: Message) -> Task<Message> {

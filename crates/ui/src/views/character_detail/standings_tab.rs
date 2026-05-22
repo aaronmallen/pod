@@ -67,16 +67,32 @@ fn error_state<'a>(msg: &'a str) -> Element<'a, Message> {
   .into()
 }
 
-fn standings_content(standings: &[CharacterStanding]) -> Element<'_, Message> {
-  let factions: Vec<&CharacterStanding> = standings.iter().filter(|s| s.from_type == "faction").collect();
-  let corps: Vec<&CharacterStanding> = standings
+fn filter_standings<'a>(standings: &'a [CharacterStanding]) -> [Vec<&'a CharacterStanding>; 3] {
+  let factions = standings.iter().filter(|s| s.from_type == "faction").collect();
+  let corps = standings
     .iter()
     .filter(|s| s.from_type == "npc_corp" || s.from_type == "corporation")
     .collect();
-  let agents: Vec<&CharacterStanding> = standings.iter().filter(|s| s.from_type == "agent").collect();
+  let agents = standings.iter().filter(|s| s.from_type == "agent").collect();
+  [factions, corps, agents]
+}
 
+fn empty_standings_message<'a>() -> Element<'a, Message> {
+  container(
+    text("No standings data available.")
+      .font(body::REGULAR)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(32.0)
+  .into()
+}
+
+fn standings_content(standings: &[CharacterStanding]) -> Element<'_, Message> {
+  let [factions, corps, agents] = filter_standings(standings);
   let mut sections: Vec<Element<'_, Message>> = Vec::new();
-
   if !factions.is_empty() {
     sections.push(standings_section("Factions", &factions));
   }
@@ -87,20 +103,8 @@ fn standings_content(standings: &[CharacterStanding]) -> Element<'_, Message> {
     sections.push(standings_section("Agents", &agents));
   }
   if sections.is_empty() {
-    sections.push(
-      container(
-        text("No standings data available.")
-          .font(body::REGULAR)
-          .size(13.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(32.0)
-      .into(),
-    );
+    sections.push(empty_standings_message());
   }
-
   scrollable(
     column(sections)
       .spacing(24.0)
@@ -119,17 +123,14 @@ fn standings_content(standings: &[CharacterStanding]) -> Element<'_, Message> {
 fn standings_section<'a>(label: &'a str, rows: &[&'a CharacterStanding]) -> Element<'a, Message> {
   let count_label = format!("{} tracked", rows.len());
   let eyebrow: Element<'_, Message> = section_eyebrow(label, &count_label);
-
   let mut row_els: Vec<Element<'_, Message>> = rows
     .iter()
     .enumerate()
     .map(|(i, s)| standing_row(s, i == rows.len() - 1))
     .collect();
-
   if row_els.is_empty() {
     row_els.push(Space::new().height(0.0).into());
   }
-
   let card = container(column(row_els))
     .width(Length::Fill)
     .style(|_| container::Style {
@@ -141,7 +142,6 @@ fn standings_section<'a>(label: &'a str, rows: &[&'a CharacterStanding]) -> Elem
       },
       ..container::Style::default()
     });
-
   column([eyebrow, card.into()]).spacing(10.0).into()
 }
 
@@ -161,24 +161,24 @@ fn section_eyebrow(label: &str, right: &str) -> Element<'static, Message> {
   row([left_el.into(), Space::new().width(Length::Fill).into(), right_el.into()]).into()
 }
 
-fn standing_row<'a>(standing: &'a CharacterStanding, is_last: bool) -> Element<'a, Message> {
-  let v = standing.standing;
-  let effective_color = standing_color(v);
-
-  let name_el = text(standing.from_name.clone())
+fn standing_name_col<'a>(standing: &'a CharacterStanding) -> Element<'a, Message> {
+  text(standing.from_name.clone())
     .font(body::REGULAR)
     .size(13.0)
     .style(|_: &Theme| iced::widget::text::Style {
       color: Some(color::text::PRIMARY),
     })
-    .width(Length::Fill);
+    .width(Length::Fill)
+    .into()
+}
 
+fn standing_raw_col<'a>(standing: &'a CharacterStanding) -> Element<'a, Message> {
   let raw_label = format!(
     "{}{:.2} raw",
     if standing.standing >= 0.0 { "+" } else { "" },
     standing.standing
   );
-  let raw_el = container(
+  container(
     text(raw_label)
       .font(mono::REGULAR)
       .size(10.0)
@@ -187,33 +187,42 @@ fn standing_row<'a>(standing: &'a CharacterStanding, is_last: bool) -> Element<'
       }),
   )
   .width(90.0)
-  .align_x(iced::alignment::Horizontal::Right);
+  .align_x(iced::alignment::Horizontal::Right)
+  .into()
+}
 
+fn standing_eff_col<'a>(v: f64, effective_color: Color) -> Element<'a, Message> {
   let eff_label = format!("{}{:.2}", if v >= 0.0 { "+" } else { "" }, v);
-  let eff_el =
-    container(
-      text(eff_label)
-        .font(mono::MEDIUM)
-        .size(14.0)
-        .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(effective_color),
-        }),
-    )
-    .width(60.0)
-    .align_x(iced::alignment::Horizontal::Right);
+  container(
+    text(eff_label)
+      .font(mono::MEDIUM)
+      .size(14.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(effective_color),
+      }),
+  )
+  .width(60.0)
+  .align_x(iced::alignment::Horizontal::Right)
+  .into()
+}
 
-  let bar_el = standing_bar(v);
-
-  let inner = row([name_el.into(), raw_el.into(), eff_el.into(), bar_el])
-    .align_y(iced::alignment::Vertical::Center)
-    .spacing(16.0)
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: 16.0,
-      right: 16.0,
-    });
-
+fn standing_row<'a>(standing: &'a CharacterStanding, is_last: bool) -> Element<'a, Message> {
+  let v = standing.standing;
+  let effective_color = standing_color(v);
+  let inner = row([
+    standing_name_col(standing),
+    standing_raw_col(standing),
+    standing_eff_col(v, effective_color),
+    standing_bar(v),
+  ])
+  .align_y(iced::alignment::Vertical::Center)
+  .spacing(16.0)
+  .padding(Padding {
+    top: 10.0,
+    bottom: 10.0,
+    left: 16.0,
+    right: 16.0,
+  });
   container(inner)
     .width(Length::Fill)
     .style(move |_| container::Style {
@@ -245,13 +254,8 @@ fn standing_color(v: f64) -> Color {
   }
 }
 
-fn standing_bar<'a>(value: f64) -> Element<'a, Message> {
-  let bar_color = standing_color(value);
-  let pct = (value.abs() / 10.0 * 50.0).min(50.0) as f32;
-  let positive = value >= 0.0;
-  let fill_width = (220.0 * pct / 100.0).max(0.0);
-
-  let fill = container(Space::new().width(fill_width).height(6.0))
+fn standing_bar_fill<'a>(bar_color: Color, fill_width: f32) -> Element<'a, Message> {
+  container(Space::new().width(fill_width).height(6.0))
     .width(fill_width)
     .height(6.0)
     .style(move |_: &Theme| container::Style {
@@ -261,19 +265,26 @@ fn standing_bar<'a>(value: f64) -> Element<'a, Message> {
         ..Border::default()
       },
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
+fn standing_bar<'a>(value: f64) -> Element<'a, Message> {
+  let bar_color = standing_color(value);
+  let pct = (value.abs() / 10.0 * 50.0).min(50.0) as f32;
+  let positive = value >= 0.0;
+  let fill_width = (220.0 * pct / 100.0).max(0.0);
+  let fill = standing_bar_fill(bar_color, fill_width);
   let bar_inner: Element<'_, Message> = if positive {
-    row([Space::new().width(110.0).height(6.0).into(), fill.into()])
+    row([Space::new().width(110.0).height(6.0).into(), fill])
       .height(6.0)
       .into()
   } else {
     let fill_start = 110.0 - fill_width;
-    row([Space::new().width(fill_start).height(6.0).into(), fill.into()])
+    row([Space::new().width(fill_start).height(6.0).into(), fill])
       .height(6.0)
       .into()
   };
-
   container(bar_inner)
     .width(220.0)
     .height(6.0)

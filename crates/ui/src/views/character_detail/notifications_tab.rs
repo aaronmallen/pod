@@ -49,17 +49,14 @@ impl<'a> Component<'a> {
   }
 }
 
-fn notifications_content<'a>(
-  notifications: &'a [CharacterNotification],
+fn notifications_eyebrow<'a>(
+  visible_count: usize,
   unread_count: usize,
   filter: &'a NotificationsFilter,
 ) -> Element<'a, Message> {
-  let visible: Vec<&CharacterNotification> = notifications.iter().collect();
-
-  let eyebrow_left = format!("Notifications · {}", visible.len());
+  let eyebrow_left = format!("Notifications · {visible_count}");
   let eyebrow_right = format!("{unread_count} unread");
-
-  let eyebrow_row = row([
+  row([
     text(eyebrow_left.to_uppercase())
       .font(mono::REGULAR)
       .size(9.0)
@@ -79,14 +76,15 @@ fn notifications_content<'a>(
     segmented_control(filter),
   ])
   .align_y(iced::alignment::Vertical::Center)
-  .into();
+  .into()
+}
 
+fn notifications_card<'a>(visible: &[&'a CharacterNotification]) -> Element<'a, Message> {
   let mut notif_rows: Vec<Element<'_, Message>> = visible
     .iter()
     .enumerate()
     .map(|(i, n)| notif_row(n, i == visible.len() - 1))
     .collect();
-
   if notif_rows.is_empty() {
     notif_rows.push(
       container(
@@ -102,8 +100,7 @@ fn notifications_content<'a>(
       .into(),
     );
   }
-
-  let card = container(column(notif_rows))
+  container(column(notif_rows))
     .width(Length::Fill)
     .clip(true)
     .style(|_| container::Style {
@@ -114,10 +111,20 @@ fn notifications_content<'a>(
         width: 1.0,
       },
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
+fn notifications_content<'a>(
+  notifications: &'a [CharacterNotification],
+  unread_count: usize,
+  filter: &'a NotificationsFilter,
+) -> Element<'a, Message> {
+  let visible: Vec<&CharacterNotification> = notifications.iter().collect();
+  let eyebrow = notifications_eyebrow(visible.len(), unread_count, filter);
+  let card = notifications_card(&visible);
   scrollable(
-    column([eyebrow_row, card.into()])
+    column([eyebrow, card])
       .spacing(16.0)
       .padding(Padding {
         top: 24.0,
@@ -131,8 +138,54 @@ fn notifications_content<'a>(
   .into()
 }
 
+fn filter_button<'a>(
+  opt: &NotificationsFilter,
+  label: &'static str,
+  filter: &'a NotificationsFilter,
+) -> Element<'a, Message> {
+  let is_active = filter == opt;
+  let opt_clone = opt.clone();
+  button(
+    text(label.to_string())
+      .font(body::MEDIUM)
+      .size(12.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(if is_active {
+          color::accent::PLASMA
+        } else {
+          color::text::SECONDARY
+        }),
+      }),
+  )
+  .padding(Padding {
+    top: 5.0,
+    bottom: 5.0,
+    left: 12.0,
+    right: 12.0,
+  })
+  .style(move |_, _| button::Style {
+    background: if is_active {
+      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+    } else {
+      None
+    },
+    border: Border {
+      radius: 4.0.into(),
+      ..Border::default()
+    },
+    text_color: if is_active {
+      color::accent::PLASMA
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  })
+  .on_press(Message::NotificationsFilterChanged(opt_clone))
+  .into()
+}
+
 fn segmented_control(filter: &NotificationsFilter) -> Element<'_, Message> {
-  let options = [
+  let options: &[(NotificationsFilter, &'static str)] = &[
     (NotificationsFilter::All, "All"),
     (NotificationsFilter::Unread, "Unread"),
     (NotificationsFilter::War, "War"),
@@ -140,52 +193,10 @@ fn segmented_control(filter: &NotificationsFilter) -> Element<'_, Message> {
     (NotificationsFilter::Corp, "Corp"),
     (NotificationsFilter::Structure, "Structure"),
   ];
-
   let btns: Vec<Element<'_, Message>> = options
     .iter()
-    .map(|(opt, label)| {
-      let is_active = filter == opt;
-      let opt_clone = opt.clone();
-      button(
-        text(label.to_string())
-          .font(body::MEDIUM)
-          .size(12.0)
-          .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(if is_active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .padding(Padding {
-        top: 5.0,
-        bottom: 5.0,
-        left: 12.0,
-        right: 12.0,
-      })
-      .style(move |_, _| button::Style {
-        background: if is_active {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
-        } else {
-          None
-        },
-        border: Border {
-          radius: 4.0.into(),
-          ..Border::default()
-        },
-        text_color: if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        },
-        ..button::Style::default()
-      })
-      .on_press(Message::NotificationsFilterChanged(opt_clone))
-      .into()
-    })
+    .map(|(opt, label)| filter_button(opt, label, filter))
     .collect();
-
   container(row(btns).spacing(2.0).padding(2.0))
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::BASE)),
@@ -261,15 +272,10 @@ fn days_since_epoch(y: i64, m: i64, d: i64) -> i64 {
   era * 146097 + doe - 719468
 }
 
-fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a, Message> {
-  let cat_color = category_color(&notif.category);
-  let is_unread = !notif.is_read;
-
-  let icon_el = category_icon(&notif.category)
-    .size(16.0)
-    .color(cat_color)
-    .render::<Message>();
-  let icon_box = container(icon_el)
+fn notif_icon_box(category: &str) -> Element<'_, Message> {
+  let cat_color = category_color(category);
+  let icon_el = category_icon(category).size(16.0).color(cat_color).render::<Message>();
+  container(icon_el)
     .width(28.0)
     .height(28.0)
     .align_x(iced::alignment::Horizontal::Center)
@@ -282,31 +288,34 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
         width: 1.0,
       },
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
-  let cat_label = notif.category.to_uppercase();
-  let title_text = format_notif_type(&notif.type_);
-  let title_weight = if is_unread { mono::MEDIUM } else { mono::REGULAR };
-  let time_label = relative_time(&notif.timestamp);
-
-  let body_snippet = notif.text.as_deref().map(|t| {
+fn notif_body_snippet(notif: &CharacterNotification) -> Option<String> {
+  notif.text.as_deref().map(|t| {
     let first_line = t.lines().next().unwrap_or("").trim();
     if first_line.len() > 80 {
       format!("{}…", &first_line[..80])
     } else {
       first_line.to_string()
     }
-  });
+  })
+}
 
-  let mut content_items: Vec<Element<'_, Message>> = vec![
-    text(cat_label)
+fn notif_content_col<'a>(notif: &'a CharacterNotification) -> Element<'a, Message> {
+  let cat_color = category_color(&notif.category);
+  let is_unread = !notif.is_read;
+  let title_weight = if is_unread { mono::MEDIUM } else { mono::REGULAR };
+  let mut items: Vec<Element<'_, Message>> = vec![
+    text(notif.category.to_uppercase())
       .font(mono::REGULAR)
       .size(9.0)
       .style(move |_: &Theme| iced::widget::text::Style {
         color: Some(cat_color),
       })
       .into(),
-    text(title_text)
+    text(format_notif_type(&notif.type_))
       .font(title_weight)
       .size(13.0)
       .style(|_: &Theme| iced::widget::text::Style {
@@ -314,9 +323,9 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
       })
       .into(),
   ];
-  if let Some(snippet) = body_snippet {
+  if let Some(snippet) = notif_body_snippet(notif) {
     if !snippet.is_empty() {
-      content_items.push(
+      items.push(
         text(snippet)
           .font(mono::REGULAR)
           .size(10.0)
@@ -327,9 +336,13 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
       );
     }
   }
+  column(items).spacing(3.0).width(Length::Fill).into()
+}
 
-  let content_col = column(content_items).spacing(3.0).width(Length::Fill).into();
-
+fn notif_inner_row<'a>(notif: &'a CharacterNotification, is_unread: bool) -> Element<'a, Message> {
+  let icon_box = notif_icon_box(&notif.category);
+  let content = notif_content_col(notif);
+  let time_label = relative_time(&notif.timestamp);
   let timestamp_el =
     container(
       text(time_label)
@@ -341,8 +354,7 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
     )
     .align_x(iced::alignment::Horizontal::Right)
     .into();
-
-  let inner_row = row([icon_box.into(), content_col, timestamp_el])
+  row([icon_box, content, timestamp_el])
     .spacing(14.0)
     .align_y(iced::alignment::Vertical::Top)
     .padding(Padding {
@@ -350,39 +362,49 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
       bottom: 12.0,
       left: if is_unread { 14.0 } else { 16.0 },
       right: 16.0,
-    });
+    })
+    .into()
+}
 
-  let bg_color = if is_unread {
-    Color::from_rgba(0.247, 0.722, 0.859, 0.04)
-  } else {
-    Color::TRANSPARENT
-  };
-
-  let border_left_color = if is_unread {
-    color::accent::PLASMA
-  } else {
-    Color::TRANSPARENT
-  };
-
+fn notif_row_unread<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a, Message> {
   let notif_id = notif.notification_id;
-  if is_unread {
-    let plasma_bar = container(Space::new().width(2.0).height(Length::Fill))
-      .width(2.0)
-      .height(Length::Fill)
-      .style(move |_| container::Style {
-        background: Some(Background::Color(border_left_color)),
-        ..container::Style::default()
-      });
+  let plasma_bar = container(Space::new().width(2.0).height(Length::Fill))
+    .width(2.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent::PLASMA)),
+      ..container::Style::default()
+    });
+  let inner_row = notif_inner_row(notif, true);
+  button(
+    row([plasma_bar.into(), inner_row])
+      .width(Length::Fill)
+      .height(Length::Shrink),
+  )
+  .width(Length::Fill)
+  .padding(0)
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.04))),
+    border: Border {
+      color: if is_last {
+        Color::TRANSPARENT
+      } else {
+        color::border::SUBTLE
+      },
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..button::Style::default()
+  })
+  .on_press(Message::NotificationRead(notif_id))
+  .into()
+}
 
-    button(
-      row([plasma_bar.into(), inner_row.into()])
-        .width(Length::Fill)
-        .height(Length::Shrink),
-    )
+fn notif_row_read<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a, Message> {
+  let inner_row = notif_inner_row(notif, false);
+  container(inner_row)
     .width(Length::Fill)
-    .padding(0)
-    .style(move |_, _| button::Style {
-      background: Some(Background::Color(bg_color)),
+    .style(move |_| container::Style {
       border: Border {
         color: if is_last {
           Color::TRANSPARENT
@@ -392,26 +414,16 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
         width: 1.0,
         radius: 0.0.into(),
       },
-      ..button::Style::default()
+      ..container::Style::default()
     })
-    .on_press(Message::NotificationRead(notif_id))
     .into()
+}
+
+fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a, Message> {
+  if !notif.is_read {
+    notif_row_unread(notif, is_last)
   } else {
-    container(inner_row)
-      .width(Length::Fill)
-      .style(move |_| container::Style {
-        border: Border {
-          color: if is_last {
-            Color::TRANSPARENT
-          } else {
-            color::border::SUBTLE
-          },
-          width: 1.0,
-          radius: 0.0.into(),
-        },
-        ..container::Style::default()
-      })
-      .into()
+    notif_row_read(notif, is_last)
   }
 }
 

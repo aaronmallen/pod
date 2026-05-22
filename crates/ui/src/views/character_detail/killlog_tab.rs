@@ -53,57 +53,64 @@ impl<'a> Component<'a> {
   }
 }
 
-fn killlog_content<'a>(
-  entries: &'a [CharacterKillEntry],
-  filtered: &'a [CharacterKillEntry],
-  filter: &'a KilllogFilter,
-  ship_icons: &'a HashMap<i32, image::Handle>,
-) -> Element<'a, Message> {
+struct KillStats {
+  kill_count: usize,
+  loss_count: usize,
+  kill_isk: f64,
+  loss_isk: f64,
+}
+
+fn compute_stats(entries: &[CharacterKillEntry]) -> KillStats {
   let kills: Vec<&CharacterKillEntry> = entries.iter().filter(|e| e.is_kill).collect();
   let losses: Vec<&CharacterKillEntry> = entries.iter().filter(|e| !e.is_kill).collect();
-  let kill_count = kills.len();
-  let loss_count = losses.len();
+  KillStats {
+    kill_count: kills.len(),
+    loss_count: losses.len(),
+    kill_isk: kills.iter().map(|e| e.total_value).sum(),
+    loss_isk: losses.iter().map(|e| e.total_value).sum(),
+  }
+}
 
-  let kill_isk: f64 = kills.iter().map(|e| e.total_value).sum();
-  let loss_isk: f64 = losses.iter().map(|e| e.total_value).sum();
-  let total_isk = kill_isk + loss_isk;
-  let efficiency = if total_isk > 0.0 {
-    kill_isk / total_isk * 100.0
+fn efficiency_label(kill_isk: f64, total_isk: f64) -> String {
+  if total_isk <= 0.0 {
+    "\u{2014}".to_string()
   } else {
-    0.0
-  };
+    format!("{:.1}%", kill_isk / total_isk * 100.0)
+  }
+}
 
-  let eff_color = if total_isk <= 0.0 {
+fn efficiency_color(kill_isk: f64, total_isk: f64) -> Color {
+  if total_isk <= 0.0 {
     color::text::SECONDARY
-  } else if efficiency >= 50.0 {
+  } else if kill_isk / total_isk * 100.0 >= 50.0 {
     color::status::ONLINE
   } else {
     color::status::DANGER
-  };
-  let eff_label = if total_isk <= 0.0 {
-    "\u{2014}".to_string()
-  } else {
-    format!("{efficiency:.1}%")
-  };
+  }
+}
 
-  let summary_tiles = row([
-    summary_tile("Kills", kill_count.to_string(), color::status::ONLINE),
-    summary_tile("Losses", loss_count.to_string(), color::status::DANGER),
+fn summary_tiles_row<'a>(stats: &KillStats) -> Element<'a, Message> {
+  let total_isk = stats.kill_isk + stats.loss_isk;
+  let eff_label = efficiency_label(stats.kill_isk, total_isk);
+  let eff_color = efficiency_color(stats.kill_isk, total_isk);
+  row([
+    summary_tile("Kills", stats.kill_count.to_string(), color::status::ONLINE),
+    summary_tile("Losses", stats.loss_count.to_string(), color::status::DANGER),
     summary_tile(
       "ISK Destroyed",
-      format!("{} ISK", format::fmt_isk(kill_isk)),
+      format!("{} ISK", format::fmt_isk(stats.kill_isk)),
       color::status::ONLINE,
     ),
     summary_tile("Efficiency", eff_label, eff_color),
   ])
   .spacing(12.0)
   .width(Length::Fill)
-  .into();
+  .into()
+}
 
-  let visible: Vec<&CharacterKillEntry> = filtered.iter().collect();
-
-  let eyebrow_row = row([
-    text(format!("Activity · {} entries", visible.len()).to_uppercase())
+fn activity_eyebrow_row<'a>(visible_count: usize, filter: &'a KilllogFilter) -> Element<'a, Message> {
+  row([
+    text(format!("Activity · {} entries", visible_count).to_uppercase())
       .font(mono::REGULAR)
       .size(9.0)
       .style(|_: &Theme| iced::widget::text::Style {
@@ -114,33 +121,37 @@ fn killlog_content<'a>(
     segmented_control(filter),
   ])
   .align_y(iced::alignment::Vertical::Center)
-  .into();
+  .into()
+}
 
+fn empty_filter_message<'a>() -> Element<'a, Message> {
+  container(
+    text("No entries match your filter.")
+      .font(body::REGULAR)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(20.0)
+  .width(Length::Fill)
+  .into()
+}
+
+fn kill_entries_card<'a>(
+  visible: &[&'a CharacterKillEntry],
+  ship_icons: &'a HashMap<i32, image::Handle>,
+) -> Element<'a, Message> {
   let header_row = killlog_header_row();
-
   let mut kill_rows: Vec<Element<'_, Message>> = visible
     .iter()
     .enumerate()
     .map(|(i, e)| kill_row(e, i == visible.len() - 1, ship_icons))
     .collect();
-
   if kill_rows.is_empty() {
-    kill_rows.push(
-      container(
-        text("No entries match your filter.")
-          .font(body::REGULAR)
-          .size(13.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(20.0)
-      .width(Length::Fill)
-      .into(),
-    );
+    kill_rows.push(empty_filter_message());
   }
-
-  let card = container(column([header_row].into_iter().chain(kill_rows).collect::<Vec<_>>()))
+  container(column([header_row].into_iter().chain(kill_rows).collect::<Vec<_>>()))
     .width(Length::Fill)
     .clip(true)
     .style(|_| container::Style {
@@ -151,10 +162,23 @@ fn killlog_content<'a>(
         width: 1.0,
       },
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
+fn killlog_content<'a>(
+  entries: &'a [CharacterKillEntry],
+  filtered: &'a [CharacterKillEntry],
+  filter: &'a KilllogFilter,
+  ship_icons: &'a HashMap<i32, image::Handle>,
+) -> Element<'a, Message> {
+  let stats = compute_stats(entries);
+  let visible: Vec<&CharacterKillEntry> = filtered.iter().collect();
+  let tiles = summary_tiles_row(&stats);
+  let eyebrow = activity_eyebrow_row(visible.len(), filter);
+  let card = kill_entries_card(&visible, ship_icons);
   scrollable(
-    column([summary_tiles, eyebrow_row, card.into()])
+    column([tiles, eyebrow, card])
       .spacing(16.0)
       .padding(Padding {
         top: 24.0,
@@ -204,58 +228,58 @@ fn summary_tile(label: &str, value: String, accent: Color) -> Element<'static, M
   .into()
 }
 
+fn filter_button<'a>(opt: &KilllogFilter, label: &'static str, filter: &'a KilllogFilter) -> Element<'a, Message> {
+  let is_active = filter == opt;
+  let opt_clone = opt.clone();
+  button(
+    text(label.to_string())
+      .font(body::MEDIUM)
+      .size(12.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(if is_active {
+          color::accent::PLASMA
+        } else {
+          color::text::SECONDARY
+        }),
+      }),
+  )
+  .padding(Padding {
+    top: 5.0,
+    bottom: 5.0,
+    left: 12.0,
+    right: 12.0,
+  })
+  .style(move |_, _| button::Style {
+    background: if is_active {
+      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+    } else {
+      None
+    },
+    border: Border {
+      radius: 4.0.into(),
+      ..Border::default()
+    },
+    text_color: if is_active {
+      color::accent::PLASMA
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  })
+  .on_press(Message::KilllogFilterChanged(opt_clone))
+  .into()
+}
+
 fn segmented_control(filter: &KilllogFilter) -> Element<'_, Message> {
-  let options = [
+  let options: &[(KilllogFilter, &'static str)] = &[
     (KilllogFilter::All, "All"),
     (KilllogFilter::Kill, "Kills"),
     (KilllogFilter::Loss, "Losses"),
   ];
-
   let btns: Vec<Element<'_, Message>> = options
     .iter()
-    .map(|(opt, label)| {
-      let is_active = filter == opt;
-      let opt_clone = opt.clone();
-      button(
-        text(label.to_string())
-          .font(body::MEDIUM)
-          .size(12.0)
-          .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(if is_active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .padding(Padding {
-        top: 5.0,
-        bottom: 5.0,
-        left: 12.0,
-        right: 12.0,
-      })
-      .style(move |_, _| button::Style {
-        background: if is_active {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
-        } else {
-          None
-        },
-        border: Border {
-          radius: 4.0.into(),
-          ..Border::default()
-        },
-        text_color: if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        },
-        ..button::Style::default()
-      })
-      .on_press(Message::KilllogFilterChanged(opt_clone))
-      .into()
-    })
+    .map(|(opt, label)| filter_button(opt, label, filter))
     .collect();
-
   container(row(btns).spacing(2.0).padding(2.0))
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::BASE)),
@@ -379,31 +403,11 @@ fn col_label<'a>(label: &'a str, right: bool, width: Length) -> Element<'a, Mess
   .into()
 }
 
-fn kill_row<'a>(
+fn ship_icon_el<'a>(
   entry: &'a CharacterKillEntry,
-  is_last: bool,
   ship_icons: &'a HashMap<i32, image::Handle>,
 ) -> Element<'a, Message> {
-  let is_kill = entry.is_kill;
-  let entry_color = if is_kill {
-    color::status::ONLINE
-  } else {
-    color::status::DANGER
-  };
-
-  let color_bar = container(Space::new().width(4.0).height(Length::Fill))
-    .width(4.0)
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(entry_color)),
-      border: Border {
-        radius: 1.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    });
-
-  let ship_icon_el: Element<'_, Message> = if let Some(handle) = ship_icons.get(&entry.ship_type_id) {
+  if let Some(handle) = ship_icons.get(&entry.ship_type_id) {
     container(
       image(handle.clone())
         .width(Length::Fixed(32.0))
@@ -436,9 +440,11 @@ fn kill_row<'a>(
         ..container::Style::default()
       })
       .into()
-  };
+  }
+}
 
-  let mut ship_items: Vec<Element<'_, Message>> = vec![
+fn ship_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
+  let mut items: Vec<Element<'_, Message>> = vec![
     text(entry.ship_name.clone())
       .font(body::MEDIUM)
       .size(13.0)
@@ -449,36 +455,40 @@ fn kill_row<'a>(
       .into(),
   ];
   if entry.final_blow {
-    ship_items.push(
-      container(
-        text("FINAL BLOW")
-          .font(mono::REGULAR)
-          .size(8.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::status::ONLINE),
-          }),
-      )
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 5.0,
-        right: 5.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.275, 0.788, 0.431, 0.12))),
-        border: Border {
-          color: color::status::ONLINE,
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
+    items.push(final_blow_badge());
   }
-  let ship_el = column(ship_items).spacing(4.0).width(Length::Fill);
+  column(items).spacing(4.0).width(Length::Fill).into()
+}
 
-  let victim_el = column([
+fn final_blow_badge<'a>() -> Element<'a, Message> {
+  container(
+    text("FINAL BLOW")
+      .font(mono::REGULAR)
+      .size(8.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::status::ONLINE),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 5.0,
+    right: 5.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(Color::from_rgba(0.275, 0.788, 0.431, 0.12))),
+    border: Border {
+      color: color::status::ONLINE,
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn victim_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
+  column([
     text(entry.victim_name.clone())
       .font(mono::REGULAR)
       .size(11.0)
@@ -497,8 +507,11 @@ fn kill_row<'a>(
       .into(),
   ])
   .spacing(2.0)
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
+fn system_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
   let sec = entry.solar_system_security;
   let sec_color = if sec >= 0.5 {
     color::status::ONLINE
@@ -508,8 +521,7 @@ fn kill_row<'a>(
     color::status::DANGER
   };
   let sec_label = format!("{:.1}", sec.max(-1.0).min(1.0));
-
-  let system_el = container(
+  container(
     column([
       text(entry.solar_system_name.clone())
         .font(mono::REGULAR)
@@ -528,26 +540,31 @@ fn kill_row<'a>(
     ])
     .spacing(2.0),
   )
-  .width(100.0);
+  .width(100.0)
+  .into()
+}
 
+fn value_col<'a>(entry: &'a CharacterKillEntry, entry_color: Color) -> Element<'a, Message> {
   let value_text = if entry.total_value > 0.0 {
     format!("{} ISK", format::fmt_isk(entry.total_value))
   } else {
     "\u{2014}".to_string()
   };
-  let value_el =
-    container(
-      text(value_text)
-        .font(mono::MEDIUM)
-        .size(12.0)
-        .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(entry_color),
-        }),
-    )
-    .width(110.0)
-    .align_x(iced::alignment::Horizontal::Right);
+  container(
+    text(value_text)
+      .font(mono::MEDIUM)
+      .size(12.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(entry_color),
+      }),
+  )
+  .width(110.0)
+  .align_x(iced::alignment::Horizontal::Right)
+  .into()
+}
 
-  let attackers_el = container(
+fn attackers_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
+  container(
     text(entry.attacker_count.to_string())
       .font(mono::REGULAR)
       .size(11.0)
@@ -556,9 +573,12 @@ fn kill_row<'a>(
       }),
   )
   .width(80.0)
-  .align_x(iced::alignment::Horizontal::Right);
+  .align_x(iced::alignment::Horizontal::Right)
+  .into()
+}
 
-  let time_el = container(
+fn time_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
+  container(
     text(relative_time(&entry.timestamp))
       .font(mono::REGULAR)
       .size(10.0)
@@ -567,17 +587,44 @@ fn kill_row<'a>(
       }),
   )
   .width(90.0)
-  .align_x(iced::alignment::Horizontal::Right);
+  .align_x(iced::alignment::Horizontal::Right)
+  .into()
+}
 
+fn color_bar(entry_color: Color) -> Element<'static, Message> {
+  container(Space::new().width(4.0).height(Length::Fill))
+    .width(4.0)
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(entry_color)),
+      border: Border {
+        radius: 1.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn kill_row<'a>(
+  entry: &'a CharacterKillEntry,
+  is_last: bool,
+  ship_icons: &'a HashMap<i32, image::Handle>,
+) -> Element<'a, Message> {
+  let entry_color = if entry.is_kill {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
   let inner = row([
-    color_bar.into(),
-    ship_icon_el,
-    ship_el.into(),
-    victim_el.into(),
-    system_el.into(),
-    value_el.into(),
-    attackers_el.into(),
-    time_el.into(),
+    color_bar(entry_color),
+    ship_icon_el(entry, ship_icons),
+    ship_col(entry),
+    victim_col(entry),
+    system_col(entry),
+    value_col(entry, entry_color),
+    attackers_col(entry),
+    time_col(entry),
   ])
   .spacing(12.0)
   .align_y(iced::alignment::Vertical::Center)
@@ -587,7 +634,6 @@ fn kill_row<'a>(
     left: 0.0,
     right: 12.0,
   });
-
   container(inner)
     .width(Length::Fill)
     .style(move |_| container::Style {

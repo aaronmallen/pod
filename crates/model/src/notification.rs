@@ -250,22 +250,24 @@ fn categorize_war_notif(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Classifies structure, sovereignty, station, and tower notifications.
 fn categorize_structure_notif(notif_type: &str) -> Option<NotificationCategory> {
-  if notif_type.starts_with("Sov")
-    || notif_type.starts_with("Sovereignty")
-    || notif_type.starts_with("Tower")
-    || notif_type.starts_with("Skyhook")
-    || notif_type.starts_with("Orbital")
-    || notif_type.starts_with("Mercenary")
-    || notif_type.starts_with("IHub")
-    || notif_type.starts_with("Infrastructure")
-    || notif_type.starts_with("Structure")
-    || notif_type.starts_with("Station")
-    || notif_type.starts_with("OwnershipTransferred")
-    || notif_type.starts_with("EntosisCapture")
-    || notif_type.starts_with("AllAnchoring")
-    || notif_type.starts_with("AllMaintenance")
-    || notif_type.starts_with("AllStruc")
-  {
+  const PREFIXES: &[&str] = &[
+    "AllAnchoring",
+    "AllMaintenance",
+    "AllStruc",
+    "EntosisCapture",
+    "IHub",
+    "Infrastructure",
+    "Mercenary",
+    "Orbital",
+    "OwnershipTransferred",
+    "Skyhook",
+    "Sov",
+    "Sovereignty",
+    "Station",
+    "Structure",
+    "Tower",
+  ];
+  if PREFIXES.iter().any(|p| notif_type.starts_with(p)) {
     Some(NotificationCategory::Structure)
   } else {
     None
@@ -383,6 +385,137 @@ impl Notification {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod categorize_structure_notif {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_none_for_non_structure_type() {
+      assert_eq!(categorize_structure_notif("UnknownMsg"), None);
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_anchoring_prefix() {
+      assert_eq!(
+        categorize_structure_notif("AllAnchoringMsg"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_maintenance_prefix() {
+      assert_eq!(
+        categorize_structure_notif("AllMaintenanceBillMsg"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_all_struc_prefix() {
+      assert_eq!(
+        categorize_structure_notif("AllStructureOnline"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_entosis_capture_prefix() {
+      assert_eq!(
+        categorize_structure_notif("EntosisCaptureMsgStandard"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_ihub_prefix() {
+      assert_eq!(
+        categorize_structure_notif("IHubDestroyedByBillFailure"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_infrastructure_prefix() {
+      assert_eq!(
+        categorize_structure_notif("InfrastructureHubLowPower"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_mercenary_prefix() {
+      assert_eq!(
+        categorize_structure_notif("MercenaryDenAttacked"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_orbital_prefix() {
+      assert_eq!(
+        categorize_structure_notif("OrbitalAttacked"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_ownership_transferred_prefix() {
+      assert_eq!(
+        categorize_structure_notif("OwnershipTransferred"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_skyhook_prefix() {
+      assert_eq!(
+        categorize_structure_notif("SkyhookDeployed"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_sov_prefix() {
+      assert_eq!(
+        categorize_structure_notif("SovCommandNodeEventStarted"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_sovereignty_prefix() {
+      assert_eq!(
+        categorize_structure_notif("SovereigntyIHubBillLate"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_station_prefix() {
+      assert_eq!(
+        categorize_structure_notif("StationAggressionMsg"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_structure_prefix() {
+      assert_eq!(
+        categorize_structure_notif("StructureUnderAttack"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+
+    #[test]
+    fn it_returns_structure_for_tower_prefix() {
+      assert_eq!(
+        categorize_structure_notif("TowerAlertMsg"),
+        Some(NotificationCategory::Structure)
+      );
+    }
+  }
 
   mod categorize_notif {
     use pretty_assertions::assert_eq;

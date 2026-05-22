@@ -66,6 +66,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
 pub fn refresh_characters(state: &mut State, characters: Vec<Character>) {
   state.characters = characters;
   let char_id = state.selected_char_id();
+  state.picker = build_skills_picker(&state.characters, char_id);
   state.queue = state
     .characters
     .iter()

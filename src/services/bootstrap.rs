@@ -77,13 +77,19 @@ async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
   };
 
   step(&mut tx, "Loading characters\u{2026}".to_string()).await;
-  let characters = match db.characters().all().await {
+  let mut characters = match db.characters().all().await {
     Ok(c) => c,
     Err(e) => {
       let _ = tx.send(Message::Error(e.to_string())).await;
       return;
     }
   };
+
+  for character in &mut characters {
+    if let Some(bytes) = crate::services::portraits::load(*character.id()) {
+      *character.portrait_data_mut() = Some(bytes);
+    }
+  }
 
   let _ = tx.send(Message::Complete(db, characters, Some(esi))).await;
 }
@@ -217,6 +223,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
 
     // Step 9: portrait
     if let Ok(bytes) = esi.images().character_portrait(char_id, 256).await {
+      crate::services::portraits::save(char_id, &bytes);
       *character.portrait_data_mut() = Some(bytes);
     }
 

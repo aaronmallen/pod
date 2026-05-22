@@ -1,6 +1,6 @@
 //! Main window controller: navigation shell that routes to child view controllers.
 
-use iced::Subscription;
+use iced::{Subscription, widget::image};
 use pod_model::{Character, CharacterSkill, Corporation};
 pub use pod_ui::views::main_window::{ActiveView, Message, Nav, State};
 use pod_ui::{
@@ -26,6 +26,11 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   match &mut state.active_view {
     ActiveView::Skills(s) => skills_ctrl::refresh_characters(s, updated),
     ActiveView::Characters(s) => {
+      if let Some(bytes) = character.portrait_data() {
+        s.character_pane
+          .portrait_handles
+          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      }
       if let Some(ci) = s.all_characters.iter().position(|c| *c.id() == *character.id()) {
         s.all_characters[ci] = character;
       }

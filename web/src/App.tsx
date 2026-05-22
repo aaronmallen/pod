@@ -8,6 +8,7 @@ import { Hero } from './components/Hero';
 import { Platforms } from './components/Platforms';
 import { Features } from './components/Features';
 import { Notes } from './components/Notes';
+import { Faq } from './components/Faq';
 import { Support } from './components/Support';
 import { Requirements } from './components/Requirements';
 import { Footer } from './components/Footer';
@@ -38,6 +39,7 @@ export function App() {
       <Platforms platforms={platforms} accent={ACCENT} release={RELEASE} />
       <Features accent={ACCENT} />
       <Notes accent={ACCENT} release={RELEASE} />
+      <Faq />
       <Support accent={ACCENT} />
       <Requirements accent={ACCENT} />
       <Footer release={RELEASE} />

@@ -10,6 +10,7 @@ interface TopNavProps {
 const NAV_LINKS: [string, string][] = [
   ['Download', '#download'],
   ["What's new", '#notes'],
+  ['FAQ', '#faq'],
   ['Support', '#support'],
   ['Discord', 'https://discord.gg/VZpQ56pcHw'],
   ['Source', 'https://github.com/aaronmallen/pod'],

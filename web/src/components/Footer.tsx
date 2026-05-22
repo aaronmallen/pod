@@ -16,6 +16,7 @@ const NAV_COLS: NavCol[] = [
   ['Pod', [
     ['Download', '#download'],
     ["What's new", '#notes'],
+    ['FAQ', '#faq'],
     ['Support', '#support'],
   ]],
   ['Resource', [

@@ -24,7 +24,7 @@ pub enum Message {
   SearchChanged(String),
 }
 
-fn filter_folder_messages<'a>(state: &'a State) -> Vec<&'a MailMessage> {
+fn filter_folder_messages(state: &State) -> Vec<&MailMessage> {
   state
     .messages
     .iter()
@@ -157,7 +157,7 @@ impl<'a> Component<'a> {
 
     let list = scrollable(column(list_rows).width(Length::Fill)).height(Length::Fill);
 
-    let pane = container(column([list_search_bar(&state.search_query).into(), list.into()]).width(Length::Fill))
+    let pane = container(column([list_search_bar(&state.search_query), list.into()]).width(Length::Fill))
       .width(Length::Fixed(self.width))
       .height(Length::Fill)
       .style(|_| container::Style {

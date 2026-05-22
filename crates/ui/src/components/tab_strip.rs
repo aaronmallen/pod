@@ -96,7 +96,7 @@ fn tab_item<'a, MSG: 'a + Clone>(_index: usize, item: TabItem, is_active: bool, 
         ..button::Style::default()
       }
     });
-  column([btn.into(), underline.into()]).width(Length::Shrink).into()
+  column([btn.into(), underline]).width(Length::Shrink).into()
 }
 
 fn tab_label_row<'a, MSG: 'a>(item: &TabItem, is_active: bool) -> iced::widget::Row<'a, MSG> {

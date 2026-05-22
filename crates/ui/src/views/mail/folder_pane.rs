@@ -133,7 +133,7 @@ impl<'a> Component<'a> {
     let folders_section = folder_named_section("Folders", standard_folder_rows(state));
     let labels_section = folder_labels_opt_section(&state.messages, &state.selected_folder);
 
-    let mut sidebar_children: Vec<Element<'_, Message>> = vec![unified_section.into(), folders_section];
+    let mut sidebar_children: Vec<Element<'_, Message>> = vec![unified_section, folders_section];
     if let Some(ls) = labels_section {
       sidebar_children.push(ls);
     }

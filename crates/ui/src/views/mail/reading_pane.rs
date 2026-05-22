@@ -48,7 +48,7 @@ fn reading_scrollable_content<'a>(msg: &'a MailMessage, to_name: &'a str, state:
   }
   content_children.push(subject_el.into());
   content_children.push(Space::new().height(24.0).into());
-  content_children.push(sender_block.into());
+  content_children.push(sender_block);
   content_children.push(Space::new().height(28.0).into());
   content_children.extend(
     body_paras
@@ -91,7 +91,7 @@ fn reading_pane_content<'a>(
   )
   .render();
   let scrollable_content = reading_scrollable_content(msg, to_name, state);
-  let base: Element<'_, Message> = container(column([toolbar.into(), scrollable_content.into()]))
+  let base: Element<'_, Message> = container(column([toolbar, scrollable_content.into()]))
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {

@@ -67,7 +67,7 @@ fn error_state<'a>(msg: &'a str) -> Element<'a, Message> {
   .into()
 }
 
-fn filter_standings<'a>(standings: &'a [CharacterStanding]) -> [Vec<&'a CharacterStanding>; 3] {
+fn filter_standings(standings: &[CharacterStanding]) -> [Vec<&CharacterStanding>; 3] {
   let factions = standings.iter().filter(|s| s.from_type == "faction").collect();
   let corps = standings
     .iter()

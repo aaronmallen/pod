@@ -226,34 +226,25 @@ impl<'a> Component<'a> {
 
     let steps = self.computed.items.iter().filter(|i| !i.skipped).count();
 
-    let mut sections: Vec<Element<'_, Message>> = Vec::new();
-
-    sections.push(plan_totals_section(
-      self.computed.total_sec,
-      self.computed.total_sp,
-      steps,
-    ));
-
-    sections.push(sep());
-    sections.push(attr_optimization_section(
-      self.base_attrs,
-      self.effective_attrs,
-      self.implant,
-      self.implant_set,
-      self.optimizer_result,
-      self.optimizer_running,
-      self.show_remap,
-      self.remap_cooldown_days,
-      self.remap_available,
-      self.bonus_remaps,
-      self.clone_data_missing,
-    ));
-
-    sections.push(sep());
-    sections.push(implant_suggestions_section(
-      self.show_implant_suggestions,
-      self.implant_savings,
-    ));
+    let mut sections: Vec<Element<'_, Message>> = vec![
+      plan_totals_section(self.computed.total_sec, self.computed.total_sp, steps),
+      sep(),
+      attr_optimization_section(
+        self.base_attrs,
+        self.effective_attrs,
+        self.implant,
+        self.implant_set,
+        self.optimizer_result,
+        self.optimizer_running,
+        self.show_remap,
+        self.remap_cooldown_days,
+        self.remap_available,
+        self.bonus_remaps,
+        self.clone_data_missing,
+      ),
+      sep(),
+      implant_suggestions_section(self.show_implant_suggestions, self.implant_savings),
+    ];
 
     if !self.computed.group_sec.is_empty() {
       sections.push(sep());
@@ -346,12 +337,12 @@ fn attr_optimization_section<'a>(
   _bonus_remaps: u32,
   clone_data_missing: bool,
 ) -> Element<'a, Message> {
-  let mut items: Vec<Element<'_, Message>> = Vec::new();
-
-  items.push(optimization_header_row());
-  items.push(Space::new().height(spacing::SPACE_3).into());
-  items.push(implant_set_picker(implant_set, clone_data_missing));
-  items.push(Space::new().height(spacing::SPACE_3).into());
+  let mut items: Vec<Element<'_, Message>> = vec![
+    optimization_header_row(),
+    Space::new().height(spacing::SPACE_3).into(),
+    implant_set_picker(implant_set, clone_data_missing),
+    Space::new().height(spacing::SPACE_3).into(),
+  ];
 
   if !show_remap {
     items.push(single_attr_column(base_attrs, effective_attrs, implant));

@@ -7,6 +7,14 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2]
+
+### Fixed
+
+- Assets located in space — undocked ships, jetcans, and floating containers — now appear in the inventory view
+  grouped under their solar system name instead of being invisible.
+- Character tags now remain visible after a background sync — they no longer vanish until you navigate away and back.
+
 ## [0.4.1]
 
 ### Added

@@ -8,7 +8,7 @@ license.workspace = true
 name = "pod"
 publish = false
 repository.workspace = true
-version = "0.4.1"
+version = "0.4.2"
 
 [package.metadata.packager]
 category = "Utility"

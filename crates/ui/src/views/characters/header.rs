@@ -69,16 +69,8 @@ impl Component {
     let chars_active = self.active_tab == "characters";
     let corps_active = self.active_tab == "corporations";
 
-    let char_count_str = if self.is_filtered && chars_active {
-      format!("{} / {}", self.char_visible, self.char_total)
-    } else {
-      self.char_total.to_string()
-    };
-    let corp_count_str = if self.is_filtered && corps_active {
-      format!("{} / {}", self.corp_visible, self.corp_total)
-    } else {
-      self.corp_total.to_string()
-    };
+    let char_count_str = count_label(self.is_filtered && chars_active, self.char_visible, self.char_total);
+    let corp_count_str = count_label(self.is_filtered && corps_active, self.corp_visible, self.corp_total);
 
     let action_btn: Element<'static, Message> = if corps_active {
       render_add_corporation_button()
@@ -124,7 +116,21 @@ impl Component {
   }
 }
 
+fn count_label(filtered: bool, visible: usize, total: usize) -> String {
+  if filtered {
+    format!("{} / {}", visible, total)
+  } else {
+    total.to_string()
+  }
+}
+
 fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> Element<'static, Message> {
+  let tab_btn = tab_button(label, count, is_active, on_press);
+  let underline = tab_underline(is_active);
+  column([tab_btn.into(), underline.into()]).width(Length::Shrink).into()
+}
+
+fn tab_button(label: &str, count: &str, is_active: bool, on_press: Message) -> button::Button<'static, Message> {
   let label_owned = label.to_string();
   let count_owned = count.to_string();
 
@@ -147,7 +153,7 @@ fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> E
 
   let centered = container(content).height(Length::Fill).center_y(Length::Fill);
 
-  let tab_btn = button(centered)
+  button(centered)
     .height(spacing::layout::HEADER_HEIGHT - 2.0)
     .padding(Padding {
       top: 0.0,
@@ -165,9 +171,11 @@ fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> E
       shadow: Shadow::default(),
       snap: false,
     })
-    .on_press(on_press);
+    .on_press(on_press)
+}
 
-  let underline = container(iced::widget::Space::new().width(Length::Fill).height(2.0))
+fn tab_underline(is_active: bool) -> container::Container<'static, Message> {
+  container(iced::widget::Space::new().width(Length::Fill).height(2.0))
     .width(Length::Fill)
     .height(2.0)
     .style(move |_| container::Style {
@@ -177,9 +185,7 @@ fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> E
         None
       },
       ..container::Style::default()
-    });
-
-  column([tab_btn.into(), underline.into()]).width(Length::Shrink).into()
+    })
 }
 
 fn render_add_corporation_button() -> Element<'static, Message> {

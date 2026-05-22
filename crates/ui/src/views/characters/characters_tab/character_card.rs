@@ -92,72 +92,21 @@ impl<'a> Component<'a> {
 
   pub fn render(self) -> Element<'a, Message> {
     let id = *self.character.id();
-    let is_elevated = self.is_elevated;
-    let is_hover_target = self.is_hover_target;
 
     // Card has been picked up — leave an empty slot in the grid.
     if self.is_dragging {
-      let mut bg = color::surface::RAISED;
-      bg.a = 0.2;
-      return container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-        .width(Length::Fill)
-        .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-        .style(move |_| container::Style {
-          background: Some(Background::Color(bg)),
-          border: Border {
-            color: color::border::SUBTLE,
-            radius: radius::PANEL.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        })
-        .into();
+      return drag_placeholder();
     }
 
-    let feat_skill_monitoring = self.feat_skill_monitoring;
-    let feat_wallet = self.feat_wallet;
+    let card_content = build_card_content(
+      self.character,
+      self.portrait_handle,
+      id,
+      self.feat_skill_monitoring,
+      self.feat_wallet,
+    );
 
-    let portrait = CharacterPortrait::new(self.character)
-      .portrait_handle(self.portrait_handle)
-      .render::<Message>();
-
-    let identity = identity_row(self.character);
-    let tags = tags_row(self.character);
-
-    let mut card_rows: Vec<Element<'a, Message>> = vec![portrait, identity, tags];
-
-    if feat_skill_monitoring {
-      card_rows.push(components::Separator::horizontal().render());
-      card_rows.push(training_row(self.character, id));
-    }
-
-    card_rows.push(components::Separator::horizontal().render());
-    card_rows.push(stats_row(self.character, id, feat_wallet));
-
-    let card_content = column(card_rows).width(Length::Fill).height(Length::Fill);
-
-    let border_color = if is_hover_target {
-      color::accent::PLASMA
-    } else {
-      color::border::SUBTLE
-    };
-    let border_width = if is_hover_target { 2.0 } else { 1.0 };
-    let bg = color::surface::RAISED;
-
-    let card = container(card_content)
-      .width(Length::Fill)
-      .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-      .style(move |_| container::Style {
-        background: Some(Background::Color(bg)),
-        border: Border {
-          color: border_color,
-          radius: radius::PANEL.into(),
-          width: border_width,
-        },
-        shadow: if is_elevated { shadow::POPOVER } else { shadow::NONE },
-        ..container::Style::default()
-      });
-
+    let card = card_container(card_content, self.is_hover_target, self.is_elevated);
     let name = self.character.name().clone();
     mouse_area(card)
       .on_press(Message::CardPressed(id))
@@ -166,6 +115,76 @@ impl<'a> Component<'a> {
       .interaction(iced::mouse::Interaction::Grab)
       .into()
   }
+}
+
+fn drag_placeholder<'a>() -> Element<'a, Message> {
+  let mut bg = color::surface::RAISED;
+  bg.a = 0.2;
+  container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+    .width(Length::Fill)
+    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: radius::PANEL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn build_card_content<'a>(
+  character: &'a Character,
+  portrait_handle: Option<&'a iced::widget::image::Handle>,
+  id: i64,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> iced::widget::Column<'a, Message> {
+  let portrait = CharacterPortrait::new(character)
+    .portrait_handle(portrait_handle)
+    .render::<Message>();
+
+  let mut card_rows: Vec<Element<'a, Message>> = vec![portrait, identity_row(character), tags_row(character)];
+
+  if feat_skill_monitoring {
+    card_rows.push(components::Separator::horizontal().render());
+    card_rows.push(training_row(character, id));
+  }
+
+  card_rows.push(components::Separator::horizontal().render());
+  card_rows.push(stats_row(character, id, feat_wallet));
+
+  column(card_rows).width(Length::Fill).height(Length::Fill)
+}
+
+fn card_container<'a>(
+  content: iced::widget::Column<'a, Message>,
+  is_hover_target: bool,
+  is_elevated: bool,
+) -> iced::widget::Container<'a, Message> {
+  let border_color = if is_hover_target {
+    color::accent::PLASMA
+  } else {
+    color::border::SUBTLE
+  };
+  let border_width = if is_hover_target { 2.0 } else { 1.0 };
+  let bg = color::surface::RAISED;
+
+  container(content)
+    .width(Length::Fill)
+    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: border_color,
+        radius: radius::PANEL.into(),
+        width: border_width,
+      },
+      shadow: if is_elevated { shadow::POPOVER } else { shadow::NONE },
+      ..container::Style::default()
+    })
 }
 
 fn identity_row<'a>(character: &'a Character) -> Element<'a, Message> {

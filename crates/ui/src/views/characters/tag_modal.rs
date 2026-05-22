@@ -120,261 +120,14 @@ impl<'a> Component<'a> {
 
   pub fn render(self) -> Element<'a, Message> {
     let items = compute_items(self.state, &self.corpus);
-    let item_count = items.len();
-    let highlighted = if item_count > 0 {
-      self.state.highlighted.min(item_count - 1)
-    } else {
-      0
-    };
-
-    let header: Element<'_, Message> = container(
-      row([
-        column([
-          text("ADD TAG")
-            .font(typography::mono::REGULAR)
-            .size(9.0)
-            .style(|_| text::Style {
-              color: Some(color::text::SECONDARY),
-            })
-            .into(),
-          text(self.state.entity_name.clone())
-            .font(typography::body::MEDIUM)
-            .size(16.0)
-            .style(|_| text::Style {
-              color: Some(color::text::PRIMARY),
-            })
-            .into(),
-        ])
-        .spacing(spacing::SPACE_1)
-        .into(),
-        iced::widget::Space::new().width(Length::Fill).into(),
-        button(
-          text("×")
-            .size(20.0)
-            .font(typography::body::REGULAR)
-            .style(|_| text::Style {
-              color: Some(color::text::SECONDARY),
-            }),
-        )
-        .on_press(Message::Close)
-        .padding(0)
-        .style(|_, _| button::Style::default())
-        .into(),
-      ])
-      .align_y(iced::alignment::Vertical::Top),
-    )
-    .padding(Padding {
-      top: spacing::SPACE_4,
-      bottom: spacing::SPACE_3_5,
-      left: spacing::SPACE_5,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into();
-
-    let plus: Element<'_, Message> = text("+")
-      .size(16.0)
-      .font(typography::body::MEDIUM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      })
-      .into();
-
-    let input_widget = text_input("Search or create a tag\u{2026}", &self.state.query)
-      .id(self.state.input_id.clone())
-      .on_input(Message::QueryChanged)
-      .font(typography::body::REGULAR)
-      .size(14.0)
-      .style(|_, _| text_input::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border::default(),
-        icon: color::text::SECONDARY,
-        placeholder: color::text::TERTIARY,
-        value: color::text::PRIMARY,
-        selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
-      })
-      .padding(Padding::ZERO);
-
-    let input_inner: Element<'_, Message> = container(
-      row([plus, input_widget.into()])
-        .spacing(spacing::SPACE_2_5)
-        .align_y(iced::alignment::Vertical::Center),
-    )
-    .padding(Padding {
-      top: 0.0,
-      bottom: 0.0,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    })
-    .align_y(iced::alignment::Vertical::Center)
-    .height(38.0)
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::accent::PLASMA,
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into();
-
-    let input_area: Element<'_, Message> = container(input_inner)
-      .padding(Padding {
-        top: spacing::SPACE_3,
-        bottom: spacing::SPACE_3,
-        left: spacing::SPACE_4,
-        right: spacing::SPACE_4,
-      })
-      .width(Length::Fill)
-      .into();
-
-    let list_body: Element<'_, Message> = if items.is_empty() {
-      let msg = if !self.state.existing_tags.is_empty() && self.state.query.trim().is_empty() {
-        "All tags already applied"
-      } else {
-        "Type to create a new tag"
-      };
-      container(
-        text(msg)
-          .font(typography::mono::REGULAR)
-          .size(10.0)
-          .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
-          }),
-      )
-      .padding(Padding {
-        top: spacing::SPACE_7,
-        bottom: spacing::SPACE_7,
-        left: 0.0,
-        right: 0.0,
-      })
-      .width(Length::Fill)
-      .align_x(Horizontal::Center)
-      .into()
-    } else {
-      let rows: Vec<Element<'_, Message>> = items
-        .into_iter()
-        .enumerate()
-        .map(|(i, item)| render_item(i, item, i == highlighted))
-        .collect();
-
-      scrollable(column(rows).width(Length::Fill)).height(220.0).into()
-    };
-
-    let list_area: Element<'_, Message> = container(list_body).padding(6.0).width(Length::Fill).into();
-
-    let footer: Element<'_, Message> = container(
-      text("\u{2191}\u{2193} navigate  \u{00b7}  \u{21b5} apply  \u{00b7}  esc close")
-        .font(typography::mono::REGULAR)
-        .size(9.0)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        }),
-    )
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into();
+    let highlighted = resolve_highlighted(self.state.highlighted, items.len());
 
     let dialog_width = (self.window_width - 48.0).min(440.0);
     let max_height = (self.window_height - 48.0).min(560.0);
 
-    let existing_section: Option<Element<'_, Message>> = if self.state.existing_tags.is_empty() {
-      None
-    } else {
-      let chips: Vec<Element<'_, Message>> = self
-        .state
-        .existing_tags
-        .iter()
-        .map(|(tag_id, name)| {
-          let tag_id = *tag_id;
-          let chip = button(
-            row([
-              text(name.as_str())
-                .font(typography::body::MEDIUM)
-                .size(11.0)
-                .style(|_| text::Style {
-                  color: Some(color::text::SECONDARY),
-                })
-                .into(),
-              text("×")
-                .font(typography::body::REGULAR)
-                .size(13.0)
-                .style(|_| text::Style {
-                  color: Some(color::text::TERTIARY),
-                })
-                .into(),
-            ])
-            .spacing(4.0)
-            .align_y(iced::alignment::Vertical::Center),
-          )
-          .padding(Padding {
-            top: 3.0,
-            bottom: 3.0,
-            left: 8.0,
-            right: 6.0,
-          })
-          .on_press(Message::Remove(tag_id))
-          .style(|_, status| button::Style {
-            background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-              Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.15)))
-            } else {
-              Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08)))
-            },
-            border: Border {
-              color: color::border::SUBTLE,
-              radius: radius::FULL.into(),
-              width: 1.0,
-            },
-            ..button::Style::default()
-          });
-          chip.into()
-        })
-        .collect();
+    let children = build_dialog_children(self.state, items, highlighted);
 
-      Some(
-        container(
-          column([
-            text("CURRENT TAGS")
-              .font(typography::mono::REGULAR)
-              .size(9.0)
-              .style(|_| text::Style {
-                color: Some(color::text::SECONDARY),
-              })
-              .into(),
-            row(chips).spacing(spacing::SPACE_1).wrap().into(),
-          ])
-          .spacing(spacing::SPACE_2),
-        )
-        .padding(Padding {
-          top: spacing::SPACE_3,
-          bottom: spacing::SPACE_3,
-          left: spacing::SPACE_4,
-          right: spacing::SPACE_4,
-        })
-        .width(Length::Fill)
-        .into(),
-      )
-    };
-
-    let mut dialog_children: Vec<Element<'_, Message>> = vec![header, components::Separator::horizontal().render()];
-    if let Some(existing) = existing_section {
-      dialog_children.push(existing);
-      dialog_children.push(components::Separator::horizontal().render());
-    }
-    dialog_children.push(input_area);
-    dialog_children.push(components::Separator::horizontal().render());
-    dialog_children.push(list_area);
-    dialog_children.push(components::Separator::horizontal().render());
-    dialog_children.push(footer);
-
-    let dialog: Element<'_, Message> = container(column(dialog_children))
+    let dialog: Element<'_, Message> = container(column(children))
       .width(Length::Fixed(dialog_width))
       .max_height(max_height)
       .style(|_| container::Style {
@@ -398,59 +151,284 @@ impl<'a> Component<'a> {
   }
 }
 
-fn render_item<'a>(i: usize, item: Item, is_highlighted: bool) -> Element<'a, Message> {
-  let kind_color = if item.is_create {
-    color::accent::PLASMA
+fn resolve_highlighted(highlighted: usize, item_count: usize) -> usize {
+  if item_count > 0 {
+    highlighted.min(item_count - 1)
   } else {
-    color::text::TERTIARY
-  };
-  let kind_label = if item.is_create { "NEW" } else { "TAG" };
+    0
+  }
+}
 
-  let kind_el: Element<'_, Message> = container(text(kind_label).font(typography::mono::REGULAR).size(9.0).style(
-    move |_| text::Style {
-      color: Some(kind_color),
-    },
-  ))
-  .width(28.0)
-  .into();
+fn build_dialog_children<'a>(state: &'a State, items: Vec<Item>, highlighted: usize) -> Vec<Element<'a, Message>> {
+  let header = render_modal_header(state);
+  let input_area = render_input_area(state);
+  let list_area = render_list_area(items, highlighted, state);
+  let footer = render_modal_footer();
+  let existing_section = render_existing_tags(state);
 
-  let display = if item.is_create {
-    format!("Create \"{}\"", item.name)
-  } else {
-    item.name.clone()
-  };
+  let mut children: Vec<Element<'_, Message>> = vec![header, components::Separator::horizontal().render()];
+  if let Some(existing) = existing_section {
+    children.push(existing);
+    children.push(components::Separator::horizontal().render());
+  }
+  children.push(input_area);
+  children.push(components::Separator::horizontal().render());
+  children.push(list_area);
+  children.push(components::Separator::horizontal().render());
+  children.push(footer);
+  children
+}
 
-  let name_el: Element<'_, Message> =
+fn render_existing_tags<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  if state.existing_tags.is_empty() {
+    return None;
+  }
+
+  let chips: Vec<Element<'a, Message>> = state
+    .existing_tags
+    .iter()
+    .map(|(tag_id, name)| render_tag_chip(*tag_id, name))
+    .collect();
+
+  Some(
     container(
-      text(display)
-        .font(typography::body::REGULAR)
-        .size(14.0)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        }),
+      column([
+        text("CURRENT TAGS")
+          .font(typography::mono::REGULAR)
+          .size(9.0)
+          .style(|_| text::Style {
+            color: Some(color::text::SECONDARY),
+          })
+          .into(),
+        row(chips).spacing(spacing::SPACE_1).wrap().into(),
+      ])
+      .spacing(spacing::SPACE_2),
     )
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
     .width(Length::Fill)
-    .into();
+    .into(),
+  )
+}
 
-  let mut row_children: Vec<Element<'_, Message>> = vec![kind_el, name_el];
-
-  if let Some(count) = item.count {
-    row_children.push(
-      text(count.to_string())
-        .font(typography::mono::REGULAR)
+fn render_tag_chip<'a>(tag_id: i32, name: &str) -> Element<'a, Message> {
+  button(
+    row([
+      text(name.to_string())
+        .font(typography::body::MEDIUM)
         .size(11.0)
+        .style(|_| text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+      text("×")
+        .font(typography::body::REGULAR)
+        .size(13.0)
         .style(|_| text::Style {
           color: Some(color::text::TERTIARY),
         })
         .into(),
-    );
-  }
+    ])
+    .spacing(4.0)
+    .align_y(iced::alignment::Vertical::Center),
+  )
+  .padding(Padding {
+    top: 3.0,
+    bottom: 3.0,
+    left: 8.0,
+    right: 6.0,
+  })
+  .on_press(Message::Remove(tag_id))
+  .style(|_, status| button::Style {
+    background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+      Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.15)))
+    } else {
+      Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08)))
+    },
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: radius::FULL.into(),
+      width: 1.0,
+    },
+    ..button::Style::default()
+  })
+  .into()
+}
 
-  let tag_name = item.name;
-  let inner = row(row_children)
-    .spacing(spacing::SPACE_3)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Length::Fill);
+fn render_modal_header(state: &State) -> Element<'_, Message> {
+  container(
+    row([
+      column([
+        text("ADD TAG")
+          .font(typography::mono::REGULAR)
+          .size(9.0)
+          .style(|_| text::Style {
+            color: Some(color::text::SECONDARY),
+          })
+          .into(),
+        text(state.entity_name.clone())
+          .font(typography::body::MEDIUM)
+          .size(16.0)
+          .style(|_| text::Style {
+            color: Some(color::text::PRIMARY),
+          })
+          .into(),
+      ])
+      .spacing(spacing::SPACE_1)
+      .into(),
+      iced::widget::Space::new().width(Length::Fill).into(),
+      button(
+        text("×")
+          .size(20.0)
+          .font(typography::body::REGULAR)
+          .style(|_| text::Style {
+            color: Some(color::text::SECONDARY),
+          }),
+      )
+      .on_press(Message::Close)
+      .padding(0)
+      .style(|_, _| button::Style::default())
+      .into(),
+    ])
+    .align_y(iced::alignment::Vertical::Top),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_4,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_5,
+    right: spacing::SPACE_4,
+  })
+  .width(Length::Fill)
+  .into()
+}
+
+fn render_input_area(state: &State) -> Element<'_, Message> {
+  let input_inner = input_pill(state);
+
+  container(input_inner)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn input_pill<'a>(state: &'a State) -> Element<'a, Message> {
+  let plus: Element<'a, Message> = text("+")
+    .size(16.0)
+    .font(typography::body::MEDIUM)
+    .style(|_| text::Style {
+      color: Some(color::accent::PLASMA),
+    })
+    .into();
+
+  let input_widget = text_input("Search or create a tag\u{2026}", &state.query)
+    .id(state.input_id.clone())
+    .on_input(Message::QueryChanged)
+    .font(typography::body::REGULAR)
+    .size(14.0)
+    .style(|_, _| text_input::Style {
+      background: Background::Color(Color::TRANSPARENT),
+      border: Border::default(),
+      icon: color::text::SECONDARY,
+      placeholder: color::text::TERTIARY,
+      value: color::text::PRIMARY,
+      selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+    })
+    .padding(Padding::ZERO);
+
+  container(
+    row([plus, input_widget.into()])
+      .spacing(spacing::SPACE_2_5)
+      .align_y(iced::alignment::Vertical::Center),
+  )
+  .padding(Padding {
+    top: 0.0,
+    bottom: 0.0,
+    left: spacing::SPACE_3,
+    right: spacing::SPACE_3,
+  })
+  .align_y(iced::alignment::Vertical::Center)
+  .height(38.0)
+  .width(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    border: Border {
+      color: color::accent::PLASMA,
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn render_list_area<'a>(items: Vec<Item>, highlighted: usize, state: &State) -> Element<'a, Message> {
+  let list_body: Element<'a, Message> = if items.is_empty() {
+    let msg = if !state.existing_tags.is_empty() && state.query.trim().is_empty() {
+      "All tags already applied"
+    } else {
+      "Type to create a new tag"
+    };
+    container(
+      text(msg)
+        .font(typography::mono::REGULAR)
+        .size(10.0)
+        .style(|_| text::Style {
+          color: Some(color::text::TERTIARY),
+        }),
+    )
+    .padding(Padding {
+      top: spacing::SPACE_7,
+      bottom: spacing::SPACE_7,
+      left: 0.0,
+      right: 0.0,
+    })
+    .width(Length::Fill)
+    .align_x(Horizontal::Center)
+    .into()
+  } else {
+    let rows: Vec<Element<'a, Message>> = items
+      .into_iter()
+      .enumerate()
+      .map(|(i, item)| render_item(i, item, i == highlighted))
+      .collect();
+
+    scrollable(column(rows).width(Length::Fill)).height(220.0).into()
+  };
+
+  container(list_body).padding(6.0).width(Length::Fill).into()
+}
+
+fn render_modal_footer<'a>() -> Element<'a, Message> {
+  container(
+    text("\u{2191}\u{2193} navigate  \u{00b7}  \u{21b5} apply  \u{00b7}  esc close")
+      .font(typography::mono::REGULAR)
+      .size(9.0)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      }),
+  )
+  .padding(Padding {
+    top: 10.0,
+    bottom: 10.0,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
+  })
+  .width(Length::Fill)
+  .into()
+}
+
+fn render_item<'a>(i: usize, item: Item, is_highlighted: bool) -> Element<'a, Message> {
+  let tag_name = item.name.clone();
+  let inner = item_row_content(item);
 
   let btn = button(inner)
     .width(Length::Fill)
@@ -479,4 +457,67 @@ fn render_item<'a>(i: usize, item: Item, is_highlighted: bool) -> Element<'a, Me
     });
 
   mouse_area(btn).on_enter(Message::Highlighted(i)).into()
+}
+
+fn item_row_content(item: Item) -> iced::widget::Row<'static, Message> {
+  let kind_el = item_kind_badge(item.is_create);
+  let name_el = item_name_label(&item);
+
+  let mut row_children: Vec<Element<'static, Message>> = vec![kind_el, name_el];
+
+  if let Some(count) = item.count {
+    row_children.push(
+      text(count.to_string())
+        .font(typography::mono::REGULAR)
+        .size(11.0)
+        .style(|_| text::Style {
+          color: Some(color::text::TERTIARY),
+        })
+        .into(),
+    );
+  }
+
+  row(row_children)
+    .spacing(spacing::SPACE_3)
+    .align_y(iced::alignment::Vertical::Center)
+    .width(Length::Fill)
+}
+
+fn item_kind_badge(is_create: bool) -> Element<'static, Message> {
+  let kind_color = if is_create {
+    color::accent::PLASMA
+  } else {
+    color::text::TERTIARY
+  };
+  let kind_label = if is_create { "NEW" } else { "TAG" };
+
+  container(
+    text(kind_label)
+      .font(typography::mono::REGULAR)
+      .size(9.0)
+      .style(move |_| text::Style {
+        color: Some(kind_color),
+      }),
+  )
+  .width(28.0)
+  .into()
+}
+
+fn item_name_label(item: &Item) -> Element<'static, Message> {
+  let display = if item.is_create {
+    format!("Create \"{}\"", item.name)
+  } else {
+    item.name.clone()
+  };
+
+  container(
+    text(display)
+      .font(typography::body::REGULAR)
+      .size(14.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      }),
+  )
+  .width(Length::Fill)
+  .into()
 }

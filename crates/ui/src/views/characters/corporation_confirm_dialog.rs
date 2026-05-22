@@ -50,65 +50,15 @@ impl Component {
     let max_height = (self.window_height - 48.0).min(320.0);
 
     let header = components::PanelHeader::new("REMOVE CORPORATION").render();
-
-    let title: Element<'static, Message> = text(format!("Remove {} from Pod?", self.corporation_name))
-      .size(17.0)
-      .font(typography::body::MEDIUM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into();
-
-    let body_text: Element<'static, Message> = text(
-      "This unlinks the corporation from this app only. The corporation \
-      and its members on the EVE servers are unaffected. You can re-add \
-      it later via Add Corporation.",
-    )
-    .size(13.0)
-    .font(typography::body::REGULAR)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    })
-    .into();
-
-    let body = container(column([title, body_text]).spacing(spacing::SPACE_2))
-      .padding(Padding {
-        top: 20.0,
-        bottom: 14.0,
-        left: 20.0,
-        right: 20.0,
-      })
-      .width(Length::Fill);
-
-    let cancel_btn =
-      components::Button::ghost(text("Cancel").size(13.0).font(typography::body::MEDIUM)).on_press(Message::Dismissed);
-
-    let remove_btn = components::Button::danger(text("Remove").size(13.0).font(typography::body::SEMIBOLD))
-      .on_press(Message::Confirmed);
-
-    let footer = container(
-      row([
-        Space::new().width(Length::Fill).into(),
-        cancel_btn.into(),
-        remove_btn.into(),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(iced::alignment::Vertical::Center),
-    )
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill);
+    let body = render_body(&self.corporation_name);
+    let footer = render_footer();
 
     let dialog = container(column([
       header,
       components::Separator::horizontal().render(),
-      body.into(),
+      body,
       components::Separator::horizontal().render(),
-      footer.into(),
+      footer,
     ]))
     .width(Length::Fixed(dialog_width))
     .max_height(max_height)
@@ -130,4 +80,62 @@ impl Component {
       .width(Length::Fill)
       .into()
   }
+}
+
+fn render_body(corporation_name: &str) -> Element<'static, Message> {
+  let title: Element<'static, Message> = text(format!("Remove {} from Pod?", corporation_name))
+    .size(17.0)
+    .font(typography::body::MEDIUM)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    })
+    .into();
+
+  let body_text: Element<'static, Message> = text(
+    "This unlinks the corporation from this app only. The corporation \
+    and its members on the EVE servers are unaffected. You can re-add \
+    it later via Add Corporation.",
+  )
+  .size(13.0)
+  .font(typography::body::REGULAR)
+  .style(|_| text::Style {
+    color: Some(color::text::SECONDARY),
+  })
+  .into();
+
+  container(column([title, body_text]).spacing(spacing::SPACE_2))
+    .padding(Padding {
+      top: 20.0,
+      bottom: 14.0,
+      left: 20.0,
+      right: 20.0,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn render_footer() -> Element<'static, Message> {
+  let cancel_btn =
+    components::Button::ghost(text("Cancel").size(13.0).font(typography::body::MEDIUM)).on_press(Message::Dismissed);
+
+  let remove_btn =
+    components::Button::danger(text("Remove").size(13.0).font(typography::body::SEMIBOLD)).on_press(Message::Confirmed);
+
+  container(
+    row([
+      Space::new().width(Length::Fill).into(),
+      cancel_btn.into(),
+      remove_btn.into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(iced::alignment::Vertical::Center),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_3,
+    bottom: spacing::SPACE_3,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
+  })
+  .width(Length::Fill)
+  .into()
 }

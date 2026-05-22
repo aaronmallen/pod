@@ -123,63 +123,63 @@ impl<'a> Component<'a> {
 
 /// Build the labels row for the reading pane.
 pub fn labels_row<'a>(msg: &'a MailMessage) -> Vec<Element<'a, Message>> {
-  let mut labels_row: Vec<Element<'_, Message>> = msg
-    .labels
-    .iter()
-    .map(|l| {
-      container(
-        text(l.to_uppercase())
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(Padding {
-        top: 3.0,
-        bottom: 3.0,
-        left: 8.0,
-        right: 8.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
-    })
-    .collect();
+  let mut items: Vec<Element<'_, Message>> = msg.labels.iter().map(|l| label_chip(l)).collect();
   if msg.important {
-    labels_row.push(
-      container(
-        text("PRIORITY")
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::status::DANGER),
-          }),
-      )
-      .padding(Padding {
-        top: 3.0,
-        bottom: 3.0,
-        left: 8.0,
-        right: 8.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.10))),
-        border: Border {
-          color: Color::from_rgba(0.878, 0.459, 0.349, 0.30),
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
+    items.push(priority_chip());
   }
-  labels_row
+  items
+}
+
+fn label_chip(l: &str) -> Element<'_, Message> {
+  container(
+    text(l.to_uppercase())
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    bottom: 3.0,
+    left: 8.0,
+    right: 8.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn priority_chip() -> Element<'static, Message> {
+  container(
+    text("PRIORITY")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::status::DANGER),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    bottom: 3.0,
+    left: 8.0,
+    right: 8.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.10))),
+    border: Border {
+      color: Color::from_rgba(0.878, 0.459, 0.349, 0.30),
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }

@@ -213,6 +213,21 @@ fn render_identity<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
 }
 
 fn render_stats<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
+  let labels_row = stats_labels_row();
+  let values_row = stats_values_row(corporation);
+
+  container(column([labels_row.into(), values_row.into()]).spacing(8.0))
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn stats_labels_row<'a>() -> iced::widget::Row<'a, Message> {
   let members_label = text("Members")
     .font(typography::mono::REGULAR)
     .size(9.0)
@@ -227,12 +242,14 @@ fn render_stats<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
       color: Some(color::text::SECONDARY),
     });
 
-  let labels_row = row([
+  row([
     members_label.into(),
     iced::widget::Space::new().width(Length::Fill).into(),
     tax_label.into(),
-  ]);
+  ])
+}
 
+fn stats_values_row<'a>(corporation: &Corporation) -> iced::widget::Row<'a, Message> {
   let member_str = format_members(*corporation.member_count());
   let members_val = text(member_str)
     .font(typography::mono::MEDIUM)
@@ -250,21 +267,11 @@ fn render_stats<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
       color: Some(color::text::PRIMARY),
     });
 
-  let values_row = row([
+  row([
     members_val.into(),
     iced::widget::Space::new().width(Length::Fill).into(),
     tax_val.into(),
-  ]);
-
-  container(column([labels_row.into(), values_row.into()]).spacing(8.0))
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into()
+  ])
 }
 
 fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
@@ -314,6 +321,15 @@ fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
 }
 
 fn render_ceo_hq<'a>(corporation: &'a Corporation, ceo_name: Option<&str>) -> Element<'a, Message> {
+  let ceo_col = ceo_column(ceo_name);
+  let hq_col = hq_column(corporation);
+
+  row([ceo_col.into(), stat_divider(), hq_col.into()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn ceo_column<'a>(ceo_name: Option<&str>) -> iced::widget::Container<'a, Message> {
   let ceo_label = text("CEO")
     .font(typography::mono::REGULAR)
     .size(9.0)
@@ -329,15 +345,17 @@ fn render_ceo_hq<'a>(corporation: &'a Corporation, ceo_name: Option<&str>) -> El
       color: Some(color::text::PRIMARY),
     });
 
-  let ceo_col = container(column([ceo_label.into(), ceo_val.into()]).spacing(spacing::SPACE_1))
+  container(column([ceo_label.into(), ceo_val.into()]).spacing(spacing::SPACE_1))
     .padding(Padding {
       top: spacing::SPACE_3,
       bottom: spacing::SPACE_3,
       left: spacing::SPACE_4,
       right: spacing::SPACE_3,
     })
-    .width(Length::FillPortion(1));
+    .width(Length::FillPortion(1))
+}
 
+fn hq_column<'a>(corporation: &'a Corporation) -> iced::widget::Container<'a, Message> {
   let hq_label = text("HQ")
     .font(typography::mono::REGULAR)
     .size(9.0)
@@ -358,18 +376,14 @@ fn render_ceo_hq<'a>(corporation: &'a Corporation, ceo_name: Option<&str>) -> El
       color: Some(hq_color),
     });
 
-  let hq_col = container(column([hq_label.into(), hq_val.into()]).spacing(spacing::SPACE_1))
+  container(column([hq_label.into(), hq_val.into()]).spacing(spacing::SPACE_1))
     .padding(Padding {
       top: spacing::SPACE_3,
       bottom: spacing::SPACE_3,
       left: spacing::SPACE_3,
       right: spacing::SPACE_4,
     })
-    .width(Length::FillPortion(1));
-
-  row([ceo_col.into(), stat_divider(), hq_col.into()])
-    .width(Length::Fill)
-    .into()
+    .width(Length::FillPortion(1))
 }
 
 fn stat_divider<'a>() -> Element<'a, Message> {

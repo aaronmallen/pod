@@ -135,56 +135,19 @@ pub fn title() -> &'static str {
 /// Returns a subscription that handles pane dragging, context menu, suggestion keyboard nav, and snooze timer.
 pub fn subscription(state: &State) -> Subscription<Message> {
   if state.dragging_pane.is_some() {
-    return iced::event::listen_with(|event, _status, _id| match event {
-      Event::Mouse(mouse::Event::CursorMoved {
-        position,
-      }) => Some(Message::PaneDrag(position.x)),
-      Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
-      _ => None,
-    });
+    return pane_drag_subscription();
   }
 
   let mut subs: Vec<Subscription<Message>> = Vec::new();
 
   if state.context_menu.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| match event {
-      Event::Mouse(mouse::Event::ButtonPressed(_)) => {
-        Some(Message::MessageList(message_list_pane::Message::ContextMenuClose))
-      }
-      _ => None,
-    }));
+    subs.push(context_menu_dismiss_subscription());
   }
-
-  if state.compose_open {
-    let to_active = !state.compose.to_suggestions.is_empty() && !state.compose.to_search.is_empty();
-    let cc_active =
-      state.compose.cc_visible && !state.compose.cc_suggestions.is_empty() && !state.compose.cc_search.is_empty();
-    if to_active || cc_active {
-      subs.push(iced::event::listen_with(|event, _status, _id| match event {
-        Event::Keyboard(keyboard::Event::KeyPressed {
-          key, ..
-        }) => match key {
-          keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-            Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(-1)))
-          }
-          keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-            Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(1)))
-          }
-          keyboard::Key::Named(keyboard::key::Named::Enter) => {
-            Some(Message::Compose(compose_panel::Message::SuggestionCursorConfirm))
-          }
-          _ => None,
-        },
-        _ => None,
-      }));
-    }
+  if let Some(s) = compose_keyboard_subscription(state) {
+    subs.push(s);
   }
-
   if state.messages.iter().any(|m| m.snoozed.is_some()) {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(60))
-        .map(|_| Message::ReadingPane(reading_pane::Message::CheckSnoozed)),
-    );
+    subs.push(snooze_timer_subscription());
   }
 
   if subs.is_empty() {
@@ -192,6 +155,59 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   } else {
     Subscription::batch(subs)
   }
+}
+
+fn pane_drag_subscription() -> Subscription<Message> {
+  iced::event::listen_with(|event, _status, _id| match event {
+    Event::Mouse(mouse::Event::CursorMoved {
+      position,
+    }) => Some(Message::PaneDrag(position.x)),
+    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
+    _ => None,
+  })
+}
+
+fn context_menu_dismiss_subscription() -> Subscription<Message> {
+  iced::event::listen_with(|event, _status, _id| match event {
+    Event::Mouse(mouse::Event::ButtonPressed(_)) => {
+      Some(Message::MessageList(message_list_pane::Message::ContextMenuClose))
+    }
+    _ => None,
+  })
+}
+
+fn compose_keyboard_subscription(state: &State) -> Option<Subscription<Message>> {
+  if !state.compose_open {
+    return None;
+  }
+  let to_active = !state.compose.to_suggestions.is_empty() && !state.compose.to_search.is_empty();
+  let cc_active =
+    state.compose.cc_visible && !state.compose.cc_suggestions.is_empty() && !state.compose.cc_search.is_empty();
+  if !to_active && !cc_active {
+    return None;
+  }
+  Some(iced::event::listen_with(|event, _status, _id| match event {
+    Event::Keyboard(keyboard::Event::KeyPressed {
+      key, ..
+    }) => match key {
+      keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+        Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(-1)))
+      }
+      keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+        Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(1)))
+      }
+      keyboard::Key::Named(keyboard::key::Named::Enter) => {
+        Some(Message::Compose(compose_panel::Message::SuggestionCursorConfirm))
+      }
+      _ => None,
+    },
+    _ => None,
+  }))
+}
+
+fn snooze_timer_subscription() -> Subscription<Message> {
+  iced::time::every(std::time::Duration::from_secs(60))
+    .map(|_| Message::ReadingPane(reading_pane::Message::CheckSnoozed))
 }
 
 /// Builder for the mail view.
@@ -219,60 +235,18 @@ impl<'a> Component<'a> {
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
 
-    let account_id = state.current_account_id();
-    if account_id != 0 {
-      if let Some(character) = state.characters.iter().find(|c| *c.id() == account_id) {
-        let granted = character.granted_scopes_list();
-        if !missing_scopes(&granted, &["esi-mail.read_mail.v1"]).is_empty() {
-          return ScopeMissing::new(account_id, "mail").render().map(|m| match m {
-            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-          });
-        }
-      }
+    if let Some(el) = mail_scope_gate(state) {
+      return el;
     }
 
-    let folder_w = effective_folder_width(state, self.window_width);
-    let msg_w = effective_message_list_width(state, self.window_width, folder_w);
-
-    let header = mail_header(state);
-    let panes = row([
-      folder_pane::Component::new(state)
-        .width(folder_w)
-        .render()
-        .map(Message::FolderPane),
-      folder_list_drag_handle(),
-      message_list_pane::Component::new(state)
-        .width(msg_w)
-        .render()
-        .map(Message::MessageList),
-      message_reader_drag_handle(),
-      reading_pane::Component::new(state).render().map(Message::ReadingPane),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    let base: Element<'_, Message> = column([header, panes.into()])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into();
-
+    let base = mail_base(state, self.window_width);
     let mut layers: Vec<Element<'_, Message>> = vec![base];
-    if let Some(o) = account_picker_overlay(state) {
-      layers.push(o);
-    }
-    if let Some(o) = compose_panel_overlay(state) {
-      layers.push(o);
-    }
-    if let Some(o) = context_menu_overlay(state) {
-      layers.push(o);
+
+    for overlay in mail_overlays(state) {
+      layers.push(overlay);
     }
     if state.dragging_pane.is_some() {
-      let drag_capture: Element<'_, Message> = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-        .on_move(|pt| Message::PaneDrag(pt.x))
-        .on_release(Message::PaneDragEnd)
-        .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        .into();
-      layers.push(drag_capture);
+      layers.push(mail_drag_capture_layer());
     }
 
     if layers.len() == 1 {
@@ -281,6 +255,68 @@ impl<'a> Component<'a> {
       stack(layers).into()
     }
   }
+}
+
+fn mail_scope_gate(state: &State) -> Option<Element<'_, Message>> {
+  let account_id = state.current_account_id();
+  if account_id == 0 {
+    return None;
+  }
+  let character = state.characters.iter().find(|c| *c.id() == account_id)?;
+  let granted = character.granted_scopes_list();
+  if missing_scopes(&granted, &["esi-mail.read_mail.v1"]).is_empty() {
+    return None;
+  }
+  Some(ScopeMissing::new(account_id, "mail").render().map(|m| match m {
+    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+  }))
+}
+
+fn mail_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
+  let folder_w = effective_folder_width(state, window_width);
+  let msg_w = effective_message_list_width(state, window_width, folder_w);
+  let header = mail_header(state);
+  let panes = row([
+    folder_pane::Component::new(state)
+      .width(folder_w)
+      .render()
+      .map(Message::FolderPane),
+    folder_list_drag_handle(),
+    message_list_pane::Component::new(state)
+      .width(msg_w)
+      .render()
+      .map(Message::MessageList),
+    message_reader_drag_handle(),
+    reading_pane::Component::new(state).render().map(Message::ReadingPane),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill);
+  column([header, panes.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn mail_overlays(state: &State) -> Vec<Element<'_, Message>> {
+  let mut layers: Vec<Element<'_, Message>> = Vec::new();
+  if let Some(o) = account_picker_overlay(state) {
+    layers.push(o);
+  }
+  if let Some(o) = compose_panel_overlay(state) {
+    layers.push(o);
+  }
+  if let Some(o) = context_menu_overlay(state) {
+    layers.push(o);
+  }
+  layers
+}
+
+fn mail_drag_capture_layer() -> Element<'static, Message> {
+  mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+    .on_move(|pt| Message::PaneDrag(pt.x))
+    .on_release(Message::PaneDragEnd)
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
 }
 
 fn effective_folder_width(state: &State, window_width: f32) -> f32 {

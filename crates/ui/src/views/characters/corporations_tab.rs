@@ -158,39 +158,11 @@ impl<'a> Component<'a> {
   }
 
   fn render_grid(self) -> Element<'a, Message> {
-    let cols = if self.window_width >= 1000.0 {
-      3
-    } else if self.window_width >= 700.0 {
-      2
-    } else {
-      1
-    };
-
+    let cols = corp_grid_cols(self.window_width);
     let icon_handles = &self.state.icon_handles;
     let characters = self.characters;
-    let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
 
-    for chunk in self.corporations.chunks(cols) {
-      let mut cells: Vec<Element<'a, Message>> = chunk
-        .iter()
-        .map(|corp| {
-          let id = *corp.id();
-          let ceo_id = *corp.ceo_character_id();
-          let ceo_name = characters.iter().find(|c| *c.id() == ceo_id).map(|c| c.name().clone());
-          CorporationCard::new(corp)
-            .icon_handle(icon_handles.get(&id))
-            .ceo_name(ceo_name)
-            .render()
-            .map(move |msg| Message::Card(id, msg))
-        })
-        .collect();
-
-      while cells.len() < cols {
-        cells.push(iced::widget::Space::new().width(Length::Fill).into());
-      }
-
-      grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
-    }
+    let grid_rows = build_corp_grid_rows(self.corporations, cols, icon_handles, characters);
 
     let grid = container(
       column(grid_rows)
@@ -208,4 +180,47 @@ impl<'a> Component<'a> {
 
     mouse_area(grid).on_move(Message::CursorMoved).into()
   }
+}
+
+fn corp_grid_cols(window_width: f32) -> usize {
+  if window_width >= 1000.0 {
+    3
+  } else if window_width >= 700.0 {
+    2
+  } else {
+    1
+  }
+}
+
+fn build_corp_grid_rows<'a>(
+  corporations: Vec<&'a Corporation>,
+  cols: usize,
+  icon_handles: &'a std::collections::HashMap<i64, iced::widget::image::Handle>,
+  characters: &'a [Character],
+) -> Vec<Element<'a, Message>> {
+  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
+
+  for chunk in corporations.chunks(cols) {
+    let mut cells: Vec<Element<'a, Message>> = chunk
+      .iter()
+      .map(|corp| {
+        let id = *corp.id();
+        let ceo_id = *corp.ceo_character_id();
+        let ceo_name = characters.iter().find(|c| *c.id() == ceo_id).map(|c| c.name().clone());
+        CorporationCard::new(corp)
+          .icon_handle(icon_handles.get(&id))
+          .ceo_name(ceo_name)
+          .render()
+          .map(move |msg| Message::Card(id, msg))
+      })
+      .collect();
+
+    while cells.len() < cols {
+      cells.push(iced::widget::Space::new().width(Length::Fill).into());
+    }
+
+    grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
+  }
+
+  grid_rows
 }

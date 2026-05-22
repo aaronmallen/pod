@@ -288,6 +288,76 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   })
 }
 
+fn scope_gate(state: &State) -> Option<Element<'_, Message>> {
+  let char_id = state.selected_character()?;
+  let wc = state.characters.iter().find(|c| c.id == char_id)?;
+  let granted_str = wc.granted_scopes.as_deref().unwrap_or("");
+  let granted: Vec<&str> = if granted_str.is_empty() {
+    Vec::new()
+  } else {
+    granted_str.split(' ').collect()
+  };
+  if missing_scopes(&granted, &["esi-wallet.read_character_wallet.v1"]).is_empty() {
+    return None;
+  }
+  Some(ScopeMissing::new(char_id, "wallet").render().map(|m| match m {
+    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+  }))
+}
+
+fn wallet_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
+  let right_w = effective_right_rail_width(state, window_width);
+  let header = Header::new(state).render();
+  let hero = NetWorthHero::new(state).render();
+  let main = MainPanel::new(state).render();
+  let right = RightRail::new(state).width(right_w).render();
+  let body: Element<'_, Message> = column([
+    hero,
+    row([main, right_rail_drag_handle(), right])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into();
+  container(column([header, body]))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn picker_dropdown_overlay(state: &State) -> Option<Element<'_, Message>> {
+  if !state.picker.is_open {
+    return None;
+  }
+  let dropdown = state.picker.dropdown().map(Message::CharacterPicker);
+  Some(
+    container(dropdown)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(iced::alignment::Horizontal::Left)
+      .padding(Padding {
+        top: spacing::layout::HEADER_HEIGHT + 8.0,
+        left: spacing::SPACE_8,
+        ..Padding::ZERO
+      })
+      .into(),
+  )
+}
+
+fn drag_capture_layer() -> Element<'static, Message> {
+  mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+    .on_move(|pt| Message::PaneDrag(pt.x))
+    .on_release(Message::PaneDragEnd)
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
+}
+
 fn drag_handle_inner() -> Element<'static, Message> {
   row([
     Space::new().width(1.5).height(Length::Fill).into(),
@@ -325,22 +395,8 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     Message::AllCorpBalancesLoaded(balances) => {
       state.all_corp_balances = balances;
     }
-    Message::AssetValuesLoaded(values) => {
-      for (char_id, total) in values {
-        if let Some(c) = state.characters.iter_mut().find(|c| c.id == char_id) {
-          c.assets = total;
-        }
-      }
-    }
-    Message::CharacterPicker(msg) => {
-      if let character_picker::Message::Select(_) = &msg {
-        state.corp_journal.clear();
-        state.corp_market.clear();
-        state.corp_divisions.clear();
-        state.active_division = 1;
-      }
-      state.picker.update(msg);
-    }
+    Message::AssetValuesLoaded(values) => update_asset_values(state, values),
+    Message::CharacterPicker(msg) => update_character_picker(state, msg),
     Message::ContractsLoaded(entries) => {
       state.contracts = entries;
     }
@@ -357,11 +413,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     Message::DivisionSelected(div) => {
       state.active_division = div;
     }
-    Message::ItemIconsLoaded(icons) => {
-      for (type_id, bytes) in icons {
-        state.item_icons.insert(type_id, image::Handle::from_bytes(bytes));
-      }
-    }
+    Message::ItemIconsLoaded(icons) => update_item_icons(state, icons),
     Message::JournalLoaded(entries) => {
       state.journal = entries;
     }
@@ -375,14 +427,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
         state.side_filter = side;
       }
     },
-    Message::PaneDrag(cursor_x) => match state.dragging_pane {
-      Some(DraggingPane::RightRail) => {
-        let (start_x, start_w) = state.drag_origin.get_or_insert((cursor_x, state.right_rail_width));
-        let delta = cursor_x - *start_x;
-        state.right_rail_width = (*start_w - delta).clamp(160.0, 400.0);
-      }
-      None => {}
-    },
+    Message::PaneDrag(cursor_x) => update_pane_drag(state, cursor_x),
     Message::PaneDragEnd => {
       state.dragging_pane = None;
       state.drag_origin = None;
@@ -408,7 +453,37 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   iced::Task::none()
 }
 
-/// Journal entry type glyph and tone.
+fn update_asset_values(state: &mut State, values: Vec<(i64, f64)>) {
+  for (char_id, total) in values {
+    if let Some(c) = state.characters.iter_mut().find(|c| c.id == char_id) {
+      c.assets = total;
+    }
+  }
+}
+
+fn update_character_picker(state: &mut State, msg: character_picker::Message) {
+  if let character_picker::Message::Select(_) = &msg {
+    state.corp_journal.clear();
+    state.corp_market.clear();
+    state.corp_divisions.clear();
+    state.active_division = 1;
+  }
+  state.picker.update(msg);
+}
+
+fn update_item_icons(state: &mut State, icons: Vec<(i32, Vec<u8>)>) {
+  for (type_id, bytes) in icons {
+    state.item_icons.insert(type_id, image::Handle::from_bytes(bytes));
+  }
+}
+
+fn update_pane_drag(state: &mut State, cursor_x: f32) {
+  if let Some(DraggingPane::RightRail) = state.dragging_pane {
+    let (start_x, start_w) = state.drag_origin.get_or_insert((cursor_x, state.right_rail_width));
+    let delta = cursor_x - *start_x;
+    state.right_rail_width = (*start_w - delta).clamp(160.0, 400.0);
+  }
+}
 
 /// Format a timestamp offset (seconds ago) as a relative label.
 pub fn ts_label(ts_secs: u64) -> String {
@@ -442,74 +517,18 @@ impl<'a> Component<'a> {
 
     let state = self.state;
 
-    if let Some(char_id) = state.selected_character() {
-      if let Some(wc) = state.characters.iter().find(|c| c.id == char_id) {
-        let granted_str = wc.granted_scopes.as_deref().unwrap_or("");
-        let granted: Vec<&str> = if granted_str.is_empty() {
-          Vec::new()
-        } else {
-          granted_str.split(' ').collect()
-        };
-        if !missing_scopes(&granted, &["esi-wallet.read_character_wallet.v1"]).is_empty() {
-          return ScopeMissing::new(char_id, "wallet").render().map(|m| match m {
-            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-          });
-        }
-      }
+    if let Some(el) = scope_gate(state) {
+      return el;
     }
 
-    let right_w = effective_right_rail_width(state, self.window_width);
-
-    let header = Header::new(state).render();
-    let hero = NetWorthHero::new(state).render();
-    let main = MainPanel::new(state).render();
-    let right = RightRail::new(state).width(right_w).render();
-
-    let body: Element<'_, Message> = column([
-      hero,
-      row([main, right_rail_drag_handle(), right])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into(),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
-
-    let base: Element<'_, Message> = container(column([header, body]))
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        ..container::Style::default()
-      })
-      .into();
-
+    let base = wallet_base(state, self.window_width);
     let mut layers: Vec<Element<'_, Message>> = vec![base];
 
-    if state.picker.is_open {
-      let dropdown = state.picker.dropdown().map(Message::CharacterPicker);
-      layers.push(
-        container(dropdown)
-          .width(Length::Fill)
-          .height(Length::Fill)
-          .align_x(iced::alignment::Horizontal::Left)
-          .padding(Padding {
-            top: spacing::layout::HEADER_HEIGHT + 8.0,
-            left: spacing::SPACE_8,
-            ..Padding::ZERO
-          })
-          .into(),
-      );
+    if let Some(overlay) = picker_dropdown_overlay(state) {
+      layers.push(overlay);
     }
-
     if state.dragging_pane.is_some() {
-      let drag_capture: Element<'_, Message> = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-        .on_move(|pt| Message::PaneDrag(pt.x))
-        .on_release(Message::PaneDragEnd)
-        .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        .into();
-      layers.push(drag_capture);
+      layers.push(drag_capture_layer());
     }
 
     if layers.len() == 1 {

@@ -179,31 +179,7 @@ impl<'a> Component<'a> {
     let query = &state.search_filter.query;
     let is_filtered = !query.trim().is_empty();
 
-    let header_el = Header::new(
-      state.active_tab.as_str(),
-      state.characters.len(),
-      state.all_characters.len(),
-      state.corporations.len(),
-      state.all_corporations.len(),
-      is_filtered,
-    )
-    .render()
-    .map(Message::Header);
-
-    let filter_el = SearchFilter::new(&state.search_filter)
-      .render()
-      .map(Message::SearchFilter);
-
-    let grid_el = render_tab_content(state, is_filtered, query, window_width, window_height);
-
-    let base: Element<'_, Message> = container(column([header_el, filter_el, grid_el]).width(Length::Fill))
-      .height(Length::Fill)
-      .width(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        ..container::Style::default()
-      })
-      .into();
+    let base = render_base(state, query, is_filtered, window_width, window_height);
 
     let needs_overlay = state.search_filter.help_pop_over.visible
       || state.confirm_remove.is_some()
@@ -215,81 +191,151 @@ impl<'a> Component<'a> {
     }
 
     let mut layers: Vec<Element<'_, Message>> = vec![base];
-
-    if state.search_filter.help_pop_over.visible {
-      let help_el = search_filter::HelpPopOver::new(&state.search_filter.help_pop_over, &state.all_tags)
-        .render()
-        .map(search_filter::Message::HelpPopOver)
-        .map(Message::SearchFilter);
-
-      let positioned = container(help_el)
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .padding(Padding {
-          top: spacing::layout::HEADER_HEIGHT + 64.0,
-          right: spacing::SPACE_8,
-          ..Padding::ZERO
-        })
-        .align_x(Horizontal::Right);
-
-      layers.push(positioned.into());
-    }
-
-    if let Some(character_id) = state.confirm_remove {
-      let character_name = state
-        .all_characters
-        .iter()
-        .find(|c| *c.id() == character_id)
-        .map(|c| c.name().clone())
-        .unwrap_or_default();
-
-      let backdrop = components::Backdrop::new(Message::DismissConfirmRemove).render();
-      let dialog = ConfirmDialog::new(character_name)
-        .window_size(window_width, window_height)
-        .render()
-        .map(|msg| match msg {
-          confirm_dialog::Message::Confirmed => Message::ConfirmRemove,
-          confirm_dialog::Message::Dismissed => Message::DismissConfirmRemove,
-        });
-
-      layers.push(backdrop);
-      layers.push(dialog);
-    }
-
-    if let Some(corporation_id) = state.confirm_remove_corporation {
-      let corporation_name = state
-        .all_corporations
-        .iter()
-        .find(|c| *c.id() == corporation_id)
-        .map(|c| c.name().clone())
-        .unwrap_or_default();
-
-      let backdrop = components::Backdrop::new(Message::DismissConfirmRemoveCorporation).render();
-      let dialog = CorporationConfirmDialog::new(corporation_name)
-        .window_size(window_width, window_height)
-        .render()
-        .map(|msg| match msg {
-          corporation_confirm_dialog::Message::Confirmed => Message::ConfirmRemoveCorporation,
-          corporation_confirm_dialog::Message::Dismissed => Message::DismissConfirmRemoveCorporation,
-        });
-
-      layers.push(backdrop);
-      layers.push(dialog);
-    }
-
-    if let Some(modal_state) = &state.tag_modal {
-      let corpus = state.tag_corpus.clone();
-      let backdrop = components::Backdrop::new(Message::TagModal(tag_modal::Message::Close)).render();
-      let modal = TagModal::new(modal_state, corpus)
-        .window_size(window_width, window_height)
-        .render()
-        .map(Message::TagModal);
-      layers.push(backdrop);
-      layers.push(modal);
-    }
+    push_help_overlay(state, &mut layers);
+    push_confirm_remove_overlay(state, window_width, window_height, &mut layers);
+    push_confirm_remove_corporation_overlay(state, window_width, window_height, &mut layers);
+    push_tag_modal_overlay(state, window_width, window_height, &mut layers);
 
     stack(layers).into()
   }
+}
+
+fn render_base<'a>(
+  state: &'a State,
+  query: &'a str,
+  is_filtered: bool,
+  window_width: f32,
+  window_height: f32,
+) -> Element<'a, Message> {
+  let header_el = Header::new(
+    state.active_tab.as_str(),
+    state.characters.len(),
+    state.all_characters.len(),
+    state.corporations.len(),
+    state.all_corporations.len(),
+    is_filtered,
+  )
+  .render()
+  .map(Message::Header);
+
+  let filter_el = SearchFilter::new(&state.search_filter)
+    .render()
+    .map(Message::SearchFilter);
+
+  let grid_el = render_tab_content(state, is_filtered, query, window_width, window_height);
+
+  container(column([header_el, filter_el, grid_el]).width(Length::Fill))
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn push_help_overlay<'a>(state: &'a State, layers: &mut Vec<Element<'a, Message>>) {
+  if !state.search_filter.help_pop_over.visible {
+    return;
+  }
+
+  let help_el = search_filter::HelpPopOver::new(&state.search_filter.help_pop_over, &state.all_tags)
+    .render()
+    .map(search_filter::Message::HelpPopOver)
+    .map(Message::SearchFilter);
+
+  let positioned = container(help_el)
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::layout::HEADER_HEIGHT + 64.0,
+      right: spacing::SPACE_8,
+      ..Padding::ZERO
+    })
+    .align_x(Horizontal::Right);
+
+  layers.push(positioned.into());
+}
+
+fn push_confirm_remove_overlay<'a>(
+  state: &'a State,
+  window_width: f32,
+  window_height: f32,
+  layers: &mut Vec<Element<'a, Message>>,
+) {
+  let Some(character_id) = state.confirm_remove else {
+    return;
+  };
+
+  let character_name = state
+    .all_characters
+    .iter()
+    .find(|c| *c.id() == character_id)
+    .map(|c| c.name().clone())
+    .unwrap_or_default();
+
+  let backdrop = components::Backdrop::new(Message::DismissConfirmRemove).render();
+  let dialog = ConfirmDialog::new(character_name)
+    .window_size(window_width, window_height)
+    .render()
+    .map(|msg| match msg {
+      confirm_dialog::Message::Confirmed => Message::ConfirmRemove,
+      confirm_dialog::Message::Dismissed => Message::DismissConfirmRemove,
+    });
+
+  layers.push(backdrop);
+  layers.push(dialog);
+}
+
+fn push_confirm_remove_corporation_overlay<'a>(
+  state: &'a State,
+  window_width: f32,
+  window_height: f32,
+  layers: &mut Vec<Element<'a, Message>>,
+) {
+  let Some(corporation_id) = state.confirm_remove_corporation else {
+    return;
+  };
+
+  let corporation_name = state
+    .all_corporations
+    .iter()
+    .find(|c| *c.id() == corporation_id)
+    .map(|c| c.name().clone())
+    .unwrap_or_default();
+
+  let backdrop = components::Backdrop::new(Message::DismissConfirmRemoveCorporation).render();
+  let dialog = CorporationConfirmDialog::new(corporation_name)
+    .window_size(window_width, window_height)
+    .render()
+    .map(|msg| match msg {
+      corporation_confirm_dialog::Message::Confirmed => Message::ConfirmRemoveCorporation,
+      corporation_confirm_dialog::Message::Dismissed => Message::DismissConfirmRemoveCorporation,
+    });
+
+  layers.push(backdrop);
+  layers.push(dialog);
+}
+
+fn push_tag_modal_overlay<'a>(
+  state: &'a State,
+  window_width: f32,
+  window_height: f32,
+  layers: &mut Vec<Element<'a, Message>>,
+) {
+  let Some(modal_state) = &state.tag_modal else {
+    return;
+  };
+
+  let corpus = state.tag_corpus.clone();
+  let backdrop = components::Backdrop::new(Message::TagModal(tag_modal::Message::Close)).render();
+  let modal = TagModal::new(modal_state, corpus)
+    .window_size(window_width, window_height)
+    .render()
+    .map(Message::TagModal);
+
+  layers.push(backdrop);
+  layers.push(modal);
 }
 
 fn render_tab_content<'a>(

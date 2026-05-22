@@ -116,65 +116,65 @@ fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
 }
 
 fn message_meta_chips<'a>(msg: &'a MailMessage) -> Vec<Element<'a, Message>> {
-  let mut items: Vec<Element<'_, Message>> = msg
-    .labels
-    .iter()
-    .map(|l| {
-      container(
-        text(l.to_uppercase())
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 6.0,
-        right: 6.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
-    })
-    .collect();
+  let mut items: Vec<Element<'_, Message>> = msg.labels.iter().map(|l| meta_label_chip(l)).collect();
   if msg.has_attachment {
-    items.push(
-      container(
-        text("+1")
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 6.0,
-        right: 6.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08))),
-        border: Border {
-          color: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
+    items.push(attachment_chip());
   }
   items
+}
+
+fn meta_label_chip(l: &str) -> Element<'_, Message> {
+  container(
+    text(l.to_uppercase())
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 6.0,
+    right: 6.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn attachment_chip() -> Element<'static, Message> {
+  container(
+    text("+1")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 6.0,
+    right: 6.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08))),
+    border: Border {
+      color: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {

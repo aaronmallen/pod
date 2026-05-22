@@ -44,90 +44,14 @@ impl State {
         self.cursor_position = pt;
         Task::none()
       }
-      Message::Card(_, card_msg) => match card_msg {
-        character_card::Message::CardRightPressed(id, name) => {
-          self.context_menu = Some(context_menu::State {
-            character_id: id,
-            character_name: name,
-            x: self.cursor_position.x,
-            y: self.cursor_position.y,
-          });
-          Task::none()
-        }
-        character_card::Message::CardPressed(id) => {
-          self.context_menu = None;
-          self.dragging_id = Some(id);
-          Task::none()
-        }
-        character_card::Message::CardEntered(id) => {
-          if self.dragging_id.is_some() {
-            self.drag_hover = Some(id);
-          }
-          Task::none()
-        }
-        character_card::Message::NamePressed(_)
-        | character_card::Message::SkillTrainingPressed(_)
-        | character_card::Message::TagsPressed(_)
-        | character_card::Message::WalletPressed(_) => {
-          self.context_menu = None;
-          Task::none()
-        }
-      },
-      Message::ContextMenu(inner) => match inner {
-        context_menu::Message::Close | context_menu::Message::CopyName => {
-          self.context_menu = None;
-          Task::none()
-        }
-        context_menu::Message::EditTags => {
-          let id = self.context_menu.as_ref().map(|s| s.character_id);
-          self.context_menu = None;
-          if let Some(id) = id {
-            Task::done(Message::Card(id, character_card::Message::TagsPressed(id)))
-          } else {
-            Task::none()
-          }
-        }
-        context_menu::Message::RemoveRequested => {
-          let id = self.context_menu.as_ref().map(|s| s.character_id);
-          self.context_menu = None;
-          if let Some(id) = id {
-            Task::done(Message::RemoveCharacter(id))
-          } else {
-            Task::none()
-          }
-        }
-      },
+      Message::Card(_, card_msg) => self.update_card(card_msg),
+      Message::ContextMenu(inner) => self.update_context_menu(inner),
       Message::DragEnd => {
         self.dragging_id = None;
         self.drag_hover = None;
         Task::none()
       }
-      Message::DragMoved(pt, pane_height) => {
-        self.cursor_position = pt;
-        if pt.y < spacing::SCROLL_EDGE_THRESHOLD {
-          let new_y = (self.scroll_offset.y - spacing::SCROLL_NUDGE_PX).max(0.0);
-          self.scroll_offset.y = new_y;
-          return iced::widget::operation::scroll_to(
-            GRID_SCROLL_ID.clone(),
-            scrollable::AbsoluteOffset {
-              x: 0.0,
-              y: new_y,
-            },
-          );
-        }
-        if pt.y > pane_height - spacing::SCROLL_EDGE_THRESHOLD {
-          let new_y = self.scroll_offset.y + spacing::SCROLL_NUDGE_PX;
-          self.scroll_offset.y = new_y;
-          return iced::widget::operation::scroll_to(
-            GRID_SCROLL_ID.clone(),
-            scrollable::AbsoluteOffset {
-              x: 0.0,
-              y: new_y,
-            },
-          );
-        }
-        Task::none()
-      }
+      Message::DragMoved(pt, pane_height) => self.update_drag_moved(pt, pane_height),
       Message::ScrollOffsetChanged(viewport) => {
         self.scroll_offset = viewport.absolute_offset();
         Task::none()
@@ -147,6 +71,92 @@ impl State {
       | Message::WalletRefreshTick
       | Message::WalletsRefreshed(_) => Task::none(),
     }
+  }
+
+  fn update_card(&mut self, card_msg: character_card::Message) -> Task<Message> {
+    match card_msg {
+      character_card::Message::CardRightPressed(id, name) => {
+        self.context_menu = Some(context_menu::State {
+          character_id: id,
+          character_name: name,
+          x: self.cursor_position.x,
+          y: self.cursor_position.y,
+        });
+        Task::none()
+      }
+      character_card::Message::CardPressed(id) => {
+        self.context_menu = None;
+        self.dragging_id = Some(id);
+        Task::none()
+      }
+      character_card::Message::CardEntered(id) => {
+        if self.dragging_id.is_some() {
+          self.drag_hover = Some(id);
+        }
+        Task::none()
+      }
+      character_card::Message::NamePressed(_)
+      | character_card::Message::SkillTrainingPressed(_)
+      | character_card::Message::TagsPressed(_)
+      | character_card::Message::WalletPressed(_) => {
+        self.context_menu = None;
+        Task::none()
+      }
+    }
+  }
+
+  fn update_context_menu(&mut self, inner: context_menu::Message) -> Task<Message> {
+    match inner {
+      context_menu::Message::Close | context_menu::Message::CopyName => {
+        self.context_menu = None;
+        Task::none()
+      }
+      context_menu::Message::EditTags => {
+        let id = self.context_menu.as_ref().map(|s| s.character_id);
+        self.context_menu = None;
+        if let Some(id) = id {
+          Task::done(Message::Card(id, character_card::Message::TagsPressed(id)))
+        } else {
+          Task::none()
+        }
+      }
+      context_menu::Message::RemoveRequested => {
+        let id = self.context_menu.as_ref().map(|s| s.character_id);
+        self.context_menu = None;
+        if let Some(id) = id {
+          Task::done(Message::RemoveCharacter(id))
+        } else {
+          Task::none()
+        }
+      }
+    }
+  }
+
+  fn update_drag_moved(&mut self, pt: Point, pane_height: f32) -> Task<Message> {
+    self.cursor_position = pt;
+    if pt.y < spacing::SCROLL_EDGE_THRESHOLD {
+      let new_y = (self.scroll_offset.y - spacing::SCROLL_NUDGE_PX).max(0.0);
+      self.scroll_offset.y = new_y;
+      return iced::widget::operation::scroll_to(
+        GRID_SCROLL_ID.clone(),
+        scrollable::AbsoluteOffset {
+          x: 0.0,
+          y: new_y,
+        },
+      );
+    }
+    if pt.y > pane_height - spacing::SCROLL_EDGE_THRESHOLD {
+      let new_y = self.scroll_offset.y + spacing::SCROLL_NUDGE_PX;
+      self.scroll_offset.y = new_y;
+      return iced::widget::operation::scroll_to(
+        GRID_SCROLL_ID.clone(),
+        scrollable::AbsoluteOffset {
+          x: 0.0,
+          y: new_y,
+        },
+      );
+    }
+    Task::none()
   }
 }
 
@@ -259,7 +269,6 @@ impl<'a> Component<'a> {
       dragging_id.and_then(|id| self.state.portrait_handles.get(&id));
 
     let grid = self.render_grid(feat_skill_monitoring, feat_wallet);
-
     let mut layers: Vec<Element<'a, Message>> = vec![grid];
 
     if let Some(ctx) = context_menu {
@@ -267,29 +276,7 @@ impl<'a> Component<'a> {
     }
 
     if let Some(ghost_c) = ghost_char {
-      let cols: usize = if window_width >= 1000.0 {
-        3
-      } else if window_width >= 700.0 {
-        2
-      } else {
-        1
-      };
-      let effective_width = window_width.min(spacing::layout::GRID_MAX_WIDTH);
-      let card_width = (effective_width - spacing::SPACE_8 * 2.0 - spacing::SPACE_4 * (cols - 1) as f32) / cols as f32;
-
-      let ghost_left = (cursor.x - card_width / 2.0).max(0.0);
-      let ghost_top = (cursor.y - spacing::layout::CHARACTER_CARD_HEIGHT * 0.3).max(0.0);
-
-      let ghost_overlay = container(container(ghost_element(ghost_c, ghost_handle)).width(card_width))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding {
-          top: ghost_top,
-          left: ghost_left,
-          ..Padding::ZERO
-        });
-
-      layers.push(ghost_overlay.into());
+      layers.push(ghost_overlay(ghost_c, ghost_handle, cursor, window_width));
     }
 
     if layers.len() == 1 {
@@ -300,42 +287,21 @@ impl<'a> Component<'a> {
   }
 
   fn render_grid(self, feat_skill_monitoring: bool, feat_wallet: bool) -> Element<'a, Message> {
-    let cols = if self.window_width >= 1000.0 {
-      3
-    } else if self.window_width >= 700.0 {
-      2
-    } else {
-      1
-    };
-
+    let cols = grid_cols(self.window_width);
     let portrait_handles = &self.state.portrait_handles;
     let dragging_id = self.state.dragging_id;
     let drag_hover = self.state.drag_hover;
     let pane_height = self.pane_height;
-    let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
 
-    for chunk in self.characters.chunks(cols) {
-      let mut cells: Vec<Element<'a, Message>> = chunk
-        .iter()
-        .map(|c| {
-          let id = *c.id();
-          CharacterCard::new(c)
-            .portrait_handle(portrait_handles.get(&id))
-            .feat_skill_monitoring(feat_skill_monitoring)
-            .feat_wallet(feat_wallet)
-            .is_dragging(dragging_id == Some(id))
-            .is_hover_target(dragging_id.is_some() && drag_hover == Some(id) && dragging_id != Some(id))
-            .render()
-            .map(move |msg| Message::Card(id, msg))
-        })
-        .collect();
-
-      while cells.len() < cols {
-        cells.push(iced::widget::Space::new().width(Length::Fill).into());
-      }
-
-      grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
-    }
+    let grid_rows = build_grid_rows(
+      self.characters,
+      cols,
+      portrait_handles,
+      dragging_id,
+      drag_hover,
+      feat_skill_monitoring,
+      feat_wallet,
+    );
 
     let grid_column = container(
       column(grid_rows)
@@ -368,6 +334,77 @@ impl<'a> Component<'a> {
   }
 }
 
+fn grid_cols(window_width: f32) -> usize {
+  if window_width >= 1000.0 {
+    3
+  } else if window_width >= 700.0 {
+    2
+  } else {
+    1
+  }
+}
+
+fn build_grid_rows<'a>(
+  characters: Vec<&'a Character>,
+  cols: usize,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i64>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Vec<Element<'a, Message>> {
+  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
+
+  for chunk in characters.chunks(cols) {
+    let mut cells: Vec<Element<'a, Message>> = chunk
+      .iter()
+      .map(|c| {
+        let id = *c.id();
+        CharacterCard::new(c)
+          .portrait_handle(portrait_handles.get(&id))
+          .feat_skill_monitoring(feat_skill_monitoring)
+          .feat_wallet(feat_wallet)
+          .is_dragging(dragging_id == Some(id))
+          .is_hover_target(dragging_id.is_some() && drag_hover == Some(id) && dragging_id != Some(id))
+          .render()
+          .map(move |msg| Message::Card(id, msg))
+      })
+      .collect();
+
+    while cells.len() < cols {
+      cells.push(iced::widget::Space::new().width(Length::Fill).into());
+    }
+
+    grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
+  }
+
+  grid_rows
+}
+
+fn ghost_overlay<'a>(
+  ghost_c: &'a Character,
+  ghost_handle: Option<&'a iced::widget::image::Handle>,
+  cursor: Point,
+  window_width: f32,
+) -> Element<'a, Message> {
+  let cols = grid_cols(window_width);
+  let effective_width = window_width.min(spacing::layout::GRID_MAX_WIDTH);
+  let card_width = (effective_width - spacing::SPACE_8 * 2.0 - spacing::SPACE_4 * (cols - 1) as f32) / cols as f32;
+
+  let ghost_left = (cursor.x - card_width / 2.0).max(0.0);
+  let ghost_top = (cursor.y - spacing::layout::CHARACTER_CARD_HEIGHT * 0.3).max(0.0);
+
+  container(container(ghost_element(ghost_c, ghost_handle)).width(card_width))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top: ghost_top,
+      left: ghost_left,
+      ..Padding::ZERO
+    })
+    .into()
+}
+
 // Non-interactive ghost that follows the cursor during drag.
 // Mirrors the full card layout but has zero mouse_area elements, so all
 // events fall through to the grid cards beneath (preserving CardEntered).
@@ -388,42 +425,9 @@ fn ghost_element<'a>(
     })
     .into();
 
-  let tag_children: Vec<Element<'a, Message>> = character
-    .tags()
-    .iter()
-    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
-    .collect();
-  let tags: Element<'a, Message> = if tag_children.is_empty() {
-    iced::widget::Space::new().width(Length::Shrink).height(0).into()
-  } else {
-    container(row(tag_children).spacing(spacing::SPACE_1).wrap())
-      .padding(Padding {
-        top: 0.0,
-        bottom: 10.0,
-        left: spacing::SPACE_4,
-        right: spacing::SPACE_4,
-      })
-      .width(Length::Fill)
-      .into()
-  };
-
+  let tags = ghost_tags(character);
   let training = character_card::CharacterSkillTraining::new(character).render::<Message>();
-
-  let location = character.location_name().as_deref();
-  let divider: Element<'a, Message> = container(iced::widget::Space::new().height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into();
-  let stats: Element<'a, Message> = row([
-    character_card::CharacterLocation::new(location).render::<Message>(),
-    divider,
-    character_card::CharacterWallet::new(character).render::<Message>(),
-  ])
-  .into();
+  let stats = ghost_stats(character);
 
   let card_content = column([
     portrait,
@@ -437,10 +441,14 @@ fn ghost_element<'a>(
   .width(Length::Fill)
   .height(Length::Fill);
 
+  ghost_card_container(card_content)
+}
+
+fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
   let mut bg = color::surface::RAISED;
   bg.a = 0.96;
 
-  container(card_content)
+  container(content)
     .width(Length::Fill)
     .height(spacing::layout::CHARACTER_CARD_HEIGHT)
     .style(move |_| container::Style {
@@ -454,4 +462,47 @@ fn ghost_element<'a>(
       ..container::Style::default()
     })
     .into()
+}
+
+fn ghost_tags<'a>(character: &'a Character) -> Element<'a, Message> {
+  use crate::components;
+
+  let tag_children: Vec<Element<'a, Message>> = character
+    .tags()
+    .iter()
+    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
+    .collect();
+
+  if tag_children.is_empty() {
+    iced::widget::Space::new().width(Length::Shrink).height(0).into()
+  } else {
+    container(row(tag_children).spacing(spacing::SPACE_1).wrap())
+      .padding(Padding {
+        top: 0.0,
+        bottom: 10.0,
+        left: spacing::SPACE_4,
+        right: spacing::SPACE_4,
+      })
+      .width(Length::Fill)
+      .into()
+  }
+}
+
+fn ghost_stats<'a>(character: &'a Character) -> Element<'a, Message> {
+  let location = character.location_name().as_deref();
+  let divider: Element<'a, Message> = container(iced::widget::Space::new().height(Length::Fill))
+    .width(1.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
+    .into();
+
+  row([
+    character_card::CharacterLocation::new(location).render::<Message>(),
+    divider,
+    character_card::CharacterWallet::new(character).render::<Message>(),
+  ])
+  .into()
 }

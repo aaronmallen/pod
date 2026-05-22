@@ -855,26 +855,9 @@ async fn load_notifications(
 }
 
 fn map_notification(n: pod_esi::models::character::CharacterNotification) -> pod_model::CharacterNotification {
-  use pod_model::{NotificationCategory, categorize_notif};
-  let cat_str = match categorize_notif(&n.r#type) {
-    NotificationCategory::Alliance => "alliance",
-    NotificationCategory::Clone => "clone",
-    NotificationCategory::Combat => "combat",
-    NotificationCategory::Contact => "contact",
-    NotificationCategory::Contract => "contract",
-    NotificationCategory::Corp => "corp",
-    NotificationCategory::Fw => "fw",
-    NotificationCategory::Incursion => "incursion",
-    NotificationCategory::Industry => "industry",
-    NotificationCategory::Insurance => "insurance",
-    NotificationCategory::Market => "market",
-    NotificationCategory::Mission => "mission",
-    NotificationCategory::Reward => "reward",
-    NotificationCategory::Standing => "standing",
-    NotificationCategory::Structure => "structure",
-    NotificationCategory::System => "system",
-    NotificationCategory::War => "war",
-  };
+  use pod_model::categorize_notif;
+  let category = categorize_notif(&n.r#type);
+  let cat_str = notification_category_label_a(&category).unwrap_or_else(|| notification_category_label_b(&category));
   pod_model::CharacterNotification {
     category: cat_str.to_string(),
     is_read: n.is_read.unwrap_or(false),
@@ -884,6 +867,37 @@ fn map_notification(n: pod_esi::models::character::CharacterNotification) -> pod
     text: n.text,
     timestamp: n.timestamp,
     type_: n.r#type,
+  }
+}
+
+fn notification_category_label_a(cat: &pod_model::NotificationCategory) -> Option<&'static str> {
+  use pod_model::NotificationCategory;
+  match cat {
+    NotificationCategory::Alliance => Some("alliance"),
+    NotificationCategory::Clone => Some("clone"),
+    NotificationCategory::Combat => Some("combat"),
+    NotificationCategory::Contact => Some("contact"),
+    NotificationCategory::Contract => Some("contract"),
+    NotificationCategory::Corp => Some("corp"),
+    NotificationCategory::Fw => Some("fw"),
+    NotificationCategory::Incursion => Some("incursion"),
+    NotificationCategory::Industry => Some("industry"),
+    _ => None,
+  }
+}
+
+fn notification_category_label_b(cat: &pod_model::NotificationCategory) -> &'static str {
+  use pod_model::NotificationCategory;
+  match cat {
+    NotificationCategory::Insurance => "insurance",
+    NotificationCategory::Market => "market",
+    NotificationCategory::Mission => "mission",
+    NotificationCategory::Reward => "reward",
+    NotificationCategory::Standing => "standing",
+    NotificationCategory::Structure => "structure",
+    NotificationCategory::System => "system",
+    NotificationCategory::War => "war",
+    _ => "other",
   }
 }
 

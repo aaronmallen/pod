@@ -168,11 +168,7 @@ pub fn wallet_refresh_task(state: &State, services: &Services) -> iced::Task<Mes
 /// Processes a characters message and returns a task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
-    Message::AddCharacterError(e) => {
-      state.add_status = Some(format!("Error: {e}"));
-      iced::Task::none()
-    }
-    Message::AddCorporationError(e) => {
+    Message::AddCharacterError(e) | Message::AddCorporationError(e) => {
       state.add_status = Some(format!("Error: {e}"));
       iced::Task::none()
     }
@@ -369,17 +365,21 @@ fn handle_tag_modal(state: &mut State, msg: tag_modal::Message, services: &Servi
       iced::Task::none()
     }
     tag_modal::Message::MoveDown => {
-      if let Some(m) = &mut state.tag_modal {
-        let count = tag_modal::compute_items(m, &state.tag_corpus).len();
-        if count > 0 && m.highlighted < count - 1 {
-          m.highlighted += 1;
-        }
-      }
+      tag_modal_move_down(state);
       iced::Task::none()
     }
     tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
     tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
     tag_modal::Message::Remove(tag_id) => handle_tag_remove(state, tag_id, services),
+  }
+}
+
+fn tag_modal_move_down(state: &mut State) {
+  if let Some(m) = &mut state.tag_modal {
+    let count = tag_modal::compute_items(m, &state.tag_corpus).len();
+    if count > 0 && m.highlighted < count - 1 {
+      m.highlighted += 1;
+    }
   }
 }
 
@@ -424,30 +424,38 @@ fn handle_tag_remove(state: &mut State, tag_id: i32, services: &Services) -> ice
     return iced::Task::none();
   };
   if entity_type == "corporation" {
-    iced::Task::perform(
-      async move {
-        db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
-        let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-      },
-      |result| match result {
-        Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-        None => Message::TagsApplied,
-      },
-    )
+    remove_corporation_tag_task(entity_id, new_ids, db)
   } else {
-    iced::Task::perform(
-      async move {
-        db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
-        let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-      },
-      |result| match result {
-        Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-        None => Message::TagsApplied,
-      },
-    )
+    remove_character_tag_task(entity_id, new_ids, db)
   }
+}
+
+fn remove_corporation_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
+      let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
+      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+    },
+    |result| match result {
+      Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+      None => Message::TagsApplied,
+    },
+  )
+}
+
+fn remove_character_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
+      let tags = db.tags().tags_for_character(entity_id).await.ok()?;
+      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+    },
+    |result| match result {
+      Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
+      None => Message::TagsApplied,
+    },
+  )
 }
 
 fn apply_tag_task(
@@ -461,40 +469,58 @@ fn apply_tag_task(
     return iced::Task::none();
   };
   if entity_type == "corporation" {
-    iced::Task::perform(
-      async move {
-        let tag = db.tags().find_or_create(&tag_name).await.ok()?;
-        let mut new_ids = existing_ids;
-        if !new_ids.contains(&tag.id) {
-          new_ids.push(tag.id);
-        }
-        db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
-        let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-      },
-      |result| match result {
-        Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-        None => Message::TagsApplied,
-      },
-    )
+    apply_corporation_tag_task(entity_id, tag_name, existing_ids, db)
   } else {
-    iced::Task::perform(
-      async move {
-        let tag = db.tags().find_or_create(&tag_name).await.ok()?;
-        let mut new_ids = existing_ids;
-        if !new_ids.contains(&tag.id) {
-          new_ids.push(tag.id);
-        }
-        db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
-        let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-      },
-      |result| match result {
-        Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-        None => Message::TagsApplied,
-      },
-    )
+    apply_character_tag_task(entity_id, tag_name, existing_ids, db)
   }
+}
+
+fn apply_corporation_tag_task(
+  entity_id: i64,
+  tag_name: String,
+  existing_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      let tag = db.tags().find_or_create(&tag_name).await.ok()?;
+      let mut new_ids = existing_ids;
+      if !new_ids.contains(&tag.id) {
+        new_ids.push(tag.id);
+      }
+      db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
+      let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
+      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+    },
+    |result| match result {
+      Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+      None => Message::TagsApplied,
+    },
+  )
+}
+
+fn apply_character_tag_task(
+  entity_id: i64,
+  tag_name: String,
+  existing_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      let tag = db.tags().find_or_create(&tag_name).await.ok()?;
+      let mut new_ids = existing_ids;
+      if !new_ids.contains(&tag.id) {
+        new_ids.push(tag.id);
+      }
+      db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
+      let tags = db.tags().tags_for_character(entity_id).await.ok()?;
+      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+    },
+    |result| match result {
+      Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
+      None => Message::TagsApplied,
+    },
+  )
 }
 
 fn drag_release_subscription() -> Subscription<Message> {
@@ -1390,11 +1416,7 @@ fn update_corporation(state: &mut State, msg: corporations_tab::Message, service
     corporations_tab::Message::CorpPublicRefreshed(updated) => handle_corp_public_refreshed(state, updated),
     corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
     corporations_tab::Message::CorporationAdded(corp) => handle_corporation_added(state, corp),
-    corporations_tab::Message::CorporationRemoved(id) => {
-      state.all_corporations.retain(|c| *c.id() != id);
-      state.corporations.retain(|c| *c.id() != id);
-      iced::Task::none()
-    }
+    corporations_tab::Message::CorporationRemoved(id) => handle_corporation_removed(state, id),
     corporations_tab::Message::CorporationTagsLoaded(id, tags) => handle_corporation_tags_loaded(state, id, tags),
     corporations_tab::Message::CorporationsLoaded(corps) => handle_corporations_loaded(state, corps, services),
     corporations_tab::Message::HqNamesLoaded(resolved) => handle_hq_names_loaded(state, resolved),
@@ -1431,6 +1453,12 @@ fn handle_corp_public_refreshed(state: &mut State, updated: Vec<Corporation>) ->
       *existing = corp;
     }
   }
+  iced::Task::none()
+}
+
+fn handle_corporation_removed(state: &mut State, id: i64) -> iced::Task<Message> {
+  state.all_corporations.retain(|c| *c.id() != id);
+  state.corporations.retain(|c| *c.id() != id);
   iced::Task::none()
 }
 

@@ -186,38 +186,9 @@ fn main() -> iced::Result {
 }
 
 fn subscription(app: &App) -> Subscription<Message> {
-  let window_events = window::events().filter_map(|(id, event)| match event {
-    window::Event::Opened {
-      ..
-    } => Some(Message::WindowOpened(id)),
-    window::Event::Moved(point) => Some(Message::WindowMoved(id, point)),
-    window::Event::Resized(size) => Some(Message::WindowResized(id, size)),
-    window::Event::CloseRequested => Some(Message::WindowCloseRequested(id)),
-    _ => None,
-  });
-
-  let tick = match &app.phase {
-    AppPhase::Splash(_) => iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick),
-    AppPhase::Main(state) => {
-      let main_subs = main_ctrl::subscription(state).map(Message::Main);
-      let eve_tick =
-        iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Main(main_ctrl::Message::EveTimeTick));
-      let update_check = iced::time::every(services::updater::check_interval())
-        .map(|_| Message::Updater(services::updater::Message::CheckRequested));
-      iced::Subscription::batch([main_subs, eve_tick, update_check])
-    }
-  };
-
-  let plan_subs: Vec<Subscription<Message>> = app
-    .plan_windows
-    .iter()
-    .map(|(id, state)| {
-      skill_plan_window::subscription(state)
-        .with(*id)
-        .map(|(id, m)| Message::SkillPlan(id, m))
-    })
-    .collect();
-
+  let window_events = window_event_subscription();
+  let tick = phase_tick_subscription(&app.phase);
+  let plan_subs = plan_window_subscriptions(&app.plan_windows);
   let menu_sub = menu::subscription().map(Message::Menu);
 
   Subscription::batch(
@@ -228,14 +199,57 @@ fn subscription(app: &App) -> Subscription<Message> {
   )
 }
 
+fn window_event_subscription() -> Subscription<Message> {
+  window::events().filter_map(|(id, event)| match event {
+    window::Event::Opened {
+      ..
+    } => Some(Message::WindowOpened(id)),
+    window::Event::Moved(point) => Some(Message::WindowMoved(id, point)),
+    window::Event::Resized(size) => Some(Message::WindowResized(id, size)),
+    window::Event::CloseRequested => Some(Message::WindowCloseRequested(id)),
+    _ => None,
+  })
+}
+
+fn phase_tick_subscription(phase: &AppPhase) -> Subscription<Message> {
+  match phase {
+    AppPhase::Splash(_) => iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick),
+    AppPhase::Main(state) => main_phase_subscriptions(state),
+  }
+}
+
+fn main_phase_subscriptions(state: &main_ctrl::State) -> Subscription<Message> {
+  let main_subs = main_ctrl::subscription(state).map(Message::Main);
+  let eve_tick =
+    iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Main(main_ctrl::Message::EveTimeTick));
+  let update_check = iced::time::every(services::updater::check_interval())
+    .map(|_| Message::Updater(services::updater::Message::CheckRequested));
+  iced::Subscription::batch([main_subs, eve_tick, update_check])
+}
+
+fn plan_window_subscriptions(
+  plan_windows: &HashMap<window::Id, skill_plan_window::State>,
+) -> Vec<Subscription<Message>> {
+  plan_windows
+    .iter()
+    .map(|(id, state)| {
+      skill_plan_window::subscription(state)
+        .with(*id)
+        .map(|(id, m)| Message::SkillPlan(id, m))
+    })
+    .collect()
+}
+
+fn update_about_window(app: &mut App, msg: about_window::Message) -> Task<Message> {
+  let Some((_, state)) = &mut app.about_window else {
+    return Task::none();
+  };
+  about_window::update(state, msg).map(Message::AboutWindow)
+}
+
 fn update(app: &mut App, message: Message) -> Task<Message> {
   match message {
-    Message::AboutWindow(msg) => {
-      let Some((_, state)) = &mut app.about_window else {
-        return Task::none();
-      };
-      about_window::update(state, msg).map(Message::AboutWindow)
-    }
+    Message::AboutWindow(msg) => update_about_window(app, msg),
     Message::BackgroundSync(msg) => update_background_sync(app, msg),
     Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::Main(msg) => update_main(app, msg),
@@ -245,10 +259,20 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     Message::Tick => update_splash(app, SplashMessage::Tick),
     Message::UpdateBanner(msg) => update_updater(app, UpdaterMessage::Banner(msg)),
     Message::Updater(msg) => update_updater(app, UpdaterMessage::Updater(msg)),
+    msg @ (Message::WindowCloseRequested(_)
+      | Message::WindowMoved(..)
+      | Message::WindowOpened(_)
+      | Message::WindowResized(..)) => dispatch_window_event(app, msg),
+  }
+}
+
+fn dispatch_window_event(app: &mut App, msg: Message) -> Task<Message> {
+  match msg {
     Message::WindowCloseRequested(id) => update_window_events(app, id, WindowEvent::CloseRequested),
     Message::WindowMoved(id, pt) => update_window_events(app, id, WindowEvent::Moved(pt)),
     Message::WindowOpened(id) => update_window_events(app, id, WindowEvent::Opened),
     Message::WindowResized(id, sz) => update_window_events(app, id, WindowEvent::Resized(sz)),
+    _ => unreachable!(),
   }
 }
 
@@ -370,104 +394,114 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
   }
 }
 
+fn handle_splash_bootstrap(app: &mut App, msg: services::bootstrap::Message) -> Task<Message> {
+  let AppPhase::Splash(state) = &mut app.phase else {
+    return Task::none();
+  };
+  match splash_ctrl::handle_bootstrap(
+    state,
+    &mut app.db,
+    &mut app.step_label,
+    &mut app.characters,
+    &mut app.esi_client,
+    msg,
+  ) {
+    splash_ctrl::HandleResult::Bootstrap(t) => t.map(Message::Bootstrap),
+    splash_ctrl::HandleResult::Fatal(e) => {
+      eprintln!("pod: fatal startup error: {e}");
+      iced::exit()
+    }
+    splash_ctrl::HandleResult::None => Task::none(),
+    splash_ctrl::HandleResult::Splash(t) => t.map(Message::Splash),
+  }
+}
+
+fn apply_saved_geometry(app: &mut App, saved: &services::window_state::WindowGeometry) {
+  app.window_position = Some(Point::new(saved.x, saved.y));
+  if let (Some(w), Some(h)) = (saved.plan_window_width, saved.plan_window_height) {
+    app.plan_window_size = Size::new(w, h);
+  }
+  if let (Some(x), Some(y)) = (saved.plan_window_x, saved.plan_window_y) {
+    app.plan_window_position = Some(Point::new(x, y));
+  }
+}
+
+fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
+  let services = Services {
+    config: app.config.clone(),
+    db: app.db.clone(),
+    esi_client: app.esi_client.clone(),
+  };
+  let saved = services::window_state::load();
+  let (target_width, target_height) = saved
+    .as_ref()
+    .map(|g| (g.width, g.height))
+    .unwrap_or((layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT));
+  let (main_state, init_task) = main_ctrl::new(
+    app.characters.clone(),
+    &services,
+    saved.as_ref().and_then(|g| g.skills_left_pane_width),
+    saved.as_ref().and_then(|g| g.mail_folder_pane_width),
+    saved.as_ref().and_then(|g| g.mail_message_list_width),
+    saved.as_ref().and_then(|g| g.wallet_right_rail_width),
+  );
+  app.phase = AppPhase::Main(main_state);
+  app.window_size = Size::new(target_width, target_height);
+  if let Some(geo) = &saved {
+    apply_saved_geometry(app, geo);
+  }
+  let position = saved
+    .as_ref()
+    .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
+    .unwrap_or(window::Position::Default);
+  let main_settings = window::Settings {
+    size: Size::new(target_width, target_height),
+    position,
+    decorations: true,
+    resizable: true,
+    min_size: Some(Size::new(layout::WINDOW_MIN_WIDTH, layout::WINDOW_MIN_HEIGHT)),
+    ..window::Settings::default()
+  };
+  let (new_id, open_task) = window::open(main_settings);
+  let splash_id = app.window_id.replace(new_id);
+  let mut tasks = vec![
+    splash_task,
+    init_task.map(Message::Main),
+    open_task.map(Message::WindowOpened),
+    services::updater::check().map(Message::Updater),
+  ];
+  if let (Some(db), Some(esi)) = (app.db.clone(), app.esi_client.clone()) {
+    tasks.push(services::bootstrap::sync_characters(db, esi, app.characters.clone()).map(Message::BackgroundSync));
+  }
+  if let Some(id) = splash_id {
+    tasks.push(window::close(id));
+  }
+  Task::batch(tasks)
+}
+
+fn handle_splash_inner(app: &mut App, inner: splash_ctrl::Message) -> Task<Message> {
+  if matches!(inner, splash_ctrl::Message::DragWindow) {
+    return match app.window_id {
+      Some(id) => window::drag(id),
+      None => Task::none(),
+    };
+  }
+  let transitioning = matches!(inner, splash_ctrl::Message::ExpandComplete);
+  let AppPhase::Splash(state) = &mut app.phase else {
+    return Task::none();
+  };
+  let task = splash_ctrl::update(state, inner.clone()).map(Message::Splash);
+  if transitioning {
+    handle_splash_transition(app, task)
+  } else {
+    task
+  }
+}
+
 fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
   match msg {
-    SplashMessage::Bootstrap(msg) => {
-      let AppPhase::Splash(state) = &mut app.phase else {
-        return Task::none();
-      };
-      match splash_ctrl::handle_bootstrap(
-        state,
-        &mut app.db,
-        &mut app.step_label,
-        &mut app.characters,
-        &mut app.esi_client,
-        msg,
-      ) {
-        splash_ctrl::HandleResult::Bootstrap(t) => t.map(Message::Bootstrap),
-        splash_ctrl::HandleResult::Fatal(e) => {
-          eprintln!("pod: fatal startup error: {e}");
-          iced::exit()
-        }
-        splash_ctrl::HandleResult::None => Task::none(),
-        splash_ctrl::HandleResult::Splash(t) => t.map(Message::Splash),
-      }
-    }
-    SplashMessage::Splash(inner) => {
-      if matches!(inner, splash_ctrl::Message::DragWindow) {
-        return if let Some(id) = app.window_id {
-          window::drag(id)
-        } else {
-          Task::none()
-        };
-      }
-      let transitioning = matches!(inner, splash_ctrl::Message::ExpandComplete);
-      let AppPhase::Splash(state) = &mut app.phase else {
-        return Task::none();
-      };
-      let task = splash_ctrl::update(state, inner.clone()).map(Message::Splash);
-      if transitioning {
-        let services = Services {
-          config: app.config.clone(),
-          db: app.db.clone(),
-          esi_client: app.esi_client.clone(),
-        };
-        let saved = services::window_state::load();
-        let (target_width, target_height) = saved
-          .as_ref()
-          .map(|g| (g.width, g.height))
-          .unwrap_or((layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT));
-        let (main_state, init_task) = main_ctrl::new(
-          app.characters.clone(),
-          &services,
-          saved.as_ref().and_then(|g| g.skills_left_pane_width),
-          saved.as_ref().and_then(|g| g.mail_folder_pane_width),
-          saved.as_ref().and_then(|g| g.mail_message_list_width),
-          saved.as_ref().and_then(|g| g.wallet_right_rail_width),
-        );
-        app.phase = AppPhase::Main(main_state);
-        app.window_size = Size::new(target_width, target_height);
-        if let Some(geo) = &saved {
-          app.window_position = Some(Point::new(geo.x, geo.y));
-          if let (Some(w), Some(h)) = (geo.plan_window_width, geo.plan_window_height) {
-            app.plan_window_size = Size::new(w, h);
-          }
-          if let (Some(x), Some(y)) = (geo.plan_window_x, geo.plan_window_y) {
-            app.plan_window_position = Some(Point::new(x, y));
-          }
-        }
-        let position = saved
-          .as_ref()
-          .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
-          .unwrap_or(window::Position::Default);
-        let main_settings = window::Settings {
-          size: Size::new(target_width, target_height),
-          position,
-          decorations: true,
-          resizable: true,
-          min_size: Some(Size::new(layout::WINDOW_MIN_WIDTH, layout::WINDOW_MIN_HEIGHT)),
-          ..window::Settings::default()
-        };
-        let (new_id, open_task) = window::open(main_settings);
-        let splash_id = app.window_id.replace(new_id);
-        let mut tasks = vec![
-          task,
-          init_task.map(Message::Main),
-          open_task.map(Message::WindowOpened),
-          services::updater::check().map(Message::Updater),
-        ];
-        if let (Some(db), Some(esi)) = (app.db.clone(), app.esi_client.clone()) {
-          tasks
-            .push(services::bootstrap::sync_characters(db, esi, app.characters.clone()).map(Message::BackgroundSync));
-        }
-        if let Some(id) = splash_id {
-          tasks.push(window::close(id));
-        }
-        Task::batch(tasks)
-      } else {
-        task
-      }
-    }
+    SplashMessage::Bootstrap(msg) => handle_splash_bootstrap(app, msg),
+    SplashMessage::Splash(inner) => handle_splash_inner(app, inner),
     SplashMessage::Tick => {
       let AppPhase::Splash(state) = &mut app.phase else {
         return Task::none();
@@ -477,49 +511,55 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
   }
 }
 
+fn handle_banner_message(app: &mut App, msg: update_banner::Message) -> Task<Message> {
+  match msg {
+    update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
+    update_banner::Message::DismissPressed => {
+      app.update_dismissed = true;
+      Task::none()
+    }
+    update_banner::Message::RestartPressed => {
+      Task::done(Message::Updater(services::updater::Message::RestartRequested))
+    }
+    update_banner::Message::RetryPressed => {
+      app.update_dismissed = false;
+      Task::done(Message::Updater(services::updater::Message::CheckRequested))
+    }
+  }
+}
+
+fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Task<Message> {
+  use services::updater::Message as UpdMsg;
+  match msg {
+    UpdMsg::ApplyComplete => {
+      app.update_state = services::updater::UpdateState::ReadyToRestart;
+      Task::none()
+    }
+    UpdMsg::ApplyFailed(e) => {
+      app.update_state = services::updater::UpdateState::Error(e);
+      Task::none()
+    }
+    UpdMsg::ApplyRequested => {
+      app.update_state = services::updater::UpdateState::Downloading;
+      services::updater::apply().map(Message::Updater)
+    }
+    UpdMsg::CheckComplete(Some(version)) => {
+      app.update_state = services::updater::UpdateState::UpdateAvailable(version);
+      Task::none()
+    }
+    UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed => Task::none(),
+    UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
+    UpdMsg::RestartRequested => {
+      services::updater::restart();
+      Task::none()
+    }
+  }
+}
+
 fn update_updater(app: &mut App, msg: UpdaterMessage) -> Task<Message> {
   match msg {
-    UpdaterMessage::Banner(msg) => match msg {
-      update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
-      update_banner::Message::DismissPressed => {
-        app.update_dismissed = true;
-        Task::none()
-      }
-      update_banner::Message::RestartPressed => {
-        Task::done(Message::Updater(services::updater::Message::RestartRequested))
-      }
-      update_banner::Message::RetryPressed => {
-        app.update_dismissed = false;
-        Task::done(Message::Updater(services::updater::Message::CheckRequested))
-      }
-    },
-    UpdaterMessage::Updater(msg) => {
-      use services::updater::Message as UpdMsg;
-      match msg {
-        UpdMsg::ApplyComplete => {
-          app.update_state = services::updater::UpdateState::ReadyToRestart;
-          Task::none()
-        }
-        UpdMsg::ApplyFailed(e) => {
-          app.update_state = services::updater::UpdateState::Error(e);
-          Task::none()
-        }
-        UpdMsg::ApplyRequested => {
-          app.update_state = services::updater::UpdateState::Downloading;
-          services::updater::apply().map(Message::Updater)
-        }
-        UpdMsg::CheckComplete(Some(version)) => {
-          app.update_state = services::updater::UpdateState::UpdateAvailable(version);
-          Task::none()
-        }
-        UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed => Task::none(),
-        UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
-        UpdMsg::RestartRequested => {
-          services::updater::restart();
-          Task::none()
-        }
-      }
-    }
+    UpdaterMessage::Banner(msg) => handle_banner_message(app, msg),
+    UpdaterMessage::Updater(msg) => handle_updater_message(app, msg),
   }
 }
 
@@ -540,60 +580,68 @@ fn update_menu(app: &mut App, msg: menu::MenuMessage) -> Task<Message> {
   }
 }
 
+fn handle_window_close(app: &mut App, id: window::Id) -> Task<Message> {
+  if app.plan_windows.remove(&id).is_some() {
+    return window::close(id);
+  }
+  if app.about_window.as_ref().map(|(wid, _)| *wid) == Some(id) {
+    app.about_window = None;
+    return window::close(id);
+  }
+  Task::none()
+}
+
+fn handle_window_moved(app: &mut App, id: window::Id, point: Point) -> Task<Message> {
+  if app.plan_windows.contains_key(&id) {
+    app.plan_window_position = Some(point);
+    save_geometry(app);
+    return Task::none();
+  }
+  if app.window_id != Some(id) {
+    return Task::none();
+  }
+  app.window_position = Some(point);
+  save_geometry(app);
+  Task::none()
+}
+
+fn handle_window_opened(app: &mut App, id: window::Id) -> Task<Message> {
+  if app.window_id.is_none() {
+    app.window_id = Some(id);
+  }
+  // boot() calls init_for_nsapp() before NSApp is fully initialized in daemon
+  // mode; re-calling here guarantees the menu is attached once NSApp is live.
+  #[cfg(target_os = "macos")]
+  if app.window_id == Some(id) {
+    MENU.with(|m| {
+      if let Some(menu) = m.get() {
+        menu.init_for_nsapp();
+      }
+    });
+  }
+  disable_shadow(id)
+}
+
+fn handle_window_resized(app: &mut App, id: window::Id, size: Size) -> Task<Message> {
+  if app.plan_windows.contains_key(&id) {
+    app.plan_window_size = size;
+    save_geometry(app);
+    return Task::none();
+  }
+  if app.window_id != Some(id) {
+    return Task::none();
+  }
+  app.window_size = size;
+  save_geometry(app);
+  Task::none()
+}
+
 fn update_window_events(app: &mut App, id: window::Id, event: WindowEvent) -> Task<Message> {
   match event {
-    WindowEvent::CloseRequested => {
-      if app.plan_windows.remove(&id).is_some() {
-        return window::close(id);
-      }
-      if app.about_window.as_ref().map(|(wid, _)| *wid) == Some(id) {
-        app.about_window = None;
-        return window::close(id);
-      }
-      Task::none()
-    }
-    WindowEvent::Moved(point) => {
-      if app.plan_windows.contains_key(&id) {
-        app.plan_window_position = Some(point);
-        save_geometry(app);
-        return Task::none();
-      }
-      if app.window_id != Some(id) {
-        return Task::none();
-      }
-      app.window_position = Some(point);
-      save_geometry(app);
-      Task::none()
-    }
-    WindowEvent::Opened => {
-      if app.window_id.is_none() {
-        app.window_id = Some(id);
-      }
-      // boot() calls init_for_nsapp() before NSApp is fully initialized in daemon
-      // mode; re-calling here guarantees the menu is attached once NSApp is live.
-      #[cfg(target_os = "macos")]
-      if app.window_id == Some(id) {
-        MENU.with(|m| {
-          if let Some(menu) = m.get() {
-            menu.init_for_nsapp();
-          }
-        });
-      }
-      disable_shadow(id)
-    }
-    WindowEvent::Resized(size) => {
-      if app.plan_windows.contains_key(&id) {
-        app.plan_window_size = size;
-        save_geometry(app);
-        return Task::none();
-      }
-      if app.window_id != Some(id) {
-        return Task::none();
-      }
-      app.window_size = size;
-      save_geometry(app);
-      Task::none()
-    }
+    WindowEvent::CloseRequested => handle_window_close(app, id),
+    WindowEvent::Moved(point) => handle_window_moved(app, id, point),
+    WindowEvent::Opened => handle_window_opened(app, id),
+    WindowEvent::Resized(size) => handle_window_resized(app, id, size),
   }
 }
 

@@ -58,65 +58,7 @@ pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Tas
     tag_modal: None,
   };
 
-  let task = if let Some(db) = services.db.clone() {
-    let char_ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
-
-    let all_tags_task = {
-      let db = db.clone();
-      iced::Task::perform(
-        async move {
-          db.tags()
-            .find_all()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| (t.id, t.name))
-            .collect()
-        },
-        Message::AllTagsLoaded,
-      )
-    };
-
-    let char_tasks = iced::Task::batch(char_ids.into_iter().map(|char_id| {
-      let db = db.clone();
-      iced::Task::perform(
-        async move {
-          let tags = db
-            .tags()
-            .tags_for_character(char_id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| (t.id, t.name))
-            .collect();
-          (char_id, tags)
-        },
-        |(id, tags)| Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-      )
-    }));
-
-    let corps_task = {
-      let db = db.clone();
-      iced::Task::perform(
-        async move { db.corporations().all().await.unwrap_or_default() },
-        |corps| Message::CorporationsTab(corporations_tab::Message::CorporationsLoaded(corps)),
-      )
-    };
-
-    let pub_refresh_task = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-      let chars = state.all_characters.clone();
-      iced::Task::perform(fetch_character_public_data(chars, esi, db), |updates| {
-        Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshed(updates))
-      })
-    } else {
-      iced::Task::none()
-    };
-
-    iced::Task::batch([all_tags_task, char_tasks, corps_task, pub_refresh_task])
-  } else {
-    iced::Task::none()
-  };
-
+  let task = startup_tasks(&state, services);
   (state, task)
 }
 
@@ -198,55 +140,13 @@ fn reorder_characters_by_ids(characters: &mut Vec<Character>, order: &[i64]) {
 /// character public/corp (3600 s), corp public (3600 s).
 /// Keyboard subscriptions are added based on which overlay is active.
 pub fn subscription(state: &State) -> Subscription<Message> {
-  let mut subs: Vec<Subscription<Message>> = Vec::new();
-
-  if state.feat_location_tracking {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(60))
-        .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
-    );
-  }
-
-  if state.feat_skill_monitoring {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(120))
-        .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
-    );
-  }
-
-  if state.feat_wallet {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(300))
-        .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
-    );
-  }
-
-  subs.extend([
-    iced::time::every(std::time::Duration::from_secs(300))
-      .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(3600))
-      .map(|_| Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick)),
-    iced::time::every(std::time::Duration::from_secs(3600))
-      .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick)),
-  ]);
+  let mut subs: Vec<Subscription<Message>> = ticker_subscriptions(state);
 
   if state.character_pane.dragging_id.is_some() {
     subs.push(drag_release_subscription());
   }
 
-  if state.tag_modal.is_some() {
-    subs.push(tag_modal_keyboard_subscription());
-  } else if state.character_pane.context_menu.is_some() {
-    subs.push(context_menu_keyboard_subscription());
-  } else if state.corporation_pane.context_menu.is_some() {
-    subs.push(corp_context_menu_keyboard_subscription());
-  } else if state.confirm_remove.is_some() {
-    subs.push(confirm_remove_keyboard_subscription());
-  } else if state.confirm_remove_corporation.is_some() {
-    subs.push(confirm_remove_corporation_keyboard_subscription());
-  } else {
-    subs.push(filter_keyboard_subscription());
-  }
+  subs.push(active_keyboard_subscription(state));
 
   Subscription::batch(subs)
 }
@@ -474,70 +374,76 @@ fn handle_tag_modal(state: &mut State, msg: tag_modal::Message, services: &Servi
       }
       iced::Task::none()
     }
-    tag_modal::Message::CommitHighlighted => {
-      let Some(m) = &state.tag_modal else {
-        return iced::Task::none();
-      };
-      let corpus = state.tag_corpus.clone();
-      let items = tag_modal::compute_items(m, &corpus);
-      let hi = m.highlighted.min(items.len().saturating_sub(1));
-      let Some(item) = items.into_iter().nth(hi) else {
-        return iced::Task::none();
-      };
-      let tag_name = item.name;
-      let entity_id = m.entity_id;
-      let entity_type = m.entity_type.clone();
-      let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
-      state.tag_modal = None;
-      apply_tag_task(entity_id, entity_type, tag_name, existing_ids, services)
-    }
-    tag_modal::Message::Confirm(name) => {
-      let Some(m) = &state.tag_modal else {
-        return iced::Task::none();
-      };
-      let entity_id = m.entity_id;
-      let entity_type = m.entity_type.clone();
-      let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
-      state.tag_modal = None;
-      apply_tag_task(entity_id, entity_type, name, existing_ids, services)
-    }
-    tag_modal::Message::Remove(tag_id) => {
-      let Some(m) = &mut state.tag_modal else {
-        return iced::Task::none();
-      };
-      m.existing_tags.retain(|(id, _)| *id != tag_id);
-      let entity_id = m.entity_id;
-      let entity_type = m.entity_type.clone();
-      let new_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      if entity_type == "corporation" {
-        iced::Task::perform(
-          async move {
-            db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
-            let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-            Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-          },
-          |result| match result {
-            Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-            None => Message::TagsApplied,
-          },
-        )
-      } else {
-        iced::Task::perform(
-          async move {
-            db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
-            let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-            Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
-          },
-          |result| match result {
-            Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-            None => Message::TagsApplied,
-          },
-        )
-      }
-    }
+    tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
+    tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
+    tag_modal::Message::Remove(tag_id) => handle_tag_remove(state, tag_id, services),
+  }
+}
+
+fn handle_tag_commit_highlighted(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(m) = &state.tag_modal else {
+    return iced::Task::none();
+  };
+  let corpus = state.tag_corpus.clone();
+  let items = tag_modal::compute_items(m, &corpus);
+  let hi = m.highlighted.min(items.len().saturating_sub(1));
+  let Some(item) = items.into_iter().nth(hi) else {
+    return iced::Task::none();
+  };
+  let tag_name = item.name;
+  let entity_id = m.entity_id;
+  let entity_type = m.entity_type.clone();
+  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  state.tag_modal = None;
+  apply_tag_task(entity_id, entity_type, tag_name, existing_ids, services)
+}
+
+fn handle_tag_confirm(state: &mut State, name: String, services: &Services) -> iced::Task<Message> {
+  let Some(m) = &state.tag_modal else {
+    return iced::Task::none();
+  };
+  let entity_id = m.entity_id;
+  let entity_type = m.entity_type.clone();
+  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  state.tag_modal = None;
+  apply_tag_task(entity_id, entity_type, name, existing_ids, services)
+}
+
+fn handle_tag_remove(state: &mut State, tag_id: i32, services: &Services) -> iced::Task<Message> {
+  let Some(m) = &mut state.tag_modal else {
+    return iced::Task::none();
+  };
+  m.existing_tags.retain(|(id, _)| *id != tag_id);
+  let entity_id = m.entity_id;
+  let entity_type = m.entity_type.clone();
+  let new_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  if entity_type == "corporation" {
+    iced::Task::perform(
+      async move {
+        db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
+        let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
+        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      },
+      |result| match result {
+        Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+        None => Message::TagsApplied,
+      },
+    )
+  } else {
+    iced::Task::perform(
+      async move {
+        db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
+        let tags = db.tags().tags_for_character(entity_id).await.ok()?;
+        Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      },
+      |result| match result {
+        Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
+        None => Message::TagsApplied,
+      },
+    )
   }
 }
 
@@ -636,6 +542,123 @@ fn filter_keyboard_subscription() -> Subscription<Message> {
       _ => None,
     }
   })
+}
+
+/// Returns the keyboard subscription matching the active overlay or default filter.
+fn active_keyboard_subscription(state: &State) -> Subscription<Message> {
+  if state.tag_modal.is_some() {
+    tag_modal_keyboard_subscription()
+  } else if state.character_pane.context_menu.is_some() {
+    context_menu_keyboard_subscription()
+  } else if state.corporation_pane.context_menu.is_some() {
+    corp_context_menu_keyboard_subscription()
+  } else if state.confirm_remove.is_some() {
+    confirm_remove_keyboard_subscription()
+  } else if state.confirm_remove_corporation.is_some() {
+    confirm_remove_corporation_keyboard_subscription()
+  } else {
+    filter_keyboard_subscription()
+  }
+}
+
+/// Returns timer-based refresh subscriptions.
+fn ticker_subscriptions(state: &State) -> Vec<Subscription<Message>> {
+  let mut subs: Vec<Subscription<Message>> = Vec::new();
+
+  if state.feat_location_tracking {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(60))
+        .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
+    );
+  }
+  if state.feat_skill_monitoring {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(120))
+        .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
+    );
+  }
+  if state.feat_wallet {
+    subs.push(
+      iced::time::every(std::time::Duration::from_secs(300))
+        .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
+    );
+  }
+  subs.extend([
+    iced::time::every(std::time::Duration::from_secs(300))
+      .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick)),
+    iced::time::every(std::time::Duration::from_secs(3600))
+      .map(|_| Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick)),
+    iced::time::every(std::time::Duration::from_secs(3600))
+      .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick)),
+  ]);
+  subs
+}
+
+/// Builds the startup batch task that pre-loads tags, corporations, and public data.
+fn startup_tasks(state: &State, services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+
+  let char_ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
+
+  let all_tags_task = {
+    let db = db.clone();
+    iced::Task::perform(
+      async move {
+        db.tags()
+          .find_all()
+          .await
+          .unwrap_or_default()
+          .into_iter()
+          .map(|t| (t.id, t.name))
+          .collect()
+      },
+      Message::AllTagsLoaded,
+    )
+  };
+
+  let char_tasks = startup_char_tag_tasks(char_ids, db.clone());
+
+  let corps_task = {
+    let db = db.clone();
+    iced::Task::perform(
+      async move { db.corporations().all().await.unwrap_or_default() },
+      |corps| Message::CorporationsTab(corporations_tab::Message::CorporationsLoaded(corps)),
+    )
+  };
+
+  let pub_refresh_task = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+    let chars = state.all_characters.clone();
+    iced::Task::perform(fetch_character_public_data(chars, esi, db), |updates| {
+      Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshed(updates))
+    })
+  } else {
+    iced::Task::none()
+  };
+
+  iced::Task::batch([all_tags_task, char_tasks, corps_task, pub_refresh_task])
+}
+
+/// Builds per-character tag-loading tasks for startup.
+fn startup_char_tag_tasks(char_ids: Vec<i64>, db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::batch(char_ids.into_iter().map(|char_id| {
+    let db = db.clone();
+    iced::Task::perform(
+      async move {
+        let tags = db
+          .tags()
+          .tags_for_character(char_id)
+          .await
+          .unwrap_or_default()
+          .into_iter()
+          .map(|t| (t.id, t.name))
+          .collect();
+        (char_id, tags)
+      },
+      |(id, tags)| Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
+    )
+  }))
 }
 
 async fn fetch_character_public_data(
@@ -754,26 +777,68 @@ async fn fetch_wallets(characters: Vec<Character>, esi: pod_esi::Client, db: pod
   results
 }
 
+/// Resolves the corporation name for a given corp ID via ESI.
+async fn resolve_corp_name(corp_id: i64, esi: &pod_esi::Client) -> String {
+  if corp_id > 0 {
+    esi
+      .corporation(corp_id)
+      .detail()
+      .await
+      .ok()
+      .map(|d| d.name)
+      .unwrap_or_default()
+  } else {
+    String::new()
+  }
+}
+
+/// Resolves the alliance name for an optional alliance ID via ESI.
+async fn resolve_alliance_name(alliance_id: Option<i64>, esi: &pod_esi::Client) -> Option<String> {
+  let id = alliance_id?;
+  esi.alliance(id).detail().await.ok().map(|a| a.name)
+}
+
+/// Resolves the HQ station name for an optional station ID via ESI.
+async fn resolve_hq_name(station_id: Option<i64>, esi: &pod_esi::Client) -> Option<String> {
+  let sid = station_id?;
+  esi.universe().station(sid).await.ok().map(|s| s.name)
+}
+
 async fn add_character(
   esi: pod_esi::Client,
   verifier: String,
   oauth_state: String,
   db: Option<pod_db::Repo>,
 ) -> Result<Character, String> {
-  let (code, returned_state) = esi.auth().await_callback(47823).await.map_err(|e| e.to_string())?;
-
-  esi
-    .auth()
-    .validate_state(&oauth_state, &returned_state)
-    .map_err(|e| e.to_string())?;
-
-  let grant = esi
-    .auth()
-    .exchange_code(&code, "http://127.0.0.1:47823/callback", &verifier)
-    .await
-    .map_err(|e| e.to_string())?;
+  let grant = exchange_oauth_grant(&esi, verifier, oauth_state).await?;
 
   let character_id = *grant.character_id();
+  let char_detail = esi.character_public(character_id).detail().await.ok();
+  let corp_id = char_detail.as_ref().map(|d| d.corporation_id).unwrap_or(0);
+  let character_name = char_detail
+    .as_ref()
+    .map(|d| d.name.clone())
+    .unwrap_or_else(|| grant.character_name().clone());
+  let corp_name = resolve_corp_name(corp_id, &esi).await;
+
+  let (character, character_skills, character_assets) =
+    build_character_from_grant(&grant, character_id, character_name, corp_id, corp_name, &esi).await;
+
+  if let Some(db) = db {
+    persist_character(&db, &character, &character_skills, &character_assets).await?;
+  }
+  Ok(character)
+}
+
+/// Assembles a `Character` and its initial skills and assets from an OAuth grant and ESI data.
+async fn build_character_from_grant(
+  grant: &pod_esi::models::auth::Grant,
+  character_id: i64,
+  character_name: String,
+  corp_id: i64,
+  corp_name: String,
+  esi: &pod_esi::Client,
+) -> (Character, Vec<CharacterSkill>, Vec<CharacterAsset>) {
   let access_token = grant.access_token().clone();
   let expires_at = grant
     .expires_at()
@@ -788,65 +853,8 @@ async fn add_character(
   let portrait_tone = (character_id % 360) as i32;
   let refresh_token = grant.refresh_token().clone();
 
-  let char_detail = esi.character_public(character_id).detail().await.ok();
-  let corp_id = char_detail.as_ref().map(|d| d.corporation_id).unwrap_or(0);
-  let character_name = char_detail
-    .as_ref()
-    .map(|d| d.name.clone())
-    .unwrap_or_else(|| grant.character_name().clone());
-  let corp_name = if corp_id > 0 {
-    esi
-      .corporation(corp_id)
-      .detail()
-      .await
-      .ok()
-      .map(|d| d.name)
-      .unwrap_or_default()
-  } else {
-    String::new()
-  };
-
-  let char_client = esi.character(&grant);
-  let (skills_result, queue_result, wallet_result, location_result, assets_result, attrs_result) = tokio::join!(
-    char_client.skills(),
-    char_client.skill_queue(),
-    char_client.wallet_balance(),
-    char_client.location(),
-    char_client.assets(),
-    char_client.attributes(),
-  );
-
-  let skills_data = skills_result.ok();
-  let queue_data = queue_result.ok().unwrap_or_default();
-  let isk_balance = wallet_result.ok().map(|w| w.0);
-  let raw_assets = assets_result.ok().unwrap_or_default();
-
-  let (location_name, location_docked) = match location_result {
-    Ok(loc) => {
-      let docked = loc.station_id.is_some() || loc.structure_id.is_some();
-      let name = if let Some(sid) = loc.station_id {
-        esi.universe().station(sid).await.ok().map(|s| s.name)
-      } else {
-        esi
-          .universe()
-          .solar_system(loc.solar_system_id)
-          .await
-          .ok()
-          .map(|s| s.name)
-      };
-      (name, Some(docked))
-    }
-    Err(_) => (None, None),
-  };
-
-  let character_skills = character_service::build_character_skills(
-    character_id,
-    skills_data.map(|sd| sd.skills).unwrap_or_default(),
-    queue_data.clone(),
-  );
-  let character_skills = character_service::inject_skill_names(character_skills, &esi).await;
-  let tq = character_service::build_training_queue(&queue_data, &character_skills);
-  let portrait_data = character_service::fetch_portrait(character_id, &esi).await;
+  let (character_skills, tq, portrait_data, isk_balance, location_name, location_docked, raw_assets, attrs) =
+    fetch_character_esi_data(character_id, grant, esi).await;
 
   let mut character = Character::new(character_id, character_name);
   character
@@ -863,7 +871,92 @@ async fn add_character(
   *character.portrait_data_mut() = portrait_data;
   *character.skills_mut() = character_skills.clone();
   *character.training_queue_mut() = tq;
-  if let Ok(esi_attrs) = attrs_result {
+  apply_attributes_from_esi(&mut character, attrs);
+
+  let character_assets = map_character_assets(character_id, raw_assets);
+  (character, character_skills, character_assets)
+}
+
+/// Fetches all ESI data for a character in parallel and returns processed results.
+#[allow(clippy::type_complexity)]
+async fn fetch_character_esi_data(
+  character_id: i64,
+  grant: &pod_esi::models::auth::Grant,
+  esi: &pod_esi::Client,
+) -> (
+  Vec<CharacterSkill>,
+  Vec<TrainingQueueEntry>,
+  Option<Vec<u8>>,
+  Option<f64>,
+  Option<String>,
+  Option<bool>,
+  Vec<pod_esi::models::character::Asset>,
+  Option<pod_esi::models::character::CharacterAttributes>,
+) {
+  let char_client = esi.character(grant);
+  let (skills_result, queue_result, wallet_result, location_result, assets_result, attrs_result) = tokio::join!(
+    char_client.skills(),
+    char_client.skill_queue(),
+    char_client.wallet_balance(),
+    char_client.location(),
+    char_client.assets(),
+    char_client.attributes(),
+  );
+
+  let queue_data = queue_result.ok().unwrap_or_default();
+  let isk_balance = wallet_result.ok().map(|w| w.0);
+  let (location_name, location_docked) = resolve_location_result(location_result, esi).await;
+  let raw_assets = assets_result.ok().unwrap_or_default();
+
+  let character_skills = character_service::build_character_skills(
+    character_id,
+    skills_result.ok().map(|sd| sd.skills).unwrap_or_default(),
+    queue_data.clone(),
+  );
+  let character_skills = character_service::inject_skill_names(character_skills, esi).await;
+  let tq = character_service::build_training_queue(&queue_data, &character_skills);
+  let portrait_data = character_service::fetch_portrait(character_id, esi).await;
+
+  (
+    character_skills,
+    tq,
+    portrait_data,
+    isk_balance,
+    location_name,
+    location_docked,
+    raw_assets,
+    attrs_result.ok(),
+  )
+}
+
+/// Resolves location name and docked state from a location result.
+async fn resolve_location_result(
+  result: Result<pod_esi::models::character::CharacterLocation, pod_esi::Error>,
+  esi: &pod_esi::Client,
+) -> (Option<String>, Option<bool>) {
+  let Ok(loc) = result else {
+    return (None, None);
+  };
+  let docked = loc.station_id.is_some() || loc.structure_id.is_some();
+  let name = if let Some(sid) = loc.station_id {
+    esi.universe().station(sid).await.ok().map(|s| s.name)
+  } else {
+    esi
+      .universe()
+      .solar_system(loc.solar_system_id)
+      .await
+      .ok()
+      .map(|s| s.name)
+  };
+  (name, Some(docked))
+}
+
+/// Applies ESI attribute data to a character if available.
+fn apply_attributes_from_esi(
+  character: &mut Character,
+  attrs: Option<pod_esi::models::character::CharacterAttributes>,
+) {
+  if let Some(esi_attrs) = attrs {
     use pod_model::CharacterAttributes;
     character.set_attributes(CharacterAttributes {
       charisma: esi_attrs.charisma,
@@ -876,8 +969,11 @@ async fn add_character(
       accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
     });
   }
+}
 
-  let character_assets: Vec<CharacterAsset> = raw_assets
+/// Maps raw ESI asset records to the model type.
+fn map_character_assets(character_id: i64, raw: Vec<pod_esi::models::character::Asset>) -> Vec<CharacterAsset> {
+  raw
     .into_iter()
     .map(|a| CharacterAsset {
       item_id: a.item_id,
@@ -890,21 +986,27 @@ async fn add_character(
       is_singleton: a.is_singleton,
       is_blueprint_copy: a.is_blueprint_copy,
     })
-    .collect();
+    .collect()
+}
 
-  if let Some(db) = db {
-    db.characters().upsert(&character).await.map_err(|e| e.to_string())?;
-    db.characters()
-      .upsert_skills(character_id, &character_skills)
-      .await
-      .map_err(|e| e.to_string())?;
-    db.characters()
-      .upsert_assets(character_id, &character_assets)
-      .await
-      .map_err(|e| e.to_string())?;
-  }
-
-  Ok(character)
+/// Persists a character and its skills and assets to the database.
+async fn persist_character(
+  db: &pod_db::Repo,
+  character: &Character,
+  skills: &[CharacterSkill],
+  assets: &[CharacterAsset],
+) -> Result<(), String> {
+  let character_id = *character.id();
+  db.characters().upsert(character).await.map_err(|e| e.to_string())?;
+  db.characters()
+    .upsert_skills(character_id, skills)
+    .await
+    .map_err(|e| e.to_string())?;
+  db.characters()
+    .upsert_assets(character_id, assets)
+    .await
+    .map_err(|e| e.to_string())?;
+  Ok(())
 }
 
 /// Runs the OAuth flow for re-authorizing an existing character with updated scopes.
@@ -926,18 +1028,7 @@ async fn add_corporation(
   oauth_state: String,
   db: Option<pod_db::Repo>,
 ) -> Result<Corporation, String> {
-  let (code, returned_state) = esi.auth().await_callback(47823).await.map_err(|e| e.to_string())?;
-
-  esi
-    .auth()
-    .validate_state(&oauth_state, &returned_state)
-    .map_err(|e| e.to_string())?;
-
-  let grant = esi
-    .auth()
-    .exchange_code(&code, "http://127.0.0.1:47823/callback", &verifier)
-    .await
-    .map_err(|e| e.to_string())?;
+  let grant = exchange_oauth_grant(&esi, verifier, oauth_state).await?;
 
   let auth_character_id = *grant.character_id();
   let access_token = grant.access_token().clone();
@@ -955,22 +1046,62 @@ async fn add_corporation(
     .await
     .map_err(|e| e.to_string())?;
   let corp_id = char_detail.corporation_id;
-
   let detail = esi.corporation(corp_id).detail().await.map_err(|e| e.to_string())?;
   let icon_data = esi.images().corporation_logo(corp_id, 128).await.ok();
+  let alliance_name = resolve_alliance_name(detail.alliance_id, &esi).await;
+  let hq_name = resolve_hq_name(detail.home_station_id, &esi).await;
 
-  let alliance_name = if let Some(alliance_id) = detail.alliance_id {
-    esi.alliance(alliance_id).detail().await.ok().map(|a| a.name)
-  } else {
-    None
-  };
+  let corp = build_corporation(
+    corp_id,
+    detail,
+    auth_character_id,
+    access_token,
+    refresh_token,
+    expires_at,
+    scopes,
+    alliance_name,
+    hq_name,
+    icon_data,
+  );
 
-  let hq_name = if let Some(sid) = detail.home_station_id {
-    esi.universe().station(sid).await.ok().map(|s| s.name)
-  } else {
-    None
-  };
+  if let Some(db) = db {
+    db.corporations().upsert(&corp).await.map_err(|e| e.to_string())?;
+  }
+  Ok(corp)
+}
 
+/// Performs the OAuth callback/exchange flow and returns the resulting grant.
+async fn exchange_oauth_grant(
+  esi: &pod_esi::Client,
+  verifier: String,
+  oauth_state: String,
+) -> Result<pod_esi::models::auth::Grant, String> {
+  let (code, returned_state) = esi.auth().await_callback(47823).await.map_err(|e| e.to_string())?;
+  esi
+    .auth()
+    .validate_state(&oauth_state, &returned_state)
+    .map_err(|e| e.to_string())?;
+  esi
+    .auth()
+    .exchange_code(&code, "http://127.0.0.1:47823/callback", &verifier)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Assembles a `Corporation` from grant data and ESI detail.
+#[allow(clippy::too_many_arguments)]
+fn build_corporation(
+  corp_id: i64,
+  detail: pod_esi::models::corporation::CorporationDetail,
+  auth_character_id: i64,
+  access_token: String,
+  refresh_token: String,
+  expires_at: i64,
+  scopes: Vec<String>,
+  alliance_name: Option<String>,
+  hq_name: Option<String>,
+  icon_data: Option<Vec<u8>>,
+) -> Corporation {
   let mut corp = Corporation::new(corp_id, detail.name);
   corp
     .set_access_token(access_token)
@@ -993,12 +1124,7 @@ async fn add_corporation(
   *corp.hq_name_mut() = hq_name;
   *corp.icon_data_mut() = icon_data;
   *corp.scopes_mut() = scopes;
-
-  if let Some(db) = db {
-    db.corporations().upsert(&corp).await.map_err(|e| e.to_string())?;
-  }
-
-  Ok(corp)
+  corp
 }
 
 async fn fetch_corp_public_data(
@@ -1017,47 +1143,47 @@ async fn fetch_corp_public_data(
       .await
       .ok()
       .or_else(|| corp.icon_data().clone());
-
     let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
       continue;
     };
-
-    let alliance_name = if let Some(alliance_id) = detail.alliance_id {
-      esi.alliance(alliance_id).detail().await.ok().map(|a| a.name)
-    } else {
-      None
-    };
-
-    let hq_name = if let Some(sid) = detail.home_station_id {
-      esi.universe().station(sid).await.ok().map(|s| s.name)
-    } else {
-      None
-    };
-
-    let mut refreshed = corp.clone();
-    refreshed
-      .set_access_token(token)
-      .set_alliance_id(detail.alliance_id)
-      .set_alliance_name(alliance_name)
-      .set_ceo_character_id(detail.ceo_id)
-      .set_date_founded(detail.date_founded)
-      .set_description(detail.description)
-      .set_faction_id(detail.faction_id)
-      .set_home_station_id(detail.home_station_id)
-      .set_member_count(detail.member_count)
-      .set_name(detail.name)
-      .set_shares(detail.shares)
-      .set_tax_rate(detail.tax_rate)
-      .set_ticker(detail.ticker)
-      .set_url(detail.url)
-      .set_war_eligible(detail.war_eligible);
-    *refreshed.hq_name_mut() = hq_name;
-    *refreshed.icon_data_mut() = icon_data;
-
+    let alliance_name = resolve_alliance_name(detail.alliance_id, &esi).await;
+    let hq_name = resolve_hq_name(detail.home_station_id, &esi).await;
+    let refreshed = apply_corp_public_refresh(corp, token, detail, alliance_name, hq_name, icon_data);
     let _ = db.corporations().upsert(&refreshed).await;
     updated.push(refreshed);
   }
   updated
+}
+
+/// Clones a corporation and applies refreshed ESI public-data fields to it.
+fn apply_corp_public_refresh(
+  corp: &Corporation,
+  token: String,
+  detail: pod_esi::models::corporation::CorporationDetail,
+  alliance_name: Option<String>,
+  hq_name: Option<String>,
+  icon_data: Option<Vec<u8>>,
+) -> Corporation {
+  let mut refreshed = corp.clone();
+  refreshed
+    .set_access_token(token)
+    .set_alliance_id(detail.alliance_id)
+    .set_alliance_name(alliance_name)
+    .set_ceo_character_id(detail.ceo_id)
+    .set_date_founded(detail.date_founded)
+    .set_description(detail.description)
+    .set_faction_id(detail.faction_id)
+    .set_home_station_id(detail.home_station_id)
+    .set_member_count(detail.member_count)
+    .set_name(detail.name)
+    .set_shares(detail.shares)
+    .set_tax_rate(detail.tax_rate)
+    .set_ticker(detail.ticker)
+    .set_url(detail.url)
+    .set_war_eligible(detail.war_eligible);
+  *refreshed.hq_name_mut() = hq_name;
+  *refreshed.icon_data_mut() = icon_data;
+  refreshed
 }
 
 async fn fetch_corp_wallets(corporations: Vec<Corporation>, esi: pod_esi::Client, db: pod_db::Repo) {
@@ -1093,16 +1219,7 @@ fn update_character_card(state: &mut State, msg: characters_tab::Message, servic
       iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToSkills(id)))
     }
     characters_tab::Message::Card(char_id, character_card::Message::TagsPressed(_)) => {
-      if let Some(c) = state.all_characters.iter().find(|c| *c.id() == char_id) {
-        let name = c.name().clone();
-        let existing = c.tags().clone();
-        let modal = pod_ui::views::characters::tag_modal::State::new(char_id, "character", name, existing);
-        let input_id = modal.input_id.clone();
-        state.tag_modal = Some(modal);
-        recompute_tag_corpus(state);
-        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
-      }
-      iced::Task::none()
+      handle_character_tags_pressed(state, char_id)
     }
     characters_tab::Message::Card(char_id, character_card::Message::WalletPressed(id)) => {
       let _ = state
@@ -1114,76 +1231,102 @@ fn update_character_card(state: &mut State, msg: characters_tab::Message, servic
         .map(Message::CharactersTab);
       iced::Task::done(Message::CharactersTab(characters_tab::Message::NavigateToWallet(id)))
     }
-    characters_tab::Message::CharacterAdded(character) => {
-      if let Some(bytes) = character.portrait_data() {
-        state
-          .character_pane
-          .portrait_handles
-          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
-      }
-      if let Some(existing) = state.all_characters.iter_mut().find(|c| c.id() == character.id()) {
-        existing.set_access_token(character.access_token().clone());
-        existing.set_refresh_token(character.refresh_token().clone());
-        existing.set_token_expires_at(*character.token_expires_at());
-        existing.set_granted_scopes(character.granted_scopes().clone());
-        state.add_status = None;
-        refilter(state);
-        return iced::Task::none();
-      }
-      state.all_characters.push(character);
-      state.add_status = None;
-      refilter(state);
-      character_public_refresh_task(state, services)
-    }
+    characters_tab::Message::CharacterAdded(character) => handle_character_added(state, character, services),
     characters_tab::Message::CharacterPublicRefreshTick => character_public_refresh_task(state, services),
-    characters_tab::Message::CharacterPublicRefreshed(updates) => {
-      for (id, corp_id, corp_name) in updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-          c.set_corp_id(corp_id);
-          c.set_corp_name(corp_name);
-        }
-      }
-      refilter(state);
-      iced::Task::none()
-    }
-    characters_tab::Message::CharacterTagsLoaded(id, tags) => {
-      if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags;
-      }
-      refilter(state);
-      recompute_tag_corpus(state);
-      iced::Task::none()
-    }
-    characters_tab::Message::ContextMenu(context_menu::Message::CopyName) => {
-      let name = state
-        .character_pane
-        .context_menu
-        .as_ref()
-        .map(|s| s.character_name.clone())
-        .unwrap_or_default();
-      let task = state
-        .character_pane
-        .update(characters_tab::Message::ContextMenu(context_menu::Message::CopyName))
-        .map(Message::CharactersTab);
-      iced::Task::batch([task, iced::clipboard::write(name)])
-    }
+    characters_tab::Message::CharacterPublicRefreshed(updates) => handle_character_public_refreshed(state, updates),
+    characters_tab::Message::CharacterTagsLoaded(id, tags) => handle_character_tags_loaded(state, id, tags),
+    characters_tab::Message::ContextMenu(context_menu::Message::CopyName) => handle_copy_name(state),
     characters_tab::Message::LocationRefreshTick => location_refresh_task(state, services),
-    characters_tab::Message::LocationsRefreshed(updates) => {
-      for (id, name, docked) in updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
-          c.set_location_name(name);
-          c.set_location_docked(docked);
-        }
-      }
-      refilter(state);
-      iced::Task::none()
-    }
+    characters_tab::Message::LocationsRefreshed(updates) => handle_locations_refreshed(state, updates),
     characters_tab::Message::RemoveCharacter(id) => {
       state.confirm_remove = Some(id);
       iced::Task::none()
     }
     msg => state.character_pane.update(msg).map(Message::CharactersTab),
   }
+}
+
+fn handle_character_tags_pressed(state: &mut State, char_id: i64) -> iced::Task<Message> {
+  if let Some(c) = state.all_characters.iter().find(|c| *c.id() == char_id) {
+    let name = c.name().clone();
+    let existing = c.tags().clone();
+    let modal = pod_ui::views::characters::tag_modal::State::new(char_id, "character", name, existing);
+    let input_id = modal.input_id.clone();
+    state.tag_modal = Some(modal);
+    recompute_tag_corpus(state);
+    return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+  }
+  iced::Task::none()
+}
+
+fn handle_character_added(state: &mut State, character: Character, services: &Services) -> iced::Task<Message> {
+  if let Some(bytes) = character.portrait_data() {
+    state
+      .character_pane
+      .portrait_handles
+      .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+  }
+  if let Some(existing) = state.all_characters.iter_mut().find(|c| c.id() == character.id()) {
+    existing.set_access_token(character.access_token().clone());
+    existing.set_refresh_token(character.refresh_token().clone());
+    existing.set_token_expires_at(*character.token_expires_at());
+    existing.set_granted_scopes(character.granted_scopes().clone());
+    state.add_status = None;
+    refilter(state);
+    return iced::Task::none();
+  }
+  state.all_characters.push(character);
+  state.add_status = None;
+  refilter(state);
+  character_public_refresh_task(state, services)
+}
+
+fn handle_character_public_refreshed(state: &mut State, updates: Vec<(i64, i64, String)>) -> iced::Task<Message> {
+  for (id, corp_id, corp_name) in updates {
+    if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+      c.set_corp_id(corp_id);
+      c.set_corp_name(corp_name);
+    }
+  }
+  refilter(state);
+  iced::Task::none()
+}
+
+fn handle_character_tags_loaded(state: &mut State, id: i64, tags: Vec<(i32, String)>) -> iced::Task<Message> {
+  if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+    *c.tags_mut() = tags;
+  }
+  refilter(state);
+  recompute_tag_corpus(state);
+  iced::Task::none()
+}
+
+fn handle_copy_name(state: &mut State) -> iced::Task<Message> {
+  let name = state
+    .character_pane
+    .context_menu
+    .as_ref()
+    .map(|s| s.character_name.clone())
+    .unwrap_or_default();
+  let task = state
+    .character_pane
+    .update(characters_tab::Message::ContextMenu(context_menu::Message::CopyName))
+    .map(Message::CharactersTab);
+  iced::Task::batch([task, iced::clipboard::write(name)])
+}
+
+fn handle_locations_refreshed(
+  state: &mut State,
+  updates: Vec<(i64, Option<String>, Option<bool>)>,
+) -> iced::Task<Message> {
+  for (id, name, docked) in updates {
+    if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
+      c.set_location_name(name);
+      c.set_location_docked(docked);
+    }
+  }
+  refilter(state);
+  iced::Task::none()
 }
 
 fn update_characters_tab(state: &mut State, msg: characters_tab::Message, services: &Services) -> iced::Task<Message> {
@@ -1229,150 +1372,173 @@ fn update_confirm_remove_corporation(state: &mut State, services: &Services) -> 
 fn update_corporation(state: &mut State, msg: corporations_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
     corporations_tab::Message::Card(corp_id, corporation_card::Message::TagsPressed(_)) => {
-      if let Some(c) = state.all_corporations.iter().find(|c| *c.id() == corp_id) {
-        let name = c.name().clone();
-        let existing = c.tags().clone();
-        let modal = pod_ui::views::characters::tag_modal::State::new(corp_id, "corporation", name, existing);
-        let input_id = modal.input_id.clone();
-        state.tag_modal = Some(modal);
-        recompute_tag_corpus(state);
-        return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
-      }
-      iced::Task::none()
+      handle_corp_tags_pressed(state, corp_id)
     }
     corporations_tab::Message::CorpPublicRefreshTick => corp_public_refresh_task(state, services),
-    corporations_tab::Message::CorpPublicRefreshed(updated) => {
-      for corp in updated {
-        if let Some(bytes) = corp.icon_data() {
-          state
-            .corporation_pane
-            .icon_handles
-            .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
-        }
-        if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-          *existing = corp.clone();
-        }
-        if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-          *existing = corp;
-        }
-      }
-      iced::Task::none()
-    }
+    corporations_tab::Message::CorpPublicRefreshed(updated) => handle_corp_public_refreshed(state, updated),
     corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
-    corporations_tab::Message::CorporationAdded(corp) => {
-      if let Some(bytes) = corp.icon_data() {
-        state
-          .corporation_pane
-          .icon_handles
-          .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
-      }
-      state.all_corporations.retain(|c| *c.id() != *corp.id());
-      state.all_corporations.push(corp.clone());
-      state.corporations.retain(|c| *c.id() != *corp.id());
-      state.corporations.push(corp);
-      state.add_status = None;
-      iced::Task::none()
-    }
+    corporations_tab::Message::CorporationAdded(corp) => handle_corporation_added(state, corp),
     corporations_tab::Message::CorporationRemoved(id) => {
       state.all_corporations.retain(|c| *c.id() != id);
       state.corporations.retain(|c| *c.id() != id);
       iced::Task::none()
     }
-    corporations_tab::Message::CorporationTagsLoaded(id, tags) => {
-      if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags.clone();
-      }
-      if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == id) {
-        *c.tags_mut() = tags;
-      }
-      recompute_tag_corpus(state);
-      iced::Task::none()
-    }
-    corporations_tab::Message::CorporationsLoaded(corps) => {
-      state.corporation_pane.icon_handles = corps
-        .iter()
-        .filter_map(|c| {
-          c.icon_data()
-            .as_ref()
-            .map(|b| (*c.id(), iced::widget::image::Handle::from_bytes(b.clone())))
-        })
-        .collect();
-      state.all_corporations = corps.clone();
-      state.corporations = corps.clone();
-      let tag_tasks = if let Some(db) = services.db.clone() {
-        let corp_ids: Vec<i64> = corps.iter().map(|c| *c.id()).collect();
-        iced::Task::batch(corp_ids.into_iter().map(|corp_id| {
-          let db = db.clone();
-          iced::Task::perform(
-            async move {
-              let tags = db
-                .tags()
-                .tags_for_corporation(corp_id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| (t.id, t.name))
-                .collect();
-              (corp_id, tags)
-            },
-            |(id, tags)| Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-          )
-        }))
-      } else {
-        iced::Task::none()
-      };
-      let hq_task = if let Some(esi) = services.esi_client.clone() {
-        let corps_with_hq: Vec<(i64, i64)> = corps
-          .iter()
-          .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
-          .collect();
-        if corps_with_hq.is_empty() {
-          iced::Task::none()
-        } else {
-          iced::Task::perform(
-            async move {
-              let mut results = Vec::new();
-              for (corp_id, station_id) in corps_with_hq {
-                if let Ok(station) = esi.universe().station(station_id).await {
-                  results.push((corp_id, station.name));
-                }
-              }
-              results
-            },
-            |resolved| Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)),
-          )
-        }
-      } else {
-        iced::Task::none()
-      };
-      iced::Task::batch([tag_tasks, hq_task])
-    }
-    corporations_tab::Message::HqNamesLoaded(resolved) => {
-      for (corp_id, name) in resolved {
-        if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
-          *c.hq_name_mut() = Some(name.clone());
-        }
-        if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
-          *c.hq_name_mut() = Some(name);
-        }
-      }
-      iced::Task::none()
-    }
-    corporations_tab::Message::RemoveCorporation(corp_id) => {
-      state.corporations.retain(|c| *c.id() != corp_id);
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(
-        async move {
-          db.corporations().delete(corp_id).await.ok();
-          corp_id
-        },
-        |id| Message::CorporationsTab(corporations_tab::Message::CorporationRemoved(id)),
-      )
-    }
+    corporations_tab::Message::CorporationTagsLoaded(id, tags) => handle_corporation_tags_loaded(state, id, tags),
+    corporations_tab::Message::CorporationsLoaded(corps) => handle_corporations_loaded(state, corps, services),
+    corporations_tab::Message::HqNamesLoaded(resolved) => handle_hq_names_loaded(state, resolved),
+    corporations_tab::Message::RemoveCorporation(corp_id) => handle_remove_corporation(state, corp_id, services),
     msg => state.corporation_pane.update(msg).map(Message::CorporationsTab),
   }
+}
+
+fn handle_corp_tags_pressed(state: &mut State, corp_id: i64) -> iced::Task<Message> {
+  if let Some(c) = state.all_corporations.iter().find(|c| *c.id() == corp_id) {
+    let name = c.name().clone();
+    let existing = c.tags().clone();
+    let modal = pod_ui::views::characters::tag_modal::State::new(corp_id, "corporation", name, existing);
+    let input_id = modal.input_id.clone();
+    state.tag_modal = Some(modal);
+    recompute_tag_corpus(state);
+    return iced::widget::operation::focus(input_id).map(|_: ()| Message::TagsApplied);
+  }
+  iced::Task::none()
+}
+
+fn handle_corp_public_refreshed(state: &mut State, updated: Vec<Corporation>) -> iced::Task<Message> {
+  for corp in updated {
+    if let Some(bytes) = corp.icon_data() {
+      state
+        .corporation_pane
+        .icon_handles
+        .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+    }
+    if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+      *existing = corp.clone();
+    }
+    if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+      *existing = corp;
+    }
+  }
+  iced::Task::none()
+}
+
+fn handle_corporation_added(state: &mut State, corp: Corporation) -> iced::Task<Message> {
+  if let Some(bytes) = corp.icon_data() {
+    state
+      .corporation_pane
+      .icon_handles
+      .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+  }
+  state.all_corporations.retain(|c| *c.id() != *corp.id());
+  state.all_corporations.push(corp.clone());
+  state.corporations.retain(|c| *c.id() != *corp.id());
+  state.corporations.push(corp);
+  state.add_status = None;
+  iced::Task::none()
+}
+
+fn handle_corporation_tags_loaded(state: &mut State, id: i64, tags: Vec<(i32, String)>) -> iced::Task<Message> {
+  if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == id) {
+    *c.tags_mut() = tags.clone();
+  }
+  if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == id) {
+    *c.tags_mut() = tags;
+  }
+  recompute_tag_corpus(state);
+  iced::Task::none()
+}
+
+fn handle_corporations_loaded(state: &mut State, corps: Vec<Corporation>, services: &Services) -> iced::Task<Message> {
+  state.corporation_pane.icon_handles = corps
+    .iter()
+    .filter_map(|c| {
+      c.icon_data()
+        .as_ref()
+        .map(|b| (*c.id(), iced::widget::image::Handle::from_bytes(b.clone())))
+    })
+    .collect();
+  state.all_corporations = corps.clone();
+  state.corporations = corps.clone();
+  let tag_tasks = corps_tag_tasks(&corps, services);
+  let hq_task = corps_hq_task(&corps, services);
+  iced::Task::batch([tag_tasks, hq_task])
+}
+
+/// Builds per-corporation tag loading tasks after corporations are loaded.
+fn corps_tag_tasks(corps: &[Corporation], services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  let corp_ids: Vec<i64> = corps.iter().map(|c| *c.id()).collect();
+  iced::Task::batch(corp_ids.into_iter().map(|corp_id| {
+    let db = db.clone();
+    iced::Task::perform(
+      async move {
+        let tags = db
+          .tags()
+          .tags_for_corporation(corp_id)
+          .await
+          .unwrap_or_default()
+          .into_iter()
+          .map(|t| (t.id, t.name))
+          .collect();
+        (corp_id, tags)
+      },
+      |(id, tags)| Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+    )
+  }))
+}
+
+/// Builds the HQ station name resolution task after corporations are loaded.
+fn corps_hq_task(corps: &[Corporation], services: &Services) -> iced::Task<Message> {
+  let Some(esi) = services.esi_client.clone() else {
+    return iced::Task::none();
+  };
+  let corps_with_hq: Vec<(i64, i64)> = corps
+    .iter()
+    .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
+    .collect();
+  if corps_with_hq.is_empty() {
+    return iced::Task::none();
+  }
+  iced::Task::perform(
+    async move {
+      let mut results = Vec::new();
+      for (corp_id, station_id) in corps_with_hq {
+        if let Ok(station) = esi.universe().station(station_id).await {
+          results.push((corp_id, station.name));
+        }
+      }
+      results
+    },
+    |resolved| Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)),
+  )
+}
+
+fn handle_hq_names_loaded(state: &mut State, resolved: Vec<(i64, String)>) -> iced::Task<Message> {
+  for (corp_id, name) in resolved {
+    if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
+      *c.hq_name_mut() = Some(name.clone());
+    }
+    if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
+      *c.hq_name_mut() = Some(name);
+    }
+  }
+  iced::Task::none()
+}
+
+fn handle_remove_corporation(state: &mut State, corp_id: i64, services: &Services) -> iced::Task<Message> {
+  state.corporations.retain(|c| *c.id() != corp_id);
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move {
+      db.corporations().delete(corp_id).await.ok();
+      corp_id
+    },
+    |id| Message::CorporationsTab(corporations_tab::Message::CorporationRemoved(id)),
+  )
 }
 
 fn update_drag(state: &mut State, services: &Services) -> iced::Task<Message> {

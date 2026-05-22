@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use pod_model::{ItemType, ItemTypeSummary};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Order, sea_query::OnConflict};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, sea_query::OnConflict};
 use validator::Validate;
 
 use crate::{
@@ -20,8 +20,14 @@ fn skill_reqs_from_attrs(attrs: &[dogma_attribute::Entry]) -> Vec<(i32, u8)> {
   let skill_attr_pairs = [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)];
   let mut result = Vec::new();
   for (type_attr_id, level_attr_id) in skill_attr_pairs {
-    let type_id = attrs.iter().find(|a| a.attribute_id == type_attr_id).map(|a| a.value as i32);
-    let level = attrs.iter().find(|a| a.attribute_id == level_attr_id).map(|a| a.value as u8);
+    let type_id = attrs
+      .iter()
+      .find(|a| a.attribute_id == type_attr_id)
+      .map(|a| a.value as i32);
+    let level = attrs
+      .iter()
+      .find(|a| a.attribute_id == level_attr_id)
+      .map(|a| a.value as u8);
     if let (Some(tid), Some(lvl)) = (type_id, level) {
       if tid > 0 && lvl > 0 {
         result.push((tid, lvl));
@@ -103,7 +109,10 @@ impl<'a> Repo<'a> {
 
     let mut mastery_map: HashMap<i32, HashMap<i32, String>> = HashMap::new();
     for row in mastery_rows {
-      mastery_map.entry(row.ship_id).or_default().insert(row.mastery_level, row.cert_ids_json);
+      mastery_map
+        .entry(row.ship_id)
+        .or_default()
+        .insert(row.mastery_level, row.cert_ids_json);
     }
 
     let raw: Vec<_> = items
@@ -227,7 +236,11 @@ impl<'a> Repo<'a> {
 
     let all_prereq_ids: Vec<i32> = items
       .iter()
-      .flat_map(|item| skill_reqs_from_attrs(&item.dogma_attributes.0).into_iter().map(|(tid, _)| tid))
+      .flat_map(|item| {
+        skill_reqs_from_attrs(&item.dogma_attributes.0)
+          .into_iter()
+          .map(|(tid, _)| tid)
+      })
       .collect::<std::collections::HashSet<_>>()
       .into_iter()
       .collect();
@@ -236,9 +249,21 @@ impl<'a> Repo<'a> {
     let mut groups: Vec<pod_model::SkillGroupDef> = Vec::new();
     for item in items {
       let attrs = &item.dogma_attributes.0;
-      let rank = attrs.iter().find(|a| a.attribute_id == 275).map(|a| a.value as u8).unwrap_or(1);
-      let primary_id = attrs.iter().find(|a| a.attribute_id == 180).map(|a| a.value as u8).unwrap_or(167);
-      let secondary_id = attrs.iter().find(|a| a.attribute_id == 181).map(|a| a.value as u8).unwrap_or(168);
+      let rank = attrs
+        .iter()
+        .find(|a| a.attribute_id == 275)
+        .map(|a| a.value as u8)
+        .unwrap_or(1);
+      let primary_id = attrs
+        .iter()
+        .find(|a| a.attribute_id == 180)
+        .map(|a| a.value as u8)
+        .unwrap_or(167);
+      let secondary_id = attrs
+        .iter()
+        .find(|a| a.attribute_id == 181)
+        .map(|a| a.value as u8)
+        .unwrap_or(168);
       let prereqs: Vec<(String, u8)> = skill_reqs_from_attrs(attrs)
         .into_iter()
         .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))

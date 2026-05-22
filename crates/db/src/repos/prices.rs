@@ -4,8 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use sea_orm::{
-  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder,
-  sea_query::OnConflict,
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, sea_query::OnConflict,
 };
 
 use crate::{
@@ -16,7 +15,6 @@ use crate::{
     type_price_history::{ActiveModel as HistoryActive, Column as HistoryColumn, Entity as HistoryEntity},
   },
 };
-
 
 /// Repository for type price intraday observations and daily OHLC aggregation.
 pub struct Repo<'a> {
@@ -247,7 +245,11 @@ impl<'a> Repo<'a> {
 
     let mut dates: HashSet<NaiveDate> = HashSet::new();
     for row in rows {
-      if let Some(d) = row.fetched_at.get(..10).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()) {
+      if let Some(d) = row
+        .fetched_at
+        .get(..10)
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+      {
         dates.insert(d);
       }
     }

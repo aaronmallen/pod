@@ -1,7 +1,9 @@
 //! Repository for EVE certificate and ship mastery persistence.
 
 use pod_model::Certificate;
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Order, sea_query::OnConflict};
+use sea_orm::{
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, sea_query::OnConflict,
+};
 
 use crate::{
   Error,
@@ -65,7 +67,12 @@ impl<'a> Repo<'a> {
       CertEntity::insert(active)
         .on_conflict(
           OnConflict::column(CertColumn::Id)
-            .update_columns([CertColumn::Name, CertColumn::Description, CertColumn::Grade, CertColumn::SkillsJson])
+            .update_columns([
+              CertColumn::Name,
+              CertColumn::Description,
+              CertColumn::Grade,
+              CertColumn::SkillsJson,
+            ])
             .to_owned(),
         )
         .exec(self.db)

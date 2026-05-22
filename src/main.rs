@@ -48,6 +48,7 @@ struct App {
   window_size: Size,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum AppPhase {
   Main(main_ctrl::State),
   Splash(splash_ctrl::State),
@@ -71,6 +72,7 @@ enum Message {
   WindowResized(window::Id, Size),
 }
 
+#[allow(clippy::large_enum_variant)]
 enum SplashMessage {
   Bootstrap(services::bootstrap::Message),
   Splash(splash_ctrl::Message),

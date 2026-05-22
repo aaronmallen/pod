@@ -85,6 +85,7 @@ impl Default for State {
 
 /// Messages for the corporations tab.
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Message {
   /// Forwarded from a corporation card.
   Card(i64, corporation_card::Message),

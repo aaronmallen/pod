@@ -91,7 +91,7 @@ fn reading_pane_content<'a>(
   )
   .render();
   let scrollable_content = reading_scrollable_content(msg, to_name, state);
-  let base: Element<'_, Message> = container(column([toolbar, scrollable_content.into()]))
+  let base: Element<'_, Message> = container(column([toolbar, scrollable_content]))
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {

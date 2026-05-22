@@ -1006,8 +1006,6 @@ mod tests {
   }
 
   mod journal_matches {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn make_journal(delta: f64) -> JournalEntry {

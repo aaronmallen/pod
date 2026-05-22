@@ -29,6 +29,7 @@ pub enum Message {
   /// Step label has changed; carries the text to show on the splash screen.
   StepChanged(String),
   /// Token refresh failed for the given character ID; surface a re-auth prompt.
+  #[allow(dead_code)]
   TokenRefreshFailed(i64),
 }
 

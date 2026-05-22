@@ -21,6 +21,8 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   let Some(idx) = state.characters.iter().position(|c| *c.id() == *character.id()) else {
     return;
   };
+  let mut character = character;
+  *character.tags_mut() = state.characters[idx].tags().clone();
   state.characters[idx] = character.clone();
   let updated = state.characters.clone();
   match &mut state.active_view {
@@ -718,4 +720,65 @@ fn utc_time_string() -> String {
   let m = (secs / 60) % 60;
   let s = secs % 60;
   format!("{h:02}:{m:02}:{s:02}")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod apply_synced_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_state(character: Character) -> State {
+      State {
+        active_nav: Nav::Settings,
+        active_view: ActiveView::Settings(settings::State::default()),
+        characters: vec![character],
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_does_nothing_if_character_id_not_found() {
+      let existing = Character::new(1, "Alpha");
+      let mut state = make_state(existing);
+      let synced = Character::new(999, "Ghost");
+
+      apply_synced_character(&mut state, synced);
+
+      assert_eq!(state.characters.len(), 1);
+      assert_eq!(*state.characters[0].id(), 1);
+    }
+
+    #[test]
+    fn it_preserves_tags_from_the_existing_character() {
+      let mut existing = Character::new(1, "Alpha");
+      *existing.tags_mut() = vec![(1, "pvp".to_string()), (2, "trader".to_string())];
+      let mut state = make_state(existing);
+      let synced = Character::new(1, "Alpha");
+
+      apply_synced_character(&mut state, synced);
+
+      assert_eq!(
+        state.characters[0].tags(),
+        &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
+      );
+    }
+  }
 }

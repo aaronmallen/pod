@@ -40,7 +40,9 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
 
   match &message {
     Message::PlansTabOpened => return handle_plans_tab_opened(state, message, services),
-    Message::PlanDeleteConfirmed(_) => return handle_plan_delete_confirmed(state, message, services),
+    Message::PlanDeleteConfirmed(_) => {
+      return handle_plan_delete_confirmed(state, message, services);
+    }
     Message::RightPanel(right_panel::Message::PlansTab(_)) => {
       return handle_right_panel_plans_tab(state, message);
     }

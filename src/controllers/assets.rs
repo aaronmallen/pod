@@ -514,11 +514,12 @@ async fn load_structure_sys_name_map(
   db: &pod_db::Repo,
   structure_name_map: &HashMap<i64, (String, i64)>,
 ) -> HashMap<i32, String> {
-  let solar_sys_ids: Vec<i32> = unique_ids(
-    structure_name_map
-      .values()
-      .filter_map(|(_, sys_id)| if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }),
-  );
+  let solar_sys_ids: Vec<i32> =
+    unique_ids(structure_name_map.values().filter_map(
+      |(_, sys_id)| {
+        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
+      },
+    ));
   if solar_sys_ids.is_empty() {
     return HashMap::new();
   }

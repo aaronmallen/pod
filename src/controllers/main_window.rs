@@ -100,41 +100,53 @@ pub fn update(
   message: Message,
   services: &Services,
 ) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  if let Some(result) = update_state_only(state, &message) {
+    return result;
+  }
   match message {
     Message::Assets(msg) => (update_assets(state, msg, services), None),
     Message::CharacterDetail(msg) => (update_character_detail(state, msg, services), None),
     Message::Characters(msg) => (update_characters(state, msg, services), None),
+    Message::Mail(msg) => (update_mail(state, msg, services), None),
+    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
+    Message::RefreshAll | Message::StatusBar(status_bar::Message::RefreshPressed) => {
+      (update_refresh_all(state, services), None)
+    }
+    Message::Settings(msg) => update_settings(state, msg, services),
+    Message::ShowToast(msg) => (show_toast(state, msg), None),
+    Message::Skills(msg) => (update_skills(state, msg, services), None),
+    Message::Wallet(msg) => (update_wallet(state, msg, services), None),
+    _ => (iced::Task::none(), None),
+  }
+}
+
+fn update_state_only(
+  state: &mut State,
+  message: &Message,
+) -> Option<(iced::Task<Message>, Option<crate::config::Settings>)> {
+  match message {
     Message::DismissToast => {
       state.toast = None;
-      (iced::Task::none(), None)
+      Some((iced::Task::none(), None))
     }
     Message::EveTimeTick => {
       state.eve_time = utc_time_string();
-      (iced::Task::none(), None)
+      Some((iced::Task::none(), None))
     }
     Message::HoverNav(nav) => {
-      state.hovered_nav = nav;
-      (iced::Task::none(), None)
+      state.hovered_nav = *nav;
+      Some((iced::Task::none(), None))
     }
-    Message::Mail(msg) => (update_mail(state, msg, services), None),
-    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
-    Message::RefreshAll => (update_refresh_all(state, services), None),
-    Message::Settings(msg) => update_settings(state, msg, services),
-    Message::ShowToast(msg) => {
-      state.toast = Some(msg);
-      let task = iced::Task::perform(
-        async { tokio::time::sleep(std::time::Duration::from_millis(2500)).await },
-        |()| Message::DismissToast,
-      );
-      (task, None)
-    }
-    Message::Skills(msg) => (update_skills(state, msg, services), None),
-    Message::StatusBar(status_bar::Message::RefreshPressed) => {
-      let (task, cfg) = update(state, Message::RefreshAll, services);
-      (task, cfg)
-    }
-    Message::Wallet(msg) => (update_wallet(state, msg, services), None),
+    _ => None,
   }
+}
+
+fn show_toast(state: &mut State, msg: String) -> iced::Task<Message> {
+  state.toast = Some(msg);
+  iced::Task::perform(
+    async { tokio::time::sleep(std::time::Duration::from_millis(2500)).await },
+    |()| Message::DismissToast,
+  )
 }
 
 fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
@@ -414,43 +426,58 @@ fn handle_characters_navigation(
 
 fn apply_characters_state_updates(state: &mut State, msg: &characters::Message) {
   match msg {
-    characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c))
-      if !state.characters.iter().any(|existing| existing.id() == c.id()) =>
-    {
-      state.characters.push(c.clone());
+    characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c)) => {
+      apply_character_added(state, c);
     }
-    characters::Message::ConfirmRemove => {
-      if let ActiveView::Characters(s) = &state.active_view
-        && let Some(id) = s.confirm_remove
-      {
-        state.characters.retain(|c| *c.id() != id);
-      }
-    }
+    characters::Message::ConfirmRemove => apply_confirm_remove(state),
     characters::Message::CharactersTab(characters::characters_tab::Message::LocationsRefreshed(updates)) => {
       update_sync_state(state, !updates.is_empty());
     }
     characters::Message::CharactersTab(characters::characters_tab::Message::SkillQueuesRefreshed(updates)) => {
       apply_skill_queues_refreshed(state, updates);
     }
-    characters::Message::ConfirmRemoveCorporation => {
-      if let ActiveView::Characters(s) = &state.active_view
-        && let Some(id) = s.confirm_remove_corporation
-      {
-        state.corporations.retain(|c: &Corporation| *c.id() != id);
-      }
+    characters::Message::ConfirmRemoveCorporation => apply_confirm_remove_corporation(state),
+    characters::Message::CorporationsTab(tab_msg) => apply_corporations_tab_update(state, tab_msg),
+    characters::Message::CharactersTab(characters::characters_tab::Message::WalletsRefreshed(updates)) => {
+      update_sync_state(state, !updates.is_empty());
     }
-    characters::Message::CorporationsTab(characters::corporations_tab::Message::CorporationAdded(corp)) => {
+    _ => {}
+  }
+}
+
+fn apply_character_added(state: &mut State, c: &Character) {
+  if !state.characters.iter().any(|existing| existing.id() == c.id()) {
+    state.characters.push(c.clone());
+  }
+}
+
+fn apply_confirm_remove(state: &mut State) {
+  if let ActiveView::Characters(s) = &state.active_view
+    && let Some(id) = s.confirm_remove
+  {
+    state.characters.retain(|c| *c.id() != id);
+  }
+}
+
+fn apply_confirm_remove_corporation(state: &mut State) {
+  if let ActiveView::Characters(s) = &state.active_view
+    && let Some(id) = s.confirm_remove_corporation
+  {
+    state.corporations.retain(|c: &Corporation| *c.id() != id);
+  }
+}
+
+fn apply_corporations_tab_update(state: &mut State, tab_msg: &characters::corporations_tab::Message) {
+  match tab_msg {
+    characters::corporations_tab::Message::CorporationAdded(corp) => {
       state.corporations.retain(|c: &Corporation| *c.id() != *corp.id());
       state.corporations.push(corp.clone());
     }
-    characters::Message::CorporationsTab(characters::corporations_tab::Message::CorporationRemoved(id)) => {
+    characters::corporations_tab::Message::CorporationRemoved(id) => {
       state.corporations.retain(|c: &Corporation| *c.id() != *id);
     }
-    characters::Message::CorporationsTab(characters::corporations_tab::Message::CorporationsLoaded(corps)) => {
+    characters::corporations_tab::Message::CorporationsLoaded(corps) => {
       state.corporations = corps.clone();
-    }
-    characters::Message::CharactersTab(characters::characters_tab::Message::WalletsRefreshed(updates)) => {
-      update_sync_state(state, !updates.is_empty());
     }
     _ => {}
   }

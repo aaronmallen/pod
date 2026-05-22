@@ -130,7 +130,6 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
   let span = tracing::info_span!("sync_character", character_id = char_id);
 
   async {
-    // Step 1: token refresh
     let token = match character_service::ensure_valid_token(&character, &esi, &db).await {
       Some(t) => t,
       None => {
@@ -142,113 +141,151 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
     character.set_token_expires_at(chrono::Utc::now().timestamp() + 1199);
     character_service::backfill_granted_scopes(&mut character, &token, &db).await;
     let grant = character_service::refresh_grant(&character, &token);
+
+    sync_corp_data(&mut character, char_id, &esi, &db).await;
+    sync_skills_and_queue(&mut character, char_id, &esi, &grant, &db).await;
+    sync_neural_attributes(&mut character, char_id, &esi, &grant, &db).await;
+    sync_wallet(&mut character, char_id, &esi, &grant, &db).await;
+    sync_assets(&mut character, char_id, &esi, &grant, &db).await;
+
     let char_client = esi.character(&grant);
-
-    // Step 2: corp data
-    if *character.corp_id() > 0
-      && let Ok(detail) = esi.corporation(*character.corp_id()).detail().await
-    {
-      character.set_corp_name(detail.name.clone());
-      let _ = db
-        .characters()
-        .update_corp(char_id, *character.corp_id(), detail.name)
-        .await;
-    }
-
-    // Step 3: skills snapshot
-    if let Ok(esi_skills) = char_client.skills().await {
-      let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
-      let _ = db.characters().upsert_skills(char_id, &skills).await;
-      *character.skills_mut() = skills;
-    }
-
-    // Step 4: skill queue — reconcile with already-synced skills
-    if let Ok(queue) = char_client.skill_queue().await {
-      let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
-      let tq = character_service::build_training_queue(&queue, &merged);
-      let _ = db.characters().upsert_skills(char_id, &merged).await;
-      *character.skills_mut() = merged;
-      *character.training_queue_mut() = tq;
-    }
-
-    // Step 5: neural attributes
-    if let Ok(esi_attrs) = char_client.attributes().await {
-      let db_attrs = NeuralAttributes {
-        charisma: esi_attrs.charisma,
-        intelligence: esi_attrs.intelligence,
-        memory: esi_attrs.memory,
-        perception: esi_attrs.perception,
-        willpower: esi_attrs.willpower,
-      };
-      let _ = db.characters().update_neural_attributes(char_id, &db_attrs).await;
-      character.set_attributes(CharacterAttributes {
-        accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
-        bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
-        charisma: esi_attrs.charisma,
-        intelligence: esi_attrs.intelligence,
-        last_remap_date: esi_attrs.last_remap_date,
-        memory: esi_attrs.memory,
-        perception: esi_attrs.perception,
-        willpower: esi_attrs.willpower,
-      });
-    }
-
-    // Step 6: wallet balance
-    if let Ok(balance) = char_client.wallet_balance().await {
-      let _ = db.characters().update_wallet(char_id, Some(balance.0)).await;
-      character.set_isk_balance(Some(balance.0));
-    }
-
-    // Step 7: assets
-    if let Ok(raw) = char_client.assets().await {
-      let assets: Vec<CharacterAsset> = raw
-        .into_iter()
-        .map(|a| CharacterAsset {
-          character_id: char_id,
-          is_blueprint_copy: a.is_blueprint_copy,
-          is_singleton: a.is_singleton,
-          item_id: a.item_id,
-          location_flag: a.location_flag,
-          location_id: a.location_id,
-          location_type: a.location_type,
-          quantity: a.quantity,
-          type_id: a.type_id,
-        })
-        .collect();
-      let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-      let _ = db.characters().upsert_assets(char_id, &assets).await;
-      let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
-      cache_structure_names_from_assets(&assets, &character, &grant, &esi, &db).await;
-    }
-
-    // Step 8: clones & implants
     let (clones_res, implants_res) = tokio::join!(char_client.clones(), char_client.implants());
     sync_clones_to_db(char_id, clones_res, implants_res, &db).await;
 
-    // Step 9: portrait
     if let Ok(bytes) = esi.images().character_portrait(char_id, 256).await {
       crate::services::portraits::save(char_id, &bytes);
       *character.portrait_data_mut() = Some(bytes);
     }
 
-    // Resolve skill names and propagate them into training queue entries
-    let resolved = character_service::inject_skill_names(character.skills().to_vec(), &esi).await;
-    *character.skills_mut() = resolved;
-    let name_map: std::collections::HashMap<i32, String> = character
-      .skills()
-      .iter()
-      .filter_map(|s| s.skill_name.as_ref().map(|n| (s.skill_id, n.clone())))
-      .collect();
-    for entry in character.training_queue_mut() {
-      if entry.skill_name.is_none() {
-        entry.skill_name = name_map.get(&entry.skill_id).cloned();
-      }
-    }
+    propagate_skill_names(&mut character, &esi).await;
 
     Message::CharacterSynced(character)
   }
   .instrument(span)
   .await
+}
+
+async fn sync_corp_data(character: &mut Character, char_id: i64, esi: &Client, db: &pod_db::Repo) {
+  if *character.corp_id() > 0
+    && let Ok(detail) = esi.corporation(*character.corp_id()).detail().await
+  {
+    character.set_corp_name(detail.name.clone());
+    let _ = db
+      .characters()
+      .update_corp(char_id, *character.corp_id(), detail.name)
+      .await;
+  }
+}
+
+async fn sync_skills_and_queue(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  let char_client = esi.character(grant);
+  if let Ok(esi_skills) = char_client.skills().await {
+    let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
+    let _ = db.characters().upsert_skills(char_id, &skills).await;
+    *character.skills_mut() = skills;
+  }
+  if let Ok(queue) = char_client.skill_queue().await {
+    let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
+    let tq = character_service::build_training_queue(&queue, &merged);
+    let _ = db.characters().upsert_skills(char_id, &merged).await;
+    *character.skills_mut() = merged;
+    *character.training_queue_mut() = tq;
+  }
+}
+
+async fn sync_neural_attributes(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  let char_client = esi.character(grant);
+  if let Ok(esi_attrs) = char_client.attributes().await {
+    let db_attrs = NeuralAttributes {
+      charisma: esi_attrs.charisma,
+      intelligence: esi_attrs.intelligence,
+      memory: esi_attrs.memory,
+      perception: esi_attrs.perception,
+      willpower: esi_attrs.willpower,
+    };
+    let _ = db.characters().update_neural_attributes(char_id, &db_attrs).await;
+    character.set_attributes(CharacterAttributes {
+      accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
+      bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
+      charisma: esi_attrs.charisma,
+      intelligence: esi_attrs.intelligence,
+      last_remap_date: esi_attrs.last_remap_date,
+      memory: esi_attrs.memory,
+      perception: esi_attrs.perception,
+      willpower: esi_attrs.willpower,
+    });
+  }
+}
+
+async fn sync_wallet(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  let char_client = esi.character(grant);
+  if let Ok(balance) = char_client.wallet_balance().await {
+    let _ = db.characters().update_wallet(char_id, Some(balance.0)).await;
+    character.set_isk_balance(Some(balance.0));
+  }
+}
+
+async fn sync_assets(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  let char_client = esi.character(grant);
+  if let Ok(raw) = char_client.assets().await {
+    let assets: Vec<CharacterAsset> = raw
+      .into_iter()
+      .map(|a| CharacterAsset {
+        character_id: char_id,
+        is_blueprint_copy: a.is_blueprint_copy,
+        is_singleton: a.is_singleton,
+        item_id: a.item_id,
+        location_flag: a.location_flag,
+        location_id: a.location_id,
+        location_type: a.location_type,
+        quantity: a.quantity,
+        type_id: a.type_id,
+      })
+      .collect();
+    let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+    let _ = db.characters().upsert_assets(char_id, &assets).await;
+    let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
+    cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
+  }
+}
+
+async fn propagate_skill_names(character: &mut Character, esi: &Client) {
+  let resolved = character_service::inject_skill_names(character.skills().to_vec(), esi).await;
+  *character.skills_mut() = resolved;
+  let name_map: std::collections::HashMap<i32, String> = character
+    .skills()
+    .iter()
+    .filter_map(|s| s.skill_name.as_ref().map(|n| (s.skill_id, n.clone())))
+    .collect();
+  for entry in character.training_queue_mut() {
+    if entry.skill_name.is_none() {
+      entry.skill_name = name_map.get(&entry.skill_id).cloned();
+    }
+  }
 }
 
 fn cache_path() -> PathBuf {

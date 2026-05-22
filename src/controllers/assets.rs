@@ -553,7 +553,7 @@ fn resolve_location(row: &RawAssetRow, maps: &AssetMaps) -> (String, String) {
   let is_at_structure = row.location_id >= i32::MAX as i64 && !maps.item_index.contains_key(&row.location_id);
   if row.location_type == "station" && row.location_id < i32::MAX as i64 {
     resolve_station_location(row.location_id, &maps.station_map, &maps.system_name_map)
-  } else if row.location_type == "solar_system" && row.location_id < i32::MAX as i64 {
+  } else if (row.location_type == "solar_system" || row.location_type == "space") && row.location_id < i32::MAX as i64 {
     resolve_solar_system_location(row.location_id, &maps.system_name_map)
   } else if is_at_structure {
     resolve_structure_location(
@@ -1261,6 +1261,69 @@ mod tests {
       assert_eq!(result[&111], vec![1, 2]);
       assert_eq!(result[&222], vec![3]);
       assert!(!result.contains_key(&999));
+    }
+  }
+
+  mod resolve_location {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn space_row(location_id: i64) -> RawAssetRow {
+      RawAssetRow {
+        character_id: 1,
+        is_blueprint_copy: None,
+        is_singleton: false,
+        item_id: 1,
+        location_flag: "Hangar".to_string(),
+        location_id,
+        location_type: "space".to_string(),
+        quantity: 1,
+        type_id: 1,
+      }
+    }
+
+    fn maps_with_system(system_id: i32, name: &str) -> AssetMaps {
+      let mut system_name_map = HashMap::new();
+      system_name_map.insert(system_id, name.to_string());
+      AssetMaps {
+        cat_key_map: HashMap::new(),
+        group_name_map: HashMap::new(),
+        is_container_set: HashSet::new(),
+        item_index: HashMap::new(),
+        price_cache: HashMap::new(),
+        station_map: HashMap::new(),
+        structure_name_map: HashMap::new(),
+        structure_name_only: HashMap::new(),
+        structure_system_name_map: HashMap::new(),
+        system_name_map,
+        type_cat_map: HashMap::new(),
+        type_group_map: HashMap::new(),
+        type_name_map: HashMap::new(),
+        type_volume_map: HashMap::new(),
+      }
+    }
+
+    #[test]
+    fn it_resolves_space_assets_to_solar_system_name() {
+      let row = space_row(30000142);
+      let maps = maps_with_system(30000142, "Jita");
+
+      let (loc, sys) = resolve_location(&row, &maps);
+
+      assert_eq!(loc, "Jita");
+      assert_eq!(sys, "Jita");
+    }
+
+    #[test]
+    fn it_falls_back_for_unknown_space_system() {
+      let row = space_row(30000999);
+      let maps = maps_with_system(30000142, "Jita");
+
+      let (loc, sys) = resolve_location(&row, &maps);
+
+      assert_eq!(loc, "System 30000999");
+      assert_eq!(sys, "System 30000999");
     }
   }
 

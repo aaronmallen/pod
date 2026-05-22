@@ -428,24 +428,50 @@ fn notif_row<'a>(notif: &'a CharacterNotification, is_last: bool) -> Element<'a,
 }
 
 fn category_icon(category: &str) -> Icon {
+  category_icon_combat(category)
+    .or_else(|| category_icon_corp(category))
+    .or_else(|| category_icon_operational(category))
+    .or_else(|| category_icon_financial(category))
+    .unwrap_or_else(Icon::notif_system)
+}
+
+fn category_icon_combat(category: &str) -> Option<Icon> {
   match category {
-    "alliance" => Icon::notif_alliance(),
-    "clone" => Icon::notif_clone(),
-    "combat" => Icon::notif_combat(),
-    "contact" => Icon::notif_contact(),
-    "contract" => Icon::notif_contract(),
-    "corp" => Icon::notif_corp(),
-    "fw" => Icon::notif_fw(),
-    "incursion" => Icon::notif_incursion(),
-    "industry" => Icon::notif_industry(),
-    "insurance" => Icon::notif_insurance(),
-    "market" => Icon::notif_market(),
-    "mission" => Icon::notif_mission(),
-    "reward" => Icon::notif_reward(),
-    "standing" => Icon::notif_standing(),
-    "structure" => Icon::notif_structure(),
-    "war" => Icon::notif_war(),
-    _ => Icon::notif_system(),
+    "war" => Some(Icon::notif_war()),
+    "combat" => Some(Icon::notif_combat()),
+    "incursion" => Some(Icon::notif_incursion()),
+    "fw" => Some(Icon::notif_fw()),
+    _ => None,
+  }
+}
+
+fn category_icon_corp(category: &str) -> Option<Icon> {
+  match category {
+    "corp" => Some(Icon::notif_corp()),
+    "alliance" => Some(Icon::notif_alliance()),
+    "standing" => Some(Icon::notif_standing()),
+    "contact" => Some(Icon::notif_contact()),
+    _ => None,
+  }
+}
+
+fn category_icon_operational(category: &str) -> Option<Icon> {
+  match category {
+    "structure" => Some(Icon::notif_structure()),
+    "industry" => Some(Icon::notif_industry()),
+    "mission" => Some(Icon::notif_mission()),
+    "clone" => Some(Icon::notif_clone()),
+    _ => None,
+  }
+}
+
+fn category_icon_financial(category: &str) -> Option<Icon> {
+  match category {
+    "market" => Some(Icon::notif_market()),
+    "insurance" => Some(Icon::notif_insurance()),
+    "reward" => Some(Icon::notif_reward()),
+    "contract" => Some(Icon::notif_contract()),
+    _ => None,
   }
 }
 

@@ -17,133 +17,32 @@ use crate::services::Services;
 
 /// Creates the initial skills state from the given characters.
 pub fn new(characters: Vec<Character>, left_pane_width: f32, services: &Services) -> (State, iced::Task<Message>) {
-  let mut expanded_groups = HashSet::new();
-  expanded_groups.insert("spaceship".to_string());
-
   let selected_char_id = characters.first().map(|c| *c.id()).unwrap_or(0);
   let char_skill_map = build_char_skill_map(&characters, selected_char_id);
-
-  let picker_entries = characters
-    .iter()
-    .map(|c| CharacterEntry {
-      id: Some(*c.id()),
-      name: c.name().clone(),
-      corp_name: c.corp_name().clone(),
-      tone: *c.portrait_tone() as u16,
-      portrait_handle: c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone())),
-    })
-    .collect();
-
-  let picker = CharacterPicker::new()
-    .entries(picker_entries)
-    .selected(PickerSelection::Character(selected_char_id));
-
   let queue = characters
     .iter()
     .find(|c| *c.id() == selected_char_id)
     .map(build_queue_from_character)
     .unwrap_or_default();
-
-  let mut state = State {
-    char_skill_map,
-    characters,
-    computed_queue: Vec::new(),
-    confirm_delete_plan_id: None,
-    dragging_pane: false,
-    expanded_groups,
-    last_drag_x: 0.0,
-    left_pane_width,
-    picker,
-    plans: Vec::new(),
-    plans_loaded: false,
-    queue,
-    queue_id_counter: 100,
-    right_tab: RightTab::Browse,
-    search_query: String::new(),
-    skill_groups: Vec::new(),
-    sp_rate: 0.0,
-  };
+  let picker = build_skills_picker(&characters, selected_char_id);
+  let mut state = build_initial_skills_state(characters, left_pane_width, picker, queue, char_skill_map);
   recompute_queue(&mut state);
-  let task = if let Some(db) = services.db.clone() {
-    iced::Task::perform(
-      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
-      Message::SkillGroupsLoaded,
-    )
-  } else {
-    iced::Task::none()
-  };
+  let task = build_skill_groups_task(services);
   (state, task)
 }
 
 /// Dispatches a skills message, rebuilding queue and skill map on character selection.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
-  let is_char_switch = matches!(
-    &message,
-    Message::Picker(character_picker::Message::Select(PickerSelection::Character(_)))
-  );
-
-  if is_char_switch {
-    let Message::Picker(character_picker::Message::Select(PickerSelection::Character(id))) = &message else {
-      unreachable!()
-    };
-    let id = *id;
-    state.queue = state
-      .characters
-      .iter()
-      .find(|c| *c.id() == id)
-      .map(build_queue_from_character)
-      .unwrap_or_default();
-    state.char_skill_map = build_char_skill_map(&state.characters, id);
-    state.plans = Vec::new();
-    state.plans_loaded = false;
-    state.confirm_delete_plan_id = None;
+  let was_char_switch = is_character_switch(&message);
+  if was_char_switch {
+    apply_char_switch(state, &message);
   }
 
   match &message {
-    Message::PlansTabOpened => {
-      let char_id = state.selected_char_id();
-      if let Some(db) = services.db.clone() {
-        let task = iced::Task::perform(
-          async move { db.skill_plans().all_for_character(char_id).await.unwrap_or_default() },
-          Message::PlansLoaded,
-        );
-        let _ = skills::update(state, message);
-        recompute_queue(state);
-        return task;
-      }
-    }
-    Message::PlanDeleteConfirmed(plan_id) => {
-      let id = plan_id.clone();
-      state.confirm_delete_plan_id = None;
-      if let Some(db) = services.db.clone() {
-        let id_for_task = id.clone();
-        return iced::Task::perform(
-          async move {
-            let _ = db.skill_plans().delete(&id_for_task).await;
-            id_for_task
-          },
-          Message::PlanDeleted,
-        );
-      }
-      state.plans.retain(|p| p.id != id);
-      recompute_queue(state);
-      return iced::Task::none();
-    }
-    Message::RightPanel(right_panel::Message::PlansTab(tab_msg)) => {
-      let translated = match tab_msg {
-        right_panel::plans_tab::Message::NewPlan => Some(Message::PlanNewRequested),
-        right_panel::plans_tab::Message::FromQueue => Some(Message::PlanFromQueueRequested),
-        right_panel::plans_tab::Message::OpenPlan(id) => Some(Message::PlanOpenRequested(id.clone())),
-        right_panel::plans_tab::Message::DeleteRequested(id) => Some(Message::PlanDeleteRequested(id.clone())),
-        right_panel::plans_tab::Message::DeleteConfirmed(id) => Some(Message::PlanDeleteConfirmed(id.clone())),
-        right_panel::plans_tab::Message::DeleteCancelled => Some(Message::PlanDeleteCancelled),
-      };
-      let _ = skills::update(state, message);
-      recompute_queue(state);
-      if let Some(msg) = translated {
-        return iced::Task::done(msg);
-      }
-      return iced::Task::none();
+    Message::PlansTabOpened => return handle_plans_tab_opened(state, message, services),
+    Message::PlanDeleteConfirmed(_) => return handle_plan_delete_confirmed(state, message, services),
+    Message::RightPanel(right_panel::Message::PlansTab(_)) => {
+      return handle_right_panel_plans_tab(state, message);
     }
     Message::RightPanel(right_panel::Message::TabSelected(RightTab::Plans)) => {
       let _ = skills::update(state, message);
@@ -155,7 +54,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
 
   let base_task = skills::update(state, message);
   recompute_queue(state);
-  if is_char_switch && state.right_tab == RightTab::Plans {
+  if was_char_switch && state.right_tab == RightTab::Plans {
     iced::Task::batch([base_task, iced::Task::done(Message::PlansTabOpened)])
   } else {
     base_task
@@ -180,6 +79,144 @@ pub fn refresh_characters(state: &mut State, characters: Vec<Character>) {
 /// Returns background subscriptions for the skills view.
 pub fn subscription(state: &State) -> Subscription<Message> {
   skills::subscription(state)
+}
+
+fn is_character_switch(message: &Message) -> bool {
+  matches!(
+    message,
+    Message::Picker(character_picker::Message::Select(PickerSelection::Character(_)))
+  )
+}
+
+fn apply_char_switch(state: &mut State, message: &Message) {
+  let Message::Picker(character_picker::Message::Select(PickerSelection::Character(id))) = message else {
+    return;
+  };
+  let id = *id;
+  state.queue = state
+    .characters
+    .iter()
+    .find(|c| *c.id() == id)
+    .map(build_queue_from_character)
+    .unwrap_or_default();
+  state.char_skill_map = build_char_skill_map(&state.characters, id);
+  state.plans = Vec::new();
+  state.plans_loaded = false;
+  state.confirm_delete_plan_id = None;
+}
+
+fn handle_plans_tab_opened(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  let char_id = state.selected_char_id();
+  if let Some(db) = services.db.clone() {
+    let task = iced::Task::perform(
+      async move { db.skill_plans().all_for_character(char_id).await.unwrap_or_default() },
+      Message::PlansLoaded,
+    );
+    let _ = skills::update(state, message);
+    recompute_queue(state);
+    return task;
+  }
+  iced::Task::none()
+}
+
+fn handle_plan_delete_confirmed(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  let Message::PlanDeleteConfirmed(plan_id) = &message else {
+    return iced::Task::none();
+  };
+  let id = plan_id.clone();
+  state.confirm_delete_plan_id = None;
+  if let Some(db) = services.db.clone() {
+    let id_for_task = id.clone();
+    return iced::Task::perform(
+      async move {
+        let _ = db.skill_plans().delete(&id_for_task).await;
+        id_for_task
+      },
+      Message::PlanDeleted,
+    );
+  }
+  state.plans.retain(|p| p.id != id);
+  recompute_queue(state);
+  iced::Task::none()
+}
+
+fn handle_right_panel_plans_tab(state: &mut State, message: Message) -> iced::Task<Message> {
+  let translated = if let Message::RightPanel(right_panel::Message::PlansTab(tab_msg)) = &message {
+    match tab_msg {
+      right_panel::plans_tab::Message::NewPlan => Some(Message::PlanNewRequested),
+      right_panel::plans_tab::Message::FromQueue => Some(Message::PlanFromQueueRequested),
+      right_panel::plans_tab::Message::OpenPlan(id) => Some(Message::PlanOpenRequested(id.clone())),
+      right_panel::plans_tab::Message::DeleteRequested(id) => Some(Message::PlanDeleteRequested(id.clone())),
+      right_panel::plans_tab::Message::DeleteConfirmed(id) => Some(Message::PlanDeleteConfirmed(id.clone())),
+      right_panel::plans_tab::Message::DeleteCancelled => Some(Message::PlanDeleteCancelled),
+    }
+  } else {
+    None
+  };
+  let _ = skills::update(state, message);
+  recompute_queue(state);
+  if let Some(msg) = translated {
+    iced::Task::done(msg)
+  } else {
+    iced::Task::none()
+  }
+}
+
+fn build_skills_picker(characters: &[Character], selected_char_id: i64) -> CharacterPicker {
+  let picker_entries = characters
+    .iter()
+    .map(|c| CharacterEntry {
+      id: Some(*c.id()),
+      name: c.name().clone(),
+      corp_name: c.corp_name().clone(),
+      tone: *c.portrait_tone() as u16,
+      portrait_handle: c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone())),
+    })
+    .collect();
+  CharacterPicker::new()
+    .entries(picker_entries)
+    .selected(PickerSelection::Character(selected_char_id))
+}
+
+fn build_initial_skills_state(
+  characters: Vec<Character>,
+  left_pane_width: f32,
+  picker: CharacterPicker,
+  queue: Vec<QueueItem>,
+  char_skill_map: HashMap<String, (u8, i64)>,
+) -> State {
+  let mut expanded_groups = HashSet::new();
+  expanded_groups.insert("spaceship".to_string());
+  State {
+    char_skill_map,
+    characters,
+    computed_queue: Vec::new(),
+    confirm_delete_plan_id: None,
+    dragging_pane: false,
+    expanded_groups,
+    last_drag_x: 0.0,
+    left_pane_width,
+    picker,
+    plans: Vec::new(),
+    plans_loaded: false,
+    queue,
+    queue_id_counter: 100,
+    right_tab: RightTab::Browse,
+    search_query: String::new(),
+    skill_groups: Vec::new(),
+    sp_rate: 0.0,
+  }
+}
+
+fn build_skill_groups_task(services: &Services) -> iced::Task<Message> {
+  if let Some(db) = services.db.clone() {
+    iced::Task::perform(
+      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
+      Message::SkillGroupsLoaded,
+    )
+  } else {
+    iced::Task::none()
+  }
 }
 
 fn compute_sp_rate(state: &State) -> f32 {

@@ -121,65 +121,57 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
     return assets_ctrl::fetch_corp_assets(corp_id, s, services).map(Message::Assets);
   }
   if let assets::Message::RefreshNavHistory = &msg {
-    if let (Some(db), Some(esi)) = (services.db.clone(), services.esi_client.clone()) {
-      let char_ids: Vec<i64> = s.characters.iter().map(|c| *c.id()).collect();
-      return iced::Task::perform(
-        async move {
-          crate::services::prices::sync(&db, &esi).await;
-          assets_ctrl::nav_history(db, char_ids, 90).await
-        },
-        |data| Message::Assets(assets::Message::NavHistoryLoaded(data)),
-      );
+    return handle_assets_refresh_nav_history(s, services);
+  }
+  let should_refresh_values = should_assets_refresh_values(&msg, s);
+  let new_items = collect_new_item_icons(&msg, s);
+
+  if let assets::Message::StockpilesTab(assets::stockpiles_tab::Message::FormSave) = &msg {
+    if let Some(task) = handle_assets_stockpile_save(s, msg, services) {
+      return task;
     }
     return iced::Task::none();
   }
-  let should_refresh_values = matches!(&msg, assets::Message::TabSelected(assets::Tab::Values))
-    || (matches!(
-      &msg,
-      assets::Message::AssetsLoaded(_) | assets::Message::CorpAssetsLoaded(_)
-    ) && s.active_tab == assets::Tab::Values);
-  if let assets::Message::StockpilesTab(assets::stockpiles_tab::Message::FormSave) = &msg
-    && let (Some(form), Some(db)) = (s.stockpile_form.clone(), services.db.clone())
-  {
-    let name = form.name.clone();
-    let location_id = form.location_id_text.trim().parse::<i64>().ok();
-    let items: Vec<(i32, i32)> = form
-      .items
-      .iter()
-      .filter_map(|it| {
-        let t = it.type_id_text.trim().parse::<i32>().ok()?;
-        let q = it.qty_text.trim().parse::<i32>().ok()?;
-        Some((t, q))
-      })
-      .collect();
-    let base_task = assets::update(s, msg).map(Message::Assets);
-    if let Some(editing_id) = form.editing_id {
-      let task = iced::Task::perform(
-        assets_ctrl::update_stockpile(db, editing_id, name, location_id, None, items),
-        |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
-      );
-      s.stockpile_form = None;
-      return iced::Task::batch([base_task, task]);
-    } else {
-      let task = iced::Task::perform(
-        assets_ctrl::create_stockpile(db, name, location_id, None, items),
-        |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
-      );
-      s.stockpile_form = None;
-      return iced::Task::batch([base_task, task]);
-    }
-  }
   if let assets::Message::StockpilesTab(assets::stockpiles_tab::Message::DeleteStockpile(id)) = &msg {
     let id = *id;
-    if let Some(db) = services.db.clone() {
-      let base_task = assets::update(s, msg).map(Message::Assets);
-      let task = iced::Task::perform(assets_ctrl::delete_stockpile(db, id), |piles| {
-        Message::Assets(assets::Message::StockpilesLoaded(piles))
-      });
-      return iced::Task::batch([base_task, task]);
+    if let Some(task) = handle_assets_stockpile_delete(s, msg, id, services) {
+      return task;
     }
+    return iced::Task::none();
   }
-  let new_items: Option<Vec<(i32, String)>> = match &msg {
+
+  let chars_snapshot = state.characters.clone();
+  let ActiveView::Assets(s) = &mut state.active_view else {
+    return iced::Task::none();
+  };
+  let base_task = assets::update(s, msg).map(Message::Assets);
+  build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services)
+}
+
+fn handle_assets_refresh_nav_history(s: &mut assets::State, services: &Services) -> iced::Task<Message> {
+  if let (Some(db), Some(esi)) = (services.db.clone(), services.esi_client.clone()) {
+    let char_ids: Vec<i64> = s.characters.iter().map(|c| *c.id()).collect();
+    return iced::Task::perform(
+      async move {
+        crate::services::prices::sync(&db, &esi).await;
+        assets_ctrl::nav_history(db, char_ids, 90).await
+      },
+      |data| Message::Assets(assets::Message::NavHistoryLoaded(data)),
+    );
+  }
+  iced::Task::none()
+}
+
+fn should_assets_refresh_values(msg: &assets::Message, s: &assets::State) -> bool {
+  matches!(msg, assets::Message::TabSelected(assets::Tab::Values))
+    || (matches!(
+      msg,
+      assets::Message::AssetsLoaded(_) | assets::Message::CorpAssetsLoaded(_)
+    ) && s.active_tab == assets::Tab::Values)
+}
+
+fn collect_new_item_icons(msg: &assets::Message, s: &assets::State) -> Option<Vec<(i32, String)>> {
+  match msg {
     assets::Message::AssetsLoaded(records) | assets::Message::CorpAssetsLoaded(records) => {
       let items: Vec<(i32, String)> = records
         .iter()
@@ -191,12 +183,68 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
       if items.is_empty() { None } else { Some(items) }
     }
     _ => None,
-  };
+  }
+}
+
+fn handle_assets_stockpile_save(
+  s: &mut assets::State,
+  msg: assets::Message,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  let form = s.stockpile_form.clone()?;
+  let db = services.db.clone()?;
+  let name = form.name.clone();
+  let location_id = form.location_id_text.trim().parse::<i64>().ok();
+  let items: Vec<(i32, i32)> = form
+    .items
+    .iter()
+    .filter_map(|it| {
+      let t = it.type_id_text.trim().parse::<i32>().ok()?;
+      let q = it.qty_text.trim().parse::<i32>().ok()?;
+      Some((t, q))
+    })
+    .collect();
   let base_task = assets::update(s, msg).map(Message::Assets);
+  let db_task = if let Some(editing_id) = form.editing_id {
+    iced::Task::perform(
+      assets_ctrl::update_stockpile(db, editing_id, name, location_id, None, items),
+      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
+    )
+  } else {
+    iced::Task::perform(
+      assets_ctrl::create_stockpile(db, name, location_id, None, items),
+      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
+    )
+  };
+  s.stockpile_form = None;
+  Some(iced::Task::batch([base_task, db_task]))
+}
+
+fn handle_assets_stockpile_delete(
+  s: &mut assets::State,
+  msg: assets::Message,
+  id: i64,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  let db = services.db.clone()?;
+  let base_task = assets::update(s, msg).map(Message::Assets);
+  let delete_task = iced::Task::perform(assets_ctrl::delete_stockpile(db, id), |piles| {
+    Message::Assets(assets::Message::StockpilesLoaded(piles))
+  });
+  Some(iced::Task::batch([base_task, delete_task]))
+}
+
+fn build_assets_follow_up_tasks(
+  base_task: iced::Task<Message>,
+  should_refresh_values: bool,
+  new_items: Option<Vec<(i32, String)>>,
+  s: &mut assets::State,
+  chars_snapshot: Vec<Character>,
+  services: &Services,
+) -> iced::Task<Message> {
   let values_task = if should_refresh_values {
     if let Some(db) = services.db.clone() {
       let assets_snapshot = s.assets.clone();
-      let chars_snapshot = state.characters.clone();
       s.values_loading = true;
       Some(iced::Task::perform(
         assets_ctrl::asset_values_breakdown(assets_snapshot, chars_snapshot, db),
@@ -272,17 +320,37 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
     characters::Message::CharactersTab(m)
       if matches!(m, characters::characters_tab::Message::DragEnd)
   );
-  match &msg {
+  if let Some(task) = handle_characters_navigation(state, &msg, services) {
+    return task;
+  }
+  apply_characters_state_updates(state, &msg);
+  let ActiveView::Characters(chars_state) = &mut state.active_view else {
+    return iced::Task::none();
+  };
+  let task = characters_ctrl::update(chars_state, msg, services).map(Message::Characters);
+  if is_drag_end {
+    let new_order: Vec<i64> = chars_state.all_characters.iter().map(|c| *c.id()).collect();
+    state
+      .characters
+      .sort_by_key(|c| new_order.iter().position(|&id| id == *c.id()).unwrap_or(usize::MAX));
+  }
+  task
+}
+
+fn handle_characters_navigation(
+  state: &mut State,
+  msg: &characters::Message,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  match msg {
     characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToDetail(char_id)) => {
       let char_id = *char_id;
-      let Some(character) = state.characters.iter().find(|c| *c.id() == char_id).cloned() else {
-        return iced::Task::none();
-      };
+      let character = state.characters.iter().find(|c| *c.id() == char_id).cloned()?;
       state.active_nav = Nav::Characters;
       let (detail_state, detail_task) =
         character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
       state.active_view = ActiveView::CharacterDetail(detail_state);
-      return detail_task.map(Message::CharacterDetail);
+      Some(detail_task.map(Message::CharacterDetail))
     }
     characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToSkills(char_id)) => {
       let char_id = *char_id;
@@ -296,7 +364,7 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
         services,
       );
       state.active_view = ActiveView::Skills(s);
-      return task.map(Message::Skills);
+      Some(task.map(Message::Skills))
     }
     characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToWallet(char_id)) => {
       let char_id = *char_id;
@@ -314,8 +382,14 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
         )),
       );
       state.active_view = ActiveView::Wallet(s);
-      return task.map(Message::Wallet);
+      Some(task.map(Message::Wallet))
     }
+    _ => None,
+  }
+}
+
+fn apply_characters_state_updates(state: &mut State, msg: &characters::Message) {
+  match msg {
     characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c))
       if !state.characters.iter().any(|existing| existing.id() == c.id()) =>
     {
@@ -332,33 +406,7 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
       update_sync_state(state, !updates.is_empty());
     }
     characters::Message::CharactersTab(characters::characters_tab::Message::SkillQueuesRefreshed(updates)) => {
-      update_sync_state(state, !updates.is_empty());
-      for (id, skills, tq) in updates {
-        let Some(c) = state.characters.iter_mut().find(|c| *c.id() == *id) else {
-          continue;
-        };
-        let skill_map: std::collections::HashMap<i32, &CharacterSkill> =
-          skills.iter().map(|s| (s.skill_id, s)).collect();
-        for s in c.skills_mut().iter_mut() {
-          s.is_active_training = false;
-          if let Some(updated) = skill_map.get(&s.skill_id) {
-            s.is_active_training = updated.is_active_training;
-            s.skill_name = updated.skill_name.clone();
-            s.skillpoints = updated.skillpoints;
-            s.trained_level = updated.trained_level;
-            s.training_end_time = updated.training_end_time;
-            s.training_level_end_sp = updated.training_level_end_sp;
-            s.training_level_start_sp = updated.training_level_start_sp;
-            s.training_start_sp = updated.training_start_sp;
-            s.training_start_time = updated.training_start_time;
-          }
-        }
-        *c.training_queue_mut() = tq.clone();
-      }
-      if let ActiveView::Skills(s) = &mut state.active_view {
-        let updated_chars = state.characters.clone();
-        skills_ctrl::refresh_characters(s, updated_chars);
-      }
+      apply_skill_queues_refreshed(state, updates);
     }
     characters::Message::ConfirmRemoveCorporation => {
       if let ActiveView::Characters(s) = &state.active_view
@@ -382,17 +430,38 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
     }
     _ => {}
   }
-  let ActiveView::Characters(chars_state) = &mut state.active_view else {
-    return iced::Task::none();
-  };
-  let task = characters_ctrl::update(chars_state, msg, services).map(Message::Characters);
-  if is_drag_end {
-    let new_order: Vec<i64> = chars_state.all_characters.iter().map(|c| *c.id()).collect();
-    state
-      .characters
-      .sort_by_key(|c| new_order.iter().position(|&id| id == *c.id()).unwrap_or(usize::MAX));
+}
+
+fn apply_skill_queues_refreshed(
+  state: &mut State,
+  updates: &[(i64, Vec<CharacterSkill>, Vec<pod_model::TrainingQueueEntry>)],
+) {
+  update_sync_state(state, !updates.is_empty());
+  for (id, skills, tq) in updates {
+    let Some(c) = state.characters.iter_mut().find(|c| *c.id() == *id) else {
+      continue;
+    };
+    let skill_map: std::collections::HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
+    for s in c.skills_mut().iter_mut() {
+      s.is_active_training = false;
+      if let Some(updated) = skill_map.get(&s.skill_id) {
+        s.is_active_training = updated.is_active_training;
+        s.skill_name = updated.skill_name.clone();
+        s.skillpoints = updated.skillpoints;
+        s.trained_level = updated.trained_level;
+        s.training_end_time = updated.training_end_time;
+        s.training_level_end_sp = updated.training_level_end_sp;
+        s.training_level_start_sp = updated.training_level_start_sp;
+        s.training_start_sp = updated.training_start_sp;
+        s.training_start_time = updated.training_start_time;
+      }
+    }
+    *c.training_queue_mut() = tq.clone();
   }
-  task
+  if let ActiveView::Skills(s) = &mut state.active_view {
+    let updated_chars = state.characters.clone();
+    skills_ctrl::refresh_characters(s, updated_chars);
+  }
 }
 
 fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> iced::Task<Message> {
@@ -479,48 +548,50 @@ fn update_settings(
     &msg,
     settings::Message::ToggleFeature(_) | settings::Message::ResetDefaults
   );
-
-  let (settings_task, updated_cfg) = {
-    let ActiveView::Settings(s) = &mut state.active_view else {
-      return (iced::Task::none(), None);
-    };
-    let task = settings_ctrl::update(s, msg, services).map(Message::Settings);
-    let cfg = if is_save {
-      Some(settings_ctrl::updated_config(s, &services.config))
-    } else {
-      None
-    };
-    (task, cfg)
+  let ActiveView::Settings(s) = &mut state.active_view else {
+    return (iced::Task::none(), None);
+  };
+  let settings_task = settings_ctrl::update(s, msg, services).map(Message::Settings);
+  let updated_cfg = if is_save {
+    Some(settings_ctrl::updated_config(s, &services.config))
+  } else {
+    None
   };
 
-  if let Some(cfg) = updated_cfg {
-    let features = cfg.features();
-    state.feat_asset_tracking = *features.asset_tracking();
-    state.feat_mail = *features.mail();
-    state.feat_skill_monitoring = *features.skill_monitoring();
-    state.feat_wallet = *features.wallet();
+  apply_settings_save(state, settings_task, updated_cfg, services)
+}
 
-    let hidden_nav = matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
-      || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
-      || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
-      || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet;
+fn apply_settings_save(
+  state: &mut State,
+  settings_task: iced::Task<Message>,
+  updated_cfg: Option<crate::config::Settings>,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  let Some(cfg) = updated_cfg else {
+    return (settings_task, None);
+  };
+  let features = cfg.features();
+  state.feat_asset_tracking = *features.asset_tracking();
+  state.feat_mail = *features.mail();
+  state.feat_skill_monitoring = *features.skill_monitoring();
+  state.feat_wallet = *features.wallet();
 
-    if hidden_nav {
-      state.active_nav = Nav::Characters;
-      let (chars_state, chars_task) = characters_ctrl::new(state.characters.clone(), services);
-      state.active_view = ActiveView::Characters(chars_state);
-      let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
-      return (
-        iced::Task::batch([settings_task, chars_task.map(Message::Characters), toast_task]),
-        Some(cfg),
-      );
-    }
+  let hidden_nav = matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
+    || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
+    || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
+    || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet;
 
-    let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
-    return (iced::Task::batch([settings_task, toast_task]), Some(cfg));
+  let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
+  if hidden_nav {
+    state.active_nav = Nav::Characters;
+    let (chars_state, chars_task) = characters_ctrl::new(state.characters.clone(), services);
+    state.active_view = ActiveView::Characters(chars_state);
+    return (
+      iced::Task::batch([settings_task, chars_task.map(Message::Characters), toast_task]),
+      Some(cfg),
+    );
   }
-
-  (settings_task, None)
+  (iced::Task::batch([settings_task, toast_task]), Some(cfg))
 }
 
 fn update_skills(state: &mut State, msg: skills::Message, services: &Services) -> iced::Task<Message> {
@@ -586,6 +657,7 @@ fn trigger_reauth(services: &Services) -> iced::Task<Message> {
     },
   )
 }
+
 fn utc_time_string() -> String {
   let secs = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)

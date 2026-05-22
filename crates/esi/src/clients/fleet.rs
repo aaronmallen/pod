@@ -284,3 +284,126 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::time::{Duration, SystemTime};
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  fn make_grant() -> crate::models::auth::Grant {
+    crate::models::auth::Grant::new(
+      "test-token",
+      90_000_001i64,
+      "Test Char",
+      SystemTime::now() + Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    )
+  }
+
+  mod detail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_fleet_detail() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/fleets/1000000014/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "is_free_move": false,
+          "is_registered": false,
+          "is_voice_enabled": false,
+          "motd": "Welcome to the fleet!"
+        })))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.fleet(1_000_000_014i64).auth(&grant).detail().await.unwrap();
+
+      assert_eq!(result.motd, "Welcome to the fleet!");
+      assert_eq!(result.is_free_move, false);
+      assert_eq!(result.is_registered, false);
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_api_failure() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/fleets/1000000014/"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "Fleet not found"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.fleet(1_000_000_014i64).auth(&grant).detail().await;
+
+      assert!(result.is_err());
+    }
+  }
+
+  mod wings {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_fleet_wings() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/fleets/1000000014/wings/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          {
+            "id": 2000000001i64,
+            "name": "Wing 1",
+            "squads": [
+              {"id": 3000000001i64, "name": "Squad 1"}
+            ]
+          }
+        ])))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.fleet(1_000_000_014i64).auth(&grant).wings().await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 2_000_000_001i64);
+      assert_eq!(result[0].name, "Wing 1");
+      assert_eq!(result[0].squads.len(), 1);
+      assert_eq!(result[0].squads[0].id, 3_000_000_001i64);
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_api_failure() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/fleets/1000000014/wings/"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({"error": "Forbidden"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.fleet(1_000_000_014i64).auth(&grant).wings().await;
+
+      assert!(result.is_err());
+    }
+  }
+}

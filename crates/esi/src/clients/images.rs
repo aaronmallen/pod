@@ -107,3 +107,70 @@ impl<'a> Client<'a> {
     UrlBuilder::new(BASE_URL)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  mod alliance_logo {
+    use pretty_assertions::assert_eq;
+
+    use crate::http::UrlBuilder;
+
+    #[test]
+    fn it_builds_the_correct_url() {
+      let url = UrlBuilder::new(super::super::BASE_URL)
+        .path("alliances/12345/logo")
+        .param("size", "64")
+        .build();
+
+      assert_eq!(url, "https://images.evetech.net/alliances/12345/logo?size=64");
+    }
+  }
+
+  mod character_portrait {
+    use pretty_assertions::assert_eq;
+
+    use crate::http::UrlBuilder;
+
+    #[test]
+    fn it_builds_the_correct_url() {
+      let url = UrlBuilder::new(super::super::BASE_URL)
+        .path("characters/9876/portrait")
+        .param("size", "512")
+        .build();
+
+      assert_eq!(url, "https://images.evetech.net/characters/9876/portrait?size=512");
+    }
+  }
+
+  mod corporation_logo {
+    use pretty_assertions::assert_eq;
+
+    use crate::http::UrlBuilder;
+
+    #[test]
+    fn it_builds_the_correct_url() {
+      let url = UrlBuilder::new(super::super::BASE_URL)
+        .path("corporations/54321/logo")
+        .param("size", "128")
+        .build();
+
+      assert_eq!(url, "https://images.evetech.net/corporations/54321/logo?size=128");
+    }
+  }
+
+  mod type_icon {
+    use pretty_assertions::assert_eq;
+
+    use crate::http::UrlBuilder;
+
+    #[test]
+    fn it_builds_the_correct_url() {
+      let url = UrlBuilder::new(super::super::BASE_URL)
+        .path("types/34/icon")
+        .param("size", "32")
+        .build();
+
+      assert_eq!(url, "https://images.evetech.net/types/34/icon?size=32");
+    }
+  }
+}

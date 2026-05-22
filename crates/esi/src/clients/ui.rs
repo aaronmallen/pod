@@ -132,3 +132,65 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  fn make_grant() -> crate::models::auth::Grant {
+    crate::models::auth::Grant::new(
+      "test-token",
+      90_000_001i64,
+      "Test Char",
+      std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    )
+  }
+
+  mod add_waypoint {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_posts_to_autopilot_waypoint_on_success() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/v2/ui/autopilot/waypoint/"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.ui().auth(&grant).add_waypoint(30_000_142).await;
+
+      assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_api_failure() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/v2/ui/autopilot/waypoint/"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({"error": "Unprocessable Entity"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let grant = make_grant();
+      let result = esi.ui().auth(&grant).add_waypoint(30_000_142).await;
+
+      assert!(result.is_err());
+    }
+  }
+}

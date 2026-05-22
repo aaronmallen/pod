@@ -66,7 +66,12 @@ pub fn run() -> Task<Message> {
 }
 
 async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
-  std::fs::create_dir_all(cache_path()).expect("failed to create cache directory");
+  if let Err(e) = std::fs::create_dir_all(cache_path()) {
+    let _ = tx
+      .send(Message::Error(format!("failed to create cache directory: {e}")))
+      .await;
+    return;
+  }
 
   step(&mut tx, "Building ESI client\u{2026}".to_string()).await;
   let esi = match Client::builder(crate::ESI_CLIENT_ID).disk_cache(cache_path()).build() {

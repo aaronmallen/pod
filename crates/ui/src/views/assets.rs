@@ -453,6 +453,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State 
   let picker_entries = build_picker_entries(&characters);
   let corp_entries = build_corp_picker_entries(&corporations);
   let picker = CharacterPicker::new()
+    .all_label("All Characters")
     .entries(picker_entries)
     .corp_entries(corp_entries)
     .show_all(true);

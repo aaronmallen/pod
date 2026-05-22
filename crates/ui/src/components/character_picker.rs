@@ -56,6 +56,7 @@ pub enum Message {
 /// callers do not need to duplicate that bookkeeping.
 #[derive(Debug)]
 pub struct Component {
+  pub all_label: String,
   pub corp_entries: Vec<CorporationEntry>,
   pub entries: Vec<CharacterEntry>,
   pub is_open: bool,
@@ -67,12 +68,19 @@ impl Component {
   /// Create a new picker with default (closed, nothing selected) state.
   pub fn new() -> Self {
     Self {
+      all_label: "All Wallets".to_string(),
       corp_entries: Vec::new(),
       entries: Vec::new(),
       is_open: false,
       selected: PickerSelection::All,
       show_all: false,
     }
+  }
+
+  /// Builder: set the label for the "show all" sentinel row.
+  pub fn all_label(mut self, label: impl Into<String>) -> Self {
+    self.all_label = label.into();
+    self
   }
 
   /// Builder: replace the corporation entry list.
@@ -187,7 +195,10 @@ impl Component {
     let mut rows: Vec<Element<'_, Message>> = vec![dropdown_header()];
 
     if self.show_all {
-      rows.push(picker_row_all(matches!(self.selected, PickerSelection::All)));
+      rows.push(picker_row_all(
+        &self.all_label,
+        matches!(self.selected, PickerSelection::All),
+      ));
     }
     for entry in &self.entries {
       if entry.id.is_none() {
@@ -429,8 +440,8 @@ fn picker_row_corp(entry: &CorporationEntry, selected: bool) -> Element<'static,
     .into()
 }
 
-fn picker_row_all(selected: bool) -> Element<'static, Message> {
-  let label: Element<'_, Message> = text("All Wallets")
+fn picker_row_all(label_str: &str, selected: bool) -> Element<'static, Message> {
+  let label: Element<'_, Message> = text(label_str.to_string())
     .font(font::body::MEDIUM)
     .size(14.0)
     .style(|_| iced::widget::text::Style {

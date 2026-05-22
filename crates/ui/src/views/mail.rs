@@ -176,6 +176,27 @@ fn context_menu_dismiss_subscription() -> Subscription<Message> {
   })
 }
 
+fn compose_suggestion_key_event(event: Event) -> Option<Message> {
+  let Event::Keyboard(keyboard::Event::KeyPressed {
+    key, ..
+  }) = event
+  else {
+    return None;
+  };
+  match key {
+    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+      Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(-1)))
+    }
+    keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+      Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(1)))
+    }
+    keyboard::Key::Named(keyboard::key::Named::Enter) => {
+      Some(Message::Compose(compose_panel::Message::SuggestionCursorConfirm))
+    }
+    _ => None,
+  }
+}
+
 fn compose_keyboard_subscription(state: &State) -> Option<Subscription<Message>> {
   if !state.compose_open {
     return None;
@@ -186,22 +207,8 @@ fn compose_keyboard_subscription(state: &State) -> Option<Subscription<Message>>
   if !to_active && !cc_active {
     return None;
   }
-  Some(iced::event::listen_with(|event, _status, _id| match event {
-    Event::Keyboard(keyboard::Event::KeyPressed {
-      key, ..
-    }) => match key {
-      keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-        Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(-1)))
-      }
-      keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-        Some(Message::Compose(compose_panel::Message::SuggestionCursorMove(1)))
-      }
-      keyboard::Key::Named(keyboard::key::Named::Enter) => {
-        Some(Message::Compose(compose_panel::Message::SuggestionCursorConfirm))
-      }
-      _ => None,
-    },
-    _ => None,
+  Some(iced::event::listen_with(|event, _status, _id| {
+    compose_suggestion_key_event(event)
   }))
 }
 
@@ -504,21 +511,32 @@ fn folder_display_label(folder: &Folder) -> &'static str {
   }
 }
 
+fn message_matches_folder_kind(m: &MailMessage, folder: &Folder) -> bool {
+  match folder {
+    Folder::All | Folder::Inbox => m.folder == "inbox",
+    Folder::Starred => m.starred,
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Sent => m.folder == "sent",
+    Folder::Drafts => m.folder == "drafts",
+    Folder::Archive => m.folder == "archive",
+    Folder::Trash => m.folder == "trash",
+    Folder::Label(l) => m.labels.contains(l),
+  }
+}
+
+fn message_in_folder(m: &MailMessage, folder: &Folder, account_id: i64) -> bool {
+  if matches!(folder, Folder::All) {
+    return m.folder == "inbox";
+  }
+  m.character_id == account_id && message_matches_folder_kind(m, folder)
+}
+
 fn folder_visible_stats(state: &State) -> (usize, u32) {
+  let account_id = state.current_account_id();
   state
     .messages
     .iter()
-    .filter(|m| match &state.selected_folder {
-      Folder::All => m.folder == "inbox",
-      Folder::Inbox => m.folder == "inbox" && m.character_id == state.current_account_id(),
-      Folder::Starred => m.starred && m.character_id == state.current_account_id(),
-      Folder::Snoozed => m.snoozed.is_some() && m.character_id == state.current_account_id(),
-      Folder::Sent => m.folder == "sent" && m.character_id == state.current_account_id(),
-      Folder::Drafts => m.folder == "drafts" && m.character_id == state.current_account_id(),
-      Folder::Archive => m.folder == "archive" && m.character_id == state.current_account_id(),
-      Folder::Trash => m.folder == "trash" && m.character_id == state.current_account_id(),
-      Folder::Label(l) => m.labels.contains(l) && m.character_id == state.current_account_id(),
-    })
+    .filter(|m| message_in_folder(m, &state.selected_folder, account_id))
     .fold((0usize, 0u32), |(t, u), m| (t + 1, u + u32::from(m.unread)))
 }
 

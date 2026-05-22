@@ -278,31 +278,28 @@ pub fn label_rows<'a>(messages: &'a [super::MailMessage], selected: &'a Folder) 
     .collect()
 }
 
+fn message_in_folder_count(m: &super::MailMessage, account_id: i64, folder: &Folder) -> bool {
+  if !matches!(folder, Folder::All) && m.character_id != account_id {
+    return false;
+  }
+  match folder {
+    Folder::All => m.folder == "inbox",
+    Folder::Inbox => m.folder == "inbox",
+    Folder::Starred => m.starred,
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Sent => m.folder == "sent",
+    Folder::Drafts => m.folder == "drafts",
+    Folder::Archive => m.folder == "archive",
+    Folder::Trash => m.folder == "trash",
+    Folder::Label(l) => m.labels.contains(l),
+  }
+}
+
 pub fn folder_counts(messages: &[super::MailMessage], account_id: i64, folder: &Folder) -> (u32, u32) {
   messages
     .iter()
-    .filter(|m| match folder {
-      Folder::All => true,
-      _ => m.character_id == account_id,
-    })
-    .fold((0u32, 0u32), |(t, u), m| {
-      let matches = match folder {
-        Folder::All => m.folder == "inbox",
-        Folder::Inbox => m.folder == "inbox",
-        Folder::Starred => m.starred,
-        Folder::Snoozed => m.snoozed.is_some(),
-        Folder::Sent => m.folder == "sent",
-        Folder::Drafts => m.folder == "drafts",
-        Folder::Archive => m.folder == "archive",
-        Folder::Trash => m.folder == "trash",
-        Folder::Label(l) => m.labels.contains(l),
-      };
-      if matches {
-        (t + 1, u + u32::from(m.unread))
-      } else {
-        (t, u)
-      }
-    })
+    .filter(|m| message_in_folder_count(m, account_id, folder))
+    .fold((0u32, 0u32), |(t, u), m| (t + 1, u + u32::from(m.unread)))
 }
 
 pub fn folder_icon_char(folder: &str) -> &'static str {

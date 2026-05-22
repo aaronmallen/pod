@@ -24,34 +24,40 @@ pub enum Message {
   SearchChanged(String),
 }
 
+fn message_passes_folder_filter(m: &MailMessage, folder: &Folder, account_id: i64) -> bool {
+  if !matches!(folder, Folder::All) && m.character_id != account_id {
+    return false;
+  }
+  match folder {
+    Folder::All => m.folder == "inbox",
+    Folder::Inbox => m.folder == "inbox",
+    Folder::Starred => m.starred,
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Sent => m.folder == "sent",
+    Folder::Drafts => m.folder == "drafts",
+    Folder::Archive => m.folder == "archive",
+    Folder::Trash => m.folder == "trash",
+    Folder::Label(l) => m.labels.contains(l),
+  }
+}
+
+fn message_passes_search(m: &MailMessage, query: &str) -> bool {
+  if query.is_empty() {
+    return true;
+  }
+  let q = query.to_lowercase();
+  m.subject.to_lowercase().contains(&q)
+    || m.from_name.to_lowercase().contains(&q)
+    || m.preview.to_lowercase().contains(&q)
+}
+
 fn filter_folder_messages(state: &State) -> Vec<&MailMessage> {
+  let account_id = state.current_account_id();
   state
     .messages
     .iter()
-    .filter(|m| match &state.selected_folder {
-      Folder::All => true,
-      _ => m.character_id == state.current_account_id(),
-    })
-    .filter(|m| match &state.selected_folder {
-      Folder::All => m.folder == "inbox",
-      Folder::Inbox => m.folder == "inbox",
-      Folder::Starred => m.starred,
-      Folder::Snoozed => m.snoozed.is_some(),
-      Folder::Sent => m.folder == "sent",
-      Folder::Drafts => m.folder == "drafts",
-      Folder::Archive => m.folder == "archive",
-      Folder::Trash => m.folder == "trash",
-      Folder::Label(l) => m.labels.contains(l),
-    })
-    .filter(|m| {
-      if state.search_query.is_empty() {
-        return true;
-      }
-      let q = state.search_query.to_lowercase();
-      m.subject.to_lowercase().contains(&q)
-        || m.from_name.to_lowercase().contains(&q)
-        || m.preview.to_lowercase().contains(&q)
-    })
+    .filter(|m| message_passes_folder_filter(m, &state.selected_folder, account_id))
+    .filter(|m| message_passes_search(m, &state.search_query))
     .collect()
 }
 

@@ -37,14 +37,41 @@ async fn do_seed(
   db: pod_db::Repo,
   tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
 ) -> Result<pod_db::Repo, String> {
+  let tmp = std::env::temp_dir().join("pod_sde");
+  let (extract_dir, build_version) = download_and_extract(tx, &tmp).await?;
+
+  if build_version.as_deref() == read_stored_sde_version().as_deref() && build_version.is_some() {
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    return Ok(db);
+  }
+
+  let root = find_sde_root(&extract_dir).await;
+  let r = root.as_path();
+
+  db.disable_foreign_keys().await.map_err(|e| e.to_string())?;
+  let seed_result = seed_all_tables(&db, tx, r).await;
+  db.enable_foreign_keys().await.map_err(|e| e.to_string())?;
+  seed_result?;
+
+  if let Some(build) = build_version {
+    write_stored_sde_version(&build);
+  }
+
+  let _ = tokio::fs::remove_dir_all(&tmp).await;
+
+  Ok(db)
+}
+
+async fn download_and_extract(
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  tmp: &std::path::Path,
+) -> Result<(std::path::PathBuf, Option<String>), String> {
+  tokio::fs::create_dir_all(tmp).await.map_err(|e| e.to_string())?;
+
+  let zip_path = tmp.join("sde.zip");
   let esi = pod_esi::Client::builder(crate::ESI_CLIENT_ID)
     .build()
     .map_err(|e| e.to_string())?;
-
-  let tmp = std::env::temp_dir().join("pod_sde");
-  tokio::fs::create_dir_all(&tmp).await.map_err(|e| e.to_string())?;
-
-  let zip_path = tmp.join("sde.zip");
 
   step(tx, "Downloading static data\u{2026}").await;
   esi
@@ -61,81 +88,77 @@ async fn do_seed(
   extract_zip(&zip_path, &extract_dir).await?;
 
   let build_version = read_sde_build_version(&extract_dir).await;
+  Ok((extract_dir, build_version))
+}
 
-  if build_version.as_deref() == read_stored_sde_version().as_deref() && build_version.is_some() {
-    let _ = tokio::fs::remove_dir_all(&tmp).await;
-    return Ok(db);
+async fn seed_all_tables(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
+  seed_item_tables(db, tx, r).await?;
+  seed_universe_tables(db, tx, r).await
+}
+
+async fn seed_item_tables(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
+  step(tx, "Seeding item categories\u{2026}").await;
+  seed_categories(db, &r.join("categories.yaml")).await?;
+
+  step(tx, "Seeding item groups\u{2026}").await;
+  seed_groups(db, &r.join("groups.yaml")).await?;
+
+  step(tx, "Seeding market groups\u{2026}").await;
+  seed_market_groups(db, &r.join("marketGroups.yaml")).await?;
+
+  step(tx, "Seeding item types\u{2026}").await;
+  seed_types(db, &r.join("types.yaml"), &r.join("typeDogma.yaml")).await?;
+
+  if r.join("certificates.yaml").exists() {
+    step(tx, "Seeding certificates\u{2026}").await;
+    seed_certificates(db, &r.join("certificates.yaml")).await?;
   }
 
-  let root = find_sde_root(&extract_dir).await;
-  let r = root.as_path();
-
-  db.disable_foreign_keys().await.map_err(|e| e.to_string())?;
-
-  let seed_result: Result<(), String> = async {
-    step(tx, "Seeding item categories\u{2026}").await;
-    seed_categories(&db, &r.join("categories.yaml")).await?;
-
-    step(tx, "Seeding item groups\u{2026}").await;
-    seed_groups(&db, &r.join("groups.yaml")).await?;
-
-    step(tx, "Seeding market groups\u{2026}").await;
-    seed_market_groups(&db, &r.join("marketGroups.yaml")).await?;
-
-    step(tx, "Seeding item types\u{2026}").await;
-    seed_types(&db, &r.join("types.yaml"), &r.join("typeDogma.yaml")).await?;
-
-    if r.join("certificates.yaml").exists() {
-      step(tx, "Seeding certificates\u{2026}").await;
-      seed_certificates(&db, &r.join("certificates.yaml")).await?;
-    }
-
-    if r.join("masteries.yaml").exists() {
-      step(tx, "Seeding ship masteries\u{2026}").await;
-      seed_masteries(&db, &r.join("masteries.yaml")).await?;
-    }
-
-    step(tx, "Seeding factions\u{2026}").await;
-    seed_factions(&db, &r.join("factions.yaml")).await?;
-
-    step(tx, "Seeding races\u{2026}").await;
-    seed_races(&db, &r.join("races.yaml")).await?;
-
-    step(tx, "Seeding bloodlines\u{2026}").await;
-    seed_bloodlines(&db, &r.join("bloodlines.yaml")).await?;
-
-    step(tx, "Seeding universe regions\u{2026}").await;
-    seed_regions(&db, &r.join("mapRegions.yaml")).await?;
-
-    step(tx, "Seeding constellations\u{2026}").await;
-    seed_constellations(&db, &r.join("mapConstellations.yaml")).await?;
-
-    step(tx, "Seeding solar systems\u{2026}").await;
-    seed_solar_systems(&db, &r.join("mapSolarSystems.yaml")).await?;
-
-    step(tx, "Seeding stars\u{2026}").await;
-    seed_stars(&db, &r.join("mapStars.yaml")).await?;
-
-    step(tx, "Seeding planets\u{2026}").await;
-    seed_planets(&db, &r.join("mapPlanets.yaml")).await?;
-
-    step(tx, "Seeding stargates\u{2026}").await;
-    seed_stargates(&db, &r.join("mapStargates.yaml")).await?;
-
-    Ok(())
-  }
-  .await;
-
-  db.enable_foreign_keys().await.map_err(|e| e.to_string())?;
-  seed_result?;
-
-  if let Some(build) = build_version {
-    write_stored_sde_version(&build);
+  if r.join("masteries.yaml").exists() {
+    step(tx, "Seeding ship masteries\u{2026}").await;
+    seed_masteries(db, &r.join("masteries.yaml")).await?;
   }
 
-  let _ = tokio::fs::remove_dir_all(&tmp).await;
+  step(tx, "Seeding factions\u{2026}").await;
+  seed_factions(db, &r.join("factions.yaml")).await?;
 
-  Ok(db)
+  step(tx, "Seeding races\u{2026}").await;
+  seed_races(db, &r.join("races.yaml")).await?;
+
+  step(tx, "Seeding bloodlines\u{2026}").await;
+  seed_bloodlines(db, &r.join("bloodlines.yaml")).await
+}
+
+async fn seed_universe_tables(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
+  step(tx, "Seeding universe regions\u{2026}").await;
+  seed_regions(db, &r.join("mapRegions.yaml")).await?;
+
+  step(tx, "Seeding constellations\u{2026}").await;
+  seed_constellations(db, &r.join("mapConstellations.yaml")).await?;
+
+  step(tx, "Seeding solar systems\u{2026}").await;
+  seed_solar_systems(db, &r.join("mapSolarSystems.yaml")).await?;
+
+  step(tx, "Seeding stars\u{2026}").await;
+  seed_stars(db, &r.join("mapStars.yaml")).await?;
+
+  step(tx, "Seeding planets\u{2026}").await;
+  seed_planets(db, &r.join("mapPlanets.yaml")).await?;
+
+  step(tx, "Seeding stargates\u{2026}").await;
+  seed_stargates(db, &r.join("mapStargates.yaml")).await
 }
 
 async fn step(tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>, label: &str) {
@@ -145,28 +168,46 @@ async fn step(tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
 async fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
   let zip_path = zip_path.to_owned();
   let dest = dest.to_owned();
-  tokio::task::spawn_blocking(move || {
-    let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    for i in 0..archive.len() {
-      let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-      let out_path = dest.join(entry.name());
-      if entry.is_dir() {
-        std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
-      } else {
-        if let Some(parent) = out_path.parent() {
-          std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-        out.write_all(&buf).map_err(|e| e.to_string())?;
-      }
-    }
-    Ok::<(), String>(())
-  })
-  .await
-  .map_err(|e| e.to_string())?
+  tokio::task::spawn_blocking(move || extract_zip_sync(&zip_path, &dest))
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn extract_zip_sync(zip_path: &Path, dest: &Path) -> Result<(), String> {
+  let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+  let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+  for i in 0..archive.len() {
+    let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+    let out_path = dest.join(entry.name());
+    extract_zip_entry(&mut entry, &out_path)?;
+  }
+  Ok(())
+}
+
+fn extract_zip_entry<R: std::io::Read + ?Sized>(
+  entry: &mut zip::read::ZipFile<'_, R>,
+  out_path: &Path,
+) -> Result<(), String> {
+  if entry.is_dir() {
+    std::fs::create_dir_all(out_path).map_err(|e| e.to_string())?;
+  } else {
+    write_zip_file_entry(entry, out_path)?;
+  }
+  Ok(())
+}
+
+fn write_zip_file_entry<R: std::io::Read + ?Sized>(
+  entry: &mut zip::read::ZipFile<'_, R>,
+  out_path: &Path,
+) -> Result<(), String> {
+  if let Some(parent) = out_path.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let mut out = std::fs::File::create(out_path).map_err(|e| e.to_string())?;
+  let mut buf = Vec::new();
+  entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+  out.write_all(&buf).map_err(|e| e.to_string())?;
+  Ok(())
 }
 
 /// Locates the directory that directly contains `categories.yaml`, handling
@@ -843,6 +884,34 @@ async fn seed_certificates(db: &pod_db::Repo, path: &Path) -> Result<(), String>
     .map_err(|e| e.to_string())
 }
 
+fn collect_mastery_tier(
+  ship_id: i32,
+  tier_key: serde_yaml::Value,
+  certs_val: serde_yaml::Value,
+  out: &mut Vec<(i32, i32, Vec<i32>)>,
+) {
+  let tier_idx = match &tier_key {
+    serde_yaml::Value::Number(n) => n.as_u64().and_then(|n| u8::try_from(n).ok()),
+    serde_yaml::Value::String(s) => s.parse().ok(),
+    _ => None,
+  };
+  let serde_yaml::Value::Sequence(certs) = certs_val else {
+    return;
+  };
+  let cert_ids: Vec<i32> = certs
+    .into_iter()
+    .filter_map(|v| match v {
+      serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+      _ => None,
+    })
+    .collect();
+  if let Some(idx) = tier_idx.filter(|&t| t < 5)
+    && !cert_ids.is_empty()
+  {
+    out.push((ship_id, (idx as i32) + 1, cert_ids));
+  }
+}
+
 #[tracing::instrument(skip(db))]
 async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let raw_bytes = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
@@ -863,26 +932,7 @@ async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
       continue;
     };
     for (tier_key, certs_val) in tiers {
-      let tier_idx = match &tier_key {
-        serde_yaml::Value::Number(n) => n.as_u64().and_then(|n| u8::try_from(n).ok()),
-        serde_yaml::Value::String(s) => s.parse().ok(),
-        _ => None,
-      };
-      let serde_yaml::Value::Sequence(certs) = certs_val else {
-        continue;
-      };
-      let cert_ids: Vec<i32> = certs
-        .into_iter()
-        .filter_map(|v| match v {
-          serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
-          _ => None,
-        })
-        .collect();
-      if let Some(idx) = tier_idx.filter(|&t| t < 5)
-        && !cert_ids.is_empty()
-      {
-        mastery_entries.push((ship_id, (idx as i32) + 1, cert_ids));
-      }
+      collect_mastery_tier(ship_id, tier_key, certs_val, &mut mastery_entries);
     }
   }
 

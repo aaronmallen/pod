@@ -506,48 +506,39 @@ fn picker_row_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button
   }
 }
 
-fn portrait_swatch<MSG: 'static>(
-  name: &str,
-  tone: u16,
-  size: f32,
-  radius: f32,
-  portrait_handle: Option<image::Handle>,
-) -> Element<'static, MSG> {
-  if let Some(handle) = portrait_handle {
-    return container(
-      image(handle)
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size))
-        .content_fit(iced::ContentFit::Cover),
-    )
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .clip(true)
-    .style(move |_| container::Style {
-      border: Border {
-        radius: radius.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into();
-  }
+fn portrait_image_swatch<MSG: 'static>(handle: image::Handle, size: f32, radius: f32) -> Element<'static, MSG> {
+  container(
+    image(handle)
+      .width(Length::Fixed(size))
+      .height(Length::Fixed(size))
+      .content_fit(iced::ContentFit::Cover),
+  )
+  .width(Length::Fixed(size))
+  .height(Length::Fixed(size))
+  .clip(true)
+  .style(move |_| container::Style {
+    border: Border {
+      radius: radius.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
 
+fn initials_swatch<MSG: 'static>(name: &str, tone: u16, size: f32, radius: f32) -> Element<'static, MSG> {
   let initials = name
     .split_whitespace()
     .filter_map(|w| w.chars().next())
     .take(2)
     .map(|c| c.to_uppercase().next().unwrap_or(c))
     .collect::<String>();
-
   let h = tone as f32 / 360.0;
   let (r0, g0, b0) = hsl_to_rgb(h, 0.28, 0.28);
   let (r1, g1, b1) = hsl_to_rgb(h, 0.18, 0.16);
-
   let grad = gradient::Linear::new(std::f32::consts::PI * 0.75)
     .add_stop(0.0, Color::from_rgb(r0, g0, b0))
     .add_stop(1.0, Color::from_rgb(r1, g1, b1));
-
   container(
     text(initials)
       .font(font::body::MEDIUM)
@@ -569,6 +560,19 @@ fn portrait_swatch<MSG: 'static>(
     ..container::Style::default()
   })
   .into()
+}
+
+fn portrait_swatch<MSG: 'static>(
+  name: &str,
+  tone: u16,
+  size: f32,
+  radius: f32,
+  portrait_handle: Option<image::Handle>,
+) -> Element<'static, MSG> {
+  if let Some(handle) = portrait_handle {
+    return portrait_image_swatch(handle, size, radius);
+  }
+  initials_swatch(name, tone, size, radius)
 }
 
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {

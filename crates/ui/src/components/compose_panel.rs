@@ -91,194 +91,16 @@ impl Component {
     self
   }
 
-  /// Builder: set the currently selected from-character ID.
-  pub fn from_selected(mut self, id: Option<i64>) -> Self {
-    let sel = id.map(PickerSelection::Character).unwrap_or(PickerSelection::All);
-    self.from_picker = self.from_picker.selected(sel);
-    self
-  }
-
   /// Returns the currently selected from-character ID (from the picker).
   pub fn from_id(&self) -> Option<i64> {
     self.from_picker.selected_character_id()
   }
 
-  /// Reset compose state for a fresh new message.
-  pub fn reset(&mut self) {
-    self.to.clear();
-    self.to_search.clear();
-    self.to_suggestions.clear();
-    self.to_suggestion_cursor = None;
-    self.cc.clear();
-    self.cc_search.clear();
-    self.cc_suggestions.clear();
-    self.cc_suggestion_cursor = None;
-    self.cc_visible = false;
-    self.subject.clear();
-    self.body = text_editor::Content::new();
-    self.expanded = false;
-    self.sending = false;
-    self.error = None;
-    self.from_picker.is_open = false;
-  }
-
-  /// Process a panel message, mutating internal state.
-  pub fn update(&mut self, msg: Message) {
-    match msg {
-      Message::Close => {
-        self.sending = false;
-        self.error = None;
-        self.from_picker.is_open = false;
-        self.to_suggestions.clear();
-        self.to_suggestion_cursor = None;
-        self.cc_suggestions.clear();
-        self.cc_suggestion_cursor = None;
-      }
-      Message::Expand => {
-        self.expanded = !self.expanded;
-      }
-      Message::ToSearchChanged(val) => {
-        self.from_picker.is_open = false;
-        if val.is_empty() {
-          self.to_suggestions.clear();
-          self.to_suggestion_cursor = None;
-        }
-        self.to_search = val;
-      }
-      Message::ToSearchResults(results) => {
-        self.to_suggestion_cursor = None;
-        self.to_suggestions = results;
-      }
-      Message::ToSearchSelect(id, name) => {
-        self.to.push(ComposeRecipient {
-          name,
-          id: Some(id),
-        });
-        self.to_search.clear();
-        self.to_suggestions.clear();
-        self.to_suggestion_cursor = None;
-      }
-      Message::ToAdd => {
-        let name = self.to_search.trim().to_string();
-        if !name.is_empty() {
-          self.to.push(ComposeRecipient {
-            name,
-            id: None,
-          });
-          self.to_search.clear();
-          self.to_suggestions.clear();
-          self.to_suggestion_cursor = None;
-        }
-      }
-      Message::ToRemove(idx) => {
-        if idx < self.to.len() {
-          self.to.remove(idx);
-        }
-      }
-      Message::CcToggle => {
-        self.cc_visible = !self.cc_visible;
-      }
-      Message::CcSearchChanged(val) => {
-        if val.is_empty() {
-          self.cc_suggestions.clear();
-          self.cc_suggestion_cursor = None;
-        }
-        self.cc_search = val;
-      }
-      Message::CcSearchResults(results) => {
-        self.cc_suggestion_cursor = None;
-        self.cc_suggestions = results;
-      }
-      Message::CcSearchSelect(id, name) => {
-        self.cc.push(ComposeRecipient {
-          name,
-          id: Some(id),
-        });
-        self.cc_search.clear();
-        self.cc_suggestions.clear();
-        self.cc_suggestion_cursor = None;
-      }
-      Message::CcAdd => {
-        let name = self.cc_search.trim().to_string();
-        if !name.is_empty() {
-          self.cc.push(ComposeRecipient {
-            name,
-            id: None,
-          });
-          self.cc_search.clear();
-          self.cc_suggestions.clear();
-          self.cc_suggestion_cursor = None;
-        }
-      }
-      Message::CcRemove(idx) => {
-        if idx < self.cc.len() {
-          self.cc.remove(idx);
-        }
-      }
-      Message::SubjectChanged(val) => {
-        self.subject = val;
-      }
-      Message::BodyAction(action) => {
-        self.body.perform(action);
-      }
-      Message::FromPicker(msg) => {
-        self.from_picker.update(msg);
-      }
-      Message::SuggestionCursorMove(delta) => {
-        let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
-        let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
-        if to_active {
-          let len = self.to_suggestions.len();
-          let cur = self.to_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
-          self.to_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
-        } else if cc_active {
-          let len = self.cc_suggestions.len();
-          let cur = self.cc_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
-          self.cc_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
-        }
-      }
-      Message::SuggestionCursorConfirm => {
-        let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
-        let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
-        if to_active {
-          if let Some(i) = self.to_suggestion_cursor
-            && let Some((id, name)) = self.to_suggestions.get(i).cloned()
-          {
-            self.to.push(ComposeRecipient {
-              name,
-              id: Some(id),
-            });
-            self.to_search.clear();
-            self.to_suggestions.clear();
-            self.to_suggestion_cursor = None;
-          }
-        } else if cc_active {
-          if let Some(i) = self.cc_suggestion_cursor
-            && let Some((id, name)) = self.cc_suggestions.get(i).cloned()
-          {
-            self.cc.push(ComposeRecipient {
-              name,
-              id: Some(id),
-            });
-            self.cc_search.clear();
-            self.cc_suggestions.clear();
-            self.cc_suggestion_cursor = None;
-          }
-        }
-      }
-      Message::SendPressed => {
-        self.sending = true;
-        self.error = None;
-      }
-      Message::Sent(Ok(_)) => {
-        self.sending = false;
-        self.reset();
-      }
-      Message::Sent(Err(e)) => {
-        self.sending = false;
-        self.error = Some(e);
-      }
-    }
+  /// Builder: set the currently selected from-character ID.
+  pub fn from_selected(mut self, id: Option<i64>) -> Self {
+    let sel = id.map(PickerSelection::Character).unwrap_or(PickerSelection::All);
+    self.from_picker = self.from_picker.selected(sel);
+    self
   }
 
   /// Render the compose panel at the appropriate size.
@@ -314,6 +136,200 @@ impl Component {
       .width(Length::Fixed(panel_width))
       .height(Length::Fixed(panel_height))
       .render()
+  }
+
+  /// Reset compose state for a fresh new message.
+  pub fn reset(&mut self) {
+    self.to.clear();
+    self.to_search.clear();
+    self.to_suggestions.clear();
+    self.to_suggestion_cursor = None;
+    self.cc.clear();
+    self.cc_search.clear();
+    self.cc_suggestions.clear();
+    self.cc_suggestion_cursor = None;
+    self.cc_visible = false;
+    self.subject.clear();
+    self.body = text_editor::Content::new();
+    self.expanded = false;
+    self.sending = false;
+    self.error = None;
+    self.from_picker.is_open = false;
+  }
+
+  /// Process a panel message, mutating internal state.
+  pub fn update(&mut self, msg: Message) {
+    match msg {
+      Message::Close => self.apply_close(),
+      Message::Expand => self.expanded = !self.expanded,
+      Message::ToSearchChanged(val) => self.apply_to_search_changed(val),
+      Message::ToSearchResults(results) => {
+        self.to_suggestion_cursor = None;
+        self.to_suggestions = results;
+      }
+      Message::ToSearchSelect(id, name) => self.apply_to_select(id, name),
+      Message::ToAdd => self.apply_to_add(),
+      Message::ToRemove(idx) => {
+        if idx < self.to.len() {
+          self.to.remove(idx);
+        }
+      }
+      Message::CcToggle => self.cc_visible = !self.cc_visible,
+      Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
+      Message::CcSearchResults(results) => {
+        self.cc_suggestion_cursor = None;
+        self.cc_suggestions = results;
+      }
+      Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
+      Message::CcAdd => self.apply_cc_add(),
+      Message::CcRemove(idx) => {
+        if idx < self.cc.len() {
+          self.cc.remove(idx);
+        }
+      }
+      Message::SubjectChanged(val) => self.subject = val,
+      Message::BodyAction(action) => self.body.perform(action),
+      Message::FromPicker(msg) => self.from_picker.update(msg),
+      Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
+      Message::SuggestionCursorConfirm => self.apply_cursor_confirm(),
+      Message::SendPressed => {
+        self.sending = true;
+        self.error = None;
+      }
+      Message::Sent(Ok(_)) => {
+        self.sending = false;
+        self.reset();
+      }
+      Message::Sent(Err(e)) => {
+        self.sending = false;
+        self.error = Some(e);
+      }
+    }
+  }
+
+  fn apply_cc_add(&mut self) {
+    let name = self.cc_search.trim().to_string();
+    if !name.is_empty() {
+      self.cc.push(ComposeRecipient {
+        name,
+        id: None,
+      });
+      self.cc_search.clear();
+      self.cc_suggestions.clear();
+      self.cc_suggestion_cursor = None;
+    }
+  }
+
+  fn apply_cc_search_changed(&mut self, val: String) {
+    if val.is_empty() {
+      self.cc_suggestions.clear();
+      self.cc_suggestion_cursor = None;
+    }
+    self.cc_search = val;
+  }
+
+  fn apply_cc_select(&mut self, id: i64, name: String) {
+    self.cc.push(ComposeRecipient {
+      name,
+      id: Some(id),
+    });
+    self.cc_search.clear();
+    self.cc_suggestions.clear();
+    self.cc_suggestion_cursor = None;
+  }
+
+  fn apply_close(&mut self) {
+    self.sending = false;
+    self.error = None;
+    self.from_picker.is_open = false;
+    self.to_suggestions.clear();
+    self.to_suggestion_cursor = None;
+    self.cc_suggestions.clear();
+    self.cc_suggestion_cursor = None;
+  }
+
+  fn apply_cursor_confirm(&mut self) {
+    let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
+    let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
+    if to_active {
+      self.confirm_to_suggestion();
+    } else if cc_active {
+      self.confirm_cc_suggestion();
+    }
+  }
+
+  fn apply_cursor_move(&mut self, delta: i32) {
+    let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
+    let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
+    if to_active {
+      let len = self.to_suggestions.len();
+      let cur = self.to_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
+      self.to_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
+    } else if cc_active {
+      let len = self.cc_suggestions.len();
+      let cur = self.cc_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
+      self.cc_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
+    }
+  }
+
+  fn apply_to_add(&mut self) {
+    let name = self.to_search.trim().to_string();
+    if !name.is_empty() {
+      self.to.push(ComposeRecipient {
+        name,
+        id: None,
+      });
+      self.to_search.clear();
+      self.to_suggestions.clear();
+      self.to_suggestion_cursor = None;
+    }
+  }
+
+  fn apply_to_search_changed(&mut self, val: String) {
+    self.from_picker.is_open = false;
+    if val.is_empty() {
+      self.to_suggestions.clear();
+      self.to_suggestion_cursor = None;
+    }
+    self.to_search = val;
+  }
+
+  fn apply_to_select(&mut self, id: i64, name: String) {
+    self.to.push(ComposeRecipient {
+      name,
+      id: Some(id),
+    });
+    self.to_search.clear();
+    self.to_suggestions.clear();
+    self.to_suggestion_cursor = None;
+  }
+
+  fn confirm_cc_suggestion(&mut self) {
+    if let Some(i) = self.cc_suggestion_cursor
+      && let Some((id, name)) = self.cc_suggestions.get(i).cloned()
+    {
+      self.cc.push(ComposeRecipient {
+        name,
+        id: Some(id),
+      });
+      self.cc_search.clear();
+      self.cc_suggestions.clear();
+      self.cc_suggestion_cursor = None;
+    }
+  }
+
+  fn confirm_to_suggestion(&mut self) {
+    if let Some(i) = self.to_suggestion_cursor
+      && let Some((id, name)) = self.to_suggestions.get(i).cloned()
+    {
+      self.to.push(ComposeRecipient {
+        name,
+        id: Some(id),
+      });
+      self.to_search.clear();
+      self.to_suggestions.clear();
+      self.to_suggestion_cursor = None;
+    }
   }
 }
 
@@ -571,6 +587,50 @@ fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
   }
 }
 
+fn suggestion_row<'a>(
+  idx: usize,
+  id: i64,
+  name: &'a str,
+  cursor: Option<usize>,
+  make_msg: impl Fn(i64, String) -> Message,
+) -> Element<'a, Message> {
+  let selected = cursor == Some(idx);
+  let msg_name = name.to_string();
+  button(
+    text(name)
+      .font(font::body::MEDIUM)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 8.0,
+    bottom: 8.0,
+    left: 12.0,
+    right: 12.0,
+  })
+  .on_press(make_msg(id, msg_name))
+  .style(move |_, status| button::Style {
+    background: if selected {
+      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
+    } else {
+      match status {
+        button::Status::Hovered | button::Status::Pressed => {
+          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06)))
+        }
+        _ => None,
+      }
+    },
+    border: Border::default(),
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  })
+  .into()
+}
+
 fn suggestions_box<'a>(
   suggestions: &'a [(i64, String)],
   cursor: Option<usize>,
@@ -579,44 +639,7 @@ fn suggestions_box<'a>(
   let rows: Vec<Element<'_, Message>> = suggestions
     .iter()
     .enumerate()
-    .map(|(idx, (id, name))| {
-      let id = *id;
-      let msg_name = name.clone();
-      let selected = cursor == Some(idx);
-      button(
-        text(name.as_str())
-          .font(font::body::MEDIUM)
-          .size(13.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::PRIMARY),
-          })
-          .width(Length::Fill),
-      )
-      .width(Length::Fill)
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 12.0,
-        right: 12.0,
-      })
-      .on_press(make_msg(id, msg_name))
-      .style(move |_, status| button::Style {
-        background: if selected {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
-        } else {
-          match status {
-            button::Status::Hovered | button::Status::Pressed => {
-              Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06)))
-            }
-            _ => None,
-          }
-        },
-        border: Border::default(),
-        text_color: color::text::PRIMARY,
-        ..button::Style::default()
-      })
-      .into()
-    })
+    .map(|(idx, (id, name))| suggestion_row(idx, *id, name.as_str(), cursor, &make_msg))
     .collect();
   container(column(rows).width(Length::Fill))
     .width(Length::Fill)

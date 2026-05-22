@@ -128,6 +128,373 @@ impl<'a> Component<'a> {
   }
 }
 
+struct FlagData {
+  description: &'static str,
+  enabled: bool,
+  feature: Feature,
+  title: &'static str,
+}
+
+fn all_flags(state: &State) -> Vec<FlagData> {
+  let mut flags = character_flags(state);
+  flags.extend(world_flags(state));
+  flags
+}
+
+fn build_visible_flags(state: &State) -> Vec<FlagData> {
+  let q = state.search_query.trim().to_lowercase();
+  let all = all_flags(state);
+  if q.is_empty() {
+    return all;
+  }
+  all
+    .into_iter()
+    .filter(|f| f.title.to_lowercase().contains(&q) || f.description.to_lowercase().contains(&q))
+    .collect()
+}
+
+fn categories_active_indicator() -> Element<'static, Message> {
+  container(
+    container(Space::new())
+      .width(2.0)
+      .height(24.0)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::PLASMA)),
+        border: Border {
+          radius: Radius {
+            top_left: 0.0,
+            top_right: radius::SUBTLE,
+            bottom_right: radius::SUBTLE,
+            bottom_left: 0.0,
+          },
+          ..Border::default()
+        },
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Left)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn categories_features_row(enabled: usize, total: usize) -> Element<'static, Message> {
+  let count_badge = text(format!("{enabled}/{total}"))
+    .size(10.0)
+    .color(color::accent::PLASMA);
+  let active_indicator = categories_active_indicator();
+  container(
+    iced::widget::stack([
+      container(
+        row([
+          text("Features").size(13.0).color(color::text::PRIMARY).into(),
+          Space::new().width(Length::Fill).into(),
+          count_badge.into(),
+        ])
+        .align_y(Vertical::Center)
+        .padding(Padding {
+          top: 10.0,
+          bottom: 10.0,
+          left: spacing::SPACE_3,
+          right: spacing::SPACE_3,
+        }),
+      )
+      .width(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
+        border: Border {
+          radius: radius::CHIP.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into(),
+      active_indicator,
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .into()
+}
+
+fn character_flags(state: &State) -> Vec<FlagData> {
+  vec![
+    FlagData {
+      description: "Sync jump-clone locations and active-clone implants",
+      enabled: state.clone_monitoring,
+      feature: Feature::CloneMonitoring,
+      title: "Clone Monitoring",
+    },
+    FlagData {
+      description: "Read character contacts and contact labels",
+      enabled: state.contacts,
+      feature: Feature::Contacts,
+      title: "Contacts",
+    },
+    FlagData {
+      description: "Read recent character killmails",
+      enabled: state.combat_log,
+      feature: Feature::CombatLog,
+      title: "Combat Log",
+    },
+    FlagData {
+      description: "Read EVE notification feed",
+      enabled: state.eve_notifications,
+      feature: Feature::EveNotifications,
+      title: "EVE Notifications",
+    },
+    FlagData {
+      description: "Read character standings toward NPCs and other players",
+      enabled: state.standings,
+      feature: Feature::Standings,
+      title: "Standings",
+    },
+  ]
+}
+
+fn feature_esi_chip() -> Element<'static, Message> {
+  container(text("ESI").size(9.0).color(color::accent::PLASMA))
+    .padding(Padding {
+      top: 2.0,
+      bottom: 2.0,
+      left: 6.0,
+      right: 6.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(Color {
+        r: color::accent::PLASMA.r,
+        g: color::accent::PLASMA.g,
+        b: color::accent::PLASMA.b,
+        a: 0.06,
+      })),
+      border: Border {
+        color: Color {
+          r: color::accent::PLASMA.r,
+          g: color::accent::PLASMA.g,
+          b: color::accent::PLASMA.b,
+          a: 0.30,
+        },
+        radius: radius::CHIP.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn features_panel_header(state: &State, total_shown: usize) -> Element<'_, Message> {
+  let panel_title = text("Features").size(18.0).color(color::text::PRIMARY);
+  let panel_desc = text(
+    "Toggle individual Pod capabilities on or off. Changes apply \
+    immediately and sync across your linked characters; reload any \
+    view to see the result.",
+  )
+  .size(13.0)
+  .color(color::text::SECONDARY);
+  let search_row = features_search_row(state, total_shown);
+  column([
+    row([panel_title.into(), Space::new().width(Length::Fill).into()])
+      .align_y(Vertical::Center)
+      .into(),
+    Space::new().height(4.0).into(),
+    panel_desc.into(),
+    Space::new().height(spacing::SPACE_3_5).into(),
+    search_row,
+  ])
+  .padding(Padding {
+    top: 24.0,
+    bottom: spacing::SPACE_3_5,
+    left: 36.0,
+    right: 36.0,
+  })
+  .into()
+}
+
+fn features_scroll_body<'a>(state: &'a State, flags: Vec<FlagData>) -> Element<'a, Message> {
+  let scroll_content: Vec<Element<'_, Message>> = if flags.is_empty() {
+    vec![
+      container(
+        text(format!("No features match \"{}\".", state.search_query))
+          .size(13.0)
+          .color(color::text::SECONDARY),
+      )
+      .width(Length::Fill)
+      .padding(Padding::new(80.0))
+      .into(),
+    ]
+  } else {
+    flags.into_iter().map(render_feature_row).collect()
+  };
+  scrollable(column(scroll_content).width(Length::Fill).padding(Padding {
+    top: 0.0,
+    bottom: 60.0,
+    left: 36.0,
+    right: 36.0,
+  }))
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn features_search_row(state: &State, total_shown: usize) -> Element<'_, Message> {
+  let search_icon = crate::components::Icon::search()
+    .size(14.0)
+    .color(color::text::SECONDARY)
+    .render::<Message>();
+  let count_chip = container(text(format!("{total_shown}")).size(9.0).color(color::text::TERTIARY))
+    .padding(Padding {
+      top: 2.0,
+      bottom: 2.0,
+      left: 6.0,
+      right: 6.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: radius::CHIP.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    });
+  container(
+    row([
+      search_icon,
+      text_input("Filter features\u{2026}", &state.search_query)
+        .on_input(Message::SearchChanged)
+        .size(13.0)
+        .style(|_, _| text_input::Style {
+          background: Background::Color(Color::TRANSPARENT),
+          border: Border::default(),
+          icon: color::text::SECONDARY,
+          placeholder: color::text::TERTIARY,
+          selection: color::accent::PLASMA_SUBTLE,
+          value: color::text::PRIMARY,
+        })
+        .into(),
+      count_chip.into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .max_width(480.0)
+  .padding(Padding {
+    top: 7.0,
+    bottom: 7.0,
+    left: spacing::SPACE_3,
+    right: spacing::SPACE_3,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: radius::CHIP.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn render_categories_pane(state: &State) -> Element<'_, Message> {
+  let enabled = state.enabled_count();
+  let total = State::total_count();
+  let label = text("Categories").size(9.0).color(color::text::SECONDARY);
+  let features_row = categories_features_row(enabled, total);
+  let categories_col: Element<'_, Message> = column([
+    container(label)
+      .padding(Padding {
+        top: 18.0,
+        bottom: 10.0,
+        left: spacing::SPACE_1 + 2.0,
+        right: 0.0,
+      })
+      .into(),
+    features_row,
+  ])
+  .padding(Padding {
+    top: 0.0,
+    bottom: 0.0,
+    left: spacing::SPACE_3_5,
+    right: spacing::SPACE_3_5,
+  })
+  .into();
+  let right_border = container(Space::new().width(1.0).height(Length::Fill))
+    .width(1.0)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    });
+  row([
+    container(categories_col)
+      .width(220.0)
+      .height(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::SUNKEN)),
+        ..container::Style::default()
+      })
+      .into(),
+    right_border.into(),
+  ])
+  .into()
+}
+
+fn render_feature_row(flag: FlagData) -> Element<'static, Message> {
+  let title = text(flag.title).size(14.0).color(color::text::PRIMARY);
+  let description = text(flag.description).size(12.0).color(color::text::SECONDARY);
+  let toggle = render_toggle(flag.enabled, flag.feature);
+  let bottom_border = container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    });
+  column([
+    row([
+      column([
+        row([title.into(), feature_esi_chip()])
+          .spacing(10.0)
+          .align_y(Vertical::Center)
+          .into(),
+        Space::new().height(4.0).into(),
+        description.into(),
+      ])
+      .into(),
+      Space::new().width(Length::Fill).into(),
+      container(toggle).align_y(Vertical::Center).height(Length::Fill).into(),
+    ])
+    .align_y(Vertical::Center)
+    .padding(Padding {
+      top: 16.0,
+      bottom: 16.0,
+      left: 4.0,
+      right: 4.0,
+    })
+    .into(),
+    bottom_border.into(),
+  ])
+  .into()
+}
+
+fn render_features_panel(state: &State) -> Element<'_, Message> {
+  let flags = build_visible_flags(state);
+  let panel_inner_header = features_panel_header(state, flags.len());
+  let inner_header_border = container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    });
+  let scrollable_body = features_scroll_body(state, flags);
+  column([panel_inner_header, inner_header_border.into(), scrollable_body])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
 fn render_header() -> Element<'static, Message> {
   let eyebrow = text("Pod · Preferences").size(9.0).color(color::text::SECONDARY);
   let title = text("Settings").size(22.0).color(color::text::PRIMARY);
@@ -174,395 +541,19 @@ fn render_header() -> Element<'static, Message> {
     .into()
 }
 
-fn render_categories_pane(state: &State) -> Element<'_, Message> {
-  let enabled = state.enabled_count();
-  let total = State::total_count();
-
-  let label = text("Categories").size(9.0).color(color::text::SECONDARY);
-  let count_badge = text(format!("{enabled}/{total}"))
-    .size(10.0)
-    .color(color::accent::PLASMA);
-
-  let active_indicator: Element<'_, Message> =
-    container(
-      container(Space::new())
-        .width(2.0)
-        .height(24.0)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA)),
-          border: Border {
-            radius: Radius {
-              top_left: 0.0,
-              top_right: radius::SUBTLE,
-              bottom_right: radius::SUBTLE,
-              bottom_left: 0.0,
-            },
-            ..Border::default()
-          },
-          ..container::Style::default()
-        }),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Left)
-    .align_y(Vertical::Center)
-    .into();
-
-  let features_row: Element<'_, Message> = container(
-    iced::widget::stack([
-      container(
-        row([
-          text("Features").size(13.0).color(color::text::PRIMARY).into(),
-          Space::new().width(Length::Fill).into(),
-          count_badge.into(),
-        ])
-        .align_y(Vertical::Center)
-        .padding(Padding {
-          top: 10.0,
-          bottom: 10.0,
-          left: spacing::SPACE_3,
-          right: spacing::SPACE_3,
-        }),
-      )
-      .width(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-        border: Border {
-          radius: radius::CHIP.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
-      active_indicator,
-    ])
-    .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .into();
-
-  let categories_col: Element<'_, Message> = column([
-    container(label)
-      .padding(Padding {
-        top: 18.0,
-        bottom: 10.0,
-        left: spacing::SPACE_1 + 2.0,
-        right: 0.0,
-      })
-      .into(),
-    features_row,
-  ])
-  .padding(Padding {
-    top: 0.0,
-    bottom: 0.0,
-    left: spacing::SPACE_3_5,
-    right: spacing::SPACE_3_5,
-  })
-  .into();
-
-  let right_border = container(Space::new().width(1.0).height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-
-  row([
-    container(categories_col)
-      .width(220.0)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::SUNKEN)),
-        ..container::Style::default()
-      })
-      .into(),
-    right_border.into(),
-  ])
-  .into()
-}
-
-fn render_features_panel(state: &State) -> Element<'_, Message> {
-  let panel_title = text("Features").size(18.0).color(color::text::PRIMARY);
-
-  let panel_desc = text(
-    "Toggle individual Pod capabilities on or off. Changes apply \
-    immediately and sync across your linked characters; reload any \
-    view to see the result.",
-  )
-  .size(13.0)
-  .color(color::text::SECONDARY);
-
-  let flags = build_visible_flags(state);
-  let total_shown = flags.len();
-
-  let search_icon = crate::components::Icon::search()
-    .size(14.0)
-    .color(color::text::SECONDARY)
-    .render::<Message>();
-
-  let count_chip = container(text(format!("{total_shown}")).size(9.0).color(color::text::TERTIARY))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
+fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
+  let track = toggle_track(on);
+  button(track)
+    .padding(Padding::ZERO)
+    .style(|_, _| button::Style {
+      background: None,
+      ..button::Style::default()
     })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-
-  let search_row: Element<'_, Message> = container(
-    row([
-      search_icon,
-      text_input("Filter features\u{2026}", &state.search_query)
-        .on_input(Message::SearchChanged)
-        .size(13.0)
-        .style(|_, _| text_input::Style {
-          background: Background::Color(Color::TRANSPARENT),
-          border: Border::default(),
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          selection: color::accent::PLASMA_SUBTLE,
-          value: color::text::PRIMARY,
-        })
-        .into(),
-      count_chip.into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .max_width(480.0)
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: radius::CHIP.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into();
-
-  let panel_inner_header: Element<'_, Message> = column([
-    row([panel_title.into(), Space::new().width(Length::Fill).into()])
-      .align_y(Vertical::Center)
-      .into(),
-    Space::new().height(4.0).into(),
-    panel_desc.into(),
-    Space::new().height(spacing::SPACE_3_5).into(),
-    search_row,
-  ])
-  .padding(Padding {
-    top: 24.0,
-    bottom: spacing::SPACE_3_5,
-    left: 36.0,
-    right: 36.0,
-  })
-  .into();
-
-  let inner_header_border = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-
-  let scroll_content: Vec<Element<'_, Message>> = if flags.is_empty() {
-    vec![
-      container(
-        text(format!("No features match \"{}\".", state.search_query))
-          .size(13.0)
-          .color(color::text::SECONDARY),
-      )
-      .width(Length::Fill)
-      .padding(Padding::new(80.0))
-      .into(),
-    ]
-  } else {
-    flags.into_iter().map(render_feature_row).collect()
-  };
-
-  let scrollable_body: Element<'_, Message> = scrollable(column(scroll_content).width(Length::Fill).padding(Padding {
-    top: 0.0,
-    bottom: 60.0,
-    left: 36.0,
-    right: 36.0,
-  }))
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .into();
-
-  column([panel_inner_header, inner_header_border.into(), scrollable_body])
-    .width(Length::Fill)
-    .height(Length::Fill)
+    .on_press(Message::ToggleFeature(feature))
     .into()
 }
 
-struct FlagData {
-  feature: Feature,
-  title: &'static str,
-  description: &'static str,
-  enabled: bool,
-}
-
-fn build_visible_flags(state: &State) -> Vec<FlagData> {
-  let q = state.search_query.trim().to_lowercase();
-
-  let all = vec![
-    FlagData {
-      feature: Feature::CloneMonitoring,
-      title: "Clone Monitoring",
-      description: "Sync jump-clone locations and active-clone implants",
-      enabled: state.clone_monitoring,
-    },
-    FlagData {
-      feature: Feature::Contacts,
-      title: "Contacts",
-      description: "Read character contacts and contact labels",
-      enabled: state.contacts,
-    },
-    FlagData {
-      feature: Feature::CombatLog,
-      title: "Combat Log",
-      description: "Read recent character killmails",
-      enabled: state.combat_log,
-    },
-    FlagData {
-      feature: Feature::EveNotifications,
-      title: "EVE Notifications",
-      description: "Read EVE notification feed",
-      enabled: state.eve_notifications,
-    },
-    FlagData {
-      feature: Feature::Standings,
-      title: "Standings",
-      description: "Read character standings toward NPCs and other players",
-      enabled: state.standings,
-    },
-    FlagData {
-      feature: Feature::LocationTracking,
-      title: "Location Tracking",
-      description: "Poll the character\u{2019}s current solar-system location",
-      enabled: state.location_tracking,
-    },
-    FlagData {
-      feature: Feature::SkillMonitoring,
-      title: "Skill Monitoring",
-      description: "Sync skill levels and active skill-training queue",
-      enabled: state.skill_monitoring,
-    },
-    FlagData {
-      feature: Feature::Mail,
-      title: "Mail",
-      description: "Read, organise, and send EVE mail",
-      enabled: state.mail,
-    },
-    FlagData {
-      feature: Feature::Wallet,
-      title: "Wallet",
-      description: "Read character wallet balance, journal, and transactions",
-      enabled: state.wallet,
-    },
-    FlagData {
-      feature: Feature::AssetTracking,
-      title: "Asset Tracking",
-      description: "Read character assets and resolve player-owned structure names",
-      enabled: state.asset_tracking,
-    },
-  ];
-
-  if q.is_empty() {
-    return all;
-  }
-
-  all
-    .into_iter()
-    .filter(|f| f.title.to_lowercase().contains(&q) || f.description.to_lowercase().contains(&q))
-    .collect()
-}
-
-fn render_feature_row(flag: FlagData) -> Element<'static, Message> {
-  let title = text(flag.title).size(14.0).color(color::text::PRIMARY);
-
-  let esi_chip = container(text("ESI").size(9.0).color(color::accent::PLASMA))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(Color {
-        r: color::accent::PLASMA.r,
-        g: color::accent::PLASMA.g,
-        b: color::accent::PLASMA.b,
-        a: 0.06,
-      })),
-      border: Border {
-        color: Color {
-          r: color::accent::PLASMA.r,
-          g: color::accent::PLASMA.g,
-          b: color::accent::PLASMA.b,
-          a: 0.30,
-        },
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-
-  let description = text(flag.description).size(12.0).color(color::text::SECONDARY);
-  let toggle = render_toggle(flag.enabled, flag.feature);
-
-  let bottom_border = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-
-  column([
-    row([
-      column([
-        row([title.into(), esi_chip.into()])
-          .spacing(10.0)
-          .align_y(Vertical::Center)
-          .into(),
-        Space::new().height(4.0).into(),
-        description.into(),
-      ])
-      .into(),
-      Space::new().width(Length::Fill).into(),
-      container(toggle).align_y(Vertical::Center).height(Length::Fill).into(),
-    ])
-    .align_y(Vertical::Center)
-    .padding(Padding {
-      top: 16.0,
-      bottom: 16.0,
-      left: 4.0,
-      right: 4.0,
-    })
-    .into(),
-    bottom_border.into(),
-  ])
-  .into()
-}
-
-fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
+fn toggle_thumb(on: bool) -> container::Container<'static, Message> {
   let thumb_color = if on {
     Color {
       r: 0.039,
@@ -578,7 +569,20 @@ fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
       a: 0.65,
     }
   };
+  container(Space::new())
+    .width(14.0)
+    .height(14.0)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(thumb_color)),
+      border: Border {
+        radius: radius::FULL.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+}
 
+fn toggle_track(on: bool) -> container::Container<'static, Message> {
   let bg_color = if on {
     color::accent::PLASMA
   } else {
@@ -589,28 +593,14 @@ fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
       a: 0.08,
     }
   };
-
   let border_color = if on {
     color::accent::PLASMA
   } else {
     color::border::DEFAULT
   };
-
   let thumb_offset = if on { 17.0_f32 } else { 2.0_f32 };
-
-  let thumb = container(Space::new())
-    .width(14.0)
-    .height(14.0)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(thumb_color)),
-      border: Border {
-        radius: radius::FULL.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    });
-
-  let track = container(
+  let thumb = toggle_thumb(on);
+  container(
     container(thumb)
       .padding(Padding {
         top: 2.0,
@@ -630,14 +620,40 @@ fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
       width: 1.0,
     },
     ..container::Style::default()
-  });
+  })
+}
 
-  button(track)
-    .padding(Padding::ZERO)
-    .style(|_, _| button::Style {
-      background: None,
-      ..button::Style::default()
-    })
-    .on_press(Message::ToggleFeature(feature))
-    .into()
+fn world_flags(state: &State) -> Vec<FlagData> {
+  vec![
+    FlagData {
+      description: "Poll the character\u{2019}s current solar-system location",
+      enabled: state.location_tracking,
+      feature: Feature::LocationTracking,
+      title: "Location Tracking",
+    },
+    FlagData {
+      description: "Sync skill levels and active skill-training queue",
+      enabled: state.skill_monitoring,
+      feature: Feature::SkillMonitoring,
+      title: "Skill Monitoring",
+    },
+    FlagData {
+      description: "Read, organise, and send EVE mail",
+      enabled: state.mail,
+      feature: Feature::Mail,
+      title: "Mail",
+    },
+    FlagData {
+      description: "Read character wallet balance, journal, and transactions",
+      enabled: state.wallet,
+      feature: Feature::Wallet,
+      title: "Wallet",
+    },
+    FlagData {
+      description: "Read character assets and resolve player-owned structure names",
+      enabled: state.asset_tracking,
+      feature: Feature::AssetTracking,
+      title: "Asset Tracking",
+    },
+  ]
 }

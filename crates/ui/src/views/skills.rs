@@ -290,9 +290,8 @@ fn view(state: &State, window_width: f32) -> Element<'_, Message> {
   let hdr = Header::new(state, total_secs, queue_len, low_queue).render();
   let warn = WarningStrip::new(low_queue).render();
   let left = left_col(state, computed_items, sp_rate, window_width);
-  let handle = pane_drag_handle();
   let right = RightPanel::new(state).render().map(Message::RightPanel);
-  let body = row([left, handle, right]).height(Length::Fill);
+  let body = row([left, pane_drag_handle(), right]).height(Length::Fill);
 
   let mut col = vec![hdr];
   if let Some(w) = warn {
@@ -309,48 +308,35 @@ fn view(state: &State, window_width: f32) -> Element<'_, Message> {
     })
     .into();
 
+  apply_overlays(state, base)
+}
+
+fn drag_capture_overlay() -> Element<'static, Message> {
+  mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+    .on_move(|pt| Message::PaneDrag(pt.x))
+    .on_release(Message::PaneDragEnd)
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
+}
+
+fn picker_dropdown_overlay(state: &State) -> Element<'_, Message> {
+  let dropdown = state.picker.dropdown().map(Message::Picker);
+  container(dropdown)
+    .padding(Padding {
+      top: 98.0,
+      left: 28.0,
+      right: 0.0,
+      bottom: 0.0,
+    })
+    .into()
+}
+
+fn apply_overlays<'a>(state: &'a State, base: Element<'a, Message>) -> Element<'a, Message> {
   match (state.dragging_pane, state.picker.is_open) {
     (false, false) => base,
-    (false, true) => {
-      let dropdown = state.picker.dropdown().map(Message::Picker);
-      iced::widget::stack![
-        base,
-        container(dropdown).padding(Padding {
-          top: 98.0,
-          left: 28.0,
-          right: 0.0,
-          bottom: 0.0
-        })
-      ]
-      .into()
-    }
-    (true, false) => {
-      let drag_capture: Element<'_, Message> = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-        .on_move(|pt| Message::PaneDrag(pt.x))
-        .on_release(Message::PaneDragEnd)
-        .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        .into();
-      iced::widget::stack![base, drag_capture].into()
-    }
-    (true, true) => {
-      let drag_capture: Element<'_, Message> = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-        .on_move(|pt| Message::PaneDrag(pt.x))
-        .on_release(Message::PaneDragEnd)
-        .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        .into();
-      let dropdown = state.picker.dropdown().map(Message::Picker);
-      iced::widget::stack![
-        base,
-        drag_capture,
-        container(dropdown).padding(Padding {
-          top: 98.0,
-          left: 28.0,
-          right: 0.0,
-          bottom: 0.0
-        })
-      ]
-      .into()
-    }
+    (false, true) => iced::widget::stack![base, picker_dropdown_overlay(state)].into(),
+    (true, false) => iced::widget::stack![base, drag_capture_overlay()].into(),
+    (true, true) => iced::widget::stack![base, drag_capture_overlay(), picker_dropdown_overlay(state)].into(),
   }
 }
 

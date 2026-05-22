@@ -120,3 +120,184 @@ pub struct CharacterStanding {
   /// Standing value in the range [-10.0, 10.0].
   pub standing: f64,
 }
+
+#[cfg(test)]
+mod tests {
+  mod character_clone {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let clone = CharacterClone {
+        clone_id: 0,
+        implants: vec![CharacterImplant {
+          name: "Memory Augmentation - Basic".into(),
+          slot: 4,
+          type_id: 9942,
+        }],
+        is_active: true,
+        jump_ready_at: None,
+        name: None,
+        station_name: "Jita IV - Moon 4".into(),
+      };
+
+      let json = serde_json::to_string(&clone).unwrap();
+      let decoded: CharacterClone = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.clone_id, 0);
+      assert_eq!(decoded.is_active, true);
+      assert_eq!(decoded.implants.len(), 1);
+      assert_eq!(decoded.implants[0].slot, 4);
+    }
+  }
+
+  mod character_contact {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let contact = CharacterContact {
+        contact_id: 90_000_001,
+        contact_type: "character".into(),
+        is_blocked: false,
+        is_watched: true,
+        label_names: vec!["Corp Mate".into()],
+        name: "Test Pilot".into(),
+        standing: 5.0,
+      };
+
+      let json = serde_json::to_string(&contact).unwrap();
+      let decoded: CharacterContact = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.contact_id, 90_000_001);
+      assert_eq!(decoded.standing, 5.0);
+      assert_eq!(decoded.label_names, vec!["Corp Mate"]);
+    }
+  }
+
+  mod character_contact_label {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let label = CharacterContactLabel {
+        label_id: 1,
+        name: "Corp Mate".into(),
+      };
+
+      let json = serde_json::to_string(&label).unwrap();
+      let decoded: CharacterContactLabel = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.label_id, 1);
+      assert_eq!(decoded.name, "Corp Mate");
+    }
+  }
+
+  mod character_kill_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let entry = CharacterKillEntry {
+        attacker_count: 3,
+        final_blow: true,
+        is_kill: true,
+        killmail_id: 100_000_001,
+        ship_name: "Rifter".into(),
+        ship_type_id: 587,
+        solar_system_security: 0.5,
+        total_value: 6_000_000.0,
+        solar_system_name: "Jita".into(),
+        timestamp: "2024-06-01T12:00:00Z".into(),
+        victim_corp: "Test Corp".into(),
+        victim_name: "Target Pilot".into(),
+      };
+
+      let json = serde_json::to_string(&entry).unwrap();
+      let decoded: CharacterKillEntry = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.killmail_id, 100_000_001);
+      assert_eq!(decoded.is_kill, true);
+      assert_eq!(decoded.total_value, 6_000_000.0);
+    }
+  }
+
+  mod character_notification {
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let notif = CharacterNotification {
+        category: "war".into(),
+        is_read: false,
+        notification_id: 1_000_001,
+        sender_id: 500_001,
+        sender_type: "corporation".into(),
+        text: Some("War declared.".into()),
+        timestamp: "2024-06-01T00:00:00Z".into(),
+        type_: "WarDeclared".into(),
+      };
+
+      let json = serde_json::to_string(&notif).unwrap();
+      let decoded: CharacterNotification = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.notification_id, 1_000_001);
+      assert_eq!(decoded.category, "war");
+      assert_eq!(decoded.text, Some("War declared.".into()));
+    }
+
+    #[test]
+    fn it_deserializes_from_json_fixture() {
+      let fixture = json!({
+        "category": "structure",
+        "is_read": true,
+        "notification_id": 999,
+        "sender_id": 1000,
+        "sender_type": "character",
+        "text": null,
+        "timestamp": "2024-01-01T00:00:00Z",
+        "type_": "StructureUnderAttack"
+      });
+
+      let notif: CharacterNotification = serde_json::from_value(fixture).unwrap();
+
+      assert_eq!(notif.category, "structure");
+      assert!(notif.is_read);
+      assert!(notif.text.is_none());
+    }
+  }
+
+  mod character_standing {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_round_trips_through_json() {
+      let standing = CharacterStanding {
+        from_id: 500_001,
+        from_name: "Caldari State".into(),
+        from_type: "faction".into(),
+        standing: 2.5,
+      };
+
+      let json = serde_json::to_string(&standing).unwrap();
+      let decoded: CharacterStanding = serde_json::from_str(&json).unwrap();
+
+      assert_eq!(decoded.from_id, 500_001);
+      assert_eq!(decoded.standing, 2.5);
+      assert_eq!(decoded.from_type, "faction");
+    }
+  }
+}

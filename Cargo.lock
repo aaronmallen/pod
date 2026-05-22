@@ -4958,6 +4958,7 @@ dependencies = [
  "getset",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "validator",
 ]
 

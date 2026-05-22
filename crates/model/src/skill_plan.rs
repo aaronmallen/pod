@@ -20,3 +20,47 @@ pub struct SkillPlan {
   /// Unix timestamp when the plan was last updated.
   pub updated_at: i64,
 }
+
+#[cfg(test)]
+mod tests {
+  mod skill_plan {
+    use pretty_assertions::assert_eq;
+
+    use super::super::*;
+
+    #[test]
+    fn it_stores_fields() {
+      let plan = SkillPlan {
+        character_id: 90_000_001,
+        created_at: 1_700_000_000,
+        entries: vec![],
+        id: "plan-uuid".into(),
+        implant_set: "standard".into(),
+        name: "PVP Plan".into(),
+        remap_json: None,
+        updated_at: 1_700_000_001,
+      };
+
+      assert_eq!(plan.character_id, 90_000_001);
+      assert_eq!(plan.name, "PVP Plan");
+      assert!(plan.entries.is_empty());
+      assert!(plan.remap_json.is_none());
+    }
+
+    #[test]
+    fn it_accepts_remap_json() {
+      let plan = SkillPlan {
+        character_id: 90_000_001,
+        created_at: 0,
+        entries: vec![],
+        id: "id".into(),
+        implant_set: "none".into(),
+        name: "Remap Plan".into(),
+        remap_json: Some(r#"{"perception":27}"#.into()),
+        updated_at: 0,
+      };
+
+      assert!(plan.remap_json.is_some());
+    }
+  }
+}

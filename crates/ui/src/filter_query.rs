@@ -91,8 +91,8 @@ pub fn parse(input: &str) -> ParsedQuery {
   let mut tokens = Vec::new();
 
   for raw in raw_tokens {
-    let (negated, rest) = if raw.starts_with('-') {
-      (true, &raw[1..])
+    let (negated, rest) = if let Some(stripped) = raw.strip_prefix('-') {
+      (true, stripped)
     } else {
       (false, raw.as_str())
     };

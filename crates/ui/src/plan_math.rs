@@ -259,7 +259,7 @@ pub fn compute_plan(entries: &[PlanEntry], attrs: &EffectiveAttrs, skill_groups:
     }
 
     let step_sp = if entry.to_level == starting_level + 1 {
-      if skill_progress.get(entry.skill_name.as_str()).is_none() && skill.level == starting_level {
+      if !skill_progress.contains_key(entry.skill_name.as_str()) && skill.level == starting_level {
         let full_level_sp = sp_cost(skill.rank as f64, entry.to_level);
         (full_level_sp as i64 - skill.sp as i64).max(0) as u64
       } else {
@@ -375,7 +375,7 @@ pub fn pair_weights(entries: &[PlanEntry], attrs: &EffectiveAttrs, skill_groups:
     }
 
     let step_sp = if entry.to_level == starting_level + 1 {
-      if skill_progress.get(entry.skill_name.as_str()).is_none() && skill.level == starting_level {
+      if !skill_progress.contains_key(entry.skill_name.as_str()) && skill.level == starting_level {
         let full_level_sp = sp_cost(skill.rank as f64, entry.to_level);
         (full_level_sp as i64 - skill.sp as i64).max(0) as u64
       } else {
@@ -448,7 +448,7 @@ pub fn optimize_remap(
       for wil in ATTR_MIN..=ATTR_MAX {
         for intl in ATTR_MIN..=ATTR_MAX {
           let cha = base_total - per - mem - wil - intl;
-          if cha < ATTR_MIN || cha > ATTR_MAX {
+          if !(ATTR_MIN..=ATTR_MAX).contains(&cha) {
             continue;
           }
           let base = BaseAttrs {

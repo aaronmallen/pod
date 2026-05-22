@@ -115,22 +115,25 @@ pub fn corp_wallet_refresh_task(state: &State, services: &Services) -> iced::Tas
   iced::Task::perform(fetch_corp_wallets(corporations, esi, db), |_| Message::TagsApplied)
 }
 
-fn reorder_ids(ids: &[i64], dragging: i64, target: i64) -> Vec<i64> {
-  let dragging_pos = ids.iter().position(|&id| id == dragging).unwrap_or(0);
-  let target_pos = ids.iter().position(|&id| id == target).unwrap_or(0);
-  let mut result = ids.to_vec();
-  result.remove(dragging_pos);
-  result.insert(target_pos.min(result.len()), dragging);
-  result
-}
-
-fn reorder_characters_by_ids(characters: &mut Vec<Character>, order: &[i64]) {
-  let mut map: std::collections::HashMap<i64, Character> = characters.drain(..).map(|c| (*c.id(), c)).collect();
-  for id in order {
-    if let Some(c) = map.remove(id) {
-      characters.push(c);
+fn compute_new_slot_indices(characters: &[Character], dragging_id: i64, target_slot: i32) -> Vec<(i64, i32)> {
+  let mut assignments: HashMap<i32, i64> = characters
+    .iter()
+    .filter(|c| *c.id() != dragging_id)
+    .map(|c| (*c.sort_order(), *c.id()))
+    .collect();
+  let mut current_id = dragging_id;
+  let mut current_slot = target_slot;
+  loop {
+    if let Some(displaced_id) = assignments.remove(&current_slot) {
+      assignments.insert(current_slot, current_id);
+      current_id = displaced_id;
+      current_slot += 1;
+    } else {
+      assignments.insert(current_slot, current_id);
+      break;
     }
   }
+  assignments.into_iter().map(|(slot, id)| (id, slot)).collect()
 }
 
 /// Returns background refresh subscriptions for the characters view.
@@ -1552,25 +1555,34 @@ fn handle_remove_corporation(state: &mut State, corp_id: i64, services: &Service
 
 fn update_drag(state: &mut State, services: &Services) -> iced::Task<Message> {
   let dragging = state.character_pane.dragging_id;
-  let hover = state.character_pane.drag_hover;
+  let target_slot = state.character_pane.drag_hover;
   let pane_task = state
     .character_pane
     .update(characters_tab::Message::DragEnd)
     .map(Message::CharactersTab);
-  if let (Some(dragging_id), Some(hover_id)) = (dragging, hover)
-    && dragging_id != hover_id
-  {
-    let ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
-    let new_order = reorder_ids(&ids, dragging_id, hover_id);
-    reorder_characters_by_ids(&mut state.all_characters, &new_order);
-    refilter(state);
-    if let Some(db) = services.db.clone() {
-      let updates: Vec<(i64, i32)> = new_order.iter().enumerate().map(|(i, &id)| (id, i as i32)).collect();
-      let db_task = iced::Task::perform(
-        async move { db.characters().update_sort_orders(&updates).await.ok() },
-        |_| Message::TagsApplied,
-      );
-      return iced::Task::batch([pane_task, db_task]);
+  if let (Some(dragging_id), Some(slot)) = (dragging, target_slot) {
+    let current_slot = state
+      .all_characters
+      .iter()
+      .find(|c| *c.id() == dragging_id)
+      .map(|c| *c.sort_order());
+    if current_slot != Some(slot) {
+      let updates = compute_new_slot_indices(&state.all_characters, dragging_id, slot);
+      for (id, new_slot) in &updates {
+        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == *id) {
+          c.set_sort_order(*new_slot);
+        }
+      }
+      state.all_characters.sort_by_key(|c| *c.sort_order());
+      refilter(state);
+      if let Some(db) = services.db.clone() {
+        let updates_clone = updates.clone();
+        let db_task = iced::Task::perform(
+          async move { db.characters().update_sort_orders(&updates_clone).await.ok() },
+          |_| Message::TagsApplied,
+        );
+        return iced::Task::batch([pane_task, db_task]);
+      }
     }
   }
   pane_task
@@ -1731,80 +1743,75 @@ mod tests {
     }
   }
 
-  mod reorder_ids {
+  mod compute_new_slot_indices {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[test]
-    fn it_moves_element_forward() {
-      let ids = vec![1i64, 2, 3, 4];
-      let result = reorder_ids(&ids, 1, 3);
+    fn make_character_with_slot(id: i64, slot: i32) -> Character {
+      let mut c = make_character(id, &format!("char{id}"));
+      c.set_sort_order(slot);
+      c
+    }
 
-      assert_eq!(result, vec![2i64, 3, 1, 4]);
+    fn slot_map(result: Vec<(i64, i32)>) -> HashMap<i64, i32> {
+      result.into_iter().collect()
     }
 
     #[test]
-    fn it_moves_element_backward() {
-      let ids = vec![1i64, 2, 3, 4];
-      let result = reorder_ids(&ids, 4, 2);
+    fn it_places_dragged_char_at_empty_target_slot() {
+      let chars = vec![make_character_with_slot(1, 0), make_character_with_slot(2, 3)];
+      let result = slot_map(compute_new_slot_indices(&chars, 1, 1));
 
-      assert_eq!(result, vec![1i64, 4, 2, 3]);
+      assert_eq!(result[&1], 1);
+      assert_eq!(result[&2], 3);
     }
 
     #[test]
-    fn it_is_no_op_when_dragging_to_same_position() {
-      let ids = vec![1i64, 2, 3];
-      let result = reorder_ids(&ids, 2, 2);
-
-      assert_eq!(result, vec![1i64, 2, 3]);
-    }
-
-    #[test]
-    fn it_handles_move_to_end() {
-      let ids = vec![1i64, 2, 3, 4];
-      let result = reorder_ids(&ids, 1, 4);
-
-      assert_eq!(result, vec![2i64, 3, 4, 1]);
-    }
-
-    #[test]
-    fn it_handles_move_to_start() {
-      let ids = vec![1i64, 2, 3, 4];
-      let result = reorder_ids(&ids, 4, 1);
-
-      assert_eq!(result, vec![4i64, 1, 2, 3]);
-    }
-  }
-
-  mod reorder_characters_by_ids {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_reorders_by_given_id_sequence() {
-      let mut chars = vec![
-        make_character(1, "Alpha"),
-        make_character(2, "Beta"),
-        make_character(3, "Gamma"),
+    fn it_cascades_displaced_chars_forward() {
+      let chars = vec![
+        make_character_with_slot(1, 0),
+        make_character_with_slot(2, 1),
+        make_character_with_slot(3, 2),
       ];
-      let order = vec![3i64, 1, 2];
-      reorder_characters_by_ids(&mut chars, &order);
+      let result = slot_map(compute_new_slot_indices(&chars, 1, 1));
 
-      assert_eq!(*chars[0].id(), 3);
-      assert_eq!(*chars[1].id(), 1);
-      assert_eq!(*chars[2].id(), 2);
+      assert_eq!(result[&1], 1);
+      assert_eq!(result[&2], 2);
+      assert_eq!(result[&3], 3);
     }
 
     #[test]
-    fn it_skips_ids_not_in_the_list() {
-      let mut chars = vec![make_character(1, "Alpha"), make_character(2, "Beta")];
-      let order = vec![1i64];
-      reorder_characters_by_ids(&mut chars, &order);
+    fn it_is_no_op_when_dropped_on_own_slot() {
+      let chars = vec![make_character_with_slot(1, 0), make_character_with_slot(2, 1)];
+      let result = slot_map(compute_new_slot_indices(&chars, 1, 0));
 
-      assert_eq!(chars.len(), 1);
-      assert_eq!(*chars[0].id(), 1);
+      assert_eq!(result[&1], 0);
+      assert_eq!(result[&2], 1);
+    }
+
+    #[test]
+    fn it_handles_single_character() {
+      let chars = vec![make_character_with_slot(1, 2)];
+      let result = slot_map(compute_new_slot_indices(&chars, 1, 5));
+
+      assert_eq!(result[&1], 5);
+    }
+
+    #[test]
+    fn it_cascades_a_chain_of_occupied_slots() {
+      let chars = vec![
+        make_character_with_slot(1, 0),
+        make_character_with_slot(2, 1),
+        make_character_with_slot(3, 2),
+        make_character_with_slot(4, 3),
+      ];
+      let result = slot_map(compute_new_slot_indices(&chars, 4, 1));
+
+      assert_eq!(result[&4], 1);
+      assert_eq!(result[&2], 2);
+      assert_eq!(result[&3], 3);
+      assert_eq!(result[&1], 0);
     }
   }
 

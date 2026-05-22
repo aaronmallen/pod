@@ -23,7 +23,7 @@ pub struct State {
   pub context_menu: Option<context_menu::State>,
   cursor_position: Point,
   pub dragging_id: Option<i64>,
-  pub drag_hover: Option<i64>,
+  pub drag_hover: Option<i32>,
   scroll_offset: scrollable::AbsoluteOffset,
 }
 
@@ -62,6 +62,12 @@ impl State {
         self.scroll_offset = viewport.absolute_offset();
         Task::none()
       }
+      Message::SlotEntered(slot) => {
+        if self.dragging_id.is_some() {
+          self.drag_hover = Some(slot);
+        }
+        Task::none()
+      }
       Message::CharacterAdded(_)
       | Message::CharacterPublicRefreshed(_)
       | Message::CharacterPublicRefreshTick
@@ -95,12 +101,7 @@ impl State {
         self.dragging_id = Some(id);
         Task::none()
       }
-      character_card::Message::CardEntered(id) => {
-        if self.dragging_id.is_some() {
-          self.drag_hover = Some(id);
-        }
-        Task::none()
-      }
+      character_card::Message::CardEntered(_) => Task::none(),
       character_card::Message::NamePressed(_)
       | character_card::Message::SkillTrainingPressed(_)
       | character_card::Message::TagsPressed(_)
@@ -212,6 +213,8 @@ pub enum Message {
   SkillQueueRefreshTick,
   /// Skill queues were refreshed with new data.
   SkillQueuesRefreshed(Vec<(i64, Vec<CharacterSkill>, Vec<TrainingQueueEntry>)>),
+  /// Cursor entered a grid slot during an active drag; carries the slot index.
+  SlotEntered(i32),
   /// Periodic wallet refresh tick.
   WalletRefreshTick,
   /// Wallets were refreshed with new data.
@@ -345,7 +348,7 @@ fn build_grid_rows<'a>(
   cols: usize,
   portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
   dragging_id: Option<i64>,
-  drag_hover: Option<i64>,
+  drag_hover: Option<i32>,
   feat_skill_monitoring: bool,
   feat_wallet: bool,
 ) -> Vec<Element<'a, Message>> {
@@ -381,12 +384,15 @@ fn build_grid_rows<'a>(
             .feat_skill_monitoring(feat_skill_monitoring)
             .feat_wallet(feat_wallet)
             .is_dragging(dragging_id == Some(id))
-            .is_hover_target(is_dragging && drag_hover == Some(id) && dragging_id != Some(id))
+            .is_hover_target(is_dragging && drag_hover == Some(slot) && dragging_id != Some(id))
             .render()
-            .map(move |msg| Message::Card(id, msg)),
+            .map(move |msg| match msg {
+              character_card::Message::CardEntered(_) => Message::SlotEntered(slot),
+              other => Message::Card(id, other),
+            }),
         );
       } else {
-        cells.push(empty_slot_placeholder(is_dragging));
+        cells.push(empty_slot_placeholder(slot, is_dragging));
       }
     }
     grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
@@ -400,7 +406,7 @@ fn build_grid_rows_responsive<'a>(
   cols: usize,
   portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
   dragging_id: Option<i64>,
-  drag_hover: Option<i64>,
+  drag_hover: Option<i32>,
   feat_skill_monitoring: bool,
   feat_wallet: bool,
 ) -> Vec<Element<'a, Message>> {
@@ -410,14 +416,18 @@ fn build_grid_rows_responsive<'a>(
       .iter()
       .map(|c| {
         let id = *c.id();
+        let sort_order = *c.sort_order();
         CharacterCard::new(c)
           .portrait_handle(portrait_handles.get(&id))
           .feat_skill_monitoring(feat_skill_monitoring)
           .feat_wallet(feat_wallet)
           .is_dragging(dragging_id == Some(id))
-          .is_hover_target(dragging_id.is_some() && drag_hover == Some(id) && dragging_id != Some(id))
+          .is_hover_target(dragging_id.is_some() && drag_hover == Some(sort_order) && dragging_id != Some(id))
           .render()
-          .map(move |msg| Message::Card(id, msg))
+          .map(move |msg| match msg {
+            character_card::Message::CardEntered(_) => Message::SlotEntered(sort_order),
+            other => Message::Card(id, other),
+          })
       })
       .collect();
     while cells.len() < cols {
@@ -428,8 +438,8 @@ fn build_grid_rows_responsive<'a>(
   grid_rows
 }
 
-fn empty_slot_placeholder<'a>(is_dragging: bool) -> Element<'a, Message> {
-  container(iced::widget::Space::new().width(Length::Fill))
+fn empty_slot_placeholder<'a>(slot: i32, is_dragging: bool) -> Element<'a, Message> {
+  let content = container(iced::widget::Space::new().width(Length::Fill))
     .width(Length::Fill)
     .height(spacing::layout::CHARACTER_CARD_HEIGHT)
     .style(move |_| {
@@ -445,8 +455,13 @@ fn empty_slot_placeholder<'a>(is_dragging: bool) -> Element<'a, Message> {
       } else {
         container::Style::default()
       }
-    })
-    .into()
+    });
+
+  if is_dragging {
+    mouse_area(content).on_enter(Message::SlotEntered(slot)).into()
+  } else {
+    content.into()
+  }
 }
 
 fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
@@ -471,7 +486,7 @@ fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Eleme
 
 // Non-interactive ghost that follows the cursor during drag.
 // Mirrors the full card layout but has zero mouse_area elements, so all
-// events fall through to the grid cards beneath (preserving CardEntered).
+// events fall through to the grid cards and empty slots beneath (preserving SlotEntered).
 fn ghost_element<'a>(
   character: &'a Character,
   portrait_handle: Option<&'a iced::widget::image::Handle>,

@@ -107,3 +107,66 @@ impl Client<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  mod ancestries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_ancestries() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/ancestries/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          {
+            "bloodline_id": 1,
+            "description": "A proud ancestry",
+            "icon_id": null,
+            "id": 42,
+            "name": "Gallente Rogue",
+            "short_description": null
+          }
+        ])))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.universe().ancestries().await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].id, 42);
+      assert_eq!(result[0].name, "Gallente Rogue");
+      assert_eq!(result[0].bloodline_id, 1);
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_404() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/ancestries/"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "Not found"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.universe().ancestries().await;
+
+      assert!(result.is_err());
+    }
+  }
+}

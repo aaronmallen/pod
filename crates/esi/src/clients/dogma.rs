@@ -80,3 +80,67 @@ impl<'a> Client<'a> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  mod attribute {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_a_dogma_attribute() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/dogma/attributes/20/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "attribute_id": 20,
+          "default_value": 1.0,
+          "description": "Armor hitpoints.",
+          "display_name": "Armor HP",
+          "high_is_good": true,
+          "icon_id": 1374,
+          "name": "armorHP",
+          "published": true,
+          "stackable": true,
+          "unit_id": 105
+        })))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let attr = esi.dogma().attribute(20).await.unwrap();
+
+      assert_eq!(attr.attribute_id, 20);
+      assert_eq!(attr.name.as_deref(), Some("armorHP"));
+      assert_eq!(attr.high_is_good, Some(true));
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_api_failure() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/dogma/attributes/20/"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "Attribute not found"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.dogma().attribute(20).await;
+
+      assert!(result.is_err());
+    }
+  }
+}

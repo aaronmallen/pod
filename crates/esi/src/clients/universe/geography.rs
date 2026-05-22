@@ -272,3 +272,61 @@ impl AuthenticatedUniverseStructureClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  mod region {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_region() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/regions/10000002/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellations": [20000020i64, 20000021i64],
+          "description": null,
+          "name": "The Forge",
+          "region_id": 10000002i64
+        })))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.universe().region(10_000_002i64).await.unwrap();
+
+      assert_eq!(result.name, "The Forge");
+      assert_eq!(result.region_id, 10_000_002i64);
+      assert_eq!(result.constellations.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_404() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/regions/10000002/"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "Not found"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.universe().region(10_000_002i64).await;
+
+      assert!(result.is_err());
+    }
+  }
+}

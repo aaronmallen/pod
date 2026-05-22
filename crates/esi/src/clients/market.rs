@@ -166,3 +166,59 @@ impl<'a> AuthenticatedStructureClient<'a> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_esi(server_uri: &str) -> crate::Client {
+    crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap()
+  }
+
+  mod prices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_market_prices() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/markets/prices/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          {"type_id": 34, "adjusted_price": 5.5, "average_price": 6.0}
+        ])))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.market().prices().await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].type_id, 34i32);
+      assert_eq!(result[0].adjusted_price, Some(5.5f64));
+      assert_eq!(result[0].average_price, Some(6.0f64));
+    }
+
+    #[tokio::test]
+    async fn it_returns_error_on_500() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/markets/prices/"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({"error": "Internal server error"})))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let result = esi.market().prices().await;
+
+      assert!(result.is_err());
+    }
+  }
+}

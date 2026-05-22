@@ -119,3 +119,82 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::time::{Duration, SystemTime};
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_grant() -> crate::models::auth::Grant {
+    crate::models::auth::Grant::new(
+      "test-token",
+      123_456_789i64,
+      "Test Member",
+      SystemTime::now() + Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    )
+  }
+
+  mod members {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_member_ids_on_success() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v4/corporations/109299958/members/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([90_000_001i64, 90_000_002i64])))
+        .mount(&server)
+        .await;
+
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let corp = esi.corporation(109_299_958i64);
+      let grant = make_grant();
+      let auth = corp.auth(&grant);
+
+      let result = auth.members().await.unwrap();
+
+      assert_eq!(result.len(), 2);
+      assert_eq!(result[0], 90_000_001i64);
+      assert_eq!(result[1], 90_000_002i64);
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_401() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v4/corporations/109299958/members/"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({"error": "Unauthorized"})))
+        .mount(&server)
+        .await;
+
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let corp = esi.corporation(109_299_958i64);
+      let grant = make_grant();
+      let auth = corp.auth(&grant);
+
+      let result = auth.members().await;
+
+      assert!(matches!(
+        result,
+        Err(crate::Error::Api {
+          status: 401,
+          ..
+        })
+      ));
+    }
+  }
+}

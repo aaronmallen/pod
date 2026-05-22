@@ -203,3 +203,90 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::time::{Duration, SystemTime};
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_grant() -> crate::models::auth::Grant {
+    crate::models::auth::Grant::new(
+      "test-token",
+      123_456_789i64,
+      "Test Member",
+      SystemTime::now() + Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    )
+  }
+
+  mod divisions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_divisions_on_success() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/corporations/109299958/divisions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "hangar": [{"division": 1, "name": "Alpha Hangar"}],
+          "wallet": [{"division": 1, "name": "Master Wallet"}]
+        })))
+        .mount(&server)
+        .await;
+
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let corp = esi.corporation(109_299_958i64);
+      let grant = make_grant();
+      let auth = corp.auth(&grant);
+
+      let result = auth.divisions().await.unwrap();
+
+      let hangars = result.hangar.unwrap();
+      assert_eq!(hangars.len(), 1);
+      assert_eq!(hangars[0].division, 1);
+      assert_eq!(hangars[0].name.as_deref(), Some("Alpha Hangar"));
+
+      let wallets = result.wallet.unwrap();
+      assert_eq!(wallets.len(), 1);
+      assert_eq!(wallets[0].name.as_deref(), Some("Master Wallet"));
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_401() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/corporations/109299958/divisions/"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({"error": "Unauthorized"})))
+        .mount(&server)
+        .await;
+
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let corp = esi.corporation(109_299_958i64);
+      let grant = make_grant();
+      let auth = corp.auth(&grant);
+
+      let result = auth.divisions().await;
+
+      assert!(matches!(
+        result,
+        Err(crate::Error::Api {
+          status: 401,
+          ..
+        })
+      ));
+    }
+  }
+}

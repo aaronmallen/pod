@@ -248,7 +248,7 @@ fn parse_iso8601(s: &str) -> Result<i64, ()> {
   }
   let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
   let time_parts: Vec<u32> = parts[1]
-    .splitn(2, '+')
+    .split('+')
     .next()
     .unwrap_or("")
     .split(':')

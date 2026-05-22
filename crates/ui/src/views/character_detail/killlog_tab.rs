@@ -321,7 +321,7 @@ fn parse_iso8601(s: &str) -> Result<i64, ()> {
   }
   let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
   let time_parts: Vec<u32> = parts[1]
-    .splitn(2, '+')
+    .split('+')
     .next()
     .unwrap_or("")
     .split(':')
@@ -520,7 +520,7 @@ fn system_col<'a>(entry: &'a CharacterKillEntry) -> Element<'a, Message> {
   } else {
     color::status::DANGER
   };
-  let sec_label = format!("{:.1}", sec.max(-1.0).min(1.0));
+  let sec_label = format!("{:.1}", sec.clamp(-1.0, 1.0));
   container(
     column([
       text(entry.solar_system_name.clone())

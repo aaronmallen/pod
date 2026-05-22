@@ -1,6 +1,7 @@
 //! Wallet controller: startup and background data fetches.
 
 use std::{
+  cmp::Reverse,
   collections::{HashMap, HashSet},
   time::{SystemTime, UNIX_EPOCH},
 };
@@ -18,6 +19,22 @@ use pod_ui::{
 };
 
 use crate::services::{Services, character as character_service, corporation as corporation_service};
+
+/// Creates the initial wallet state and kicks off background data fetches.
+pub fn new(
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  services: &Services,
+  right_rail_width: f32,
+) -> (State, iced::Task<Message>) {
+  let state = build_wallet_state(&characters, &corporations, right_rail_width);
+  let tasks = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+    build_initial_tasks(characters, corporations, esi, db)
+  } else {
+    iced::Task::none()
+  };
+  (state, tasks)
+}
 
 /// Processes a wallet message, performing ESI fetches when a corporation is
 /// selected or a division is changed.
@@ -39,14 +56,166 @@ pub fn update(
   }
 }
 
-/// Creates the initial wallet state and kicks off background data fetches.
-pub fn new(
+fn attach_icon_task(
+  base: iced::Task<Message>,
+  icon_type_ids: Option<Vec<i32>>,
+  services: &Services,
+) -> iced::Task<Message> {
+  if let (Some(type_ids), Some(esi), Some(db)) = (icon_type_ids, services.esi_client.clone(), services.db.clone()) {
+    let icon_task = iced::Task::perform(
+      async move { fetch_type_icons(type_ids, esi, db).await },
+      Message::ItemIconsLoaded,
+    );
+    iced::Task::batch([base, icon_task])
+  } else {
+    base
+  }
+}
+
+fn build_contract_entry(
+  row: CharacterContract,
+  names: &HashMap<i64, String>,
+  locations: &HashMap<i64, String>,
+) -> ContractEntry {
+  let ts = parse_iso_to_unix(&row.date_issued);
+  let counterparty_id = if row.acceptor_id != 0 {
+    row.acceptor_id
+  } else {
+    row.assignee_id
+  };
+  let counterparty = if counterparty_id != 0 {
+    names
+      .get(&counterparty_id)
+      .cloned()
+      .unwrap_or_else(|| format!("#{counterparty_id}"))
+  } else {
+    String::new()
+  };
+  let location = row
+    .start_location_id
+    .and_then(|id| locations.get(&id).cloned())
+    .unwrap_or_default();
+  let title = if row.title.is_empty() {
+    format!("Contract #{}", row.contract_id)
+  } else {
+    row.title
+  };
+  ContractEntry {
+    id: format!("{}-{}", row.character_id, row.contract_id),
+    who: row.character_id,
+    kind: row.contract_type,
+    status: row.status,
+    title,
+    counterparty,
+    price: row.price.unwrap_or(0.0),
+    collateral: row.collateral.unwrap_or(0.0),
+    ts_secs: secs_ago(ts),
+    location,
+  }
+}
+
+fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEntry> {
+  corporations
+    .iter()
+    .map(|c| {
+      let icon_handle = c.icon_data().as_ref().map(|b| image::Handle::from_bytes(b.clone()));
+      CorporationEntry {
+        icon_handle,
+        id: *c.id(),
+        name: c.name().clone(),
+        ticker: c.ticker().clone(),
+      }
+    })
+    .collect()
+}
+
+fn build_initial_tasks(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
-  services: &Services,
-  right_rail_width: f32,
-) -> (State, iced::Task<Message>) {
-  let wallet_chars: Vec<WalletCharacter> = characters
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> iced::Task<Message> {
+  let chars_j = characters.clone();
+  let db_j = db.clone();
+  let esi_j = esi.clone();
+  let chars_t = characters.clone();
+  let db_t = db.clone();
+  let esi_t = esi.clone();
+  let corps_b = corporations.clone();
+  let db_b = db.clone();
+  let esi_b = esi.clone();
+  let chars_a = characters.clone();
+  let db_a = db.clone();
+  let esi_a = esi.clone();
+  let chars_c = characters.clone();
+  let db_c = db.clone();
+  let esi_c = esi.clone();
+  let db_i = db.clone();
+  iced::Task::batch([
+    iced::Task::perform(
+      async move { fetch_journal(chars_j, esi_j, db_j).await },
+      Message::JournalLoaded,
+    ),
+    iced::Task::perform(
+      async move { fetch_transactions(chars_t, esi_t, db_t).await },
+      Message::TransactionsLoaded,
+    ),
+    iced::Task::perform(
+      async move { fetch_all_corp_totals(corps_b, esi_b, db_b).await },
+      Message::AllCorpBalancesLoaded,
+    ),
+    iced::Task::perform(
+      async move { fetch_asset_values(chars_a, esi_a, db_a).await },
+      Message::AssetValuesLoaded,
+    ),
+    iced::Task::perform(
+      async move { fetch_contracts(chars_c, esi_c, db_c).await },
+      Message::ContractsLoaded,
+    ),
+    iced::Task::perform(
+      async move { load_all_cached_icons(db_i).await },
+      Message::ItemIconsLoaded,
+    ),
+  ])
+}
+
+fn build_net_worth_series(journal: &[JournalEntry]) -> Vec<f64> {
+  if journal.is_empty() {
+    return Vec::new();
+  }
+  let mut running = 0.0f64;
+  journal
+    .iter()
+    .map(|e| {
+      running += e.delta;
+      running
+    })
+    .collect()
+}
+
+fn build_picker_entries(characters: &[Character]) -> Vec<CharacterEntry> {
+  let mut v = vec![CharacterEntry {
+    id: None,
+    name: "All Wallets".to_string(),
+    corp_name: format!("{} accounts", characters.len()),
+    tone: 200,
+    portrait_handle: None,
+  }];
+  for c in characters {
+    let portrait_handle = c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone()));
+    v.push(CharacterEntry {
+      id: Some(*c.id()),
+      name: c.name().clone(),
+      corp_name: c.corp_name().clone(),
+      tone: *c.portrait_tone() as u16,
+      portrait_handle,
+    });
+  }
+  v
+}
+
+fn build_wallet_chars(characters: &[Character]) -> Vec<WalletCharacter> {
+  characters
     .iter()
     .map(|c| WalletCharacter {
       id: *c.id(),
@@ -59,16 +228,18 @@ pub fn new(
       portrait_tone: *c.portrait_tone() as u16,
       portrait_handle: c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone())),
     })
-    .collect();
+    .collect()
+}
 
-  let picker_entries = build_picker_entries(&characters);
-  let corp_entries = build_corp_picker_entries(&corporations);
+fn build_wallet_state(characters: &[Character], corporations: &[Corporation], right_rail_width: f32) -> State {
+  let wallet_chars = build_wallet_chars(characters);
+  let picker_entries = build_picker_entries(characters);
+  let corp_entries = build_corp_picker_entries(corporations);
   let picker = CharacterPicker::new()
     .entries(picker_entries)
     .corp_entries(corp_entries)
     .show_all(true);
-
-  let state = State {
+  State {
     active_division: 1,
     active_tab: Tab::Market,
     all_corp_balances: Vec::new(),
@@ -96,109 +267,7 @@ pub fn new(
     side_filter: SideFilter::All,
     sign_filter: SignFilter::All,
     timeframe: Timeframe::M3,
-  };
-
-  let tasks = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-    let chars_j = characters.clone();
-    let db_j = db.clone();
-    let esi_j = esi.clone();
-    let chars_t = characters.clone();
-    let db_t = db.clone();
-    let esi_t = esi.clone();
-    let corps_b = corporations.clone();
-    let db_b = db.clone();
-    let esi_b = esi.clone();
-    let chars_a = characters.clone();
-    let db_a = db.clone();
-    let esi_a = esi.clone();
-    let chars_c = characters.clone();
-    let db_c = db.clone();
-    let esi_c = esi.clone();
-    let db_i = db.clone();
-
-    iced::Task::batch([
-      iced::Task::perform(
-        async move { fetch_journal(chars_j, esi_j, db_j).await },
-        Message::JournalLoaded,
-      ),
-      iced::Task::perform(
-        async move { fetch_transactions(chars_t, esi_t, db_t).await },
-        Message::TransactionsLoaded,
-      ),
-      iced::Task::perform(
-        async move { fetch_all_corp_totals(corps_b, esi_b, db_b).await },
-        Message::AllCorpBalancesLoaded,
-      ),
-      iced::Task::perform(
-        async move { fetch_asset_values(chars_a, esi_a, db_a).await },
-        Message::AssetValuesLoaded,
-      ),
-      iced::Task::perform(
-        async move { fetch_contracts(chars_c, esi_c, db_c).await },
-        Message::ContractsLoaded,
-      ),
-      iced::Task::perform(
-        async move { load_all_cached_icons(db_i).await },
-        Message::ItemIconsLoaded,
-      ),
-    ])
-  } else {
-    iced::Task::none()
-  };
-
-  (state, tasks)
-}
-
-fn attach_icon_task(
-  base: iced::Task<Message>,
-  icon_type_ids: Option<Vec<i32>>,
-  services: &Services,
-) -> iced::Task<Message> {
-  if let (Some(type_ids), Some(esi), Some(db)) = (icon_type_ids, services.esi_client.clone(), services.db.clone()) {
-    let icon_task = iced::Task::perform(
-      async move { fetch_type_icons(type_ids, esi, db).await },
-      Message::ItemIconsLoaded,
-    );
-    iced::Task::batch([base, icon_task])
-  } else {
-    base
   }
-}
-
-fn build_picker_entries(characters: &[Character]) -> Vec<CharacterEntry> {
-  let mut v = vec![CharacterEntry {
-    id: None,
-    name: "All Wallets".to_string(),
-    corp_name: format!("{} accounts", characters.len()),
-    tone: 200,
-    portrait_handle: None,
-  }];
-  for c in characters {
-    let portrait_handle = c.portrait_data().as_ref().map(|b| image::Handle::from_bytes(b.clone()));
-    v.push(CharacterEntry {
-      id: Some(*c.id()),
-      name: c.name().clone(),
-      corp_name: c.corp_name().clone(),
-      tone: *c.portrait_tone() as u16,
-      portrait_handle,
-    });
-  }
-  v
-}
-
-fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEntry> {
-  corporations
-    .iter()
-    .map(|c| {
-      let icon_handle = c.icon_data().as_ref().map(|b| image::Handle::from_bytes(b.clone()));
-      CorporationEntry {
-        icon_handle,
-        id: *c.id(),
-        name: c.name().clone(),
-        ticker: c.ticker().clone(),
-      }
-    })
-    .collect()
 }
 
 fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
@@ -220,6 +289,152 @@ fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
         .collect::<Vec<_>>()
     })
     .filter(|ids| !ids.is_empty())
+}
+
+async fn fetch_all_corp_totals(
+  corporations: Vec<Corporation>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> Vec<(i64, f64)> {
+  let mut totals = Vec::new();
+  for corp in &corporations {
+    let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
+      continue;
+    };
+    let grant = corporation_service::refresh_grant(corp, &token);
+    let corp_id = *corp.id();
+    let corp_esi = esi.corporation(corp_id);
+    let corp_client = corp_esi.auth(&grant);
+    if let Ok(wallets) = corp_client.wallets().await {
+      let total: f64 = wallets.iter().map(|w| w.balance).sum();
+      totals.push((corp_id, total));
+    }
+  }
+  totals
+}
+
+async fn fetch_asset_values(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i64, f64)> {
+  let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
+  if char_ids.is_empty() {
+    return Vec::new();
+  }
+
+  let asset_rows = db
+    .characters()
+    .assets_for_character_ids(&char_ids)
+    .await
+    .unwrap_or_default();
+
+  if asset_rows.is_empty() {
+    return Vec::new();
+  }
+
+  let prices: std::collections::HashMap<i32, f64> = esi
+    .market()
+    .prices()
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|p| (p.type_id, p.adjusted_price.or(p.average_price).unwrap_or(0.0)))
+    .collect();
+
+  let mut totals: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+  for asset in &asset_rows {
+    let price = prices.get(&asset.type_id).copied().unwrap_or(0.0);
+    let value = price * asset.quantity as f64;
+    *totals.entry(asset.character_id).or_insert(0.0) += value;
+  }
+
+  totals.into_iter().collect()
+}
+
+async fn fetch_contracts(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<ContractEntry> {
+  let mut all: Vec<ContractEntry> = Vec::new();
+  for character in &characters {
+    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+      continue;
+    };
+    let grant = character_service::refresh_grant(character, &token);
+    let char_client = esi.character(&grant);
+    if let Ok(contracts) = char_client.contracts().await {
+      let db_rows: Vec<_> = contracts
+        .iter()
+        .map(|c| CharacterContract {
+          character_id: *character.id(),
+          contract_id: c.contract_id,
+          contract_type: c.r#type.clone(),
+          status: c.status.clone(),
+          title: c.title.clone().unwrap_or_default(),
+          issuer_id: c.issuer_id,
+          assignee_id: c.assignee_id,
+          acceptor_id: c.acceptor_id,
+          price: c.price,
+          collateral: c.collateral,
+          date_issued: c.date_issued.clone(),
+          date_expired: c.date_expired.clone(),
+          start_location_id: c.start_location_id,
+        })
+        .collect();
+      let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
+    }
+    if let Ok(rows) = db.characters().contracts(*character.id()).await {
+      let names = resolve_entity_names(&rows, &esi).await;
+      let locations = resolve_location_names(&rows, &esi, &db).await;
+      for row in rows {
+        all.push(build_contract_entry(row, &names, &locations));
+      }
+    }
+  }
+  all.sort_by_key(|e| e.ts_secs);
+  all
+}
+
+async fn fetch_corp_data(
+  corp_id: i64,
+  division: u8,
+  corporations: Vec<Corporation>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> (Vec<(u8, f64)>, Vec<JournalEntry>, Vec<MarketEntry>) {
+  let Some(corp) = corporations.iter().find(|c| *c.id() == corp_id) else {
+    return (Vec::new(), Vec::new(), Vec::new());
+  };
+  let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
+    return (Vec::new(), Vec::new(), Vec::new());
+  };
+  let grant = corporation_service::refresh_grant(corp, &token);
+  let corp_esi = esi.corporation(corp_id);
+  let corp_client = corp_esi.auth(&grant);
+  let divisions: Vec<(u8, f64)> = corp_client
+    .wallets()
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|w| (w.division as u8, w.balance))
+    .collect();
+  let journal: Vec<JournalEntry> = corp_client
+    .wallet_journal(i32::from(division))
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|e| map_corp_journal_entry(e, corp_id, division))
+    .collect();
+  let raw_txns = corp_client
+    .wallet_transactions(i32::from(division))
+    .await
+    .unwrap_or_default();
+  let corp_type_ids: Vec<i32> = raw_txns
+    .iter()
+    .map(|t| t.type_id)
+    .collect::<HashSet<_>>()
+    .into_iter()
+    .collect();
+  let corp_type_names = load_type_names(&corp_type_ids, &db).await;
+  let market: Vec<MarketEntry> = raw_txns
+    .into_iter()
+    .map(|t| map_corp_txn_entry(t, corp_id, division, &corp_type_names))
+    .collect();
+  (divisions, journal, market)
 }
 
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
@@ -296,42 +511,12 @@ async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db
       let type_ids: Vec<i32> = rows
         .iter()
         .map(|r| r.type_id)
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-      let type_names: std::collections::HashMap<i32, String> = db
-        .universe()
-        .item_types()
-        .find_by_ids(&type_ids)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|t| (t.id, t.name))
-        .collect();
+      let type_names = load_type_names(&type_ids, &db).await;
       for row in rows {
-        let ts = parse_iso_to_unix(&row.date);
-        let total = row.unit_price * row.quantity as f64;
-        let item = type_names
-          .get(&row.type_id)
-          .cloned()
-          .unwrap_or_else(|| format!("Type #{}", row.type_id));
-        all.push(MarketEntry {
-          id: format!("{}-{}", row.character_id, row.transaction_id),
-          who: row.character_id,
-          type_id: row.type_id,
-          side: if row.is_buy {
-            "buy".to_string()
-          } else {
-            "sell".to_string()
-          },
-          qty: row.quantity as u64,
-          item,
-          unit: row.unit_price,
-          total,
-          fee: 0.0,
-          ts_secs: secs_ago(ts),
-          location: format!("Location #{}", row.location_id),
-        });
+        all.push(map_txn_row(row, &type_names));
       }
     }
   }
@@ -339,78 +524,273 @@ async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db
   all
 }
 
-async fn fetch_contracts(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<ContractEntry> {
-  let mut all: Vec<ContractEntry> = Vec::new();
-  for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    if let Ok(contracts) = char_client.contracts().await {
-      let db_rows: Vec<_> = contracts
-        .iter()
-        .map(|c| CharacterContract {
-          character_id: *character.id(),
-          contract_id: c.contract_id,
-          contract_type: c.r#type.clone(),
-          status: c.status.clone(),
-          title: c.title.clone().unwrap_or_default(),
-          issuer_id: c.issuer_id,
-          assignee_id: c.assignee_id,
-          acceptor_id: c.acceptor_id,
-          price: c.price,
-          collateral: c.collateral,
-          date_issued: c.date_issued.clone(),
-          date_expired: c.date_expired.clone(),
-          start_location_id: c.start_location_id,
-        })
-        .collect();
-      let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
-    }
-    if let Ok(rows) = db.characters().contracts(*character.id()).await {
-      let names = resolve_entity_names(&rows, &esi).await;
-      let locations = resolve_location_names(&rows, &esi, &db).await;
-      for row in rows {
-        let ts = parse_iso_to_unix(&row.date_issued);
-        let counterparty_id = if row.acceptor_id != 0 {
-          row.acceptor_id
-        } else {
-          row.assignee_id
-        };
-        let counterparty = if counterparty_id != 0 {
-          names
-            .get(&counterparty_id)
-            .cloned()
-            .unwrap_or_else(|| format!("#{counterparty_id}"))
-        } else {
-          String::new()
-        };
-        let location = row
-          .start_location_id
-          .and_then(|id| locations.get(&id).cloned())
-          .unwrap_or_default();
-        all.push(ContractEntry {
-          id: format!("{}-{}", row.character_id, row.contract_id),
-          who: row.character_id,
-          kind: row.contract_type,
-          status: row.status,
-          title: if row.title.is_empty() {
-            format!("Contract #{}", row.contract_id)
-          } else {
-            row.title
-          },
-          counterparty,
-          price: row.price.unwrap_or(0.0),
-          collateral: row.collateral.unwrap_or(0.0),
-          ts_secs: secs_ago(ts),
-          location,
-        });
-      }
+async fn fetch_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
+  let cached = db
+    .universe()
+    .type_icons()
+    .find_by_ids(&type_ids, "icon")
+    .await
+    .unwrap_or_default();
+
+  let cached_ids: HashSet<i32> = cached.iter().map(|(id, _)| *id).collect();
+  let missing: Vec<i32> = type_ids.into_iter().filter(|id| !cached_ids.contains(id)).collect();
+
+  let mut results = cached;
+  for type_id in missing {
+    if let Ok(bytes) = esi.images().type_icon(type_id as i64, 32).await {
+      let _ = db.universe().type_icons().upsert(type_id, "icon", bytes.clone()).await;
+      results.push((type_id, bytes));
     }
   }
-  all.sort_by_key(|e| e.ts_secs);
-  all
+  results
+}
+
+fn format_party_id(id: Option<i64>) -> String {
+  match id {
+    Some(n) => format!("#{n}"),
+    None => String::new(),
+  }
+}
+
+fn journal_matches(j: &JournalEntry, corp_selected: bool, who: Option<i64>, sign: &SignFilter, q: &str) -> bool {
+  if !corp_selected
+    && let Some(id) = who
+    && j.who != id
+  {
+    return false;
+  }
+  match sign {
+    SignFilter::In if j.delta <= 0.0 => return false,
+    SignFilter::Out if j.delta >= 0.0 => return false,
+    _ => {}
+  }
+  if !q.is_empty()
+    && !j.reference.to_lowercase().contains(q)
+    && !j.party.to_lowercase().contains(q)
+    && !j.location.to_lowercase().contains(q)
+  {
+    return false;
+  }
+  true
+}
+
+async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
+  db.universe()
+    .type_icons()
+    .find_all()
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(type_id, _variant, data)| (type_id, data))
+    .collect()
+}
+
+async fn load_type_names(type_ids: &[i32], db: &pod_db::Repo) -> HashMap<i32, String> {
+  db.universe()
+    .item_types()
+    .find_by_ids(type_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|t| (t.id, t.name))
+    .collect()
+}
+
+fn map_corp_journal_entry(
+  e: pod_esi::models::corporation::CorporationWalletJournalEntry,
+  corp_id: i64,
+  division: u8,
+) -> JournalEntry {
+  let ts = parse_iso_to_unix(&e.date);
+  JournalEntry {
+    id: format!("corp-{corp_id}-{division}-{}", e.id),
+    who: e.first_party_id.unwrap_or(corp_id),
+    entry_type: e.ref_type.clone(),
+    delta: e.amount.unwrap_or(0.0),
+    ts_secs: secs_ago(ts),
+    reference: e.description,
+    party: format_party_id(e.first_party_id.or(e.second_party_id)),
+    location: String::new(),
+  }
+}
+
+fn map_corp_txn_entry(
+  t: pod_esi::models::corporation::CorporationWalletTransaction,
+  corp_id: i64,
+  division: u8,
+  type_names: &HashMap<i32, String>,
+) -> MarketEntry {
+  let ts = parse_iso_to_unix(&t.date);
+  let total = t.unit_price * t.quantity as f64;
+  let item = type_names
+    .get(&t.type_id)
+    .cloned()
+    .unwrap_or_else(|| format!("Type #{}", t.type_id));
+  MarketEntry {
+    id: format!("corp-{corp_id}-{division}-{}", t.transaction_id),
+    who: corp_id,
+    type_id: t.type_id,
+    side: if t.is_buy {
+      "buy".to_string()
+    } else {
+      "sell".to_string()
+    },
+    qty: t.quantity as u64,
+    item,
+    unit: t.unit_price,
+    total,
+    fee: 0.0,
+    ts_secs: secs_ago(ts),
+    location: format!("Location #{}", t.location_id),
+  }
+}
+
+fn map_txn_row(row: WalletTransaction, type_names: &HashMap<i32, String>) -> MarketEntry {
+  let ts = parse_iso_to_unix(&row.date);
+  let total = row.unit_price * row.quantity as f64;
+  let item = type_names
+    .get(&row.type_id)
+    .cloned()
+    .unwrap_or_else(|| format!("Type #{}", row.type_id));
+  MarketEntry {
+    id: format!("{}-{}", row.character_id, row.transaction_id),
+    who: row.character_id,
+    type_id: row.type_id,
+    side: if row.is_buy {
+      "buy".to_string()
+    } else {
+      "sell".to_string()
+    },
+    qty: row.quantity as u64,
+    item,
+    unit: row.unit_price,
+    total,
+    fee: 0.0,
+    ts_secs: secs_ago(ts),
+    location: format!("Location #{}", row.location_id),
+  }
+}
+
+fn market_matches(m: &MarketEntry, corp_selected: bool, who: Option<i64>, side: &SideFilter, q: &str) -> bool {
+  if !corp_selected
+    && let Some(id) = who
+    && m.who != id
+  {
+    return false;
+  }
+  match side {
+    SideFilter::Buy if m.side != "buy" => return false,
+    SideFilter::Sell if m.side != "sell" => return false,
+    _ => {}
+  }
+  if !q.is_empty() && !m.item.to_lowercase().contains(q) {
+    return false;
+  }
+  true
+}
+
+fn parse_iso_to_unix(s: &str) -> i64 {
+  let s = s.trim_end_matches('Z');
+  let Some((date, time)) = s.split_once('T') else {
+    return 0;
+  };
+  let mut dp = date.split('-');
+  let y: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+  let mo: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+  let d: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+  let mut tp = time.split(':');
+  let h: i64 = tp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+  let mi: i64 = tp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+  let sec: i64 = tp.next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) as i64;
+  let y = if mo <= 2 { y - 1 } else { y };
+  let mo = if mo > 2 { mo - 3 } else { mo + 9 };
+  let c = y / 100;
+  let ya = y - 100 * c;
+  let j = (146097 * c) / 4 + (1461 * ya) / 4 + (153 * mo + 2) / 5 + d + 1721119;
+  let unix_days = j - 2440588;
+  unix_days * 86400 + h * 3600 + mi * 60 + sec
+}
+
+fn recompute_derived(state: &mut State) {
+  recompute_filters(state);
+  recompute_series(state);
+}
+
+fn recompute_filters(state: &mut State) {
+  let who = state.selected_character();
+  let q = state.search_query.to_lowercase();
+  let corp_selected = state.is_corp_selected();
+  let sign = state.sign_filter.clone();
+  let side = state.side_filter.clone();
+  let journal_source = if corp_selected {
+    &state.corp_journal
+  } else {
+    &state.journal
+  };
+  state.filtered_journal = journal_source
+    .iter()
+    .filter(|j| journal_matches(j, corp_selected, who, &sign, &q))
+    .cloned()
+    .collect();
+  let market_source = if corp_selected {
+    &state.corp_market
+  } else {
+    &state.market
+  };
+  state.filtered_market = market_source
+    .iter()
+    .filter(|m| market_matches(m, corp_selected, who, &side, &q))
+    .cloned()
+    .collect();
+  state.filtered_contracts = state
+    .contracts
+    .iter()
+    .filter(|c| {
+      if let Some(id) = who
+        && c.who != id
+      {
+        return false;
+      }
+      if !q.is_empty() && !c.title.to_lowercase().contains(&q) {
+        return false;
+      }
+      true
+    })
+    .cloned()
+    .collect();
+  update_journal_totals(state);
+}
+
+fn recompute_series(state: &mut State) {
+  let corp_selected = state.is_corp_selected();
+  let selected_char = state.selected_character();
+  let mut entries: Vec<JournalEntry> = if corp_selected {
+    state.corp_journal.clone()
+  } else {
+    state
+      .journal
+      .iter()
+      .filter(|e| selected_char.is_none_or(|id| e.who == id))
+      .cloned()
+      .collect()
+  };
+  entries.sort_by_key(|e| Reverse(e.ts_secs));
+  state.net_worth_series = build_net_worth_series(&entries);
+
+  let days = state.timeframe.days();
+  let total = state.net_worth_series.len();
+  state.chart_series = if total <= days {
+    state.net_worth_series.clone()
+  } else {
+    state.net_worth_series[total - days..].to_vec()
+  };
+
+  state.net_worth_change = if state.chart_series.len() < 2 {
+    0.0
+  } else {
+    let s = &state.chart_series;
+    s[s.len() - 1] - s[0]
+  };
 }
 
 async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
@@ -479,378 +859,12 @@ async fn resolve_location_names(
   names
 }
 
-async fn fetch_corp_data(
-  corp_id: i64,
-  division: u8,
-  corporations: Vec<Corporation>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> (Vec<(u8, f64)>, Vec<JournalEntry>, Vec<MarketEntry>) {
-  let Some(corp) = corporations.iter().find(|c| *c.id() == corp_id) else {
-    return (Vec::new(), Vec::new(), Vec::new());
-  };
-
-  let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
-    return (Vec::new(), Vec::new(), Vec::new());
-  };
-
-  let grant = corporation_service::refresh_grant(corp, &token);
-  let corp_esi = esi.corporation(corp_id);
-  let corp_client = corp_esi.auth(&grant);
-
-  let divisions: Vec<(u8, f64)> = corp_client
-    .wallets()
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|w| (w.division as u8, w.balance))
-    .collect();
-
-  let journal: Vec<JournalEntry> = corp_client
-    .wallet_journal(i32::from(division))
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|e| {
-      let ts = parse_iso_to_unix(&e.date);
-      JournalEntry {
-        id: format!("corp-{corp_id}-{division}-{}", e.id),
-        who: e.first_party_id.unwrap_or(corp_id),
-        entry_type: e.ref_type.clone(),
-        delta: e.amount.unwrap_or(0.0),
-        ts_secs: secs_ago(ts),
-        reference: e.description,
-        party: format_party_id(e.first_party_id.or(e.second_party_id)),
-        location: String::new(),
-      }
-    })
-    .collect();
-
-  let raw_txns = corp_client
-    .wallet_transactions(i32::from(division))
-    .await
-    .unwrap_or_default();
-
-  let corp_type_ids: Vec<i32> = raw_txns
-    .iter()
-    .map(|t| t.type_id)
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect();
-  let corp_type_names: HashMap<i32, String> = db
-    .universe()
-    .item_types()
-    .find_by_ids(&corp_type_ids)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|t| (t.id, t.name))
-    .collect();
-
-  let market: Vec<MarketEntry> = raw_txns
-    .into_iter()
-    .map(|t| {
-      let ts = parse_iso_to_unix(&t.date);
-      let total = t.unit_price * t.quantity as f64;
-      let item = corp_type_names
-        .get(&t.type_id)
-        .cloned()
-        .unwrap_or_else(|| format!("Type #{}", t.type_id));
-      MarketEntry {
-        id: format!("corp-{corp_id}-{division}-{}", t.transaction_id),
-        who: corp_id,
-        type_id: t.type_id,
-        side: if t.is_buy {
-          "buy".to_string()
-        } else {
-          "sell".to_string()
-        },
-        qty: t.quantity as u64,
-        item,
-        unit: t.unit_price,
-        total,
-        fee: 0.0,
-        ts_secs: secs_ago(ts),
-        location: format!("Location #{}", t.location_id),
-      }
-    })
-    .collect();
-
-  (divisions, journal, market)
-}
-
-async fn fetch_all_corp_totals(
-  corporations: Vec<Corporation>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> Vec<(i64, f64)> {
-  let mut totals = Vec::new();
-  for corp in &corporations {
-    let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
-      continue;
-    };
-    let grant = corporation_service::refresh_grant(corp, &token);
-    let corp_id = *corp.id();
-    let corp_esi = esi.corporation(corp_id);
-    let corp_client = corp_esi.auth(&grant);
-    if let Ok(wallets) = corp_client.wallets().await {
-      let total: f64 = wallets.iter().map(|w| w.balance).sum();
-      totals.push((corp_id, total));
-    }
-  }
-  totals
-}
-
-fn build_net_worth_series(journal: &[JournalEntry]) -> Vec<f64> {
-  if journal.is_empty() {
-    return Vec::new();
-  }
-  let mut running = 0.0f64;
-  journal
-    .iter()
-    .map(|e| {
-      running += e.delta;
-      running
-    })
-    .collect()
-}
-
-fn recompute_series(state: &mut State) {
-  let corp_selected = state.is_corp_selected();
-  let selected_char = state.selected_character();
-  let mut entries: Vec<JournalEntry> = if corp_selected {
-    state.corp_journal.clone()
-  } else {
-    state
-      .journal
-      .iter()
-      .filter(|e| selected_char.is_none_or(|id| e.who == id))
-      .cloned()
-      .collect()
-  };
-  // Sort oldest-first (ts_secs = seconds-ago, so largest value = oldest entry)
-  entries.sort_by(|a, b| b.ts_secs.cmp(&a.ts_secs));
-  state.net_worth_series = build_net_worth_series(&entries);
-
-  let days = state.timeframe.days();
-  let total = state.net_worth_series.len();
-  state.chart_series = if total <= days {
-    state.net_worth_series.clone()
-  } else {
-    state.net_worth_series[total - days..].to_vec()
-  };
-
-  state.net_worth_change = if state.chart_series.len() < 2 {
-    0.0
-  } else {
-    let s = &state.chart_series;
-    s[s.len() - 1] - s[0]
-  };
-}
-
-fn recompute_filters(state: &mut State) {
-  let who = state.selected_character();
-  let q = state.search_query.to_lowercase();
-  let corp_selected = state.is_corp_selected();
-
-  let sign = state.sign_filter.clone();
-  let source = if corp_selected {
-    &state.corp_journal
-  } else {
-    &state.journal
-  };
-  state.filtered_journal = source
-    .iter()
-    .filter(|j| {
-      if !corp_selected
-        && let Some(id) = who
-        && j.who != id
-      {
-        return false;
-      }
-      match sign {
-        SignFilter::In if j.delta <= 0.0 => return false,
-        SignFilter::Out if j.delta >= 0.0 => return false,
-        _ => {}
-      }
-      if !q.is_empty()
-        && !j.reference.to_lowercase().contains(&q)
-        && !j.party.to_lowercase().contains(&q)
-        && !j.location.to_lowercase().contains(&q)
-      {
-        return false;
-      }
-      true
-    })
-    .cloned()
-    .collect();
-
-  let side = state.side_filter.clone();
-  let source = if corp_selected {
-    &state.corp_market
-  } else {
-    &state.market
-  };
-  state.filtered_market = source
-    .iter()
-    .filter(|m| {
-      if !corp_selected
-        && let Some(id) = who
-        && m.who != id
-      {
-        return false;
-      }
-      match side {
-        SideFilter::Buy if m.side != "buy" => return false,
-        SideFilter::Sell if m.side != "sell" => return false,
-        _ => {}
-      }
-      if !q.is_empty() && !m.item.to_lowercase().contains(&q) {
-        return false;
-      }
-      true
-    })
-    .cloned()
-    .collect();
-
-  state.filtered_contracts = state
-    .contracts
-    .iter()
-    .filter(|c| {
-      if let Some(id) = who
-        && c.who != id
-      {
-        return false;
-      }
-      if !q.is_empty() && !c.title.to_lowercase().contains(&q) {
-        return false;
-      }
-      true
-    })
-    .cloned()
-    .collect();
-
-  state.journal_income = state
-    .filtered_journal
-    .iter()
-    .filter(|j| j.delta > 0.0)
-    .map(|j| j.delta)
-    .sum();
-  state.journal_spend = state
-    .filtered_journal
-    .iter()
-    .filter(|j| j.delta < 0.0)
-    .map(|j| j.delta.abs())
-    .sum();
-}
-
-fn recompute_derived(state: &mut State) {
-  recompute_filters(state);
-  recompute_series(state);
-}
-
-fn parse_iso_to_unix(s: &str) -> i64 {
-  let s = s.trim_end_matches('Z');
-  let Some((date, time)) = s.split_once('T') else {
-    return 0;
-  };
-  let mut dp = date.split('-');
-  let y: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-  let mo: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-  let d: i64 = dp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-  let mut tp = time.split(':');
-  let h: i64 = tp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-  let mi: i64 = tp.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-  let sec: i64 = tp.next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) as i64;
-  let y = if mo <= 2 { y - 1 } else { y };
-  let mo = if mo > 2 { mo - 3 } else { mo + 9 };
-  let c = y / 100;
-  let ya = y - 100 * c;
-  let j = (146097 * c) / 4 + (1461 * ya) / 4 + (153 * mo + 2) / 5 + d + 1721119;
-  let unix_days = j - 2440588;
-  unix_days * 86400 + h * 3600 + mi * 60 + sec
-}
-
 fn secs_ago(ts: i64) -> u64 {
   let now = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap_or_default()
     .as_secs() as i64;
   (now - ts).max(0) as u64
-}
-
-async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
-  db.universe()
-    .type_icons()
-    .find_all()
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(type_id, _variant, data)| (type_id, data))
-    .collect()
-}
-
-async fn fetch_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
-  let cached = db
-    .universe()
-    .type_icons()
-    .find_by_ids(&type_ids, "icon")
-    .await
-    .unwrap_or_default();
-
-  let cached_ids: HashSet<i32> = cached.iter().map(|(id, _)| *id).collect();
-  let missing: Vec<i32> = type_ids.into_iter().filter(|id| !cached_ids.contains(id)).collect();
-
-  let mut results = cached;
-  for type_id in missing {
-    if let Ok(bytes) = esi.images().type_icon(type_id as i64, 32).await {
-      let _ = db.universe().type_icons().upsert(type_id, "icon", bytes.clone()).await;
-      results.push((type_id, bytes));
-    }
-  }
-  results
-}
-
-async fn fetch_asset_values(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i64, f64)> {
-  let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
-  if char_ids.is_empty() {
-    return Vec::new();
-  }
-
-  let asset_rows = db
-    .characters()
-    .assets_for_character_ids(&char_ids)
-    .await
-    .unwrap_or_default();
-
-  if asset_rows.is_empty() {
-    return Vec::new();
-  }
-
-  let prices: std::collections::HashMap<i32, f64> = esi
-    .market()
-    .prices()
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|p| (p.type_id, p.adjusted_price.or(p.average_price).unwrap_or(0.0)))
-    .collect();
-
-  let mut totals: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
-  for asset in &asset_rows {
-    let price = prices.get(&asset.type_id).copied().unwrap_or(0.0);
-    let value = price * asset.quantity as f64;
-    *totals.entry(asset.character_id).or_insert(0.0) += value;
-  }
-
-  totals.into_iter().collect()
-}
-
-fn format_party_id(id: Option<i64>) -> String {
-  match id {
-    Some(n) => format!("#{n}"),
-    None => String::new(),
-  }
 }
 
 fn update_character_picker(
@@ -906,4 +920,255 @@ fn update_division_selected(
   let base = pod_ui::views::wallet::update(state, Message::DivisionSelected(div));
   recompute_derived(state);
   attach_icon_task(base, icon_type_ids, services)
+}
+
+fn update_journal_totals(state: &mut State) {
+  state.journal_income = state
+    .filtered_journal
+    .iter()
+    .filter(|j| j.delta > 0.0)
+    .map(|j| j.delta)
+    .sum();
+  state.journal_spend = state
+    .filtered_journal
+    .iter()
+    .filter(|j| j.delta < 0.0)
+    .map(|j| j.delta.abs())
+    .sum();
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod build_contract_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_contract(acceptor_id: i64, assignee_id: i64, title: &str) -> CharacterContract {
+      CharacterContract {
+        character_id: 1,
+        contract_id: 7,
+        contract_type: "item_exchange".to_string(),
+        status: "outstanding".to_string(),
+        title: title.to_string(),
+        issuer_id: 1,
+        assignee_id,
+        acceptor_id,
+        price: Some(100.0),
+        collateral: Some(0.0),
+        date_issued: "2024-01-01T00:00:00Z".to_string(),
+        date_expired: "2024-02-01T00:00:00Z".to_string(),
+        start_location_id: None,
+      }
+    }
+
+    #[test]
+    fn it_uses_acceptor_as_counterparty_when_nonzero() {
+      let row = make_contract(500, 200, "deal");
+      let mut names = HashMap::new();
+      names.insert(500_i64, "Alice".to_string());
+
+      let entry = build_contract_entry(row, &names, &HashMap::new());
+
+      assert_eq!(entry.counterparty, "Alice");
+    }
+
+    #[test]
+    fn it_falls_back_to_assignee_when_acceptor_is_zero() {
+      let row = make_contract(0, 200, "deal");
+      let mut names = HashMap::new();
+      names.insert(200_i64, "Bob".to_string());
+
+      let entry = build_contract_entry(row, &names, &HashMap::new());
+
+      assert_eq!(entry.counterparty, "Bob");
+    }
+
+    #[test]
+    fn it_generates_default_title_when_title_is_empty() {
+      let row = make_contract(0, 0, "");
+
+      let entry = build_contract_entry(row, &HashMap::new(), &HashMap::new());
+
+      assert_eq!(entry.title, "Contract #7");
+    }
+
+    #[test]
+    fn it_preserves_non_empty_title() {
+      let row = make_contract(0, 0, "My contract");
+
+      let entry = build_contract_entry(row, &HashMap::new(), &HashMap::new());
+
+      assert_eq!(entry.title, "My contract");
+    }
+  }
+
+  mod journal_matches {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_journal(delta: f64) -> JournalEntry {
+      JournalEntry {
+        id: "1".to_string(),
+        who: 10,
+        entry_type: "player_trading".to_string(),
+        delta,
+        ts_secs: 0,
+        reference: "ref".to_string(),
+        party: "party".to_string(),
+        location: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_excludes_wrong_character_when_corp_not_selected() {
+      let j = make_journal(100.0);
+
+      let result = journal_matches(&j, false, Some(99), &SignFilter::All, "");
+
+      assert!(!result);
+    }
+
+    #[test]
+    fn it_includes_matching_character_id() {
+      let j = make_journal(100.0);
+
+      let result = journal_matches(&j, false, Some(10), &SignFilter::All, "");
+
+      assert!(result);
+    }
+
+    #[test]
+    fn it_excludes_negative_delta_for_sign_filter_in() {
+      let j = make_journal(-50.0);
+
+      let result = journal_matches(&j, true, None, &SignFilter::In, "");
+
+      assert!(!result);
+    }
+
+    #[test]
+    fn it_excludes_positive_delta_for_sign_filter_out() {
+      let j = make_journal(50.0);
+
+      let result = journal_matches(&j, true, None, &SignFilter::Out, "");
+
+      assert!(!result);
+    }
+  }
+
+  mod map_txn_row {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_txn(type_id: i32, qty: i32, unit_price: f64, is_buy: bool) -> WalletTransaction {
+      WalletTransaction {
+        character_id: 1,
+        transaction_id: 99,
+        type_id,
+        quantity: qty,
+        unit_price,
+        is_buy,
+        date: "2024-01-01T00:00:00Z".to_string(),
+        location_id: 60_000_000,
+        client_id: 0,
+      }
+    }
+
+    #[test]
+    fn it_computes_total_as_unit_price_times_qty() {
+      let mut names = HashMap::new();
+      names.insert(34, "Tritanium".to_string());
+      let row = make_txn(34, 100, 5.5, false);
+
+      let entry = map_txn_row(row, &names);
+
+      assert_eq!(entry.total, 550.0);
+    }
+
+    #[test]
+    fn it_uses_type_name_from_map_when_present() {
+      let mut names = HashMap::new();
+      names.insert(34, "Tritanium".to_string());
+      let row = make_txn(34, 1, 1.0, false);
+
+      let entry = map_txn_row(row, &names);
+
+      assert_eq!(entry.item, "Tritanium");
+    }
+
+    #[test]
+    fn it_falls_back_to_type_number_when_name_absent() {
+      let row = make_txn(34, 1, 1.0, false);
+
+      let entry = map_txn_row(row, &HashMap::new());
+
+      assert_eq!(entry.item, "Type #34");
+    }
+
+    #[test]
+    fn it_sets_side_to_buy_when_is_buy_is_true() {
+      let row = make_txn(34, 1, 1.0, true);
+
+      let entry = map_txn_row(row, &HashMap::new());
+
+      assert_eq!(entry.side, "buy");
+    }
+
+    #[test]
+    fn it_sets_side_to_sell_when_is_buy_is_false() {
+      let row = make_txn(34, 1, 1.0, false);
+
+      let entry = map_txn_row(row, &HashMap::new());
+
+      assert_eq!(entry.side, "sell");
+    }
+  }
+
+  mod update_journal_totals {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_journal_entries(deltas: Vec<f64>) -> Vec<JournalEntry> {
+      deltas
+        .into_iter()
+        .enumerate()
+        .map(|(i, delta)| JournalEntry {
+          id: i.to_string(),
+          who: 0,
+          entry_type: String::new(),
+          delta,
+          ts_secs: 0,
+          reference: String::new(),
+          party: String::new(),
+          location: String::new(),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn it_sums_only_positive_deltas_for_income() {
+      let mut state = build_wallet_state(&[], &[], 0.0);
+      state.filtered_journal = make_journal_entries(vec![100.0, -50.0, 200.0]);
+
+      update_journal_totals(&mut state);
+
+      assert_eq!(state.journal_income, 300.0);
+    }
+
+    #[test]
+    fn it_sums_absolute_values_of_negative_deltas_for_spend() {
+      let mut state = build_wallet_state(&[], &[], 0.0);
+      state.filtered_journal = make_journal_entries(vec![100.0, -50.0, -80.0]);
+
+      update_journal_totals(&mut state);
+
+      assert_eq!(state.journal_spend, 130.0);
+    }
+  }
 }

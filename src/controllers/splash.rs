@@ -42,12 +42,7 @@ pub fn handle_bootstrap(
       state.progress_target = 0.85;
       HandleResult::Bootstrap(bootstrap::continue_after_db(db_val))
     }
-    bootstrap::Message::SyncStarted(total_steps) => {
-      if total_steps > 0 {
-        *sync_step_size = (1.0 - state.progress_target) / total_steps as f32;
-      }
-      HandleResult::None
-    }
+    bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
     bootstrap::Message::StepChanged(label) => {
       *step_label = label;
       state.progress_target = (state.progress_target + *sync_step_size).min(1.0);

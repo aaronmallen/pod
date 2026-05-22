@@ -532,16 +532,9 @@ async fn load_structure_sys_name_map(
     .collect()
 }
 
-/// Builds the price cache from the latest Jita prices for all known type IDs.
+/// Builds the price cache from the latest prices for all known type IDs.
 async fn build_price_cache(db: &pod_db::Repo, type_ids: &[i32]) -> HashMap<i32, f64> {
-  let prices_repo = db.prices();
-  let mut cache = HashMap::new();
-  for &type_id in type_ids {
-    if let Ok(Some(price)) = prices_repo.latest_price(type_id).await {
-      cache.insert(type_id, price);
-    }
-  }
-  cache
+  db.prices().latest_prices(type_ids).await.unwrap_or_default()
 }
 
 /// Extracts the unique set of station-type location IDs from a slice of asset rows.
@@ -691,16 +684,22 @@ async fn build_asset_maps(
   item_index: HashMap<i64, (i64, String, String, i32)>,
   is_container_set: HashSet<i64>,
 ) -> AssetMaps {
-  let (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map) =
-    load_type_maps(db, type_ids).await;
-  let system_name_map = load_system_name_map(db, &station_map).await;
-  let structure_name_map = resolve_structure_names(&structure_locs, characters, esi, db).await;
+  let (
+    (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map),
+    system_name_map,
+    structure_name_map,
+    price_cache,
+  ) = tokio::join!(
+    load_type_maps(db, type_ids),
+    load_system_name_map(db, &station_map),
+    resolve_structure_names(&structure_locs, characters, esi, db),
+    build_price_cache(db, type_ids),
+  );
   let structure_system_name_map = load_structure_sys_name_map(db, &structure_name_map).await;
   let structure_name_only: HashMap<i64, String> = structure_name_map
     .iter()
     .map(|(&id, (name, _))| (id, name.clone()))
     .collect();
-  let price_cache = build_price_cache(db, type_ids).await;
   AssetMaps {
     cat_key_map,
     group_name_map,
@@ -904,14 +903,8 @@ pub async fn asset_values_breakdown(
   characters: Vec<pod_model::Character>,
   db: pod_db::Repo,
 ) -> AssetValuesData {
-  let prices_repo = db.prices();
   let type_ids: Vec<i32> = unique_ids(assets.iter().map(|a| a.type_id));
-  let mut price_cache: HashMap<i32, f64> = HashMap::new();
-  for type_id in type_ids {
-    if let Ok(Some(price)) = prices_repo.latest_price(type_id).await {
-      price_cache.insert(type_id, price);
-    }
-  }
+  let price_cache = db.prices().latest_prices(&type_ids).await.unwrap_or_default();
   let char_name_map: HashMap<i64, String> = characters.iter().map(|c| (*c.id(), c.name().clone())).collect();
   let valued: Vec<(&AssetRecord, f64)> = assets
     .iter()

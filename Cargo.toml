@@ -60,7 +60,7 @@ serde_yaml = "0.9"
 sha2 = "0.11"
 thiserror = "2"
 tokio = { features = ["full"], version = "1" }
-toml = "0.8"
+toml = "1.1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { features = ["env-filter", "fmt"], version = "0.3" }

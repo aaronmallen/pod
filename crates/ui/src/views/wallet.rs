@@ -391,64 +391,18 @@ fn effective_right_rail_width(state: &State, window_width: f32) -> f32 {
 /// Processes a wallet message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::ReauthorizeCharacter(_) => {}
-    Message::AllCorpBalancesLoaded(balances) => {
-      state.all_corp_balances = balances;
-    }
-    Message::AssetValuesLoaded(values) => update_asset_values(state, values),
     Message::CharacterPicker(msg) => update_character_picker(state, msg),
-    Message::ContractsLoaded(entries) => {
-      state.contracts = entries;
-    }
-    Message::ContractsTab(_msg) => {}
     Message::CorpDataLoaded {
       divisions,
       journal,
       market,
-    } => {
-      state.corp_divisions = divisions;
-      state.corp_journal = journal;
-      state.corp_market = market;
-    }
-    Message::DivisionSelected(div) => {
-      state.active_division = div;
-    }
-    Message::ItemIconsLoaded(icons) => update_item_icons(state, icons),
-    Message::JournalLoaded(entries) => {
-      state.journal = entries;
-    }
-    Message::JournalTab(msg) => match msg {
-      journal_tab::Message::SignFilterChanged(sign) => {
-        state.sign_filter = sign;
-      }
-    },
-    Message::MarketTab(msg) => match msg {
-      market_tab::Message::SideFilterChanged(side) => {
-        state.side_filter = side;
-      }
-    },
+    } => update_corp_data(state, divisions, journal, market),
+    Message::JournalTab(msg) => update_journal_tab(state, msg),
+    Message::MarketTab(msg) => update_market_tab(state, msg),
     Message::PaneDrag(cursor_x) => update_pane_drag(state, cursor_x),
-    Message::PaneDragEnd => {
-      state.dragging_pane = None;
-      state.drag_origin = None;
-    }
-    Message::PaneDragStart(pane) => {
-      state.dragging_pane = Some(pane);
-      state.drag_origin = None;
-    }
-    Message::SearchChanged(q) => {
-      state.search_query = q;
-    }
-    Message::TabSelected(tab) => {
-      state.active_tab = tab;
-      state.search_query.clear();
-    }
-    Message::TimeframeChanged(tf) => {
-      state.timeframe = tf;
-    }
-    Message::TransactionsLoaded(entries) => {
-      state.market = entries;
-    }
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
+    msg => update_simple(state, msg),
   }
   iced::Task::none()
 }
@@ -482,6 +436,93 @@ fn update_pane_drag(state: &mut State, cursor_x: f32) {
     let (start_x, start_w) = state.drag_origin.get_or_insert((cursor_x, state.right_rail_width));
     let delta = cursor_x - *start_x;
     state.right_rail_width = (*start_w - delta).clamp(160.0, 400.0);
+  }
+}
+
+fn update_all_corp_balances(state: &mut State, balances: Vec<(i64, f64)>) {
+  state.all_corp_balances = balances;
+}
+
+fn update_contracts_loaded(state: &mut State, entries: Vec<ContractEntry>) {
+  state.contracts = entries;
+}
+
+fn update_corp_data(
+  state: &mut State,
+  divisions: Vec<(u8, f64)>,
+  journal: Vec<JournalEntry>,
+  market: Vec<MarketEntry>,
+) {
+  state.corp_divisions = divisions;
+  state.corp_journal = journal;
+  state.corp_market = market;
+}
+
+fn update_division_selected(state: &mut State, div: u8) {
+  state.active_division = div;
+}
+
+fn update_journal_loaded(state: &mut State, entries: Vec<JournalEntry>) {
+  state.journal = entries;
+}
+
+fn update_journal_tab(state: &mut State, msg: journal_tab::Message) {
+  match msg {
+    journal_tab::Message::SignFilterChanged(sign) => {
+      state.sign_filter = sign;
+    }
+  }
+}
+
+fn update_market_tab(state: &mut State, msg: market_tab::Message) {
+  match msg {
+    market_tab::Message::SideFilterChanged(side) => {
+      state.side_filter = side;
+    }
+  }
+}
+
+fn update_pane_drag_end(state: &mut State) {
+  state.dragging_pane = None;
+  state.drag_origin = None;
+}
+
+fn update_pane_drag_start(state: &mut State, pane: DraggingPane) {
+  state.dragging_pane = Some(pane);
+  state.drag_origin = None;
+}
+
+fn update_search_changed(state: &mut State, q: String) {
+  state.search_query = q;
+}
+
+fn update_tab_selected(state: &mut State, tab: Tab) {
+  state.active_tab = tab;
+  state.search_query.clear();
+}
+
+fn update_timeframe_changed(state: &mut State, tf: Timeframe) {
+  state.timeframe = tf;
+}
+
+fn update_transactions_loaded(state: &mut State, entries: Vec<MarketEntry>) {
+  state.market = entries;
+}
+
+fn update_simple(state: &mut State, msg: Message) {
+  match msg {
+    Message::ReauthorizeCharacter(_) | Message::ContractsTab(_) => {}
+    Message::AllCorpBalancesLoaded(b) => update_all_corp_balances(state, b),
+    Message::AssetValuesLoaded(v) => update_asset_values(state, v),
+    Message::ContractsLoaded(e) => update_contracts_loaded(state, e),
+    Message::DivisionSelected(d) => update_division_selected(state, d),
+    Message::ItemIconsLoaded(i) => update_item_icons(state, i),
+    Message::JournalLoaded(e) => update_journal_loaded(state, e),
+    Message::SearchChanged(q) => update_search_changed(state, q),
+    Message::TabSelected(t) => update_tab_selected(state, t),
+    Message::TimeframeChanged(tf) => update_timeframe_changed(state, tf),
+    Message::TransactionsLoaded(e) => update_transactions_loaded(state, e),
+    _ => {}
   }
 }
 

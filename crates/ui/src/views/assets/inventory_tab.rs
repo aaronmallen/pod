@@ -140,6 +140,14 @@ fn filter_bar<'a>(state: &'a State) -> Element<'a, Message> {
   .into()
 }
 
+fn col_hdr_label_text(label: &'static str, is_active: bool, asc: bool) -> String {
+  if is_active {
+    format!("{} {}", label, if asc { "▲" } else { "▼" })
+  } else {
+    label.to_string()
+  }
+}
+
 fn table_col_hdr<'a>(
   label: &'static str,
   col: SortCol,
@@ -149,11 +157,7 @@ fn table_col_hdr<'a>(
   fill: bool,
 ) -> Element<'a, Message> {
   let is_active = *active == col;
-  let label_text = if is_active {
-    format!("{} {}", label, if asc { "▲" } else { "▼" })
-  } else {
-    label.to_string()
-  };
+  let label_text = col_hdr_label_text(label, is_active, asc);
 
   let btn = button(
     text(label_text)
@@ -327,6 +331,35 @@ fn container_toggle(item_id: i64, expanded: bool) -> Element<'static, Message> {
   .into()
 }
 
+fn asset_row_prefix(a: &AssetRecord, expanded: bool) -> Element<'_, Message> {
+  let indent = a.depth as f32 * 16.0;
+  if a.is_container {
+    row([Space::new().width(indent).into(), container_toggle(a.item_id, expanded)]).into()
+  } else {
+    Space::new().width(indent + 16.0).into()
+  }
+}
+
+fn asset_value_cell(val: f64) -> Element<'static, Message> {
+  text(format::fmt_isk(val))
+    .font(mono::MEDIUM)
+    .size(12.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::accent::PLASMA),
+    })
+    .width(Length::Fixed(120.0))
+    .into()
+}
+
+fn asset_location_cell(a: &AssetRecord) -> Element<'_, Message> {
+  let loc = if a.container_path.is_empty() {
+    a.location_name.clone()
+  } else {
+    a.container_path.clone()
+  };
+  asset_grotesk_cell(loc, 11.0, color::text::SECONDARY, 200.0)
+}
+
 fn asset_table_row<'a>(
   a: &'a AssetRecord,
   char_name: &'a str,
@@ -335,12 +368,8 @@ fn asset_table_row<'a>(
 ) -> Element<'a, Message> {
   let val = asset_value(a);
   let vol = asset_volume(a);
-  let indent = a.depth as f32 * 16.0;
-  let prefix: Element<'_, Message> = if a.is_container {
-    row([Space::new().width(indent).into(), container_toggle(a.item_id, expanded)]).into()
-  } else {
-    Space::new().width(indent + 16.0).into()
-  };
+  let prefix = asset_row_prefix(a, expanded);
+
   container(
     row([
       prefix,
@@ -349,25 +378,9 @@ fn asset_table_row<'a>(
       asset_name_col(a),
       asset_mono_cell(fmt_qty(a.quantity as u64), 12.0, color::text::PRIMARY, 70.0),
       asset_mono_cell(format::fmt_isk(0.0), 11.0, color::text::SECONDARY, 110.0),
-      text(format::fmt_isk(val))
-        .font(mono::MEDIUM)
-        .size(12.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::accent::PLASMA),
-        })
-        .width(Length::Fixed(120.0))
-        .into(),
+      asset_value_cell(val),
       asset_mono_cell(fmt_vol(vol), 11.0, color::text::SECONDARY, 90.0),
-      asset_grotesk_cell(
-        if a.container_path.is_empty() {
-          a.location_name.clone()
-        } else {
-          a.container_path.clone()
-        },
-        11.0,
-        color::text::SECONDARY,
-        200.0,
-      ),
+      asset_location_cell(a),
       asset_grotesk_cell(char_name.to_string(), 11.0, color::text::SECONDARY, 120.0),
     ])
     .align_y(iced::alignment::Vertical::Center)

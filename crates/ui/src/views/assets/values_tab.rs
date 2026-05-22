@@ -63,64 +63,43 @@ fn hdr_cell(label: String, width: impl Into<Length> + Copy) -> Element<'static, 
   .into()
 }
 
-fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'static, Message> {
-  let mut structures: Vec<String> = cells
-    .iter()
-    .map(|c| c.structure_name.clone())
-    .collect::<std::collections::HashSet<_>>()
-    .into_iter()
-    .collect();
-  structures.sort_by(|a, b| {
-    let a_total: f64 = cells.iter().filter(|c| &c.structure_name == a).map(|c| c.value).sum();
-    let b_total: f64 = cells.iter().filter(|c| &c.structure_name == b).map(|c| c.value).sum();
-    b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
-  });
+fn matrix_total_hdr_cell() -> Element<'static, Message> {
+  container(
+    text("TOTAL")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .width(Length::Fixed(120.0))
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::border::SUBTLE,
+      width: 1.0,
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
 
-  let mut characters: Vec<(i64, String)> = cells
-    .iter()
-    .map(|c| (c.character_id, c.character_name.clone()))
-    .collect::<std::collections::HashSet<_>>()
-    .into_iter()
-    .collect();
-  characters.sort_by_key(|(id, _)| *id);
-
-  let n_chars = characters.len();
-  let n_structs = structures.len();
-
+fn matrix_header_row(structures: &[String]) -> Element<'static, Message> {
   let mut header_cells: Vec<Element<'static, Message>> = vec![hdr_cell("CHARACTER".to_string(), 160.0)];
-  for s in &structures {
+  for s in structures {
     let short = s.split(" · ").next().unwrap_or(s.as_str()).to_string();
     header_cells.push(hdr_cell(short, Length::Fixed(120.0)));
   }
-  header_cells.push(
-    container(
-      text("TOTAL")
-        .font(mono::REGULAR)
-        .size(9.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
-    )
-    .width(Length::Fixed(120.0))
-    .padding(Padding {
-      top: 12.0,
-      bottom: 12.0,
-      left: 18.0,
-      right: 18.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::border::SUBTLE,
-        width: 1.0,
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into(),
-  );
+  header_cells.push(matrix_total_hdr_cell());
 
-  let header_row: Element<'static, Message> = container(
+  container(
     row(header_cells)
       .width(Length::Fill)
       .align_y(iced::alignment::Vertical::Center),
@@ -135,211 +114,232 @@ fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'
     },
     ..container::Style::default()
   })
-  .into();
+  .into()
+}
 
-  let mut data_rows: Vec<Element<'static, Message>> = Vec::new();
-  for (char_id, char_name) in &characters {
-    let char_id = *char_id;
-    let row_total: f64 = cells
-      .iter()
-      .filter(|c| c.character_id == char_id)
-      .map(|c| c.value)
-      .sum();
+fn matrix_value_cell(v: f64, row_total: f64) -> Element<'static, Message> {
+  let intensity = if row_total > 0.0 { (v / row_total) as f32 } else { 0.0 };
+  let bg = if v > 0.0 {
+    Some(Background::Color(Color::from_rgba(
+      0.247,
+      0.722,
+      0.859,
+      0.04 + 0.16 * intensity,
+    )))
+  } else {
+    None
+  };
+  let label = if v == 0.0 {
+    "\u{2014}".to_string()
+  } else {
+    format::fmt_isk(v)
+  };
+  let text_color = if v == 0.0 {
+    color::text::TERTIARY
+  } else {
+    color::text::PRIMARY
+  };
 
-    let char_cell: Element<'static, Message> = container(text(char_name.clone()).font(body::MEDIUM).size(13.0).style(
-      |_: &Theme| iced::widget::text::Style {
+  container(
+    text(label)
+      .font(mono::REGULAR)
+      .size(11.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(text_color),
+      }),
+  )
+  .width(Length::Fixed(120.0))
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(move |_| container::Style {
+    background: bg,
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn matrix_row_total_cell(row_total: f64) -> Element<'static, Message> {
+  container(
+    text(format::fmt_isk(row_total))
+      .font(mono::MEDIUM)
+      .size(12.0)
+      .style(|_: &Theme| iced::widget::text::Style {
         color: Some(color::text::PRIMARY),
-      },
-    ))
-    .width(160.0)
-    .padding(Padding {
-      top: 12.0,
-      bottom: 12.0,
-      left: 18.0,
-      right: 18.0,
-    })
-    .into();
+      }),
+  )
+  .width(Length::Fixed(120.0))
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(|_| container::Style {
+    border: Border {
+      color: color::border::SUBTLE,
+      width: 1.0,
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
 
-    let mut row_cells: Vec<Element<'static, Message>> = vec![char_cell];
+fn matrix_char_name_cell(char_name: &str) -> Element<'static, Message> {
+  container(
+    text(char_name.to_string())
+      .font(body::MEDIUM)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      }),
+  )
+  .width(160.0)
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .into()
+}
 
-    for struct_name in &structures {
-      let v = cells
-        .iter()
-        .filter(|c| c.character_id == char_id && &c.structure_name == struct_name)
-        .map(|c| c.value)
-        .sum::<f64>();
-      let intensity = if row_total > 0.0 { (v / row_total) as f32 } else { 0.0 };
-      let bg = if v > 0.0 {
-        Some(Background::Color(Color::from_rgba(
-          0.247,
-          0.722,
-          0.859,
-          0.04 + 0.16 * intensity,
-        )))
-      } else {
-        None
-      };
-      let label = if v == 0.0 {
-        "\u{2014}".to_string()
-      } else {
-        format::fmt_isk(v)
-      };
-      let text_color = if v == 0.0 {
-        color::text::TERTIARY
-      } else {
-        color::text::PRIMARY
-      };
-      row_cells.push(
-        container(
-          text(label)
-            .font(mono::REGULAR)
-            .size(11.0)
-            .style(move |_: &Theme| iced::widget::text::Style {
-              color: Some(text_color),
-            }),
-        )
-        .width(Length::Fixed(120.0))
-        .padding(Padding {
-          top: 12.0,
-          bottom: 12.0,
-          left: 18.0,
-          right: 18.0,
-        })
-        .style(move |_| container::Style {
-          background: bg,
-          ..container::Style::default()
-        })
-        .into(),
-      );
-    }
+fn matrix_char_data_row(
+  cells: &[CharacterStructureCell],
+  char_id: i64,
+  char_name: &str,
+  structures: &[String],
+) -> Element<'static, Message> {
+  let row_total: f64 = cells
+    .iter()
+    .filter(|c| c.character_id == char_id)
+    .map(|c| c.value)
+    .sum();
 
-    row_cells.push(
-      container(
-        text(format::fmt_isk(row_total))
-          .font(mono::MEDIUM)
-          .size(12.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::PRIMARY),
-          }),
-      )
-      .width(Length::Fixed(120.0))
-      .padding(Padding {
-        top: 12.0,
-        bottom: 12.0,
-        left: 18.0,
-        right: 18.0,
-      })
-      .style(|_| container::Style {
-        border: Border {
-          color: color::border::SUBTLE,
-          width: 1.0,
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
-
-    data_rows.push(
-      container(
-        row(row_cells)
-          .width(Length::Fill)
-          .align_y(iced::alignment::Vertical::Center),
-      )
-      .width(Length::Fill)
-      .style(|_| container::Style {
-        border: Border {
-          color: color::border::SUBTLE,
-          width: 1.0,
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
+  let mut row_cells: Vec<Element<'static, Message>> = vec![matrix_char_name_cell(char_name)];
+  for struct_name in structures {
+    let v = cells
+      .iter()
+      .filter(|c| c.character_id == char_id && &c.structure_name == struct_name)
+      .map(|c| c.value)
+      .sum::<f64>();
+    row_cells.push(matrix_value_cell(v, row_total));
   }
+  row_cells.push(matrix_row_total_cell(row_total));
 
-  let mut totals_cells: Vec<Element<'static, Message>> = vec![
-    container(
-      text("COLUMN TOTAL")
-        .font(mono::REGULAR)
-        .size(9.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
-    )
-    .width(160.0)
-    .padding(Padding {
-      top: 12.0,
-      bottom: 12.0,
-      left: 18.0,
-      right: 18.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      ..container::Style::default()
-    })
-    .into(),
-  ];
+  container(
+    row(row_cells)
+      .width(Length::Fill)
+      .align_y(iced::alignment::Vertical::Center),
+  )
+  .width(Length::Fill)
+  .style(|_| container::Style {
+    border: Border {
+      color: color::border::SUBTLE,
+      width: 1.0,
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
 
-  for struct_name in &structures {
+fn totals_label_cell() -> Element<'static, Message> {
+  container(
+    text("COLUMN TOTAL")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .width(160.0)
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn totals_col_cell(col_total: f64) -> Element<'static, Message> {
+  container(
+    text(format::fmt_isk(col_total))
+      .font(mono::REGULAR)
+      .size(11.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .width(Length::Fixed(120.0))
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn totals_grand_total_cell(total_value: f64) -> Element<'static, Message> {
+  container(
+    text(format::fmt_isk(total_value))
+      .font(mono::MEDIUM)
+      .size(14.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .width(Length::Fixed(120.0))
+  .padding(Padding {
+    top: 12.0,
+    bottom: 12.0,
+    left: 18.0,
+    right: 18.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::border::SUBTLE,
+      width: 1.0,
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn matrix_totals_row(
+  cells: &[CharacterStructureCell],
+  structures: &[String],
+  total_value: f64,
+) -> Element<'static, Message> {
+  let mut totals_cells: Vec<Element<'static, Message>> = vec![totals_label_cell()];
+
+  for struct_name in structures {
     let col_total: f64 = cells
       .iter()
       .filter(|c| &c.structure_name == struct_name)
       .map(|c| c.value)
       .sum();
-    totals_cells.push(
-      container(
-        text(format::fmt_isk(col_total))
-          .font(mono::REGULAR)
-          .size(11.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .width(Length::Fixed(120.0))
-      .padding(Padding {
-        top: 12.0,
-        bottom: 12.0,
-        left: 18.0,
-        right: 18.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::SUNKEN)),
-        ..container::Style::default()
-      })
-      .into(),
-    );
+    totals_cells.push(totals_col_cell(col_total));
   }
-  totals_cells.push(
-    container(
-      text(format::fmt_isk(total_value))
-        .font(mono::MEDIUM)
-        .size(14.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::accent::PLASMA),
-        }),
-    )
-    .width(Length::Fixed(120.0))
-    .padding(Padding {
-      top: 12.0,
-      bottom: 12.0,
-      left: 18.0,
-      right: 18.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::border::SUBTLE,
-        width: 1.0,
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into(),
-  );
+  totals_cells.push(totals_grand_total_cell(total_value));
 
-  let totals_row: Element<'static, Message> = container(
+  container(
     row(totals_cells)
       .width(Length::Fill)
       .align_y(iced::alignment::Vertical::Center),
@@ -354,9 +354,11 @@ fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'
     },
     ..container::Style::default()
   })
-  .into();
+  .into()
+}
 
-  let title_row: Element<'static, Message> = container(
+fn matrix_title_row(n_chars: usize, n_structs: usize) -> Element<'static, Message> {
+  container(
     row([
       text("Value · character × location")
         .font(body::MEDIUM)
@@ -391,7 +393,51 @@ fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'
     },
     ..container::Style::default()
   })
-  .into();
+  .into()
+}
+
+fn sorted_structures(cells: &[CharacterStructureCell]) -> Vec<String> {
+  let mut structures: Vec<String> = cells
+    .iter()
+    .map(|c| c.structure_name.clone())
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect();
+  structures.sort_by(|a, b| {
+    let a_total: f64 = cells.iter().filter(|c| &c.structure_name == a).map(|c| c.value).sum();
+    let b_total: f64 = cells.iter().filter(|c| &c.structure_name == b).map(|c| c.value).sum();
+    b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
+  });
+  structures
+}
+
+fn sorted_characters(cells: &[CharacterStructureCell]) -> Vec<(i64, String)> {
+  let mut characters: Vec<(i64, String)> = cells
+    .iter()
+    .map(|c| (c.character_id, c.character_name.clone()))
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect();
+  characters.sort_by_key(|(id, _)| *id);
+  characters
+}
+
+fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'static, Message> {
+  let structures = sorted_structures(cells);
+  let characters = sorted_characters(cells);
+
+  let n_chars = characters.len();
+  let n_structs = structures.len();
+
+  let header_row = matrix_header_row(&structures);
+
+  let data_rows: Vec<Element<'static, Message>> = characters
+    .iter()
+    .map(|(char_id, char_name)| matrix_char_data_row(cells, *char_id, char_name, &structures))
+    .collect();
+
+  let totals_row = matrix_totals_row(cells, &structures, total_value);
+  let title_row = matrix_title_row(n_chars, n_structs);
 
   let mut body_rows: Vec<Element<'static, Message>> = vec![header_row];
   body_rows.extend(data_rows);
@@ -418,7 +464,7 @@ fn matrix_panel(cells: &[CharacterStructureCell], total_value: f64) -> Element<'
   .into()
 }
 
-fn category_panel(cats: &[CategoryValue], total_value: f64) -> Element<'static, Message> {
+fn category_stacked_bar(cats: &[CategoryValue], total_value: f64) -> Element<'static, Message> {
   let mut bar_segments: Vec<Element<'static, Message>> = Vec::new();
   for c in cats {
     if c.value <= 0.0 || total_value <= 0.0 {
@@ -437,7 +483,7 @@ fn category_panel(cats: &[CategoryValue], total_value: f64) -> Element<'static, 
     );
   }
 
-  let stacked_bar: Element<'static, Message> = container(row(bar_segments).width(Length::Fill).height(10.0))
+  container(row(bar_segments).width(Length::Fill).height(10.0))
     .width(Length::Fill)
     .height(10.0)
     .style(|_| container::Style {
@@ -448,59 +494,61 @@ fn category_panel(cats: &[CategoryValue], total_value: f64) -> Element<'static, 
       },
       ..container::Style::default()
     })
-    .into();
+    .into()
+}
 
-  let mut legend_rows: Vec<Element<'static, Message>> = Vec::new();
-  for c in cats {
-    if c.value <= 0.0 {
-      continue;
-    }
-    let col = category_color(&c.category_name);
-    let display = category_display_name(&c.category_name);
-    let isk = format::fmt_isk(c.value);
-    let pct_str = format!("{:.1}%", c.pct * 100.0);
-    legend_rows.push(
-      row([
-        container(Space::new().width(10.0).height(10.0))
-          .style(move |_| container::Style {
-            background: Some(Background::Color(col)),
-            border: Border {
-              radius: 2.0.into(),
-              ..Border::default()
-            },
-            ..container::Style::default()
-          })
-          .into(),
-        Space::new().width(10.0).into(),
-        text(display)
-          .font(body::REGULAR)
-          .size(12.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::PRIMARY),
-          })
-          .width(Length::Fill)
-          .into(),
-        text(isk)
-          .font(mono::REGULAR)
-          .size(11.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-        Space::new().width(8.0).into(),
-        text(pct_str)
-          .font(mono::REGULAR)
-          .size(10.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::TERTIARY),
-          })
-          .width(44.0)
-          .into(),
-      ])
-      .align_y(iced::alignment::Vertical::Center)
+fn category_legend_row(c: &CategoryValue) -> Element<'static, Message> {
+  let col = category_color(&c.category_name);
+  let display = category_display_name(&c.category_name);
+  let isk = format::fmt_isk(c.value);
+  let pct_str = format!("{:.1}%", c.pct * 100.0);
+
+  row([
+    container(Space::new().width(10.0).height(10.0))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(col)),
+        border: Border {
+          radius: 2.0.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
       .into(),
-    );
-  }
+    Space::new().width(10.0).into(),
+    text(display)
+      .font(body::REGULAR)
+      .size(12.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+    text(isk)
+      .font(mono::REGULAR)
+      .size(11.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+    Space::new().width(8.0).into(),
+    text(pct_str)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .width(44.0)
+      .into(),
+  ])
+  .align_y(iced::alignment::Vertical::Center)
+  .into()
+}
+
+fn category_panel(cats: &[CategoryValue], total_value: f64) -> Element<'static, Message> {
+  let stacked_bar = category_stacked_bar(cats, total_value);
+
+  let legend_rows: Vec<Element<'static, Message>> =
+    cats.iter().filter(|c| c.value > 0.0).map(category_legend_row).collect();
 
   container(
     column([
@@ -544,6 +592,123 @@ fn category_panel(cats: &[CategoryValue], total_value: f64) -> Element<'static, 
   .into()
 }
 
+fn top_item_icon(item: &TopItem, icons: &HashMap<(i32, String), image::Handle>) -> Element<'static, Message> {
+  let col = category_color(&item.category_name);
+  if let Some(handle) = icons.get(&(item.type_id, "icon".to_string())) {
+    container(
+      image(handle.clone())
+        .width(24.0)
+        .height(24.0)
+        .content_fit(ContentFit::Cover),
+    )
+    .width(24.0)
+    .height(24.0)
+    .style(|_| container::Style {
+      border: Border {
+        radius: 4.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .clip(true)
+    .into()
+  } else {
+    container(Space::new().width(24.0).height(24.0))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(Color::from_rgba(col.r, col.g, col.b, 0.18))),
+        border: Border {
+          radius: 4.0.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+}
+
+fn top_item_name_col(type_name: String, group_label: String) -> Element<'static, Message> {
+  column([
+    text(type_name)
+      .font(body::REGULAR)
+      .size(12.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(group_label)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .width(Length::Fill)
+  .into()
+}
+
+fn top_item_isk_cell(isk: String) -> Element<'static, Message> {
+  text(isk)
+    .font(mono::MEDIUM)
+    .size(12.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::accent::PLASMA),
+    })
+    .into()
+}
+
+fn top_item_rank_cell(rank_str: String) -> Element<'static, Message> {
+  text(rank_str)
+    .font(mono::REGULAR)
+    .size(9.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::TERTIARY),
+    })
+    .width(18.0)
+    .into()
+}
+
+fn top_item_row(
+  rank: usize,
+  item: &TopItem,
+  icons: &HashMap<(i32, String), image::Handle>,
+) -> Element<'static, Message> {
+  let rank_str = format!("{:02}", rank + 1);
+  let group_label = format!(
+    "{} · ×{}",
+    category_display_name(&item.category_name),
+    format::fmt_count(item.total_quantity as u64)
+  );
+
+  container(
+    row([
+      top_item_rank_cell(rank_str),
+      Space::new().width(4.0).into(),
+      top_item_icon(item, icons),
+      Space::new().width(10.0).into(),
+      top_item_name_col(item.type_name.clone(), group_label),
+      top_item_isk_cell(format::fmt_isk(item.value)),
+    ])
+    .align_y(iced::alignment::Vertical::Center)
+    .padding(Padding {
+      top: 10.0,
+      bottom: 10.0,
+      left: 18.0,
+      right: 18.0,
+    }),
+  )
+  .width(Length::Fill)
+  .style(|_| container::Style {
+    border: Border {
+      color: color::border::SUBTLE,
+      width: 1.0,
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
 fn top_items_panel(items: &[TopItem], icons: &HashMap<(i32, String), image::Handle>) -> Element<'static, Message> {
   let title_row: Element<'static, Message> = container(text("Top items by value").font(body::MEDIUM).size(14.0).style(
     |_: &Theme| iced::widget::text::Style {
@@ -567,107 +732,11 @@ fn top_items_panel(items: &[TopItem], icons: &HashMap<(i32, String), image::Hand
   })
   .into();
 
-  let mut item_rows: Vec<Element<'static, Message>> = Vec::new();
-  for (i, item) in items.iter().enumerate() {
-    let rank = format!("{:02}", i + 1);
-    let col = category_color(&item.category_name);
-    let type_name = item.type_name.clone();
-    let group_label = format!(
-      "{} · ×{}",
-      category_display_name(&item.category_name),
-      format::fmt_count(item.total_quantity as u64)
-    );
-    let isk = format::fmt_isk(item.value);
-    let icon_el: Element<'static, Message> = if let Some(handle) = icons.get(&(item.type_id, "icon".to_string())) {
-      container(
-        image(handle.clone())
-          .width(24.0)
-          .height(24.0)
-          .content_fit(ContentFit::Cover),
-      )
-      .width(24.0)
-      .height(24.0)
-      .style(|_| container::Style {
-        border: Border {
-          radius: 4.0.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .clip(true)
-      .into()
-    } else {
-      container(Space::new().width(24.0).height(24.0))
-        .style(move |_| container::Style {
-          background: Some(Background::Color(Color::from_rgba(col.r, col.g, col.b, 0.18))),
-          border: Border {
-            radius: 4.0.into(),
-            ..Border::default()
-          },
-          ..container::Style::default()
-        })
-        .into()
-    };
-    item_rows.push(
-      container(
-        row([
-          text(rank)
-            .font(mono::REGULAR)
-            .size(9.0)
-            .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(color::text::TERTIARY),
-            })
-            .width(18.0)
-            .into(),
-          Space::new().width(4.0).into(),
-          icon_el,
-          Space::new().width(10.0).into(),
-          column([
-            text(type_name)
-              .font(body::REGULAR)
-              .size(12.0)
-              .style(|_: &Theme| iced::widget::text::Style {
-                color: Some(color::text::PRIMARY),
-              })
-              .into(),
-            text(group_label)
-              .font(mono::REGULAR)
-              .size(10.0)
-              .style(|_: &Theme| iced::widget::text::Style {
-                color: Some(color::text::SECONDARY),
-              })
-              .into(),
-          ])
-          .width(Length::Fill)
-          .into(),
-          text(isk)
-            .font(mono::MEDIUM)
-            .size(12.0)
-            .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(color::accent::PLASMA),
-            })
-            .into(),
-        ])
-        .align_y(iced::alignment::Vertical::Center)
-        .padding(Padding {
-          top: 10.0,
-          bottom: 10.0,
-          left: 18.0,
-          right: 18.0,
-        }),
-      )
-      .width(Length::Fill)
-      .style(|_| container::Style {
-        border: Border {
-          color: color::border::SUBTLE,
-          width: 1.0,
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    );
-  }
+  let item_rows: Vec<Element<'static, Message>> = items
+    .iter()
+    .enumerate()
+    .map(|(i, item)| top_item_row(i, item, icons))
+    .collect();
 
   let mut all_rows: Vec<Element<'static, Message>> = vec![title_row];
   all_rows.extend(item_rows);

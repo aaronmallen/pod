@@ -380,30 +380,13 @@ impl State {
       if cat_key != "all" && a.category_key != cat_key {
         return false;
       }
-      if let Some(ref filter) = loc {
-        if let Some(sys) = filter.strip_prefix("system:") {
-          if a.system_name != sys {
-            return false;
-          }
-        } else if let Some(loc_name) = filter.strip_prefix("location:") {
-          if a.location_name != loc_name {
-            return false;
-          }
-        } else if let Some(cid_str) = filter.strip_prefix("container:") {
-          if let Ok(cid) = cid_str.parse::<i64>() {
-            if a.container_id != cid {
-              return false;
-            }
-          }
-        }
+      if let Some(ref filter) = loc
+        && !asset_matches_loc_filter(a, filter)
+      {
+        return false;
       }
-      if !q.is_empty() {
-        let name_lc = a.type_name.to_lowercase();
-        let grp_lc = a.group_name.to_lowercase();
-        let loc_lc = a.location_name.to_lowercase();
-        if !name_lc.contains(&q) && !grp_lc.contains(&q) && !loc_lc.contains(&q) {
-          return false;
-        }
+      if !q.is_empty() && !asset_matches_query(a, &q) {
+        return false;
       }
       true
     })
@@ -534,6 +517,145 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
     .collect()
 }
 
+fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
+  if let Some(sys) = filter.strip_prefix("system:") {
+    a.system_name == sys
+  } else if let Some(loc_name) = filter.strip_prefix("location:") {
+    a.location_name == loc_name
+  } else if let Some(cid_str) = filter.strip_prefix("container:") {
+    cid_str.parse::<i64>().map_or(true, |cid| a.container_id == cid)
+  } else {
+    true
+  }
+}
+
+fn asset_matches_query(a: &AssetRecord, q: &str) -> bool {
+  let name_lc = a.type_name.to_lowercase();
+  let grp_lc = a.group_name.to_lowercase();
+  let loc_lc = a.location_name.to_lowercase();
+  name_lc.contains(q) || grp_lc.contains(q) || loc_lc.contains(q)
+}
+
+fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
+  match msg {
+    inventory_tab::Message::CategoryChanged(cat) => {
+      state.category = cat;
+    }
+    inventory_tab::Message::SearchChanged(q) => {
+      state.search_query = q;
+    }
+    inventory_tab::Message::SortChanged(col) => {
+      if state.sort_col == col {
+        state.sort_asc = !state.sort_asc;
+      } else {
+        state.sort_col = col;
+        state.sort_asc = matches!(state.sort_col, SortCol::Name | SortCol::Category | SortCol::Location);
+      }
+    }
+    inventory_tab::Message::ToggleContainer(id) => {
+      if !state.expanded_containers.remove(&id) {
+        state.expanded_containers.insert(id);
+      }
+    }
+  }
+}
+
+fn update_stockpile_form(state: &mut State, msg: stockpiles_tab::Message) {
+  match msg {
+    stockpiles_tab::Message::FormNameChanged(name) => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        form.name = name;
+      }
+    }
+    stockpiles_tab::Message::FormLocationChanged(loc) => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        form.location_id_text = loc;
+      }
+    }
+    stockpiles_tab::Message::FormItemTypeChanged(idx, val) => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        if let Some(item) = form.items.get_mut(idx) {
+          item.type_id_text = val;
+        }
+      }
+    }
+    stockpiles_tab::Message::FormItemQtyChanged(idx, val) => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        if let Some(item) = form.items.get_mut(idx) {
+          item.qty_text = val;
+        }
+      }
+    }
+    stockpiles_tab::Message::FormAddItem => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        form.items.push(StockpileFormItem::default());
+      }
+    }
+    stockpiles_tab::Message::FormRemoveItem(idx) => {
+      if let Some(form) = state.stockpile_form.as_mut() {
+        if idx < form.items.len() {
+          form.items.remove(idx);
+        }
+      }
+    }
+    stockpiles_tab::Message::FormCancel => {
+      state.stockpile_form = None;
+    }
+    _ => {}
+  }
+}
+
+fn update_stockpiles_tab(state: &mut State, msg: stockpiles_tab::Message) {
+  match msg {
+    stockpiles_tab::Message::NewStockpile => {
+      state.stockpile_form = Some(StockpileForm {
+        items: vec![StockpileFormItem::default()],
+        ..StockpileForm::default()
+      });
+    }
+    stockpiles_tab::Message::EditStockpile(id) => {
+      update_edit_stockpile(state, id);
+    }
+    stockpiles_tab::Message::DeleteStockpile(_id) => {}
+    stockpiles_tab::Message::ConfirmDelete(_) => {}
+    stockpiles_tab::Message::FormSave => {}
+    msg => update_stockpile_form(state, msg),
+  }
+}
+
+fn update_edit_stockpile(state: &mut State, id: i64) {
+  if let Some(pile) = state.stockpiles.iter().find(|p| p.id == id) {
+    let items = pile
+      .items
+      .iter()
+      .map(|it| StockpileFormItem {
+        type_id_text: it.type_id.to_string(),
+        qty_text: it.target_quantity.to_string(),
+      })
+      .collect();
+    state.stockpile_form = Some(StockpileForm {
+      editing_id: Some(id),
+      name: pile.name.clone(),
+      location_id_text: pile.location_id.map(|l| l.to_string()).unwrap_or_default(),
+      items,
+      error: String::new(),
+    });
+  }
+}
+
+fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Task<Message> {
+  if let character_picker::Message::Select(character_picker::PickerSelection::Corporation(id)) = &msg {
+    let corp_id = *id;
+    state.picker.update(msg);
+    state.loading = true;
+    state.corp_assets = Vec::new();
+    state.selected_loc = None;
+    return iced::Task::done(Message::FetchCorpAssets(corp_id));
+  }
+  state.picker.update(msg);
+  iced::Task::none()
+}
+
 /// Processes an assets message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
@@ -546,27 +668,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       state.loading = false;
     }
     Message::FetchCorpAssets(_) => {}
-    Message::InventoryTab(msg) => match msg {
-      inventory_tab::Message::CategoryChanged(cat) => {
-        state.category = cat;
-      }
-      inventory_tab::Message::SearchChanged(q) => {
-        state.search_query = q;
-      }
-      inventory_tab::Message::SortChanged(col) => {
-        if state.sort_col == col {
-          state.sort_asc = !state.sort_asc;
-        } else {
-          state.sort_col = col;
-          state.sort_asc = matches!(state.sort_col, SortCol::Name | SortCol::Category | SortCol::Location);
-        }
-      }
-      inventory_tab::Message::ToggleContainer(id) => {
-        if !state.expanded_containers.remove(&id) {
-          state.expanded_containers.insert(id);
-        }
-      }
-    },
+    Message::InventoryTab(msg) => update_inventory_tab(state, msg),
     Message::ItemIconsLoaded(icons) => {
       for (type_id, variant, bytes) in icons {
         state
@@ -574,97 +676,20 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
           .insert((type_id, variant), image::Handle::from_bytes(bytes));
       }
     }
+    Message::LocationSelected(loc) => {
+      state.selected_loc = loc;
+    }
     Message::NavHistoryLoaded(history) => {
       state.nav_series = history.iter().map(|(_, v)| *v).collect();
       state.nav_history = history;
     }
-    Message::LocationSelected(loc) => {
-      state.selected_loc = loc;
-    }
+    Message::Picker(msg) => return update_picker(state, msg),
+    Message::ReauthorizeCharacter(_) => {}
     Message::RefreshNavHistory => {}
-    Message::Picker(msg) => {
-      if let character_picker::Message::Select(character_picker::PickerSelection::Corporation(id)) = &msg {
-        let corp_id = *id;
-        state.picker.update(msg);
-        state.loading = true;
-        state.corp_assets = Vec::new();
-        state.selected_loc = None;
-        return iced::Task::done(Message::FetchCorpAssets(corp_id));
-      }
-      state.picker.update(msg);
-    }
     Message::StockpilesLoaded(piles) => {
       state.stockpiles = piles;
     }
-    Message::StockpilesTab(msg) => match msg {
-      stockpiles_tab::Message::NewStockpile => {
-        state.stockpile_form = Some(StockpileForm {
-          items: vec![StockpileFormItem::default()],
-          ..StockpileForm::default()
-        });
-      }
-      stockpiles_tab::Message::EditStockpile(id) => {
-        if let Some(pile) = state.stockpiles.iter().find(|p| p.id == id) {
-          let items = pile
-            .items
-            .iter()
-            .map(|it| StockpileFormItem {
-              type_id_text: it.type_id.to_string(),
-              qty_text: it.target_quantity.to_string(),
-            })
-            .collect();
-          state.stockpile_form = Some(StockpileForm {
-            editing_id: Some(id),
-            name: pile.name.clone(),
-            location_id_text: pile.location_id.map(|l| l.to_string()).unwrap_or_default(),
-            items,
-            error: String::new(),
-          });
-        }
-      }
-      stockpiles_tab::Message::DeleteStockpile(_id) => {}
-      stockpiles_tab::Message::ConfirmDelete(_) => {}
-      stockpiles_tab::Message::FormNameChanged(name) => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          form.name = name;
-        }
-      }
-      stockpiles_tab::Message::FormLocationChanged(loc) => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          form.location_id_text = loc;
-        }
-      }
-      stockpiles_tab::Message::FormItemTypeChanged(idx, val) => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          if let Some(item) = form.items.get_mut(idx) {
-            item.type_id_text = val;
-          }
-        }
-      }
-      stockpiles_tab::Message::FormItemQtyChanged(idx, val) => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          if let Some(item) = form.items.get_mut(idx) {
-            item.qty_text = val;
-          }
-        }
-      }
-      stockpiles_tab::Message::FormAddItem => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          form.items.push(StockpileFormItem::default());
-        }
-      }
-      stockpiles_tab::Message::FormRemoveItem(idx) => {
-        if let Some(form) = state.stockpile_form.as_mut() {
-          if idx < form.items.len() {
-            form.items.remove(idx);
-          }
-        }
-      }
-      stockpiles_tab::Message::FormCancel => {
-        state.stockpile_form = None;
-      }
-      stockpiles_tab::Message::FormSave => {}
-    },
+    Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
     Message::TabSelected(tab) => {
       state.active_tab = tab;
     }
@@ -678,7 +703,6 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       state.values_loading = false;
     }
     Message::ValuesTab(_msg) => {}
-    Message::ReauthorizeCharacter(_) => {}
   }
   iced::Task::none()
 }

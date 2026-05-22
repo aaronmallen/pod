@@ -124,13 +124,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 /// Processes a skills message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::PaneDrag(x) => {
-      if state.last_drag_x > 0.0 {
-        let delta = x - state.last_drag_x;
-        state.left_pane_width = (state.left_pane_width + delta).max(100.0);
-      }
-      state.last_drag_x = x;
-    }
+    Message::PaneDrag(x) => update_pane_drag(state, x),
     Message::PaneDragEnd => {
       state.dragging_pane = false;
       state.last_drag_x = 0.0;
@@ -168,6 +162,14 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     | Message::ReauthorizeCharacter(_) => {}
   }
   iced::Task::none()
+}
+
+fn update_pane_drag(state: &mut State, x: f32) {
+  if state.last_drag_x > 0.0 {
+    let delta = x - state.last_drag_x;
+    state.left_pane_width = (state.left_pane_width + delta).max(100.0);
+  }
+  state.last_drag_x = x;
 }
 
 fn update_right_panel(state: &mut State, msg: right_panel::Message) {

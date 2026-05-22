@@ -42,38 +42,10 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   match message {
     Message::AccountPicker(msg) => update_account_picker(state, msg),
     Message::FolderPane(folder_pane::Message::FolderSelected(folder)) => update_folder_selected(state, folder),
-    Message::MessageList(message_list_pane::Message::CursorMoved(x, y)) => {
-      state.cursor_pos = (x, y);
-      iced::Task::none()
-    }
-    Message::MessageList(message_list_pane::Message::MessageRightClicked(id)) => {
-      update_message_right_clicked(state, id)
-    }
-    Message::MessageList(message_list_pane::Message::ContextMenuClose) => {
-      state.context_menu = None;
-      iced::Task::none()
-    }
-    Message::MessageList(message_list_pane::Message::MessageSelected(id)) => {
-      update_message_selected(state, id, services)
-    }
-    Message::MessageList(message_list_pane::Message::SearchChanged(q)) => {
-      state.search_query = q;
-      iced::Task::none()
-    }
-    Message::ReadingPane(reading_pane::Message::ReplyPressed)
-    | Message::ReadingPane(reading_pane::Message::ReplyAllPressed) => update_reply(state),
-    Message::ReadingPane(reading_pane::Message::ForwardPressed) => update_forward(state),
-    Message::ReadingPane(reading_pane::Message::StarToggle) => update_star_toggle(state),
-    Message::ReadingPane(reading_pane::Message::ArchivePressed) => update_archive(state),
-    Message::ReadingPane(reading_pane::Message::DeletePressed) => update_delete(state, services),
-    Message::ComposePressed => update_compose_open(state),
-    Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
+    Message::MessageList(msg) => update_message_list(state, msg, services),
+    Message::ReadingPane(msg) => update_reading_pane(state, msg, services),
+    Message::ComposePressed | Message::Compose(_) => update_compose_event(state, message, services),
     Message::MailDeleted => update_mail_deleted(state),
-    Message::ReadingPane(reading_pane::Message::SnoozedExpired(pairs)) => update_snoozed_expired(state, pairs),
-    Message::ReadingPane(reading_pane::Message::SnoozeToggle) => update_snooze_toggle(state),
-    Message::ReadingPane(reading_pane::Message::SnoozeFailed(_)) => iced::Task::none(),
-    Message::ReadingPane(reading_pane::Message::SnoozeSet(label)) => update_snooze_set(state, label, services),
-    Message::ReadingPane(reading_pane::Message::CheckSnoozed) => update_check_snoozed(state, services),
     Message::MailBodyLoaded(msg_id, paragraphs) => update_mail_body_loaded(state, msg_id, paragraphs),
     Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
     Message::PaneDrag(x) => update_pane_drag(state, x),
@@ -81,6 +53,100 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
     Message::ReauthorizeCharacter(_) => iced::Task::none(),
   }
+}
+
+fn update_compose_event(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::ComposePressed => update_compose_open(state),
+    Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
+    _ => unreachable!(),
+  }
+}
+
+fn update_message_list(state: &mut State, msg: message_list_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    message_list_pane::Message::CursorMoved(x, y) => {
+      state.cursor_pos = (x, y);
+      iced::Task::none()
+    }
+    message_list_pane::Message::MessageRightClicked(id) => update_message_right_clicked(state, id),
+    message_list_pane::Message::ContextMenuClose => {
+      state.context_menu = None;
+      iced::Task::none()
+    }
+    message_list_pane::Message::MessageSelected(id) => update_message_selected(state, id, services),
+    message_list_pane::Message::SearchChanged(q) => {
+      state.search_query = q;
+      iced::Task::none()
+    }
+  }
+}
+
+fn update_reading_pane(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::ReplyPressed | reading_pane::Message::ReplyAllPressed => update_reply(state),
+    reading_pane::Message::ForwardPressed => update_forward(state),
+    reading_pane::Message::StarToggle => update_star_toggle(state),
+    reading_pane::Message::ArchivePressed => update_archive(state),
+    reading_pane::Message::DeletePressed => update_delete(state, services),
+    reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
+    reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
+    reading_pane::Message::SnoozeFailed(_) => iced::Task::none(),
+    reading_pane::Message::SnoozeSet(label) => update_snooze_set(state, label, services),
+    reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
+  }
+}
+
+async fn get_or_create_snoozed_label(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+  add_label: bool,
+) -> Result<Option<i64>, String> {
+  let char_client = esi.character(grant);
+  let all_labels = char_client
+    .mail_labels()
+    .await
+    .map_err(|e| format!("Failed to fetch labels: {e}"))?;
+  match find_snoozed_label_id(&all_labels) {
+    Some(id) => Ok(Some(id)),
+    None if !add_label => Ok(None),
+    None => {
+      let id = char_client
+        .create_mail_label(NewMailLabel {
+          color: Some("#ffaa00".into()),
+          name: "Snoozed".into(),
+        })
+        .await
+        .map_err(|e| format!("Failed to create Snoozed label: {e}"))?;
+      Ok(Some(id))
+    }
+  }
+}
+
+async fn apply_label_to_mail(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+  mail_id: i64,
+  snoozed_id: i64,
+  add_label: bool,
+) -> Result<(), String> {
+  let char_client = esi.character(grant);
+  let mail_body = char_client
+    .mail_message(mail_id)
+    .await
+    .map_err(|e| format!("Failed to fetch mail: {e}"))?;
+  let mut mail_labels: Vec<i64> = mail_body.labels.unwrap_or_default();
+  toggle_label_list(&mut mail_labels, snoozed_id, add_label);
+  char_client
+    .update_mail(
+      mail_id,
+      UpdateMail {
+        labels: Some(mail_labels),
+        read: None,
+      },
+    )
+    .await
+    .map_err(|e| format!("Failed to update mail labels: {e}"))
 }
 
 async fn apply_snooze_label(
@@ -99,38 +165,10 @@ async fn apply_snooze_label(
     return Err("Token refresh failed".to_string());
   };
   let grant = character_service::refresh_grant(character, &token);
-  let char_client = esi.character(&grant);
-  let all_labels = char_client
-    .mail_labels()
-    .await
-    .map_err(|e| format!("Failed to fetch labels: {e}"))?;
-  let snoozed_id = match find_snoozed_label_id(&all_labels) {
-    Some(id) => id,
-    None if !add_label => return Ok(()),
-    None => char_client
-      .create_mail_label(NewMailLabel {
-        color: Some("#ffaa00".into()),
-        name: "Snoozed".into(),
-      })
-      .await
-      .map_err(|e| format!("Failed to create Snoozed label: {e}"))?,
+  let Some(snoozed_id) = get_or_create_snoozed_label(&esi, &grant, add_label).await? else {
+    return Ok(());
   };
-  let mail_body = char_client
-    .mail_message(mail_id)
-    .await
-    .map_err(|e| format!("Failed to fetch mail: {e}"))?;
-  let mut mail_labels: Vec<i64> = mail_body.labels.unwrap_or_default();
-  toggle_label_list(&mut mail_labels, snoozed_id, add_label);
-  char_client
-    .update_mail(
-      mail_id,
-      UpdateMail {
-        labels: Some(mail_labels),
-        read: None,
-      },
-    )
-    .await
-    .map_err(|e| format!("Failed to update mail labels: {e}"))
+  apply_label_to_mail(&esi, &grant, mail_id, snoozed_id, add_label).await
 }
 
 fn build_accounts(characters: &[Character]) -> Vec<MailAccount> {
@@ -627,29 +665,33 @@ async fn send_composed_mail(
     .map_err(|e| format!("Send failed: {e}"))
 }
 
+fn snooze_after_downtime(now: chrono::DateTime<Utc>, today: chrono::NaiveDate) -> Option<chrono::DateTime<Utc>> {
+  let downtime = today.and_hms_opt(11, 0, 0)?.and_utc();
+  if now >= downtime {
+    Some(today.succ_opt()?.and_hms_opt(11, 0, 0)?.and_utc())
+  } else {
+    Some(downtime)
+  }
+}
+
+fn snooze_next_monday(today: chrono::NaiveDate) -> Option<chrono::DateTime<Utc>> {
+  let days_until_mon = match today.weekday() {
+    Weekday::Mon => 7,
+    d => (8 - d.number_from_monday() as i64).rem_euclid(7).max(1),
+  };
+  (today + chrono::Duration::days(days_until_mon))
+    .and_hms_opt(9, 0, 0)
+    .map(|dt| dt.and_utc())
+}
+
 fn snooze_label_to_iso(label: &str) -> Option<String> {
   let now = Utc::now();
   let today = now.date_naive();
   let target = match label {
     "Later today" => today.and_hms_opt(18, 0, 0)?.and_utc(),
     "Tomorrow" => today.succ_opt()?.and_hms_opt(9, 0, 0)?.and_utc(),
-    "After downtime" => {
-      let downtime = today.and_hms_opt(11, 0, 0)?.and_utc();
-      if now >= downtime {
-        today.succ_opt()?.and_hms_opt(11, 0, 0)?.and_utc()
-      } else {
-        downtime
-      }
-    }
-    "Next week" => {
-      let days_until_mon = match today.weekday() {
-        Weekday::Mon => 7,
-        d => (8 - d.number_from_monday() as i64).rem_euclid(7).max(1),
-      };
-      (today + chrono::Duration::days(days_until_mon))
-        .and_hms_opt(9, 0, 0)?
-        .and_utc()
-    }
+    "After downtime" => snooze_after_downtime(now, today)?,
+    "Next week" => snooze_next_monday(today)?,
     _ => return None,
   };
   Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())

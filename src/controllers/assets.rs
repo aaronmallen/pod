@@ -645,7 +645,11 @@ fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> Asset
     .and_then(|c| maps.cat_key_map.get(&c).copied())
     .unwrap_or("commodity");
   let volume = maps.type_volume_map.get(&row.type_id).copied().unwrap_or(0.0);
-  let unit_price = maps.price_cache.get(&row.type_id).copied().unwrap_or(0.0);
+  let unit_price = if row.is_blueprint_copy == Some(true) {
+    0.0
+  } else {
+    maps.price_cache.get(&row.type_id).copied().unwrap_or(0.0)
+  };
   let (location_name, system_name) = resolve_location(&row, maps);
   let (container_path, container_id) = resolve_container_for_row(&row, maps);
   let depth = compute_depth(row.item_id, &maps.item_index);
@@ -901,16 +905,12 @@ pub async fn nav_history(db: pod_db::Repo, char_ids: Vec<i64>, days: u32) -> Vec
 pub async fn asset_values_breakdown(
   assets: Vec<AssetRecord>,
   characters: Vec<pod_model::Character>,
-  db: pod_db::Repo,
 ) -> AssetValuesData {
-  let type_ids: Vec<i32> = unique_ids(assets.iter().map(|a| a.type_id));
-  let price_cache = db.prices().latest_prices(&type_ids).await.unwrap_or_default();
   let char_name_map: HashMap<i64, String> = characters.iter().map(|c| (*c.id(), c.name().clone())).collect();
   let valued: Vec<(&AssetRecord, f64)> = assets
     .iter()
     .map(|a| {
-      let unit_price = price_cache.get(&a.type_id).copied().unwrap_or(0.0);
-      let value = unit_price * a.quantity as f64;
+      let value = a.unit_price * a.quantity as f64;
       (a, value)
     })
     .collect();

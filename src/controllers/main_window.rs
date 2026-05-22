@@ -271,16 +271,12 @@ fn build_assets_follow_up_tasks(
   services: &Services,
 ) -> iced::Task<Message> {
   let values_task = if should_refresh_values {
-    if let Some(db) = services.db.clone() {
-      let assets_snapshot = s.assets.clone();
-      s.values_loading = true;
-      Some(iced::Task::perform(
-        assets_ctrl::asset_values_breakdown(assets_snapshot, chars_snapshot, db),
-        |data| Message::Assets(assets::Message::ValuesLoaded(data)),
-      ))
-    } else {
-      None
-    }
+    let assets_snapshot = s.assets.clone();
+    s.values_loading = true;
+    Some(iced::Task::perform(
+      assets_ctrl::asset_values_breakdown(assets_snapshot, chars_snapshot),
+      |data| Message::Assets(assets::Message::ValuesLoaded(data)),
+    ))
   } else {
     None
   };

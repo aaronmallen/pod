@@ -97,44 +97,27 @@ pub fn build_character_skills(
 /// Builds a [`CharacterSkill`] from a `SkillEntry`, overlaying active-training state when the
 /// entry matches the currently-training queue slot.
 fn skill_from_entry(character_id: i64, s: SkillEntry, active: Option<&SkillQueueEntry>) -> CharacterSkill {
-  let is_active = active.map(|a| a.skill_id == s.skill_id).unwrap_or(false);
-  let (training_end_time, training_start_time, training_start_sp) = if is_active {
-    let a = active.unwrap();
-    (
-      a.finish_date.as_deref().and_then(parse_eve_datetime),
-      a.start_date.as_deref().and_then(parse_eve_datetime),
-      a.training_start_sp.map(|sp| sp as i64),
-    )
-  } else {
-    (None, None, None)
-  };
+  let active = active.filter(|a| a.skill_id == s.skill_id);
+  let (training_end_time, training_start_time, training_start_sp) = active
+    .map(|a| {
+      (
+        a.finish_date.as_deref().and_then(parse_eve_datetime),
+        a.start_date.as_deref().and_then(parse_eve_datetime),
+        a.training_start_sp.map(|sp| sp as i64),
+      )
+    })
+    .unwrap_or((None, None, None));
   CharacterSkill {
-    active_level: if is_active {
-      active.unwrap().finished_level
-    } else {
-      s.active_skill_level
-    },
+    active_level: active.map_or(s.active_skill_level, |a| a.finished_level),
     character_id,
-    is_active_training: is_active,
+    is_active_training: active.is_some(),
     skill_id: s.skill_id,
     skill_name: None,
     skillpoints: s.skillpoints_in_skill,
-    trained_level: if is_active {
-      (active.unwrap().finished_level - 1).max(0)
-    } else {
-      s.trained_skill_level
-    },
+    trained_level: active.map_or(s.trained_skill_level, |a| (a.finished_level - 1).max(0)),
     training_end_time,
-    training_level_end_sp: if is_active {
-      active.unwrap().level_end_sp.map(|sp| sp as i64)
-    } else {
-      None
-    },
-    training_level_start_sp: if is_active {
-      active.unwrap().level_start_sp.map(|sp| sp as i64)
-    } else {
-      None
-    },
+    training_level_end_sp: active.and_then(|a| a.level_end_sp.map(|sp| sp as i64)),
+    training_level_start_sp: active.and_then(|a| a.level_start_sp.map(|sp| sp as i64)),
     training_start_sp,
     training_start_time,
   }

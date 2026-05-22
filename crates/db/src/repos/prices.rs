@@ -65,6 +65,44 @@ impl<'a> Repo<'a> {
     Ok(history.map(|h| h.close))
   }
 
+  /// Returns the most recent price for each `type_id` in the input slice.
+  ///
+  /// Queries `type_prices` (intraday) for all IDs in one call, then falls back
+  /// to `type_price_histories.close` for any IDs not found intraday. Returns
+  /// an empty map when `type_ids` is empty.
+  pub async fn latest_prices(&self, type_ids: &[i32]) -> Result<HashMap<i32, f64>, Error> {
+    if type_ids.is_empty() {
+      return Ok(HashMap::new());
+    }
+
+    let intraday = PriceEntity::find()
+      .filter(PriceColumn::TypeId.is_in(type_ids.to_vec()))
+      .order_by(PriceColumn::FetchedAt, Order::Desc)
+      .all(self.db)
+      .await?;
+
+    let mut result: HashMap<i32, f64> = HashMap::new();
+    for row in intraday {
+      result.entry(row.type_id).or_insert(row.price);
+    }
+
+    let missing: Vec<i32> = type_ids.iter().copied().filter(|id| !result.contains_key(id)).collect();
+
+    if !missing.is_empty() {
+      let history = HistoryEntity::find()
+        .filter(HistoryColumn::TypeId.is_in(missing))
+        .order_by(HistoryColumn::Date, Order::Desc)
+        .all(self.db)
+        .await?;
+
+      for row in history {
+        result.entry(row.type_id).or_insert(row.close);
+      }
+    }
+
+    Ok(result)
+  }
+
   /// Returns all distinct type IDs that should have prices tracked.
   ///
   /// The set is the UNION of type IDs present in `character_assets` and
@@ -366,6 +404,89 @@ mod tests {
       let repo = Repo::new(&db);
       let result = repo.latest_price(34).await.unwrap();
       assert_eq!(result, Some(7.0));
+    }
+  }
+
+  mod latest_prices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_history(db: &DatabaseConnection, type_id: i32, date: &str, close: f64) {
+      use sea_orm::ActiveValue::{NotSet, Set};
+
+      use crate::entities::type_price_history::{ActiveModel as HistActive, Entity as HistEntity};
+      HistEntity::insert(HistActive {
+        id: NotSet,
+        type_id: Set(type_id),
+        date: Set(date.to_string()),
+        open: Set(close),
+        high: Set(close),
+        low: Set(close),
+        close: Set(close),
+        avg: Set(close),
+        sample_count: Set(1),
+      })
+      .exec(db)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_map_for_empty_input() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.latest_prices(&[]).await.unwrap();
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_intraday_price_when_present() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.insert_price(34, 5.5, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+
+      let result = repo.latest_prices(&[34]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&5.5));
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_history_when_no_intraday() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      insert_history(&db, 34, "2025-01-01", 5.9).await;
+
+      let result = repo.latest_prices(&[34]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&5.9));
+    }
+
+    #[tokio::test]
+    async fn it_prefers_intraday_over_history() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.insert_price(34, 7.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      insert_history(&db, 34, "2025-01-01", 5.9).await;
+
+      let result = repo.latest_prices(&[34]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&7.0));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_multiple_type_ids_in_one_call() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.insert_price(34, 5.5, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      insert_history(&db, 35, "2025-01-01", 3.0).await;
+
+      let result = repo.latest_prices(&[34, 35]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&5.5));
+      assert_eq!(result.get(&35), Some(&3.0));
     }
   }
 

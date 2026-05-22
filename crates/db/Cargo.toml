@@ -21,4 +21,5 @@ thiserror.workspace = true
 validator.workspace = true
 
 [dev-dependencies]
+pretty_assertions.workspace = true
 tokio.workspace = true

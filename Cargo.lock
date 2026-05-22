@@ -4890,6 +4890,7 @@ dependencies = [
  "chrono",
  "libsqlite3-sys",
  "pod-model",
+ "pretty_assertions",
  "sea-orm",
  "sea-orm-migration",
  "serde",

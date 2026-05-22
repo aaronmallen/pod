@@ -20,7 +20,7 @@ impl<'a> Client<'a> {
   pub async fn alliance_logo(&self, alliance_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("alliances/{alliance_id}/logo"))
+      .path(format!("alliances/{alliance_id}/logo"))
       .param("size", size.to_string())
       .build();
 
@@ -33,7 +33,7 @@ impl<'a> Client<'a> {
   pub async fn corporation_logo(&self, corporation_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("corporations/{corporation_id}/logo"))
+      .path(format!("corporations/{corporation_id}/logo"))
       .param("size", size.to_string())
       .build();
 
@@ -46,7 +46,7 @@ impl<'a> Client<'a> {
   pub async fn character_portrait(&self, character_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("characters/{character_id}/portrait"))
+      .path(format!("characters/{character_id}/portrait"))
       .param("size", size.to_string())
       .build();
 
@@ -56,7 +56,7 @@ impl<'a> Client<'a> {
   pub async fn type_bpc(&self, type_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("types/{type_id}/bpc"))
+      .path(format!("types/{type_id}/bpc"))
       .param("size", size.to_string())
       .build();
 
@@ -66,7 +66,7 @@ impl<'a> Client<'a> {
   pub async fn type_bpo(&self, type_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("types/{type_id}/bpo"))
+      .path(format!("types/{type_id}/bpo"))
       .param("size", size.to_string())
       .build();
 
@@ -76,7 +76,7 @@ impl<'a> Client<'a> {
   pub async fn type_icon(&self, type_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("types/{type_id}/icon"))
+      .path(format!("types/{type_id}/icon"))
       .param("size", size.to_string())
       .build();
 
@@ -86,7 +86,7 @@ impl<'a> Client<'a> {
   pub async fn type_relic(&self, type_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("types/{type_id}/relic"))
+      .path(format!("types/{type_id}/relic"))
       .param("size", size.to_string())
       .build();
 
@@ -96,7 +96,7 @@ impl<'a> Client<'a> {
   pub async fn type_render(&self, type_id: i64, size: u32) -> Result<Vec<u8>, crate::Error> {
     let url = self
       .url_builder()
-      .path(&format!("types/{type_id}/render"))
+      .path(format!("types/{type_id}/render"))
       .param("size", size.to_string())
       .build();
 

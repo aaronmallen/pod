@@ -588,6 +588,7 @@ async fn search_recipients(
   }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_composed_mail(
   from_id: i64,
   to: Vec<ComposeRecipient>,

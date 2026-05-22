@@ -142,6 +142,7 @@ pub struct PlanEditor<'a> {
 }
 
 impl<'a> PlanEditor<'a> {
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
     plan_name: &'a str,
     dirty: bool,

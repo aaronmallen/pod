@@ -42,6 +42,7 @@ pub struct KillEntry {
 
 impl KillEntry {
   /// Creates a new kill entry.
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
     killmail_id: i32,
     is_kill: bool,

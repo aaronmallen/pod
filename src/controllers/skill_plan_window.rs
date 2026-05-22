@@ -108,6 +108,7 @@ pub struct State {
 /// `current_effective_attrs` is the raw ESI value (implants already
 /// included). `clone_data_missing` is true when no active-clone data is
 /// available, meaning `ImplantSet::Current` cannot be calculated accurately.
+#[allow(clippy::too_many_arguments)]
 pub fn new(
   window_id: iced::window::Id,
   character_id: i64,

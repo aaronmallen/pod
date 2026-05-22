@@ -16,6 +16,26 @@ use crate::{
   },
 };
 
+fn accumulate_nav_by_date(
+  histories: &[crate::entities::type_price_history::Model],
+  qty_map: &HashMap<i32, i64>,
+) -> HashMap<NaiveDate, f64> {
+  let mut nav_by_date = HashMap::new();
+  for h in histories {
+    if let (Ok(date), Some(&qty)) = (NaiveDate::parse_from_str(&h.date, "%Y-%m-%d"), qty_map.get(&h.type_id)) {
+      *nav_by_date.entry(date).or_insert(0.0) += h.close * qty as f64;
+    }
+  }
+  nav_by_date
+}
+
+fn compute_today_nav(latest_prices: &HashMap<i32, f64>, qty_map: &HashMap<i32, i64>) -> f64 {
+  latest_prices
+    .iter()
+    .filter_map(|(tid, price)| qty_map.get(tid).map(|&qty| price * qty as f64))
+    .sum()
+}
+
 /// Repository for type price intraday observations and daily OHLC aggregation.
 pub struct Repo<'a> {
   db: &'a DatabaseConnection,
@@ -233,12 +253,7 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
 
-    let mut nav_by_date: HashMap<NaiveDate, f64> = HashMap::new();
-    for h in &histories {
-      if let (Ok(date), Some(&qty)) = (NaiveDate::parse_from_str(&h.date, "%Y-%m-%d"), qty_map.get(&h.type_id)) {
-        *nav_by_date.entry(date).or_insert(0.0) += h.close * qty as f64;
-      }
-    }
+    let mut nav_by_date = accumulate_nav_by_date(&histories, &qty_map);
 
     // Synthetic today point from latest intraday prices.
     let intraday = PriceEntity::find()
@@ -252,10 +267,7 @@ impl<'a> Repo<'a> {
       latest_prices.entry(p.type_id).or_insert(p.price);
     }
 
-    let today_nav: f64 = latest_prices
-      .iter()
-      .filter_map(|(tid, price)| qty_map.get(tid).map(|&qty| price * qty as f64))
-      .sum();
+    let today_nav = compute_today_nav(&latest_prices, &qty_map);
 
     if today_nav > 0.0 {
       nav_by_date.insert(Utc::now().date_naive(), today_nav);

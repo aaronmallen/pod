@@ -53,6 +53,31 @@ pub struct StockpileItemStatus {
   pub type_name: String,
 }
 
+fn build_fill_statuses(
+  items: &[crate::entities::stockpile_item::Model],
+  assets: Vec<crate::entities::character_asset::Model>,
+  type_name_map: HashMap<i32, String>,
+) -> Vec<StockpileItemStatus> {
+  let mut qty_by_type: HashMap<i32, i64> = HashMap::new();
+  for asset in assets {
+    *qty_by_type.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
+  }
+  let mut result: Vec<StockpileItemStatus> = items
+    .iter()
+    .map(|item| StockpileItemStatus {
+      type_id: item.type_id,
+      target_quantity: item.target_quantity,
+      have_quantity: *qty_by_type.get(&item.type_id).unwrap_or(&0),
+      type_name: type_name_map
+        .get(&item.type_id)
+        .cloned()
+        .unwrap_or_else(|| format!("Type {}", item.type_id)),
+    })
+    .collect();
+  result.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+  result
+}
+
 /// Repository for stockpile CRUD operations.
 pub struct Repo<'a> {
   db: &'a DatabaseConnection,
@@ -178,11 +203,6 @@ impl<'a> Repo<'a> {
     }
     let assets = asset_query.all(self.db).await?;
 
-    let mut qty_by_type: HashMap<i32, i64> = HashMap::new();
-    for asset in assets {
-      *qty_by_type.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
-    }
-
     let type_name_map: HashMap<i32, String> = TypeEntity::find()
       .filter(TypeColumn::Id.is_in(type_ids))
       .all(self.db)
@@ -191,21 +211,7 @@ impl<'a> Repo<'a> {
       .map(|t| (t.id, t.name))
       .collect();
 
-    let mut result: Vec<StockpileItemStatus> = items
-      .iter()
-      .map(|item| StockpileItemStatus {
-        type_id: item.type_id,
-        target_quantity: item.target_quantity,
-        have_quantity: *qty_by_type.get(&item.type_id).unwrap_or(&0),
-        type_name: type_name_map
-          .get(&item.type_id)
-          .cloned()
-          .unwrap_or_else(|| format!("Type {}", item.type_id)),
-      })
-      .collect();
-    result.sort_by(|a, b| a.type_name.cmp(&b.type_name));
-
-    Ok(result)
+    Ok(build_fill_statuses(&items, assets, type_name_map))
   }
 
   async fn insert_items(&self, stockpile_id: i64, items: &[(i32, i32)]) -> Result<(), Error> {

@@ -11,7 +11,7 @@ use crate::{
   entities::{
     dogma_attribute,
     item_group::{Column as GroupColumn, Entity as GroupEntity},
-    item_type::{ActiveModel, Column, Entity},
+    item_type::{ActiveModel, Column, Entity, Model as ItemTypeModel},
     ship_mastery_cert::{Column as MasteryColumn, Entity as MasteryEntity},
   },
 };
@@ -63,6 +63,103 @@ async fn resolve_skill_names(db: &DatabaseConnection, type_ids: &[i32]) -> HashM
     .into_iter()
     .map(|r| (r.id, r.name))
     .collect()
+}
+
+fn add_skill_to_groups(
+  groups: &mut Vec<pod_model::SkillGroupDef>,
+  item: ItemTypeModel,
+  skill_groups: &HashMap<i32, String>,
+  prereq_names: &HashMap<i32, String>,
+) {
+  let attrs = &item.dogma_attributes.0;
+  let rank = attrs
+    .iter()
+    .find(|a| a.attribute_id == 275)
+    .map(|a| a.value as u8)
+    .unwrap_or(1);
+  let primary_id = attrs
+    .iter()
+    .find(|a| a.attribute_id == 180)
+    .map(|a| a.value as u8)
+    .unwrap_or(167);
+  let secondary_id = attrs
+    .iter()
+    .find(|a| a.attribute_id == 181)
+    .map(|a| a.value as u8)
+    .unwrap_or(168);
+  let prereqs = skill_reqs_from_attrs(attrs)
+    .into_iter()
+    .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
+    .collect();
+  let skill = pod_model::SkillDef {
+    type_id: item.id,
+    name: item.name,
+    rank,
+    level: 0,
+    sp: 0,
+    primary: pod_model::AttrKey::from_eve_id(primary_id),
+    secondary: pod_model::AttrKey::from_eve_id(secondary_id),
+    prereqs,
+  };
+  let group_id_str = item.item_group_id.to_string();
+  let group_name = skill_groups.get(&item.item_group_id).cloned().unwrap_or_default();
+  match groups.iter_mut().find(|g| g.id == group_id_str) {
+    Some(group) => group.skills.push(skill),
+    None => groups.push(pod_model::SkillGroupDef {
+      id: group_id_str,
+      name: group_name,
+      skills: vec![skill],
+    }),
+  }
+}
+
+fn collect_raw_skill_ids(raw: &[(&ItemTypeModel, Vec<(i32, u8)>)]) -> Vec<i32> {
+  raw
+    .iter()
+    .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect()
+}
+
+fn build_ship_summary(
+  item: &ItemTypeModel,
+  reqs: Vec<(i32, u8)>,
+  ship_groups: &HashMap<i32, String>,
+  mastery_map: &HashMap<i32, HashMap<i32, String>>,
+  names: &HashMap<i32, String>,
+) -> ItemTypeSummary {
+  let mastery = mastery_map.get(&item.id);
+  ItemTypeSummary {
+    id: item.id,
+    name: item.name.clone(),
+    group_name: ship_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
+    skill_requirements: reqs
+      .into_iter()
+      .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
+      .collect(),
+    mastery_cert_ids: (1..=5)
+      .map(|lvl| parse_cert_ids(mastery.and_then(|m| m.get(&lvl))))
+      .collect(),
+  }
+}
+
+fn build_module_summary(
+  item: &ItemTypeModel,
+  reqs: Vec<(i32, u8)>,
+  module_groups: &HashMap<i32, String>,
+  names: &HashMap<i32, String>,
+) -> ItemTypeSummary {
+  ItemTypeSummary {
+    id: item.id,
+    name: item.name.clone(),
+    group_name: module_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
+    skill_requirements: reqs
+      .into_iter()
+      .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
+      .collect(),
+    mastery_cert_ids: vec![],
+  }
 }
 
 /// Repository for item type CRUD operations.
@@ -124,32 +221,13 @@ impl<'a> Repo<'a> {
       })
       .collect();
 
-    let all_skill_ids: Vec<i32> = raw
-      .iter()
-      .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
-      .collect::<std::collections::HashSet<_>>()
-      .into_iter()
-      .collect();
+    let all_skill_ids = collect_raw_skill_ids(&raw);
     let names = resolve_skill_names(self.db, &all_skill_ids).await;
 
     Ok(
       raw
         .into_iter()
-        .map(|(item, reqs)| {
-          let mastery = mastery_map.get(&item.id);
-          ItemTypeSummary {
-            id: item.id,
-            name: item.name.clone(),
-            group_name: ship_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
-            skill_requirements: reqs
-              .into_iter()
-              .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
-              .collect(),
-            mastery_cert_ids: (1..=5)
-              .map(|lvl| parse_cert_ids(mastery.and_then(|m| m.get(&lvl))))
-              .collect(),
-          }
-        })
+        .map(|(item, reqs)| build_ship_summary(item, reqs, &ship_groups, &mastery_map, &names))
         .collect(),
     )
   }
@@ -187,27 +265,13 @@ impl<'a> Repo<'a> {
       })
       .collect();
 
-    let all_skill_ids: Vec<i32> = raw
-      .iter()
-      .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
-      .collect::<std::collections::HashSet<_>>()
-      .into_iter()
-      .collect();
+    let all_skill_ids = collect_raw_skill_ids(&raw);
     let names = resolve_skill_names(self.db, &all_skill_ids).await;
 
     Ok(
       raw
         .into_iter()
-        .map(|(item, reqs)| ItemTypeSummary {
-          id: item.id,
-          name: item.name.clone(),
-          group_name: module_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
-          skill_requirements: reqs
-            .into_iter()
-            .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
-            .collect(),
-          mastery_cert_ids: vec![],
-        })
+        .map(|(item, reqs)| build_module_summary(item, reqs, &module_groups, &names))
         .collect(),
     )
   }
@@ -249,48 +313,7 @@ impl<'a> Repo<'a> {
 
     let mut groups: Vec<pod_model::SkillGroupDef> = Vec::new();
     for item in items {
-      let attrs = &item.dogma_attributes.0;
-      let rank = attrs
-        .iter()
-        .find(|a| a.attribute_id == 275)
-        .map(|a| a.value as u8)
-        .unwrap_or(1);
-      let primary_id = attrs
-        .iter()
-        .find(|a| a.attribute_id == 180)
-        .map(|a| a.value as u8)
-        .unwrap_or(167);
-      let secondary_id = attrs
-        .iter()
-        .find(|a| a.attribute_id == 181)
-        .map(|a| a.value as u8)
-        .unwrap_or(168);
-      let prereqs: Vec<(String, u8)> = skill_reqs_from_attrs(attrs)
-        .into_iter()
-        .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
-        .collect();
-
-      let skill = pod_model::SkillDef {
-        type_id: item.id,
-        name: item.name,
-        rank,
-        level: 0,
-        sp: 0,
-        primary: pod_model::AttrKey::from_eve_id(primary_id),
-        secondary: pod_model::AttrKey::from_eve_id(secondary_id),
-        prereqs,
-      };
-
-      let group_id_str = item.item_group_id.to_string();
-      let group_name = skill_groups.get(&item.item_group_id).cloned().unwrap_or_default();
-      match groups.iter_mut().find(|g| g.id == group_id_str) {
-        Some(group) => group.skills.push(skill),
-        None => groups.push(pod_model::SkillGroupDef {
-          id: group_id_str,
-          name: group_name,
-          skills: vec![skill],
-        }),
-      }
+      add_skill_to_groups(&mut groups, item, &skill_groups, &prereq_names);
     }
 
     Ok(groups)

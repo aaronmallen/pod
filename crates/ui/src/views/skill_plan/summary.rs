@@ -279,50 +279,57 @@ fn plan_totals_section(total_sec: f64, total_sp: u64, steps: usize) -> Element<'
   let steps_str = format!("{steps} steps");
   let completion_str = format!("Completes {}", completion_date_string(total_sec));
 
-  container(
-    column([
-      text(time_str)
-        .font(mono::MEDIUM)
-        .size(28.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      Space::new().height(2.0).into(),
-      text(sp_str)
-        .font(mono::MEDIUM)
-        .size(16.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      Space::new().height(4.0).into(),
-      text(steps_str)
-        .font(mono::REGULAR)
-        .size(11.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      Space::new().height(2.0).into(),
-      text(completion_str)
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::TERTIARY),
-        })
-        .into(),
-    ])
-    .width(Length::Fill),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_4,
-    bottom: spacing::SPACE_4,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
+  container(totals_column(time_str, sp_str, steps_str, completion_str))
+    .padding(Padding {
+      top: spacing::SPACE_4,
+      bottom: spacing::SPACE_4,
+      left: spacing::SPACE_4,
+      right: spacing::SPACE_4,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+fn totals_column(
+  time_str: String,
+  sp_str: String,
+  steps_str: String,
+  completion_str: String,
+) -> iced::widget::Column<'static, Message> {
+  column([
+    text(time_str)
+      .font(mono::MEDIUM)
+      .size(28.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    Space::new().height(2.0).into(),
+    text(sp_str)
+      .font(mono::MEDIUM)
+      .size(16.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+    Space::new().height(4.0).into(),
+    text(steps_str)
+      .font(mono::REGULAR)
+      .size(11.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+    Space::new().height(2.0).into(),
+    text(completion_str)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+  ])
   .width(Length::Fill)
-  .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -458,6 +465,18 @@ fn implant_set_picker(current: ImplantSet, clone_data_missing: bool) -> Element<
 }
 
 fn implant_set_button(set: ImplantSet, label: &'static str, active: bool) -> Element<'static, Message> {
+  let bg = implant_btn_bg(active);
+  let border_color = if active {
+    color::accent::PLASMA_MUTED
+  } else {
+    color::border::SUBTLE
+  };
+  let text_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  };
+
   button(
     text(label)
       .font(mono::REGULAR)
@@ -479,35 +498,39 @@ fn implant_set_button(set: ImplantSet, label: &'static str, active: bool) -> Ele
   .on_press(Message::ImplantSetChanged(set))
   .style(move |_, status| button::Style {
     background: Some(Background::Color(if active {
-      color::accent::PLASMA_SUBTLE
+      bg
     } else {
-      match status {
-        button::Status::Hovered => Color::from_rgba(
-          color::accent::PLASMA.r,
-          color::accent::PLASMA.g,
-          color::accent::PLASMA.b,
-          0.05,
-        ),
-        _ => Color::TRANSPARENT,
-      }
+      implant_btn_hover_bg(status)
     })),
     border: Border {
-      color: if active {
-        color::accent::PLASMA_MUTED
-      } else {
-        color::border::SUBTLE
-      },
+      color: border_color,
       radius: 4.0.into(),
       width: 1.0,
     },
-    text_color: if active {
-      color::accent::PLASMA
-    } else {
-      color::text::SECONDARY
-    },
+    text_color,
     ..button::Style::default()
   })
   .into()
+}
+
+fn implant_btn_bg(active: bool) -> Color {
+  if active {
+    color::accent::PLASMA_SUBTLE
+  } else {
+    Color::TRANSPARENT
+  }
+}
+
+fn implant_btn_hover_bg(status: button::Status) -> Color {
+  match status {
+    button::Status::Hovered => Color::from_rgba(
+      color::accent::PLASMA.r,
+      color::accent::PLASMA.g,
+      color::accent::PLASMA.b,
+      0.05,
+    ),
+    _ => Color::TRANSPARENT,
+  }
 }
 
 fn single_attr_column<'a>(
@@ -627,7 +650,54 @@ fn attr_column_panel<'a>(
   implant: &'a ImplantBonus,
   highlight: bool,
 ) -> Element<'a, Message> {
-  let header = text(title)
+  let header = attr_panel_header(title, highlight);
+  let rows: Vec<Element<'_, Message>> = AttrKey::ALL
+    .iter()
+    .map(|&key| attr_value_row(key, attr_base(base, key), attr_implant(implant, key), highlight))
+    .collect();
+
+  let items: Vec<Element<'_, Message>> = std::iter::once(header)
+    .chain(std::iter::once(Space::new().height(6.0).into()))
+    .chain(rows)
+    .collect();
+
+  attr_panel_container(highlight, items)
+}
+
+fn attr_panel_container<'a>(highlight: bool, items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  let bg = if highlight {
+    color::accent::PLASMA_SUBTLE
+  } else {
+    color::surface::SUNKEN
+  };
+  let border_color = if highlight {
+    color::accent::PLASMA_MUTED
+  } else {
+    color::border::SUBTLE
+  };
+
+  container(column(items).spacing(2.0).width(Length::Fill))
+    .padding(Padding {
+      top: 10.0,
+      bottom: 10.0,
+      left: 10.0,
+      right: 10.0,
+    })
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: border_color,
+        radius: 6.0.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn attr_panel_header(title: &'static str, highlight: bool) -> Element<'static, Message> {
+  text(title)
     .font(mono::REGULAR)
     .size(9.0)
     .style(move |_| iced::widget::text::Style {
@@ -637,82 +707,12 @@ fn attr_column_panel<'a>(
         color::text::TERTIARY
       }),
     })
-    .into();
-
-  let rows: Vec<Element<'_, Message>> = AttrKey::ALL
-    .iter()
-    .map(|&key| {
-      let base_val = attr_base(base, key);
-      let imp_val = attr_implant(implant, key);
-      attr_value_row(key, base_val, imp_val, highlight)
-    })
-    .collect();
-
-  container(
-    column(
-      std::iter::once(header)
-        .chain(std::iter::once(Space::new().height(6.0).into()))
-        .chain(rows)
-        .collect::<Vec<_>>(),
-    )
-    .spacing(2.0)
-    .width(Length::Fill),
-  )
-  .padding(Padding {
-    top: 10.0,
-    bottom: 10.0,
-    left: 10.0,
-    right: 10.0,
-  })
-  .width(Length::Fill)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(if highlight {
-      color::accent::PLASMA_SUBTLE
-    } else {
-      color::surface::SUNKEN
-    })),
-    border: Border {
-      color: if highlight {
-        color::accent::PLASMA_MUTED
-      } else {
-        color::border::SUBTLE
-      },
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into()
+    .into()
 }
 
 fn savings_callout(result: &RemapResult, effective: &EffectiveAttrs) -> Element<'static, Message> {
   let _ = effective;
-  let (bg_color, border_color, label_color, msg_str) = if result.is_current {
-    (
-      Color::from_rgba(
-        color::text::SUCCESS.r,
-        color::text::SUCCESS.g,
-        color::text::SUCCESS.b,
-        0.08,
-      ),
-      Color::from_rgba(
-        color::text::SUCCESS.r,
-        color::text::SUCCESS.g,
-        color::text::SUCCESS.b,
-        0.30,
-      ),
-      color::text::SUCCESS,
-      "Already optimal".to_string(),
-    )
-  } else {
-    let saved = (result.current_sec - result.total_sec).max(0.0);
-    (
-      color::accent::PLASMA_SUBTLE,
-      color::accent::PLASMA_MUTED,
-      color::accent::PLASMA,
-      format!("\u{2212}{}", fmt_time_long(saved)),
-    )
-  };
+  let (bg_color, border_color, label_color, msg_str) = savings_callout_style(result);
 
   container(
     text(msg_str)
@@ -741,17 +741,37 @@ fn savings_callout(result: &RemapResult, effective: &EffectiveAttrs) -> Element<
   .into()
 }
 
-fn remap_status_row(cooldown_days: i32, remap_available: bool) -> Element<'static, Message> {
-  let (dot_color, status_text) = if cooldown_days > 0 {
+fn savings_callout_style(result: &RemapResult) -> (Color, Color, Color, String) {
+  if result.is_current {
     (
-      color::status::CAUTION,
-      format!("Remap on cooldown for {cooldown_days} days"),
+      Color::from_rgba(
+        color::text::SUCCESS.r,
+        color::text::SUCCESS.g,
+        color::text::SUCCESS.b,
+        0.08,
+      ),
+      Color::from_rgba(
+        color::text::SUCCESS.r,
+        color::text::SUCCESS.g,
+        color::text::SUCCESS.b,
+        0.30,
+      ),
+      color::text::SUCCESS,
+      "Already optimal".to_string(),
     )
-  } else if remap_available {
-    (color::status::ONLINE, "Remap available now".to_string())
   } else {
-    (color::text::TERTIARY, "No remap available".to_string())
-  };
+    let saved = (result.current_sec - result.total_sec).max(0.0);
+    (
+      color::accent::PLASMA_SUBTLE,
+      color::accent::PLASMA_MUTED,
+      color::accent::PLASMA,
+      format!("\u{2212}{}", fmt_time_long(saved)),
+    )
+  }
+}
+
+fn remap_status_row(cooldown_days: i32, remap_available: bool) -> Element<'static, Message> {
+  let (dot_color, status_text) = remap_status_info(cooldown_days, remap_available);
 
   row([
     container(Space::new().width(6.0).height(6.0))
@@ -771,18 +791,25 @@ fn remap_status_row(cooldown_days: i32, remap_available: bool) -> Element<'stati
       .font(mono::REGULAR)
       .size(10.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(if cooldown_days > 0 {
-          color::status::CAUTION
-        } else if remap_available {
-          color::status::ONLINE
-        } else {
-          color::text::TERTIARY
-        }),
+        color: Some(dot_color),
       })
       .into(),
   ])
   .align_y(Vertical::Center)
   .into()
+}
+
+fn remap_status_info(cooldown_days: i32, remap_available: bool) -> (Color, String) {
+  if cooldown_days > 0 {
+    (
+      color::status::CAUTION,
+      format!("Remap on cooldown for {cooldown_days} days"),
+    )
+  } else if remap_available {
+    (color::status::ONLINE, "Remap available now".to_string())
+  } else {
+    (color::text::TERTIARY, "No remap available".to_string())
+  }
 }
 
 fn implant_suggestions_section<'a>(show: bool, savings: &'a [ImplantSaving]) -> Element<'a, Message> {
@@ -848,6 +875,20 @@ fn implant_suggestions_header_row() -> Element<'static, Message> {
 }
 
 fn implant_saving_row(saving: &ImplantSaving, is_first: bool) -> Element<'static, Message> {
+  let (badge_bg, badge_border, badge_text_color) = implant_saving_badge_style(is_first);
+  let attr_name = saving.attr.label();
+  let saved_str = fmt_time_short(saving.saved_sec);
+
+  row([
+    implant_saving_badge(badge_bg, badge_border, badge_text_color),
+    Space::new().width(8.0).into(),
+    implant_saving_label(attr_name, saved_str),
+  ])
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn implant_saving_badge_style(is_first: bool) -> (Color, Color, Color) {
   let badge_bg = if is_first {
     color::accent::PLASMA_SUBTLE
   } else {
@@ -868,53 +909,51 @@ fn implant_saving_row(saving: &ImplantSaving, is_first: bool) -> Element<'static
   } else {
     color::text::SECONDARY
   };
+  (badge_bg, badge_border, badge_text_color)
+}
 
-  let attr_name = saving.attr.label();
-  let saved_str = fmt_time_short(saving.saved_sec);
-
-  row([
-    container(
-      text("+1")
-        .font(mono::MEDIUM)
-        .size(10.0)
-        .style(move |_| iced::widget::text::Style {
-          color: Some(badge_text_color),
-        }),
-    )
-    .width(28.0)
-    .height(20.0)
-    .align_x(iced::alignment::Horizontal::Center)
-    .align_y(Vertical::Center)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(badge_bg)),
-      border: Border {
-        color: badge_border,
-        radius: 4.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into(),
-    Space::new().width(8.0).into(),
-    column([
-      text(attr_name)
-        .font(body::MEDIUM)
-        .size(12.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      text(format!("saves {saved_str}"))
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .into(),
-  ])
+fn implant_saving_badge(badge_bg: Color, badge_border: Color, badge_text_color: Color) -> Element<'static, Message> {
+  container(
+    text("+1")
+      .font(mono::MEDIUM)
+      .size(10.0)
+      .style(move |_| iced::widget::text::Style {
+        color: Some(badge_text_color),
+      }),
+  )
+  .width(28.0)
+  .height(20.0)
+  .align_x(iced::alignment::Horizontal::Center)
   .align_y(Vertical::Center)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(badge_bg)),
+    border: Border {
+      color: badge_border,
+      radius: 4.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn implant_saving_label(attr_name: &'static str, saved_str: String) -> Element<'static, Message> {
+  column([
+    text(attr_name)
+      .font(body::MEDIUM)
+      .size(12.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(format!("saves {saved_str}"))
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
   .into()
 }
 
@@ -940,29 +979,7 @@ fn time_by_group_section(group_sec: &std::collections::HashMap<String, f64>) -> 
     })
     .collect();
 
-  container(
-    column([
-      container(section_label("TIME BY SKILL GROUP"))
-        .padding(Padding {
-          top: 0.0,
-          bottom: spacing::SPACE_3,
-          left: 0.0,
-          right: 0.0,
-        })
-        .width(Length::Fill)
-        .into(),
-      column(rows).width(Length::Fill).into(),
-    ])
-    .width(Length::Fill),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_3,
-    bottom: spacing::SPACE_4,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
-  .width(Length::Fill)
-  .into()
+  time_chart_section("TIME BY SKILL GROUP", rows)
 }
 
 fn time_by_pair_section(pair_sec: &std::collections::HashMap<String, f64>) -> Element<'static, Message> {
@@ -986,9 +1003,13 @@ fn time_by_pair_section(pair_sec: &std::collections::HashMap<String, f64>) -> El
     })
     .collect();
 
+  time_chart_section("TIME BY ATTRIBUTE PAIR", rows)
+}
+
+fn time_chart_section(title: &'static str, rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
   container(
     column([
-      container(section_label("TIME BY ATTRIBUTE PAIR"))
+      container(section_label(title))
         .padding(Padding {
           top: 0.0,
           bottom: spacing::SPACE_3,
@@ -1016,61 +1037,69 @@ fn bar_chart_row(label: String, time_str: String, fraction: f32, bar_color: Colo
   let rest = 1000u16.saturating_sub(filled);
 
   column([
-    row([
-      text(label)
-        .font(body::REGULAR)
-        .size(11.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .width(Length::Fill)
-        .into(),
-      text(time_str)
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .align_y(Vertical::Center)
-    .into(),
+    bar_label_row(label, time_str),
     Space::new().height(4.0).into(),
-    container(
-      row([
-        container(Space::new().width(Length::Fill).height(4.0))
-          .width(Length::FillPortion(filled))
-          .height(4.0)
-          .style(move |_| container::Style {
-            background: Some(Background::Color(bar_color)),
-            border: Border {
-              radius: 2.0.into(),
-              ..Border::default()
-            },
-            ..container::Style::default()
-          })
-          .into(),
-        if rest > 0 {
-          Space::new().width(Length::FillPortion(rest)).height(4.0).into()
-        } else {
-          Space::new().width(0.0).into()
-        },
-      ])
-      .height(4.0)
-      .spacing(0.0),
-    )
-    .height(4.0)
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      border: Border {
-        radius: 2.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into(),
+    bar_track(filled, rest, bar_color),
   ])
   .width(Length::Fill)
+  .into()
+}
+
+fn bar_label_row(label: String, time_str: String) -> Element<'static, Message> {
+  row([
+    text(label)
+      .font(body::REGULAR)
+      .size(11.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+    text(time_str)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn bar_track(filled: u16, rest: u16, bar_color: Color) -> Element<'static, Message> {
+  container(
+    row([
+      container(Space::new().width(Length::Fill).height(4.0))
+        .width(Length::FillPortion(filled))
+        .height(4.0)
+        .style(move |_| container::Style {
+          background: Some(Background::Color(bar_color)),
+          border: Border {
+            radius: 2.0.into(),
+            ..Border::default()
+          },
+          ..container::Style::default()
+        })
+        .into(),
+      if rest > 0 {
+        Space::new().width(Length::FillPortion(rest)).height(4.0).into()
+      } else {
+        Space::new().width(0.0).into()
+      },
+    ])
+    .height(4.0)
+    .spacing(0.0),
+  )
+  .height(4.0)
+  .width(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::border::SUBTLE)),
+    border: Border {
+      radius: 2.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
   .into()
 }

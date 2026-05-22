@@ -295,20 +295,7 @@ fn search_bar<'a>(query: &'a str, placeholder: &'static str) -> Element<'a, Mess
         .size(14.0)
         .color(color::text::SECONDARY)
         .render::<Message>(),
-      text_input(placeholder, query)
-        .on_input(Message::PickerSearchChanged)
-        .padding(Padding::ZERO)
-        .size(13.0)
-        .font(body::REGULAR)
-        .style(|_, _| iced::widget::text_input::Style {
-          background: Background::Color(Color::TRANSPARENT),
-          border: Border::default(),
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          value: color::text::PRIMARY,
-          selection: color::accent::PLASMA_SUBTLE,
-        })
-        .into(),
+      search_input(query, placeholder),
     ])
     .spacing(10.0)
     .align_y(Vertical::Center),
@@ -342,6 +329,23 @@ fn search_bar<'a>(query: &'a str, placeholder: &'static str) -> Element<'a, Mess
     .into()
 }
 
+fn search_input<'a>(query: &'a str, placeholder: &'static str) -> Element<'a, Message> {
+  text_input(placeholder, query)
+    .on_input(Message::PickerSearchChanged)
+    .padding(Padding::ZERO)
+    .size(13.0)
+    .font(body::REGULAR)
+    .style(|_, _| iced::widget::text_input::Style {
+      background: Background::Color(Color::TRANSPARENT),
+      border: Border::default(),
+      icon: color::text::SECONDARY,
+      placeholder: color::text::TERTIARY,
+      value: color::text::PRIMARY,
+      selection: color::accent::PLASMA_SUBTLE,
+    })
+    .into()
+}
+
 fn group_header_row(
   name: &str,
   is_expanded: bool,
@@ -349,77 +353,36 @@ fn group_header_row(
   total_skills: usize,
 ) -> Element<'static, Message> {
   let caret = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
-  let rule = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
+  let rule = picker_separator();
+  let count_label = format!("{}/{}", trained_count, total_skills);
 
-  let btn = button(
-    row([
-      text(caret)
-        .size(9.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      Space::new().width(10.0).into(),
-      text(name.to_string())
-        .font(body::MEDIUM)
-        .size(13.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .width(Length::Fill)
-        .into(),
-      text(format!("{}/{}", trained_count, total_skills))
-        .font(mono::REGULAR)
-        .size(9.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .align_y(Vertical::Center),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 10.0,
-    bottom: 10.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::PickerGroupToggled(name.to_string()))
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.03)))
-      }
-      _ => None,
-    },
-    border: iced::Border::default(),
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  });
-
+  let btn = group_btn(name, caret, count_label);
   column([rule.into(), btn.into()]).into()
 }
 
 fn dyn_group_header<'a>(name: &str, count: usize, is_expanded: bool) -> Element<'a, Message> {
   let caret = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
-  let rule = container(Space::new().width(Length::Fill).height(1.0))
+  let rule = picker_separator();
+  let count_label = count.to_string();
+
+  let btn = group_btn(name, caret, count_label);
+  column([rule.into(), btn.into()]).into()
+}
+
+fn picker_separator<'a>() -> iced::widget::Container<'a, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
     .width(Length::Fill)
     .height(1.0)
     .style(|_| container::Style {
       background: Some(Background::Color(color::border::SUBTLE)),
       ..container::Style::default()
-    });
+    })
+}
 
-  let btn = button(
+fn group_btn(name: &str, caret: &str, count_label: String) -> button::Button<'static, Message> {
+  button(
     row([
-      text(caret)
+      text(caret.to_string())
         .size(9.0)
         .style(|_| iced::widget::text::Style {
           color: Some(color::text::SECONDARY),
@@ -434,7 +397,7 @@ fn dyn_group_header<'a>(name: &str, count: usize, is_expanded: bool) -> Element<
         })
         .width(Length::Fill)
         .into(),
-      text(count.to_string())
+      text(count_label)
         .font(mono::REGULAR)
         .size(9.0)
         .style(|_| iced::widget::text::Style {
@@ -462,67 +425,11 @@ fn dyn_group_header<'a>(name: &str, count: usize, is_expanded: bool) -> Element<
     border: iced::Border::default(),
     text_color: color::text::PRIMARY,
     ..button::Style::default()
-  });
-
-  column([rule.into(), btn.into()]).into()
+  })
 }
 
 fn skill_row(skill: &SkillDef, planned_level: u8) -> Element<'static, Message> {
-  let pips: Vec<Element<'_, Message>> = (1u8..=5)
-    .map(|lv| {
-      let trained = lv <= skill.level;
-      let planned = !trained && lv <= planned_level;
-
-      let (bg, border_col) = if trained {
-        (color::text::PRIMARY, color::text::PRIMARY)
-      } else if planned {
-        (
-          Color::from_rgba(0.247, 0.722, 0.859, 0.25),
-          Color::from_rgba(0.247, 0.722, 0.859, 0.60),
-        )
-      } else {
-        (Color::TRANSPARENT, color::border::SUBTLE)
-      };
-
-      let pip = container(Space::new())
-        .width(10.0)
-        .height(8.0)
-        .style(move |_| container::Style {
-          background: Some(Background::Color(bg)),
-          border: Border {
-            color: border_col,
-            radius: 1.5.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        });
-
-      if trained {
-        pip.into()
-      } else {
-        button(pip)
-          .padding(0)
-          .on_press(Message::SkillPicked(skill.name.to_string(), lv))
-          .style(|_, status| button::Style {
-            background: match status {
-              button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
-              }
-              _ => None,
-            },
-            border: Border {
-              color: Color::TRANSPARENT,
-              radius: 1.5.into(),
-              width: 0.0,
-            },
-            ..button::Style::default()
-          })
-          .into()
-      }
-    })
-    .collect();
-
-  let pip_row = row(pips).spacing(3.0).align_y(Vertical::Center);
+  let pip_row = skill_pip_row(skill, planned_level);
 
   let row_content = container(
     row([
@@ -554,24 +461,76 @@ fn skill_row(skill: &SkillDef, planned_level: u8) -> Element<'static, Message> {
   })
   .width(Length::Fill);
 
-  column([
-    container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into(),
-    row_content.into(),
-  ])
-  .into()
+  column([picker_separator().into(), row_content.into()]).into()
+}
+
+fn skill_pip_row(skill: &SkillDef, planned_level: u8) -> iced::widget::Row<'static, Message> {
+  let pips: Vec<Element<'_, Message>> = (1u8..=5)
+    .map(|lv| {
+      let trained = lv <= skill.level;
+      let planned = !trained && lv <= planned_level;
+      let (bg, border_col) = skill_pip_colors(trained, planned);
+      let pip = skill_pip(bg, border_col);
+
+      if trained {
+        pip.into()
+      } else {
+        button(pip)
+          .padding(0)
+          .on_press(Message::SkillPicked(skill.name.to_string(), lv))
+          .style(|_, status| button::Style {
+            background: match status {
+              button::Status::Hovered | button::Status::Pressed => {
+                Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
+              }
+              _ => None,
+            },
+            border: Border {
+              color: Color::TRANSPARENT,
+              radius: 1.5.into(),
+              width: 0.0,
+            },
+            ..button::Style::default()
+          })
+          .into()
+      }
+    })
+    .collect();
+
+  row(pips).spacing(3.0).align_y(Vertical::Center)
+}
+
+fn skill_pip_colors(trained: bool, planned: bool) -> (Color, Color) {
+  if trained {
+    (color::text::PRIMARY, color::text::PRIMARY)
+  } else if planned {
+    (
+      Color::from_rgba(0.247, 0.722, 0.859, 0.25),
+      Color::from_rgba(0.247, 0.722, 0.859, 0.60),
+    )
+  } else {
+    (Color::TRANSPARENT, color::border::SUBTLE)
+  }
+}
+
+fn skill_pip(bg: Color, border_col: Color) -> iced::widget::Container<'static, Message> {
+  container(Space::new())
+    .width(10.0)
+    .height(8.0)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(bg)),
+      border: Border {
+        color: border_col,
+        radius: 1.5.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
 }
 
 fn ship_row<'a>(ship: &'a ItemTypeSummary, selected_mastery: u8) -> Element<'a, Message> {
   let type_id = ship.id;
   let ship_name = ship.name.clone();
-  let mastery = selected_mastery;
 
   let name_el = text(ship.name.clone())
     .font(body::REGULAR)
@@ -581,89 +540,8 @@ fn ship_row<'a>(ship: &'a ItemTypeSummary, selected_mastery: u8) -> Element<'a, 
     })
     .width(Length::Fill);
 
-  let add_btn = button(
-    text("Add")
-      .font(body::MEDIUM)
-      .size(11.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 3.0,
-    bottom: 3.0,
-    left: 8.0,
-    right: 8.0,
-  })
-  .on_press(Message::ShipSelected(type_id, ship_name, mastery))
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
-      }
-      _ => Some(Background::Color(Color::TRANSPARENT)),
-    },
-    border: Border {
-      color: color::accent::PLASMA,
-      radius: 4.0.into(),
-      width: 1.0,
-    },
-    text_color: color::accent::PLASMA,
-    ..button::Style::default()
-  });
-
-  let chips: Vec<Element<'_, Message>> = ["I", "II", "III", "IV", "V"]
-    .iter()
-    .enumerate()
-    .map(|(i, label)| {
-      let lv = (i + 1) as u8;
-      let is_active = lv == selected_mastery;
-      button(
-        text(*label)
-          .font(mono::REGULAR)
-          .size(10.0)
-          .style(move |_| iced::widget::text::Style {
-            color: Some(if is_active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 5.0,
-        right: 5.0,
-      })
-      .on_press(Message::ShipMasteryChanged(type_id, lv))
-      .style(move |_, status| button::Style {
-        background: match (is_active, status) {
-          (true, _) => Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15))),
-          (false, button::Status::Hovered | button::Status::Pressed) => {
-            Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-          }
-          _ => None,
-        },
-        border: Border {
-          color: if is_active {
-            color::accent::PLASMA
-          } else {
-            color::border::SUBTLE
-          },
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        text_color: if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        },
-        ..button::Style::default()
-      })
-      .into()
-    })
-    .collect();
+  let add_btn = item_add_btn(Message::ShipSelected(type_id, ship_name, selected_mastery));
+  let chips = mastery_chips(type_id, selected_mastery);
 
   let row_children: Vec<Element<'_, Message>> = vec![
     name_el.into(),
@@ -681,18 +559,7 @@ fn ship_row<'a>(ship: &'a ItemTypeSummary, selected_mastery: u8) -> Element<'a, 
     })
     .width(Length::Fill);
 
-  column([
-    container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into(),
-    row_content.into(),
-  ])
-  .into()
+  column([picker_separator().into(), row_content.into()]).into()
 }
 
 fn module_row<'a>(module: &'a ItemTypeSummary) -> Element<'a, Message> {
@@ -731,18 +598,7 @@ fn module_row<'a>(module: &'a ItemTypeSummary) -> Element<'a, Message> {
   )
   .width(Length::Fill);
 
-  column([
-    container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into(),
-    row_content.into(),
-  ])
-  .into()
+  column([picker_separator().into(), row_content.into()]).into()
 }
 
 fn cert_row<'a>(cert: &'a Certificate, selected_prof: u8) -> Element<'a, Message> {
@@ -757,90 +613,8 @@ fn cert_row<'a>(cert: &'a Certificate, selected_prof: u8) -> Element<'a, Message
     })
     .width(Length::Fill);
 
-  let add_btn = button(
-    text("Add")
-      .font(body::MEDIUM)
-      .size(11.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 3.0,
-    bottom: 3.0,
-    left: 8.0,
-    right: 8.0,
-  })
-  .on_press(Message::CertSelected(cert_id, cert_name, selected_prof))
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
-      }
-      _ => Some(Background::Color(Color::TRANSPARENT)),
-    },
-    border: Border {
-      color: color::accent::PLASMA,
-      radius: 4.0.into(),
-      width: 1.0,
-    },
-    text_color: color::accent::PLASMA,
-    ..button::Style::default()
-  });
-
-  let prof_labels = ["Basic", "Std", "Adv", "Elite"];
-  let chips: Vec<Element<'_, Message>> = prof_labels
-    .iter()
-    .enumerate()
-    .map(|(i, label)| {
-      let prof = i as u8;
-      let is_active = prof == selected_prof;
-      button(
-        text(*label)
-          .font(mono::REGULAR)
-          .size(10.0)
-          .style(move |_| iced::widget::text::Style {
-            color: Some(if is_active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 5.0,
-        right: 5.0,
-      })
-      .on_press(Message::CertProficiencyChanged(cert_id, prof))
-      .style(move |_, status| button::Style {
-        background: match (is_active, status) {
-          (true, _) => Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15))),
-          (false, button::Status::Hovered | button::Status::Pressed) => {
-            Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-          }
-          _ => None,
-        },
-        border: Border {
-          color: if is_active {
-            color::accent::PLASMA
-          } else {
-            color::border::SUBTLE
-          },
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        text_color: if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        },
-        ..button::Style::default()
-      })
-      .into()
-    })
-    .collect();
+  let add_btn = item_add_btn(Message::CertSelected(cert_id, cert_name, selected_prof));
+  let chips = prof_chips(cert_id, selected_prof);
 
   let row_content = container(
     row([
@@ -860,16 +634,109 @@ fn cert_row<'a>(cert: &'a Certificate, selected_prof: u8) -> Element<'a, Message
   })
   .width(Length::Fill);
 
-  column([
-    container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into(),
-    row_content.into(),
-  ])
+  column([picker_separator().into(), row_content.into()]).into()
+}
+
+fn item_add_btn(on_press: Message) -> button::Button<'static, Message> {
+  button(
+    text("Add")
+      .font(body::MEDIUM)
+      .size(11.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    bottom: 3.0,
+    left: 8.0,
+    right: 8.0,
+  })
+  .on_press(on_press)
+  .style(|_, status| button::Style {
+    background: match status {
+      button::Status::Hovered | button::Status::Pressed => {
+        Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+      }
+      _ => Some(Background::Color(Color::TRANSPARENT)),
+    },
+    border: Border {
+      color: color::accent::PLASMA,
+      radius: 4.0.into(),
+      width: 1.0,
+    },
+    text_color: color::accent::PLASMA,
+    ..button::Style::default()
+  })
+}
+
+fn mastery_chips(type_id: i32, selected_mastery: u8) -> Vec<Element<'static, Message>> {
+  ["I", "II", "III", "IV", "V"]
+    .into_iter()
+    .enumerate()
+    .map(|(i, label)| {
+      let lv = (i + 1) as u8;
+      let is_active = lv == selected_mastery;
+      level_chip(label, is_active, Message::ShipMasteryChanged(type_id, lv))
+    })
+    .collect()
+}
+
+fn prof_chips(cert_id: i32, selected_prof: u8) -> Vec<Element<'static, Message>> {
+  ["Basic", "Std", "Adv", "Elite"]
+    .into_iter()
+    .enumerate()
+    .map(|(i, label)| {
+      let prof = i as u8;
+      let is_active = prof == selected_prof;
+      level_chip(label, is_active, Message::CertProficiencyChanged(cert_id, prof))
+    })
+    .collect()
+}
+
+fn level_chip(label: &'static str, is_active: bool, on_press: Message) -> Element<'static, Message> {
+  button(
+    text(label)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(move |_| iced::widget::text::Style {
+        color: Some(if is_active {
+          color::accent::PLASMA
+        } else {
+          color::text::SECONDARY
+        }),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 5.0,
+    right: 5.0,
+  })
+  .on_press(on_press)
+  .style(move |_, status| button::Style {
+    background: match (is_active, status) {
+      (true, _) => Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15))),
+      (false, button::Status::Hovered | button::Status::Pressed) => {
+        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
+      }
+      _ => None,
+    },
+    border: Border {
+      color: if is_active {
+        color::accent::PLASMA
+      } else {
+        color::border::SUBTLE
+      },
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    text_color: if is_active {
+      color::accent::PLASMA
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  })
   .into()
 }

@@ -351,9 +351,11 @@ async fn check_expired_snoozes(
   };
   let mut unsnooze_pairs: Vec<(i64, i64)> = Vec::new();
   for row in expired {
+    // best-effort; snooze re-expires on the next sync cycle if this fails
     let _ = db.characters().delete_snoozed_mail(row.character_id, row.mail_id).await;
     if let Some(esi) = &esi {
       let chars = characters.clone();
+      // best-effort; snooze re-expires on the next sync cycle if this fails
       let _ = apply_snooze_label(row.character_id, row.mail_id, false, chars, esi.clone(), db.clone()).await;
     }
     unsnooze_pairs.push((row.character_id, row.mail_id));
@@ -447,6 +449,7 @@ async fn fetch_mail_headers(characters: Vec<Character>, esi: pod_esi::Client, db
     };
     if !esi_headers.is_empty() {
       let db_rows = build_db_mail_rows(&esi_headers, &recipient_map, &name_map, *character.id());
+      // best-effort cache write
       let _ = db.characters().upsert_mail_headers(*character.id(), &db_rows).await;
     }
     if let Ok(rows) = db.characters().mail_headers(*character.id()).await {
@@ -847,11 +850,13 @@ fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> 
       let chars = state.characters.clone();
       return iced::Task::perform(
         async move {
+          // best-effort; mail may reappear until next sync if either fails
           let _ = db.characters().delete_mail_header(character_id, mail_id).await;
           if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
             && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
           {
             let grant = character_service::refresh_grant(character, &token);
+            // best-effort; mail may reappear until next sync if either fails
             let _ = esi.character(&grant).delete_mail(mail_id).await;
           }
         },
@@ -1032,9 +1037,11 @@ fn update_snooze_set(state: &mut State, label: String, services: &Services) -> i
       async move {
         if adding {
           if let Some(until) = &snooze_until {
+            // best-effort; snooze state may be inconsistent until next launch if this fails
             let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
           }
         } else {
+          // best-effort; snooze state may be inconsistent until next launch if this fails
           let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
         }
         apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await

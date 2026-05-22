@@ -253,8 +253,10 @@ fn write_stored_sde_version(version: &str) {
     return;
   };
   if let Some(parent) = path.parent() {
+    // non-critical; failure means the SDE will be re-downloaded on next launch
     std::fs::create_dir_all(parent).ok();
   }
+  // non-critical; failure means the SDE will be re-downloaded on next launch
   std::fs::write(path, version).ok();
 }
 

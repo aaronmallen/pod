@@ -960,6 +960,7 @@ async fn load_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::R
 
   for type_id in missing {
     if let Ok(bytes) = esi.images().type_icon(type_id as i64, 64).await {
+      // write-through icon cache; failure is safe to ignore
       let _ = db.universe().type_icons().upsert(type_id, "icon", bytes.clone()).await;
       result.push((type_id, bytes));
     }

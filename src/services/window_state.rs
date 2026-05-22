@@ -40,6 +40,7 @@ pub fn load() -> Option<WindowGeometry> {
 pub fn save(geometry: &WindowGeometry) {
   let Some(path) = state_path() else { return };
   if let Some(parent) = path.parent() {
+    // non-critical; window state loss is preferable to a crash on save
     std::fs::create_dir_all(parent).ok();
   }
   serde_json::to_vec(geometry)

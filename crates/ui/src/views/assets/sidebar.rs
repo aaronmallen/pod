@@ -183,7 +183,7 @@ fn is_structure_loc_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool 
   a.system_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
 }
 
-fn collect_systems<'a>(source: &'a [super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&'a str> {
+fn collect_systems(source: &[super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&str> {
   source
     .iter()
     .filter(|a| is_system_asset(a, char_id))
@@ -191,7 +191,7 @@ fn collect_systems<'a>(source: &'a [super::AssetRecord], char_id: Option<i64>) -
     .collect()
 }
 
-fn collect_structure_locs<'a>(source: &'a [super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&'a str> {
+fn collect_structure_locs(source: &[super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&str> {
   source
     .iter()
     .filter(|a| is_structure_loc_asset(a, char_id))

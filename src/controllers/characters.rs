@@ -821,11 +821,11 @@ async fn add_character(
     .unwrap_or_else(|| grant.character_name().clone());
   let corp_name = resolve_corp_name(corp_id, &esi).await;
 
-  let (character, character_skills, character_assets) =
+  let (mut character, character_skills, character_assets) =
     build_character_from_grant(&grant, character_id, character_name, corp_id, corp_name, &esi).await;
 
   if let Some(db) = db {
-    persist_character(&db, &character, &character_skills, &character_assets).await?;
+    persist_character(&db, &mut character, &character_skills, &character_assets).await?;
   }
   Ok(character)
 }
@@ -990,13 +990,19 @@ fn map_character_assets(character_id: i64, raw: Vec<pod_esi::models::character::
 }
 
 /// Persists a character and its skills and assets to the database.
+///
+/// Assigns a slot index one past the current maximum so new characters land at the end of the
+/// grid without colliding with existing ones. The upsert's ON CONFLICT clause does not update
+/// sort_order, so re-authorizing an existing character preserves its current slot.
 async fn persist_character(
   db: &pod_db::Repo,
-  character: &Character,
+  character: &mut Character,
   skills: &[CharacterSkill],
   assets: &[CharacterAsset],
 ) -> Result<(), String> {
   let character_id = *character.id();
+  let next_order = db.characters().next_sort_order().await.map_err(|e| e.to_string())?;
+  character.set_sort_order(next_order);
   db.characters().upsert(character).await.map_err(|e| e.to_string())?;
   db.characters()
     .upsert_skills(character_id, skills)

@@ -77,6 +77,9 @@ async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
   };
 
   step(&mut tx, "Loading characters\u{2026}".to_string()).await;
+  if let Err(e) = db.characters().normalize_sort_orders().await {
+    let _ = tx.send(Message::Error(e.to_string())).await;
+  }
   let mut characters = match db.characters().all().await {
     Ok(c) => c,
     Err(e) => {

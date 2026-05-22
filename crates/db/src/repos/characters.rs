@@ -86,6 +86,41 @@ impl<'a> Repo<'a> {
     Ok(Some(character))
   }
 
+  /// Returns the next available slot index (one past the current maximum sort_order).
+  ///
+  /// Returns 0 when no characters exist yet.
+  pub async fn next_sort_order(&self) -> Result<i32, Error> {
+    let rows = CharacterEntity::find()
+      .order_by(CharacterColumn::SortOrder, Order::Desc)
+      .all(self.db)
+      .await?;
+    Ok(rows.first().map(|r| r.sort_order + 1).unwrap_or(0))
+  }
+
+  /// Ensures all characters have unique slot indices, fixing duplicates if needed.
+  ///
+  /// Characters are fetched ordered by sort_order ascending (then id for stability). If any two
+  /// share the same slot index the entire list is reassigned sequential indices 0, 1, 2 … in that
+  /// order. No-ops when all slot indices are already unique.
+  pub async fn normalize_sort_orders(&self) -> Result<(), Error> {
+    let rows = CharacterEntity::find()
+      .order_by(CharacterColumn::SortOrder, Order::Asc)
+      .order_by(CharacterColumn::Id, Order::Asc)
+      .all(self.db)
+      .await?;
+
+    let has_duplicates = {
+      let mut seen = std::collections::HashSet::new();
+      rows.iter().any(|r| !seen.insert(r.sort_order))
+    };
+    if !has_duplicates {
+      return Ok(());
+    }
+
+    let updates: Vec<(i64, i32)> = rows.iter().enumerate().map(|(i, r)| (r.id, i as i32)).collect();
+    self.update_sort_orders(&updates).await
+  }
+
   /// Updates only the location fields for a character.
   pub async fn update_location(
     &self,
@@ -926,6 +961,101 @@ mod tests {
 
       repo.delete(1001).await.unwrap();
       assert!(repo.find(1001).await.unwrap().is_none());
+    }
+  }
+
+  mod next_sort_order {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_zero_when_no_characters_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let result = repo.next_sort_order().await.unwrap();
+
+      assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_one_past_the_maximum_sort_order() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut c1 = pod_model::Character::new(1001, "Alpha");
+      c1.set_sort_order(4);
+      let mut c2 = pod_model::Character::new(1002, "Beta");
+      c2.set_sort_order(7);
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+
+      let result = repo.next_sort_order().await.unwrap();
+
+      assert_eq!(result, 8);
+    }
+  }
+
+  mod normalize_sort_orders {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_noop_when_all_sort_orders_are_unique() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut c1 = pod_model::Character::new(1001, "Alpha");
+      c1.set_sort_order(0);
+      let mut c2 = pod_model::Character::new(1002, "Beta");
+      c2.set_sort_order(1);
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+
+      repo.normalize_sort_orders().await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(*all[0].sort_order(), 0);
+      assert_eq!(*all[1].sort_order(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_reassigns_sequential_indices_when_duplicates_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let c1 = pod_model::Character::new(1001, "Alpha");
+      let c2 = pod_model::Character::new(1002, "Beta");
+      let c3 = pod_model::Character::new(1003, "Gamma");
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+      repo.upsert(&c3).await.unwrap();
+
+      repo.normalize_sort_orders().await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(all.len(), 3);
+      assert_eq!(*all[0].sort_order(), 0);
+      assert_eq!(*all[1].sort_order(), 1);
+      assert_eq!(*all[2].sort_order(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_preserves_relative_order_when_normalizing() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      let mut c1 = pod_model::Character::new(1001, "Alpha");
+      c1.set_sort_order(5);
+      let mut c2 = pod_model::Character::new(1002, "Beta");
+      c2.set_sort_order(5);
+      repo.upsert(&c1).await.unwrap();
+      repo.upsert(&c2).await.unwrap();
+
+      repo.normalize_sort_orders().await.unwrap();
+
+      let all = repo.all().await.unwrap();
+      assert_eq!(all.len(), 2);
+      assert_eq!(*all[0].sort_order(), 0);
+      assert_eq!(*all[1].sort_order(), 1);
     }
   }
 

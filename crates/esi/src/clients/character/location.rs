@@ -124,3 +124,80 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::time::{Duration, SystemTime};
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+  };
+
+  fn make_grant() -> crate::models::auth::Grant {
+    crate::models::auth::Grant::new(
+      "test-token",
+      90_000_001i64,
+      "Test Char",
+      SystemTime::now() + Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    )
+  }
+
+  mod location {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_location_on_success() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/characters/90000001/location/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"{"solar_system_id": 30000142, "station_id": 60003760}"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let grant = make_grant();
+      let auth = esi.character(&grant);
+
+      let result = auth.location().await.unwrap();
+
+      assert_eq!(result.solar_system_id, 30000142);
+      assert_eq!(result.station_id, Some(60003760));
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_401() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v2/characters/90000001/location/"))
+        .respond_with(ResponseTemplate::new(401).set_body_raw(r#"{"error": "Unauthorized"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = crate::Client::builder("test-client")
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+      let grant = make_grant();
+      let auth = esi.character(&grant);
+
+      let result = auth.location().await;
+
+      assert!(matches!(
+        result,
+        Err(crate::Error::Api {
+          status: 401,
+          ..
+        })
+      ));
+    }
+  }
+}

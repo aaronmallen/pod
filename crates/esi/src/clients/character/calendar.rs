@@ -72,3 +72,76 @@ impl AuthenticatedClient<'_> {
       .await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  fn make_esi(server_uri: &str) -> (crate::Client, crate::models::auth::Grant) {
+    let esi = crate::Client::builder("test-client")
+      .base_url(server_uri)
+      .build()
+      .unwrap();
+    let grant = crate::models::auth::Grant::new(
+      "test-token",
+      90_000_001i64,
+      "Test Char",
+      std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+      "refresh",
+      vec![],
+    );
+    (esi, grant)
+  }
+
+  mod calendar {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_calendar_events_on_success() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/characters/90000001/calendar/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"[{"event_id":1,"importance":0,"title":"Alliance Meeting"}]"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let (esi, grant) = make_esi(&server.uri());
+      let auth = esi.character(&grant);
+
+      let result = auth.calendar().await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].event_id, 1);
+      assert_eq!(result[0].importance, 0);
+      assert_eq!(result[0].title, "Alliance Meeting");
+    }
+
+    #[tokio::test]
+    async fn it_returns_api_error_on_401() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/characters/90000001/calendar/"))
+        .respond_with(ResponseTemplate::new(401).set_body_raw(r#"{"error":"Unauthorized"}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let (esi, grant) = make_esi(&server.uri());
+      let auth = esi.character(&grant);
+
+      let result = auth.calendar().await;
+
+      assert!(matches!(
+        result,
+        Err(crate::Error::Api {
+          status: 401,
+          ..
+        })
+      ));
+    }
+  }
+}

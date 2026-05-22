@@ -260,9 +260,9 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     Message::UpdateBanner(msg) => update_updater(app, UpdaterMessage::Banner(msg)),
     Message::Updater(msg) => update_updater(app, UpdaterMessage::Updater(msg)),
     msg @ (Message::WindowCloseRequested(_)
-      | Message::WindowMoved(..)
-      | Message::WindowOpened(_)
-      | Message::WindowResized(..)) => dispatch_window_event(app, msg),
+    | Message::WindowMoved(..)
+    | Message::WindowOpened(_)
+    | Message::WindowResized(..)) => dispatch_window_event(app, msg),
   }
 }
 

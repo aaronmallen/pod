@@ -45,7 +45,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 - ESI OAuth scopes are now split between character and corporation flows. Corp wallet (`contracts`, `orders`, `wallet`)
   and corp asset scopes are only requested when their corresponding feature flags are enabled, so characters are never
   prompted for scopes they do not need.
-- `granted_scopes` column on the characters table records which OAuth scopes were actually granted during authentication.
+- `granted_scopes` column on the characters table records which OAuth scopes were actually granted during
+  authentication.
 - On first launch after upgrading, granted scopes are backfilled for existing characters by decoding the current access
   token JWT locally — no network round-trip or re-authentication required.
 - Nav items (Assets, Skills, Wallet, Mail) and character detail tabs (Clones, Contacts, Kill Log, Notifications,

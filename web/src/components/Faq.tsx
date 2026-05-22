@@ -19,6 +19,17 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
     ),
   },
   {
+    question: "Is this built by AI?",
+    answer: (
+      <>
+        Pod is built by a software engineer by trade. AI tools are used to
+        augment the development workflow — things like code completion,
+        review, and research — but every decision, every line of code, and
+        every release is subject to human oversight.
+      </>
+    ),
+  },
+  {
     question: "The app says it's damaged on macOS",
     answer: (
       <>

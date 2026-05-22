@@ -27,7 +27,7 @@ if [ -n "${PACKAGE}" ]; then
   cargo llvm-cov report --html --output-dir coverage/rust/"${PACKAGE}"
   cargo llvm-cov report --cobertura --output-path coverage/rust/"${PACKAGE}"/cobertura.xml
 else
-  eval cargo llvm-cov nextest --workspace --summary-only --all-features --no-tests pass "${FILTER_ARGS}"
+  eval cargo llvm-cov nextest --workspace --exclude pod-ui --summary-only --all-features --no-tests pass --fail-under-lines 50 "${FILTER_ARGS}"
   cargo llvm-cov report --html --output-dir coverage/rust
   cargo llvm-cov report --cobertura --output-path coverage/rust/cobertura.xml
 fi

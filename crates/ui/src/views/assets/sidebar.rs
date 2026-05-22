@@ -165,6 +165,40 @@ fn push_system_rows<'a>(
   }
 }
 
+fn is_system_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
+  if let Some(id) = char_id
+    && a.character_id != id
+  {
+    return false;
+  }
+  !a.system_name.is_empty()
+}
+
+fn is_structure_loc_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
+  if let Some(id) = char_id
+    && a.character_id != id
+  {
+    return false;
+  }
+  a.system_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
+}
+
+fn collect_systems<'a>(source: &'a [super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&'a str> {
+  source
+    .iter()
+    .filter(|a| is_system_asset(a, char_id))
+    .map(|a| a.system_name.as_str())
+    .collect()
+}
+
+fn collect_structure_locs<'a>(source: &'a [super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&'a str> {
+  source
+    .iter()
+    .filter(|a| is_structure_loc_asset(a, char_id))
+    .map(|a| a.location_name.as_str())
+    .collect()
+}
+
 fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let mut items: Vec<Element<'_, Message>> = Vec::new();
   items.push(locations_label());
@@ -178,37 +212,11 @@ fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let char_id = state.selected_character();
   let selected_loc = state.selected_loc.as_deref();
 
-  let systems: BTreeSet<&str> = source
-    .iter()
-    .filter(|a| {
-      if let Some(id) = char_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      !a.system_name.is_empty()
-    })
-    .map(|a| a.system_name.as_str())
-    .collect();
-
-  for sys_name in &systems {
+  for sys_name in &collect_systems(source, char_id) {
     push_system_rows(&mut items, source, sys_name, char_id, selected_loc);
   }
 
-  let structure_locs: BTreeSet<&str> = source
-    .iter()
-    .filter(|a| {
-      if let Some(id) = char_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      a.system_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
-    })
-    .map(|a| a.location_name.as_str())
-    .collect();
-
-  for loc_name in &structure_locs {
+  for loc_name in &collect_structure_locs(source, char_id) {
     push_location_rows(&mut items, source, loc_name, char_id, selected_loc);
   }
 

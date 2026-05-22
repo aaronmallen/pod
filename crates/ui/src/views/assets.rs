@@ -574,44 +574,56 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
   }
 }
 
+fn form_set_name(state: &mut State, name: String) {
+  if let Some(form) = state.stockpile_form.as_mut() {
+    form.name = name;
+  }
+}
+
+fn form_set_location(state: &mut State, loc: String) {
+  if let Some(form) = state.stockpile_form.as_mut() {
+    form.location_id_text = loc;
+  }
+}
+
+fn form_set_item_type(state: &mut State, idx: usize, val: String) {
+  if let Some(form) = state.stockpile_form.as_mut()
+    && let Some(item) = form.items.get_mut(idx)
+  {
+    item.type_id_text = val;
+  }
+}
+
+fn form_set_item_qty(state: &mut State, idx: usize, val: String) {
+  if let Some(form) = state.stockpile_form.as_mut()
+    && let Some(item) = form.items.get_mut(idx)
+  {
+    item.qty_text = val;
+  }
+}
+
+fn form_add_item(state: &mut State) {
+  if let Some(form) = state.stockpile_form.as_mut() {
+    form.items.push(StockpileFormItem::default());
+  }
+}
+
+fn form_remove_item(state: &mut State, idx: usize) {
+  if let Some(form) = state.stockpile_form.as_mut()
+    && idx < form.items.len()
+  {
+    form.items.remove(idx);
+  }
+}
+
 fn update_stockpile_form(state: &mut State, msg: stockpiles_tab::Message) {
   match msg {
-    stockpiles_tab::Message::FormNameChanged(name) => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        form.name = name;
-      }
-    }
-    stockpiles_tab::Message::FormLocationChanged(loc) => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        form.location_id_text = loc;
-      }
-    }
-    stockpiles_tab::Message::FormItemTypeChanged(idx, val) => {
-      if let Some(form) = state.stockpile_form.as_mut()
-        && let Some(item) = form.items.get_mut(idx)
-      {
-        item.type_id_text = val;
-      }
-    }
-    stockpiles_tab::Message::FormItemQtyChanged(idx, val) => {
-      if let Some(form) = state.stockpile_form.as_mut()
-        && let Some(item) = form.items.get_mut(idx)
-      {
-        item.qty_text = val;
-      }
-    }
-    stockpiles_tab::Message::FormAddItem => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        form.items.push(StockpileFormItem::default());
-      }
-    }
-    stockpiles_tab::Message::FormRemoveItem(idx) => {
-      if let Some(form) = state.stockpile_form.as_mut()
-        && idx < form.items.len()
-      {
-        form.items.remove(idx);
-      }
-    }
+    stockpiles_tab::Message::FormNameChanged(name) => form_set_name(state, name),
+    stockpiles_tab::Message::FormLocationChanged(loc) => form_set_location(state, loc),
+    stockpiles_tab::Message::FormItemTypeChanged(idx, val) => form_set_item_type(state, idx, val),
+    stockpiles_tab::Message::FormItemQtyChanged(idx, val) => form_set_item_qty(state, idx, val),
+    stockpiles_tab::Message::FormAddItem => form_add_item(state),
+    stockpiles_tab::Message::FormRemoveItem(idx) => form_remove_item(state, idx),
     stockpiles_tab::Message::FormCancel => {
       state.stockpile_form = None;
     }
@@ -673,8 +685,28 @@ fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Tas
   iced::Task::none()
 }
 
-/// Processes an assets message and returns a task.
-pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
+fn load_item_icons(state: &mut State, icons: Vec<(i32, String, Vec<u8>)>) {
+  for (type_id, variant, bytes) in icons {
+    state
+      .item_icons
+      .insert((type_id, variant), image::Handle::from_bytes(bytes));
+  }
+}
+
+fn update_nav_history(state: &mut State, history: Vec<(chrono::NaiveDate, f64)>) {
+  state.nav_series = history.iter().map(|(_, v)| *v).collect();
+  state.nav_history = history;
+}
+
+fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
+  match msg {
+    tracker_tab::Message::TrackerRangeChanged(r) => {
+      state.tracker_range = r;
+    }
+  }
+}
+
+fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
     Message::AssetsLoaded(assets) => {
       state.assets = assets;
@@ -684,45 +716,38 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       state.corp_assets = records;
       state.loading = false;
     }
-    Message::FetchCorpAssets(_) => {}
-    Message::InventoryTab(msg) => update_inventory_tab(state, msg),
-    Message::ItemIconsLoaded(icons) => {
-      for (type_id, variant, bytes) in icons {
-        state
-          .item_icons
-          .insert((type_id, variant), image::Handle::from_bytes(bytes));
-      }
+    Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
+    Message::NavHistoryLoaded(history) => update_nav_history(state, history),
+    Message::StockpilesLoaded(piles) => {
+      state.stockpiles = piles;
     }
+    Message::ValuesLoaded(data) => {
+      state.asset_values_data = Some(data);
+      state.values_loading = false;
+    }
+    _ => {}
+  }
+}
+
+/// Processes an assets message and returns a task.
+pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::FetchCorpAssets(_) | Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
+    Message::InventoryTab(msg) => update_inventory_tab(state, msg),
     Message::LoadMoreAssets => {
       state.visible_count += 50;
     }
     Message::LocationSelected(loc) => {
       state.selected_loc = loc;
     }
-    Message::NavHistoryLoaded(history) => {
-      state.nav_series = history.iter().map(|(_, v)| *v).collect();
-      state.nav_history = history;
-    }
     Message::Picker(msg) => return update_picker(state, msg),
-    Message::ReauthorizeCharacter(_) => {}
-    Message::RefreshNavHistory => {}
-    Message::StockpilesLoaded(piles) => {
-      state.stockpiles = piles;
-    }
     Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
     Message::TabSelected(tab) => {
       state.active_tab = tab;
     }
-    Message::TrackerTab(msg) => match msg {
-      tracker_tab::Message::TrackerRangeChanged(r) => {
-        state.tracker_range = r;
-      }
-    },
-    Message::ValuesLoaded(data) => {
-      state.asset_values_data = Some(data);
-      state.values_loading = false;
-    }
+    Message::TrackerTab(msg) => update_tracker_tab(state, msg),
     Message::ValuesTab(_msg) => {}
+    msg => apply_data_loaded(state, msg),
   }
   iced::Task::none()
 }

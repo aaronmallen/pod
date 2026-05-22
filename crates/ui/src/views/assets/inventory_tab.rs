@@ -21,6 +21,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum Message {
   CategoryChanged(Category),
+  ScrollUpdate(f32),
   SearchChanged(String),
   SortChanged(SortCol),
   ToggleContainer(i64),
@@ -471,7 +472,9 @@ impl<'a> Component<'a> {
     } else {
       let header_row = table_header(&state.sort_col, state.sort_asc);
       let all_assets = state.all_assets();
-      let tree_rows = build_tree_rows(sorted, all_assets, &state.expanded_containers);
+      let visible = state.visible_count.min(sorted.len());
+      let page: Vec<&AssetRecord> = sorted[..visible].to_vec();
+      let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers);
       let data_rows: Vec<Element<'_, Message>> = tree_rows
         .into_iter()
         .map(|a| {
@@ -492,7 +495,9 @@ impl<'a> Component<'a> {
           asset_table_row(a, owner_name, &state.item_icons, expanded)
         })
         .collect();
-      let data = scrollable(column(data_rows).width(Length::Fill)).height(Length::Fill);
+      let data = scrollable(column(data_rows).width(Length::Fill))
+        .height(Length::Fill)
+        .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y));
       column([header_row, data.into()])
         .width(Length::Fill)
         .height(Length::Fill)

@@ -283,6 +283,7 @@ pub enum Message {
   FetchCorpAssets(i64),
   InventoryTab(inventory_tab::Message),
   ItemIconsLoaded(Vec<(i32, String, Vec<u8>)>),
+  LoadMoreAssets,
   LocationSelected(Option<String>),
   NavHistoryLoaded(Vec<(NaiveDate, f64)>),
   Picker(character_picker::Message),
@@ -319,6 +320,7 @@ pub struct State {
   pub stockpiles: Vec<StockpileWithStatus>,
   pub tracker_range: TrackerRange,
   pub values_loading: bool,
+  pub visible_count: usize,
 }
 
 impl State {
@@ -479,6 +481,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State 
     stockpiles: Vec::new(),
     tracker_range: TrackerRange::D90,
     values_loading: false,
+    visible_count: 100,
   }
 }
 
@@ -541,9 +544,19 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
   match msg {
     inventory_tab::Message::CategoryChanged(cat) => {
       state.category = cat;
+      state.visible_count = 100;
+    }
+    inventory_tab::Message::ScrollUpdate(y) => {
+      if y > 0.85 {
+        let total = state.visible_assets().count();
+        if state.visible_count < total {
+          state.visible_count += 50;
+        }
+      }
     }
     inventory_tab::Message::SearchChanged(q) => {
       state.search_query = q;
+      state.visible_count = 100;
     }
     inventory_tab::Message::SortChanged(col) => {
       if state.sort_col == col {
@@ -645,6 +658,9 @@ fn update_edit_stockpile(state: &mut State, id: i64) {
 }
 
 fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Task<Message> {
+  if let character_picker::Message::Select(_) = &msg {
+    state.visible_count = 100;
+  }
   if let character_picker::Message::Select(character_picker::PickerSelection::Corporation(id)) = &msg {
     let corp_id = *id;
     state.picker.update(msg);
@@ -676,6 +692,9 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
           .item_icons
           .insert((type_id, variant), image::Handle::from_bytes(bytes));
       }
+    }
+    Message::LoadMoreAssets => {
+      state.visible_count += 50;
     }
     Message::LocationSelected(loc) => {
       state.selected_loc = loc;

@@ -26,26 +26,26 @@ pub fn handle_bootstrap(
   step_label: &mut String,
   characters: &mut Vec<Character>,
   esi_client: &mut Option<pod_esi::Client>,
-  sync_step_size: &mut f32,
   msg: bootstrap::Message,
 ) -> HandleResult {
   match msg {
     bootstrap::Message::SeedingRequired(db_val) => {
       *db = Some(db_val.clone());
       *step_label = "Downloading static data\u{2026}".to_string();
-      state.progress_target = 0.05;
+      state.progress_target = 0.25;
       HandleResult::Bootstrap(sde::seed(db_val))
     }
     bootstrap::Message::SeedingComplete(db_val) => {
       *db = Some(db_val.clone());
-      *step_label = "Loading characters\u{2026}".to_string();
-      state.progress_target = 0.85;
+      state.progress_target = 0.50;
       HandleResult::Bootstrap(bootstrap::continue_after_db(db_val))
     }
     bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
     bootstrap::Message::StepChanged(label) => {
       *step_label = label;
-      state.progress_target = (state.progress_target + *sync_step_size).min(1.0);
+      if state.progress_target >= 0.50 {
+        state.progress_target = (state.progress_target + 0.25).min(1.0);
+      }
       HandleResult::None
     }
     bootstrap::Message::Complete(db_val, chars, esi) => {

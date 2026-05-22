@@ -41,7 +41,6 @@ struct App {
   plan_window_size: Size,
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
   step_label: String,
-  sync_step_size: f32,
   update_dismissed: bool,
   update_state: services::updater::UpdateState,
   window_id: Option<window::Id>,
@@ -100,7 +99,6 @@ impl Default for App {
       phase: AppPhase::Splash(splash_ctrl::State::default()),
       plan_windows: HashMap::new(),
       step_label: "Opening database\u{2026}".to_string(),
-      sync_step_size: 0.15,
       update_dismissed: false,
       update_state: services::updater::UpdateState::default(),
       window_id: None,
@@ -353,7 +351,6 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
         &mut app.step_label,
         &mut app.characters,
         &mut app.esi_client,
-        &mut app.sync_step_size,
         msg,
       ) {
         splash_ctrl::HandleResult::Bootstrap(t) => t.map(Message::Bootstrap),

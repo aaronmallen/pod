@@ -1199,21 +1199,42 @@ fn update_picker_group_toggled(state: &mut State, name: String) -> iced::Task<Me
   iced::Task::none()
 }
 
-fn update_picker_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+fn update_picker_cert_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::AllCertsLoaded(certs) => update_all_certs_loaded(state, certs),
     Message::CertificatesLoaded(certs) => update_certificates_loaded(state, certs),
     Message::CertProficiencyChanged(cert_id, prof) => update_cert_proficiency_changed(state, cert_id, prof),
     Message::CertSelected(cert_id, _name, prof) => update_cert_selected(state, cert_id, prof),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_picker_ship_module_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
     Message::ModuleSelected(type_id, _name) => update_module_selected(state, type_id),
     Message::ModulesLoaded(modules) => update_modules_loaded(state, modules),
+    Message::ShipMasteryChanged(type_id, level) => update_ship_mastery_changed(state, type_id, level),
+    Message::ShipSelected(type_id, _name, mastery) => update_ship_selected(state, type_id, mastery),
+    Message::ShipsLoaded(ships) => update_ships_loaded(state, ships, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_picker_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::AllCertsLoaded(_)
+    | Message::CertificatesLoaded(_)
+    | Message::CertProficiencyChanged(_, _)
+    | Message::CertSelected(_, _, _) => update_picker_cert_messages(state, message),
+    Message::ModuleSelected(_, _)
+    | Message::ModulesLoaded(_)
+    | Message::ShipMasteryChanged(_, _)
+    | Message::ShipSelected(_, _, _)
+    | Message::ShipsLoaded(_) => update_picker_ship_module_messages(state, message, services),
     Message::PickerGroupToggled(name) => update_picker_group_toggled(state, name),
     Message::PickerSearchChanged(q) => update_picker_search(state, q),
     Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
     Message::PickerToggled => update_picker_toggled(state),
-    Message::ShipMasteryChanged(type_id, level) => update_ship_mastery_changed(state, type_id, level),
-    Message::ShipSelected(type_id, _name, mastery) => update_ship_selected(state, type_id, mastery),
-    Message::ShipsLoaded(ships) => update_ships_loaded(state, ships, services),
     Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
     Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
     _ => iced::Task::none(),
@@ -1312,8 +1333,58 @@ fn update_plan_messages(state: &mut State, message: Message, services: &Services
   }
 }
 
+fn update_plan_import_export_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::ExportDropdownToggled => update_export_dropdown_toggled(state),
+    Message::ExportPathChosen(None) => iced::Task::none(),
+    Message::ExportPathChosen(Some(path)) => update_export_path_chosen(state, path),
+    Message::ExportToClipboard => update_export_clipboard(state),
+    Message::ExportToFile => update_export_file(state),
+    Message::ImportDropdownToggled => update_import_dropdown_toggled(state),
+    Message::ImportFromClipboard => update_import_clipboard(state),
+    Message::ImportFromFile => update_import_file(state),
+    Message::ImportPathChosen(None) => iced::Task::none(),
+    Message::ImportPathChosen(Some(path)) => update_import_path_chosen(state, path),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_optimizer_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::ImplantSetChanged(set) => update_implant_set(state, set),
+    Message::ImplantSuggestionsToggled => update_implant_suggestions(state),
+    Message::OptimizerCompleted(result) => update_optimizer_completed(state, result),
+    Message::OptimizerRequested => update_optimizer_request(state),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_pane_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::PaneDrag(x) => update_pane_drag(state, x),
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart(edge) => update_pane_drag_start(state, edge),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_plan_ui_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
+    Message::ExportDropdownToggled
+    | Message::ExportPathChosen(_)
+    | Message::ExportToClipboard
+    | Message::ExportToFile
+    | Message::ImportDropdownToggled
+    | Message::ImportFromClipboard
+    | Message::ImportFromFile
+    | Message::ImportPathChosen(_) => update_plan_import_export_messages(state, message),
+    Message::ImplantSetChanged(_)
+    | Message::ImplantSuggestionsToggled
+    | Message::OptimizerCompleted(_)
+    | Message::OptimizerRequested => update_plan_optimizer_messages(state, message),
+    Message::PaneDrag(_) | Message::PaneDragEnd | Message::PaneDragStart(_) => {
+      update_plan_pane_messages(state, message)
+    }
     Message::AttrsLoaded {
       base_attrs,
       current_effective_attrs,
@@ -1322,24 +1393,7 @@ fn update_plan_ui_messages(state: &mut State, message: Message, services: &Servi
     Message::CancelClose => update_cancel_close(state),
     Message::CloseRequested => update_close(state),
     Message::ConfirmClose => iced::window::close(state.window_id),
-    Message::ExportDropdownToggled => update_export_dropdown_toggled(state),
-    Message::ExportPathChosen(None) => iced::Task::none(),
-    Message::ExportPathChosen(Some(path)) => update_export_path_chosen(state, path),
-    Message::ExportToClipboard => update_export_clipboard(state),
-    Message::ExportToFile => update_export_file(state),
-    Message::ImplantSetChanged(set) => update_implant_set(state, set),
-    Message::ImplantSuggestionsToggled => update_implant_suggestions(state),
-    Message::ImportDropdownToggled => update_import_dropdown_toggled(state),
-    Message::ImportFromClipboard => update_import_clipboard(state),
-    Message::ImportFromFile => update_import_file(state),
-    Message::ImportPathChosen(None) => iced::Task::none(),
-    Message::ImportPathChosen(Some(path)) => update_import_path_chosen(state, path),
     Message::NameChanged(name) => update_name_changed(state, name),
-    Message::OptimizerCompleted(result) => update_optimizer_completed(state, result),
-    Message::OptimizerRequested => update_optimizer_request(state),
-    Message::PaneDrag(x) => update_pane_drag(state, x),
-    Message::PaneDragEnd => update_pane_drag_end(state),
-    Message::PaneDragStart(edge) => update_pane_drag_start(state, edge),
     Message::SaveCompleted => update_save_completed(state),
     Message::SaveRequested => update_save(state, services),
     _ => iced::Task::none(),

@@ -439,11 +439,12 @@ fn append_subtree<'a>(
   out: &mut Vec<&'a AssetRecord>,
 ) {
   out.push(item);
-  if item.is_container && expanded.contains(&item.item_id) {
-    if let Some(children) = children_map.get(&item.item_id) {
-      for child in children {
-        append_subtree(child, children_map, expanded, out);
-      }
+  if item.is_container
+    && expanded.contains(&item.item_id)
+    && let Some(children) = children_map.get(&item.item_id)
+  {
+    for child in children {
+      append_subtree(child, children_map, expanded, out);
     }
   }
 }

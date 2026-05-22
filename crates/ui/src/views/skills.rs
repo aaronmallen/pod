@@ -259,21 +259,21 @@ impl<'a> Component<'a> {
 
   /// Consume the builder and return the finished [`Element`].
   pub fn render(self) -> Element<'a, Message> {
-    if let Some(char_id) = self.state.selected_char_id().checked_sub(0).filter(|&id| id != 0) {
-      if let Some(character) = self.state.characters.iter().find(|c| *c.id() == char_id) {
-        let granted = character.granted_scopes_list();
-        if !missing_scopes(
-          &granted,
-          &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
-        )
-        .is_empty()
-        {
-          return ScopeMissing::new(char_id, "skill monitoring")
-            .render()
-            .map(|m| match m {
-              scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-            });
-        }
+    if let Some(char_id) = self.state.selected_char_id().checked_sub(0).filter(|&id| id != 0)
+      && let Some(character) = self.state.characters.iter().find(|c| *c.id() == char_id)
+    {
+      let granted = character.granted_scopes_list();
+      if !missing_scopes(
+        &granted,
+        &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
+      )
+      .is_empty()
+      {
+        return ScopeMissing::new(char_id, "skill monitoring")
+          .render()
+          .map(|m| match m {
+            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+          });
       }
     }
     view(self.state, self.window_width)

@@ -323,18 +323,18 @@ fn notif_content_col<'a>(notif: &'a CharacterNotification) -> Element<'a, Messag
       })
       .into(),
   ];
-  if let Some(snippet) = notif_body_snippet(notif) {
-    if !snippet.is_empty() {
-      items.push(
-        text(snippet)
-          .font(mono::REGULAR)
-          .size(10.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-      );
-    }
+  if let Some(snippet) = notif_body_snippet(notif)
+    && !snippet.is_empty()
+  {
+    items.push(
+      text(snippet)
+        .font(mono::REGULAR)
+        .size(10.0)
+        .style(|_: &Theme| iced::widget::text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+    );
   }
   column(items).spacing(3.0).width(Length::Fill).into()
 }

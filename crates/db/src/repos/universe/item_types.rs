@@ -28,10 +28,11 @@ fn skill_reqs_from_attrs(attrs: &[dogma_attribute::Entry]) -> Vec<(i32, u8)> {
       .iter()
       .find(|a| a.attribute_id == level_attr_id)
       .map(|a| a.value as u8);
-    if let (Some(tid), Some(lvl)) = (type_id, level) {
-      if tid > 0 && lvl > 0 {
-        result.push((tid, lvl));
-      }
+    if let (Some(tid), Some(lvl)) = (type_id, level)
+      && tid > 0
+      && lvl > 0
+    {
+      result.push((tid, lvl));
     }
   }
   result

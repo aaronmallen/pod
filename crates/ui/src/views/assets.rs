@@ -587,17 +587,17 @@ fn update_stockpile_form(state: &mut State, msg: stockpiles_tab::Message) {
       }
     }
     stockpiles_tab::Message::FormItemTypeChanged(idx, val) => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        if let Some(item) = form.items.get_mut(idx) {
-          item.type_id_text = val;
-        }
+      if let Some(form) = state.stockpile_form.as_mut()
+        && let Some(item) = form.items.get_mut(idx)
+      {
+        item.type_id_text = val;
       }
     }
     stockpiles_tab::Message::FormItemQtyChanged(idx, val) => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        if let Some(item) = form.items.get_mut(idx) {
-          item.qty_text = val;
-        }
+      if let Some(form) = state.stockpile_form.as_mut()
+        && let Some(item) = form.items.get_mut(idx)
+      {
+        item.qty_text = val;
       }
     }
     stockpiles_tab::Message::FormAddItem => {
@@ -606,10 +606,10 @@ fn update_stockpile_form(state: &mut State, msg: stockpiles_tab::Message) {
       }
     }
     stockpiles_tab::Message::FormRemoveItem(idx) => {
-      if let Some(form) = state.stockpile_form.as_mut() {
-        if idx < form.items.len() {
-          form.items.remove(idx);
-        }
+      if let Some(form) = state.stockpile_form.as_mut()
+        && idx < form.items.len()
+      {
+        form.items.remove(idx);
       }
     }
     stockpiles_tab::Message::FormCancel => {
@@ -821,14 +821,14 @@ impl<'a> Component<'a> {
 
     let state = self.state;
 
-    if let Some(char_id) = state.selected_character() {
-      if let Some(character) = state.characters.iter().find(|c| *c.id() == char_id) {
-        let granted = character.granted_scopes_list();
-        if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
-          return ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
-            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-          });
-        }
+    if let Some(char_id) = state.selected_character()
+      && let Some(character) = state.characters.iter().find(|c| *c.id() == char_id)
+    {
+      let granted = character.granted_scopes_list();
+      if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
+        return ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
+          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+        });
       }
     }
 

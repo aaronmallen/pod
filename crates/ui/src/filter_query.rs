@@ -188,40 +188,52 @@ fn match_token(token: &FilterToken, character: &Character) -> bool {
   }
 }
 
+fn match_tag(values: &[String], character: &Character) -> bool {
+  let char_tags: Vec<String> = character.tags().iter().map(|(_, name)| name.to_lowercase()).collect();
+  values.iter().any(|v| char_tags.contains(v))
+}
+
+fn match_corp(values: &[String], character: &Character) -> bool {
+  let corp = character.corp_name().to_lowercase();
+  values.iter().any(|v| corp.contains(v.as_str()))
+}
+
+fn match_loc(values: &[String], character: &Character) -> bool {
+  let loc = character.location_name().as_deref().unwrap_or("").to_lowercase();
+  values.iter().any(|v| loc.contains(v.as_str()))
+}
+
+fn match_status(values: &[String], character: &Character) -> bool {
+  let docked = character.location_docked().unwrap_or(false);
+  values.iter().any(|v| match v.as_str() {
+    "docked" => docked,
+    "in-space" => !docked,
+    _ => false,
+  })
+}
+
+fn match_training(values: &[String], character: &Character) -> bool {
+  let is_active = character.skills().iter().any(|s| s.is_active_training);
+  values.iter().any(|v| match v.as_str() {
+    "active" => is_active,
+    "idle" => !is_active,
+    _ => false,
+  })
+}
+
+fn match_name(values: &[String], character: &Character) -> bool {
+  let name = character.name().to_lowercase();
+  values.iter().any(|v| name.contains(v.as_str()))
+}
+
 fn match_key_value(key: &str, values: &[String], character: &Character) -> bool {
   match key {
-    "tag" => {
-      let char_tags: Vec<String> = character.tags().iter().map(|(_, name)| name.to_lowercase()).collect();
-      values.iter().any(|v| char_tags.contains(v))
-    }
-    "corp" => {
-      let corp = character.corp_name().to_lowercase();
-      values.iter().any(|v| corp.contains(v.as_str()))
-    }
-    "loc" => {
-      let loc = character.location_name().as_deref().unwrap_or("").to_lowercase();
-      values.iter().any(|v| loc.contains(v.as_str()))
-    }
-    "status" => {
-      let docked = character.location_docked().unwrap_or(false);
-      values.iter().any(|v| match v.as_str() {
-        "docked" => docked,
-        "in-space" => !docked,
-        _ => false,
-      })
-    }
-    "training" => {
-      let is_active = character.skills().iter().any(|s| s.is_active_training);
-      values.iter().any(|v| match v.as_str() {
-        "active" => is_active,
-        "idle" => !is_active,
-        _ => false,
-      })
-    }
-    "name" => {
-      let name = character.name().to_lowercase();
-      values.iter().any(|v| name.contains(v.as_str()))
-    }
+    "tag" => match_tag(values, character),
+    "corp" => match_corp(values, character),
+    "loc" => match_loc(values, character),
+    "status" => match_status(values, character),
+    "training" => match_training(values, character),
+    "name" => match_name(values, character),
     _ => false,
   }
 }

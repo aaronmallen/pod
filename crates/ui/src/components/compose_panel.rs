@@ -162,6 +162,17 @@ impl Component {
     match msg {
       Message::Close => self.apply_close(),
       Message::Expand => self.expanded = !self.expanded,
+      Message::SubjectChanged(val) => self.subject = val,
+      Message::BodyAction(action) => self.body.perform(action),
+      Message::FromPicker(msg) => self.from_picker.update(msg),
+      Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
+      Message::SuggestionCursorConfirm => self.apply_cursor_confirm(),
+      msg => self.apply_field_message(msg),
+    }
+  }
+
+  fn apply_field_message(&mut self, msg: Message) {
+    match msg {
       Message::ToSearchChanged(val) => self.apply_to_search_changed(val),
       Message::ToSearchResults(results) => {
         self.to_suggestion_cursor = None;
@@ -169,11 +180,15 @@ impl Component {
       }
       Message::ToSearchSelect(id, name) => self.apply_to_select(id, name),
       Message::ToAdd => self.apply_to_add(),
-      Message::ToRemove(idx) => {
-        if idx < self.to.len() {
-          self.to.remove(idx);
-        }
+      Message::ToRemove(idx) if idx < self.to.len() => {
+        self.to.remove(idx);
       }
+      msg => self.apply_cc_or_send_message(msg),
+    }
+  }
+
+  fn apply_cc_or_send_message(&mut self, msg: Message) {
+    match msg {
       Message::CcToggle => self.cc_visible = !self.cc_visible,
       Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
       Message::CcSearchResults(results) => {
@@ -182,16 +197,9 @@ impl Component {
       }
       Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
       Message::CcAdd => self.apply_cc_add(),
-      Message::CcRemove(idx) => {
-        if idx < self.cc.len() {
-          self.cc.remove(idx);
-        }
+      Message::CcRemove(idx) if idx < self.cc.len() => {
+        self.cc.remove(idx);
       }
-      Message::SubjectChanged(val) => self.subject = val,
-      Message::BodyAction(action) => self.body.perform(action),
-      Message::FromPicker(msg) => self.from_picker.update(msg),
-      Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
-      Message::SuggestionCursorConfirm => self.apply_cursor_confirm(),
       Message::SendPressed => {
         self.sending = true;
         self.error = None;
@@ -204,6 +212,7 @@ impl Component {
         self.sending = false;
         self.error = Some(e);
       }
+      _ => {}
     }
   }
 

@@ -266,27 +266,33 @@ fn trigger_label_col(name: String, subtitle: String) -> Element<'static, Message
   .into()
 }
 
+fn display_for_all(entries: &[CharacterEntry]) -> (String, String, u16, Option<image::Handle>) {
+  let e = entries.iter().find(|e| e.id.is_none()).or_else(|| entries.first());
+  e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
+    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
+}
+
+fn display_for_character(entries: &[CharacterEntry], id: i64) -> (String, String, u16, Option<image::Handle>) {
+  let e = entries.iter().find(|e| e.id == Some(id)).or_else(|| entries.first());
+  e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
+    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
+}
+
+fn display_for_corporation(corp_entries: &[CorporationEntry], id: i64) -> (String, String, u16, Option<image::Handle>) {
+  let e = corp_entries.iter().find(|e| e.id == id);
+  e.map(|e| (e.name.clone(), e.ticker.clone(), 220, e.icon_handle.clone()))
+    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
+}
+
 fn selected_display(
   entries: &[CharacterEntry],
   corp_entries: &[CorporationEntry],
   selected: &PickerSelection,
 ) -> (String, String, u16, Option<image::Handle>) {
   match selected {
-    PickerSelection::All => {
-      let e = entries.iter().find(|e| e.id.is_none()).or_else(|| entries.first());
-      e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
-        .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-    }
-    PickerSelection::Character(id) => {
-      let e = entries.iter().find(|e| e.id == Some(*id)).or_else(|| entries.first());
-      e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
-        .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-    }
-    PickerSelection::Corporation(id) => {
-      let e = corp_entries.iter().find(|e| e.id == *id);
-      e.map(|e| (e.name.clone(), e.ticker.clone(), 220, e.icon_handle.clone()))
-        .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-    }
+    PickerSelection::All => display_for_all(entries),
+    PickerSelection::Character(id) => display_for_character(entries, *id),
+    PickerSelection::Corporation(id) => display_for_corporation(corp_entries, *id),
   }
 }
 

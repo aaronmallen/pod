@@ -61,7 +61,7 @@ pub fn fmt_dur(secs: u64) -> String {
   }
 }
 
-/// UTC ETA formatted as "D Mon · HH:MM EVE" from seconds from now.
+/// UTC ETA formatted as "D Mon YYYY · HH:MM" from seconds from now.
 /// Returns "—" when `seconds_from_now` is 0.
 pub fn fmt_eta(seconds_from_now: u64) -> String {
   if seconds_from_now == 0 {
@@ -74,11 +74,18 @@ pub fn fmt_eta(seconds_from_now: u64) -> String {
   let ts = now + seconds_from_now;
   let hh = (ts % 86400) / 3600;
   let mm = (ts % 3600) / 60;
-  let (_, month, day) = days_to_utc_date(ts / 86400);
+  let (year, month, day) = days_to_utc_date(ts / 86400);
   const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
   ];
-  format!("{} {} \u{00b7} {:02}:{:02}", day, MONTHS[month as usize - 1], hh, mm)
+  format!(
+    "{} {} {} \u{00b7} {:02}:{:02}",
+    day,
+    MONTHS[month as usize - 1],
+    year,
+    hh,
+    mm
+  )
 }
 
 /// Gregorian civil-date from days since 1970-01-01 (Howard Hinnant algorithm).

@@ -48,7 +48,7 @@ fn labels<'a>() -> Element<'a, Message> {
           color: Some(color::text::SECONDARY),
         }),
     )
-    .width(Length::Fixed(90.0))
+    .width(Length::Fixed(135.0))
     .into(),
     Space::new().width(28.0).into(),
     container(

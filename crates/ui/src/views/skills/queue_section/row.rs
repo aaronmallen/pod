@@ -1,7 +1,7 @@
 //! Single queue entry row component (with gutter).
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Space, column, container, row, text},
 };
@@ -42,12 +42,7 @@ impl Component {
     };
 
     let cum_end_secs = (entry.cum_start_secs + entry.duration_secs) as u64;
-    let gutter = queue_gutter(
-      offset_label,
-      fmt_eta(cum_end_secs),
-      color::surface::SUNKEN,
-      color::border::DEFAULT,
-    );
+    let gutter = queue_gutter(offset_label, fmt_eta(cum_end_secs));
     let skill_col = skill_col(&entry);
     let sp_col = sp_col(entry.sp_needed);
     let dur_col = dur_col(entry.duration_secs);
@@ -63,25 +58,7 @@ impl Component {
   }
 }
 
-fn queue_gutter(
-  offset_label: String,
-  eta_label: String,
-  dot_color: Color,
-  dot_border: Color,
-) -> Element<'static, Message> {
-  let timeline_dot = container(Space::new().width(7.0).height(7.0))
-    .width(7.0)
-    .height(7.0)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(dot_color)),
-      border: Border {
-        color: dot_border,
-        radius: 3.5.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-
+fn queue_gutter(offset_label: String, eta_label: String) -> Element<'static, Message> {
   container(column([
     text(offset_label)
       .font(mono::REGULAR)
@@ -98,10 +75,8 @@ fn queue_gutter(
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    Space::new().height(spacing::SPACE_2).into(),
-    timeline_dot.into(),
   ]))
-  .width(Length::Fixed(90.0))
+  .width(Length::Fixed(135.0))
   .padding(Padding {
     top: 10.0,
     bottom: 10.0,

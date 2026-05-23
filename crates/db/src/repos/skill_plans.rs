@@ -1,13 +1,15 @@
 //! Repository for skill plan persistence.
 
 use pod_model::{SkillPlan, SkillPlanEntry};
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder};
+use sea_orm::{
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityLoaderTrait, EntityTrait, Order, QueryFilter, QueryOrder,
+};
 
 use crate::{
   Error,
   entities::{
     skill_plan::{ActiveModel as PlanActive, Column as PlanColumn, Entity as PlanEntity},
-    skill_plan_entry::{ActiveModel as EntryActive, Column as EntryColumn, Entity as EntryEntity},
+    skill_plan_entry::{self, ActiveModel as EntryActive, Column as EntryColumn, Entity as EntryEntity},
   },
 };
 
@@ -26,26 +28,23 @@ impl<'a> Repo<'a> {
 
   /// Returns all skill plans for the given character, each with their entries loaded.
   pub async fn all_for_character(&self, character_id: i64) -> Result<Vec<SkillPlan>, Error> {
-    let rows = PlanEntity::find()
+    let rows = PlanEntity::load()
       .filter(PlanColumn::CharacterId.eq(character_id))
       .order_by(PlanColumn::CreatedAt, Order::Asc)
+      .with(skill_plan_entry::Entity)
       .all(self.db)
       .await?;
-    let mut plans = Vec::with_capacity(rows.len());
-    for row in rows {
-      let entries = self.entries_for(&row.id).await?;
-      plans.push(plan_from_row(row, entries));
-    }
-    Ok(plans)
+    Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds a skill plan by ID, loading its entries as well.
   pub async fn find(&self, id: &str) -> Result<Option<SkillPlan>, Error> {
-    let Some(row) = PlanEntity::find_by_id(id.to_string()).one(self.db).await? else {
-      return Ok(None);
-    };
-    let entries = self.entries_for(&row.id).await?;
-    Ok(Some(plan_from_row(row, entries)))
+    let row = PlanEntity::load()
+      .filter_by_id(id.to_string())
+      .with(skill_plan_entry::Entity)
+      .one(self.db)
+      .await?;
+    Ok(row.map(Into::into))
   }
 
   /// Inserts a skill plan and all of its entries.
@@ -79,29 +78,6 @@ impl<'a> Repo<'a> {
     }
     Ok(())
   }
-
-  /// Loads all entry rows for the given plan ID, ordered by position.
-  async fn entries_for(&self, plan_id: &str) -> Result<Vec<SkillPlanEntry>, Error> {
-    let rows = EntryEntity::find()
-      .filter(EntryColumn::PlanId.eq(plan_id))
-      .order_by(EntryColumn::Position, Order::Asc)
-      .all(self.db)
-      .await?;
-    Ok(rows.into_iter().map(entry_from_row).collect())
-  }
-}
-
-fn plan_from_row(row: crate::entities::skill_plan::Model, entries: Vec<SkillPlanEntry>) -> SkillPlan {
-  SkillPlan {
-    character_id: row.character_id,
-    created_at: row.created_at,
-    entries,
-    id: row.id,
-    implant_set: row.implant_set,
-    name: row.name,
-    remap_json: row.remap_json,
-    updated_at: row.updated_at,
-  }
 }
 
 fn plan_to_active(plan: &SkillPlan) -> PlanActive {
@@ -113,19 +89,6 @@ fn plan_to_active(plan: &SkillPlan) -> PlanActive {
     name: ActiveValue::Set(plan.name.clone()),
     remap_json: ActiveValue::Set(plan.remap_json.clone()),
     updated_at: ActiveValue::Set(plan.updated_at),
-  }
-}
-
-fn entry_from_row(row: crate::entities::skill_plan_entry::Model) -> SkillPlanEntry {
-  SkillPlanEntry {
-    auto: row.auto != 0,
-    id: row.id,
-    note: row.note,
-    plan_id: row.plan_id,
-    position: row.position,
-    priority: row.priority,
-    skill_name: row.skill_name,
-    to_level: row.to_level,
   }
 }
 

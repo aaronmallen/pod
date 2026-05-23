@@ -152,6 +152,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
     sync_neural_attributes(&mut character, char_id, &esi, &grant, &db).await;
     sync_wallet(&mut character, char_id, &esi, &grant, &db).await;
     sync_assets(&mut character, char_id, &esi, &grant, &db).await;
+    sync_active_ship(&character, char_id, &esi, &grant, &db).await;
     sync_corp_assets(&character, &esi, &db).await;
 
     let char_client = esi.character(&grant);
@@ -280,6 +281,57 @@ async fn sync_assets(
   }
 }
 
+async fn sync_active_ship(
+  character: &Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  let char_client = esi.character(grant);
+  let (ship_res, location_res) = tokio::join!(char_client.ship(), char_client.location());
+  let (ship, location) = match (ship_res, location_res) {
+    (Ok(s), Ok(l)) => (s, l),
+    (Err(e), _) => {
+      tracing::warn!(
+        "bootstrap: failed to fetch ship for character {}: {e}",
+        character.name()
+      );
+      return;
+    }
+    (_, Err(e)) => {
+      tracing::warn!(
+        "bootstrap: failed to fetch location for character {}: {e}",
+        character.name()
+      );
+      return;
+    }
+  };
+
+  let location_id = location.station_id.unwrap_or(location.solar_system_id);
+  let location_type = if location.station_id.is_some() {
+    "station"
+  } else {
+    "solar_system"
+  };
+
+  let synthetic = CharacterAsset {
+    character_id: char_id,
+    is_active_ship: true,
+    is_blueprint_copy: None,
+    is_singleton: true,
+    item_id: ship.ship_item_id,
+    location_flag: "Active Ship".to_string(),
+    location_id,
+    location_type: location_type.to_string(),
+    quantity: 1,
+    ship_name: Some(ship.ship_name),
+    type_id: ship.ship_type_id,
+  };
+
+  let _ = db.characters().upsert_assets(char_id, &[synthetic]).await;
+}
+
 async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo) {
   let all_corps = match db.corporations().all().await {
     Ok(corps) => corps,
@@ -346,7 +398,6 @@ async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo
       .await;
   }
 }
-
 async fn propagate_skill_names(character: &mut Character, esi: &Client) {
   let resolved = character_service::inject_skill_names(character.skills().to_vec(), esi).await;
   *character.skills_mut() = resolved;

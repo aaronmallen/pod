@@ -68,6 +68,7 @@ impl From<ModelEx> for SolarSystem {
     *model.stargates_mut() = entity.stargates.into_iter().map(Into::into).collect();
     *model.stations_mut() = entity.stations.into_iter().map(Into::into).collect();
     model
+      .set_constellation(entity.constellation.into_option().map(Into::into))
       .set_constellation_id(entity.constellation_id)
       .set_position(entity.position_x, entity.position_y, entity.position_z)
       .set_security_class(entity.security_class)

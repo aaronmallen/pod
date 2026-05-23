@@ -89,6 +89,12 @@ impl Model {
     self.persisted
   }
 
+  /// Sets the eagerly loaded constellation record.
+  pub fn set_constellation(&mut self, constellation: Option<crate::constellation::Model>) -> &mut Self {
+    self.constellation = constellation;
+    self
+  }
+
   /// Sets the parent constellation ID, marking the record dirty if already persisted.
   pub fn set_constellation_id(&mut self, constellation_id: i32) -> &mut Self {
     self.constellation_id = constellation_id;

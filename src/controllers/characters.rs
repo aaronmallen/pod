@@ -835,11 +835,12 @@ async fn resolve_hq_name(station_id: Option<i64>, esi: &pod_esi::Client) -> Opti
 
 async fn add_character(
   esi: pod_esi::Client,
+  oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   verifier: String,
   oauth_state: String,
   db: Option<pod_db::Repo>,
 ) -> Result<Character, String> {
-  let grant = exchange_oauth_grant(&esi, verifier, oauth_state).await?;
+  let grant = exchange_oauth_grant(&esi, oauth_callback_tx, verifier, oauth_state).await?;
 
   let character_id = *grant.character_id();
   let char_detail = esi.character_public(character_id).detail().await.ok();
@@ -1050,20 +1051,22 @@ async fn persist_character(
 /// existing record is updated rather than a duplicate being created.
 pub async fn reauthorize_character(
   esi: pod_esi::Client,
+  oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   verifier: String,
   oauth_state: String,
   db: Option<pod_db::Repo>,
 ) -> Result<Character, String> {
-  add_character(esi, verifier, oauth_state, db).await
+  add_character(esi, oauth_callback_tx, verifier, oauth_state, db).await
 }
 
 async fn add_corporation(
   esi: pod_esi::Client,
+  oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   verifier: String,
   oauth_state: String,
   db: Option<pod_db::Repo>,
 ) -> Result<Corporation, String> {
-  let grant = exchange_oauth_grant(&esi, verifier, oauth_state).await?;
+  let grant = exchange_oauth_grant(&esi, oauth_callback_tx, verifier, oauth_state).await?;
 
   let auth_character_id = *grant.character_id();
   let access_token = grant.access_token().clone();
@@ -1108,14 +1111,18 @@ async fn add_corporation(
 /// Performs the OAuth callback/exchange flow and returns the resulting grant.
 async fn exchange_oauth_grant(
   esi: &pod_esi::Client,
+  oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   verifier: String,
   oauth_state: String,
 ) -> Result<pod_esi::models::auth::Grant, String> {
-  let (code, returned_state) = esi.auth().await_callback(47823).await.map_err(|e| e.to_string())?;
-  esi
-    .auth()
-    .validate_state(&oauth_state, &returned_state)
-    .map_err(|e| e.to_string())?;
+  let mut rx = oauth_callback_tx.subscribe();
+  let code = loop {
+    match rx.recv().await {
+      Ok((code, returned_state)) if returned_state == oauth_state => break code,
+      Ok(_) => continue,
+      Err(e) => return Err(format!("OAuth callback error: {e}")),
+    }
+  };
   esi
     .auth()
     .exchange_code(&code, "http://127.0.0.1:47823/callback", &verifier)
@@ -1629,8 +1636,9 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
       let _ = open::that_detached(&url);
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
+      let oauth_tx = services.oauth_callback_tx.clone();
       iced::Task::perform(
-        async move { add_character(esi, verifier, oauth_state, db).await },
+        async move { add_character(esi, oauth_tx, verifier, oauth_state, db).await },
         |result| match result {
           Ok(character) => Message::CharactersTab(characters_tab::Message::CharacterAdded(character)),
           Err(e) => Message::AddCharacterError(e),
@@ -1647,8 +1655,9 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
       let _ = open::that_detached(&url);
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
+      let oauth_tx = services.oauth_callback_tx.clone();
       iced::Task::perform(
-        async move { add_corporation(esi, verifier, oauth_state, db).await },
+        async move { add_corporation(esi, oauth_tx, verifier, oauth_state, db).await },
         |result| match result {
           Ok(corp) => Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)),
           Err(e) => Message::AddCorporationError(e),
@@ -1741,10 +1750,12 @@ mod tests {
   }
 
   fn make_services() -> Services {
+    let (oauth_callback_tx, _) = tokio::sync::broadcast::channel(1);
     Services {
       config: crate::config::Settings::default(),
       db: None,
       esi_client: None,
+      oauth_callback_tx,
     }
   }
 

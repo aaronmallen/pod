@@ -5,6 +5,7 @@ pub mod cache_cleaner;
 pub mod character;
 pub mod corporation;
 pub mod menu;
+pub mod oauth_callback;
 pub mod portraits;
 pub mod prices;
 pub mod sde;
@@ -18,4 +19,5 @@ pub struct Services {
   pub config: crate::config::Settings,
   pub db: Option<pod_db::Repo>,
   pub esi_client: Option<pod_esi::Client>,
+  pub oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
 }

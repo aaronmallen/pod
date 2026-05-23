@@ -36,6 +36,7 @@ struct App {
   config: config::Settings,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
+  oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   phase: AppPhase,
   plan_window_position: Option<Point>,
   plan_window_size: Size,
@@ -61,6 +62,7 @@ enum Message {
   Bootstrap(services::bootstrap::Message),
   Main(main_ctrl::Message),
   Menu(menu::MenuMessage),
+  OAuthCallback(String, String),
   SkillPlan(window::Id, skill_plan_window::Message),
   Splash(splash_ctrl::Message),
   Tick,
@@ -93,12 +95,14 @@ enum WindowEvent {
 
 impl Default for App {
   fn default() -> Self {
+    let (oauth_callback_tx, _) = tokio::sync::broadcast::channel(4);
     Self {
       about_window: None,
       characters: Vec::new(),
       config: config::Settings::default(),
       db: None,
       esi_client: None,
+      oauth_callback_tx,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
       plan_windows: HashMap::new(),
       step_label: "Opening database\u{2026}".to_string(),
@@ -190,11 +194,13 @@ fn subscription(app: &App) -> Subscription<Message> {
   let tick = phase_tick_subscription(&app.phase);
   let plan_subs = plan_window_subscriptions(&app.plan_windows);
   let menu_sub = menu::subscription().map(Message::Menu);
+  let oauth_sub = services::oauth_callback::subscription().map(|(code, state)| Message::OAuthCallback(code, state));
 
   Subscription::batch(
     std::iter::once(window_events)
       .chain(std::iter::once(tick))
       .chain(std::iter::once(menu_sub))
+      .chain(std::iter::once(oauth_sub))
       .chain(plan_subs),
   )
 }
@@ -254,6 +260,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::Main(msg) => update_main(app, msg),
     Message::Menu(msg) => update_menu(app, msg),
+    Message::OAuthCallback(code, state) => {
+      let _ = app.oauth_callback_tx.send((code, state));
+      Task::none()
+    }
     Message::SkillPlan(id, msg) => update_skill_plan(app, id, msg),
     Message::Splash(msg) => update_splash(app, SplashMessage::Splash(msg)),
     Message::Tick => update_splash(app, SplashMessage::Tick),
@@ -296,6 +306,7 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
         config: app.config.clone(),
         db: app.db.clone(),
         esi_client: app.esi_client.clone(),
+        oauth_callback_tx: app.oauth_callback_tx.clone(),
       };
       main_ctrl::reauth(&services).map(Message::Main)
     }
@@ -350,6 +361,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let (task, new_config) = main_ctrl::update(state, msg, &services);
   if let Some(cfg) = new_config {
@@ -369,6 +381,7 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let Some(plan_state) = app.plan_windows.get_mut(&window_id) else {
     return Task::none();
@@ -431,6 +444,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let saved = services::window_state::load();
   let (target_width, target_height) = saved

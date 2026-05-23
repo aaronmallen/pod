@@ -700,8 +700,9 @@ fn trigger_reauth(services: &Services) -> iced::Task<Message> {
   let (url, verifier, oauth_state) = esi.auth().sign_in(&scopes, "http://127.0.0.1:47823/callback");
   let _ = open::that_detached(&url);
   let db = services.db.clone();
+  let oauth_tx = services.oauth_callback_tx.clone();
   iced::Task::perform(
-    async move { characters_ctrl::reauthorize_character(esi, verifier, oauth_state, db).await },
+    async move { characters_ctrl::reauthorize_character(esi, oauth_tx, verifier, oauth_state, db).await },
     |result| match result {
       Ok(character) => Message::Characters(characters::Message::CharactersTab(
         pod_ui::views::characters::characters_tab::Message::CharacterAdded(character),

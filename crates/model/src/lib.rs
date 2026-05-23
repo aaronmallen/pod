@@ -35,6 +35,8 @@ mod standing;
 mod star;
 mod stargate;
 mod station;
+mod stockpile;
+mod stockpile_item;
 mod wallet_journal_entry;
 mod wallet_transaction;
 
@@ -76,6 +78,8 @@ pub use standing::{FromType, Standing};
 pub use star::Model as Star;
 pub use stargate::Model as Stargate;
 pub use station::Model as Station;
+pub use stockpile::Stockpile;
+pub use stockpile_item::StockpileItem;
 pub use wallet_journal_entry::Model as WalletJournalEntry;
 pub use wallet_transaction::Model as WalletTransaction;
 

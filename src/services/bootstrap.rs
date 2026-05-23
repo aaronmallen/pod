@@ -66,6 +66,7 @@ pub fn run() -> Task<Message> {
 }
 
 async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
+  tracing::info!("boot: starting");
   if let Err(e) = std::fs::create_dir_all(cache_path()) {
     let _ = tx
       .send(Message::Error(format!("failed to create cache directory: {e}")))
@@ -100,10 +101,12 @@ async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
     }
   }
 
+  tracing::info!("boot: loaded {} characters", characters.len());
   let _ = tx.send(Message::Complete(db, characters, Some(esi))).await;
 }
 
 async fn run_background_sync(db: pod_db::Repo, esi: Client, characters: Vec<Character>, mut tx: Tx) {
+  tracing::info!("sync: starting for {} characters", characters.len());
   if characters.is_empty() {
     crate::services::prices::sync(&db, &esi).await;
     return;
@@ -126,6 +129,7 @@ async fn run_background_sync(db: pod_db::Repo, esi: Client, characters: Vec<Char
     let _ = tx.send(msg).await;
   }
 
+  tracing::info!("sync: complete");
   crate::services::prices::sync(&db, &esi).await;
 }
 
@@ -173,14 +177,23 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
 }
 
 async fn sync_corp_data(character: &mut Character, char_id: i64, esi: &Client, db: &pod_db::Repo) {
-  if *character.corp_id() > 0
-    && let Ok(detail) = esi.corporation(*character.corp_id()).detail().await
-  {
-    character.set_corp_name(detail.name.clone());
-    let _ = db
-      .characters()
-      .update_corp(char_id, *character.corp_id(), detail.name)
-      .await;
+  if *character.corp_id() == 0 {
+    return;
+  }
+  match esi.corporation(*character.corp_id()).detail().await {
+    Ok(detail) => {
+      character.set_corp_name(detail.name.clone());
+      if let Err(e) = db
+        .characters()
+        .update_corp(char_id, *character.corp_id(), detail.name)
+        .await
+      {
+        tracing::warn!("sync: failed to persist corp data for character {char_id}: {e}");
+      }
+    }
+    Err(e) => {
+      tracing::warn!("sync: failed to fetch corp detail for character {char_id}: {e}");
+    }
   }
 }
 
@@ -192,17 +205,27 @@ async fn sync_skills_and_queue(
   db: &pod_db::Repo,
 ) {
   let char_client = esi.character(grant);
-  if let Ok(esi_skills) = char_client.skills().await {
-    let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
-    let _ = db.characters().upsert_skills(char_id, &skills).await;
-    *character.skills_mut() = skills;
+  match char_client.skills().await {
+    Ok(esi_skills) => {
+      let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
+      if let Err(e) = db.characters().upsert_skills(char_id, &skills).await {
+        tracing::warn!("sync: failed to persist skills for character {char_id}: {e}");
+      }
+      *character.skills_mut() = skills;
+    }
+    Err(e) => tracing::warn!("sync: failed to fetch skills for character {char_id}: {e}"),
   }
-  if let Ok(queue) = char_client.skill_queue().await {
-    let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
-    let tq = character_service::build_training_queue(&queue, &merged);
-    let _ = db.characters().upsert_skills(char_id, &merged).await;
-    *character.skills_mut() = merged;
-    *character.training_queue_mut() = tq;
+  match char_client.skill_queue().await {
+    Ok(queue) => {
+      let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
+      let tq = character_service::build_training_queue(&queue, &merged);
+      if let Err(e) = db.characters().upsert_skills(char_id, &merged).await {
+        tracing::warn!("sync: failed to persist skill queue for character {char_id}: {e}");
+      }
+      *character.skills_mut() = merged;
+      *character.training_queue_mut() = tq;
+    }
+    Err(e) => tracing::warn!("sync: failed to fetch skill queue for character {char_id}: {e}"),
   }
 }
 
@@ -214,25 +237,30 @@ async fn sync_neural_attributes(
   db: &pod_db::Repo,
 ) {
   let char_client = esi.character(grant);
-  if let Ok(esi_attrs) = char_client.attributes().await {
-    let db_attrs = NeuralAttributes {
-      charisma: esi_attrs.charisma,
-      intelligence: esi_attrs.intelligence,
-      memory: esi_attrs.memory,
-      perception: esi_attrs.perception,
-      willpower: esi_attrs.willpower,
-    };
-    let _ = db.characters().update_neural_attributes(char_id, &db_attrs).await;
-    character.set_attributes(CharacterAttributes {
-      accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
-      bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
-      charisma: esi_attrs.charisma,
-      intelligence: esi_attrs.intelligence,
-      last_remap_date: esi_attrs.last_remap_date,
-      memory: esi_attrs.memory,
-      perception: esi_attrs.perception,
-      willpower: esi_attrs.willpower,
-    });
+  match char_client.attributes().await {
+    Ok(esi_attrs) => {
+      let db_attrs = NeuralAttributes {
+        charisma: esi_attrs.charisma,
+        intelligence: esi_attrs.intelligence,
+        memory: esi_attrs.memory,
+        perception: esi_attrs.perception,
+        willpower: esi_attrs.willpower,
+      };
+      if let Err(e) = db.characters().update_neural_attributes(char_id, &db_attrs).await {
+        tracing::warn!("sync: failed to persist neural attributes for character {char_id}: {e}");
+      }
+      character.set_attributes(CharacterAttributes {
+        accrued_remap_cooldown_date: esi_attrs.accrued_remap_cooldown_date,
+        bonus_remaps: esi_attrs.bonus_remaps.unwrap_or(0),
+        charisma: esi_attrs.charisma,
+        intelligence: esi_attrs.intelligence,
+        last_remap_date: esi_attrs.last_remap_date,
+        memory: esi_attrs.memory,
+        perception: esi_attrs.perception,
+        willpower: esi_attrs.willpower,
+      });
+    }
+    Err(e) => tracing::debug!("sync: failed to fetch neural attributes for character {char_id}: {e}"),
   }
 }
 
@@ -244,9 +272,14 @@ async fn sync_wallet(
   db: &pod_db::Repo,
 ) {
   let char_client = esi.character(grant);
-  if let Ok(balance) = char_client.wallet_balance().await {
-    let _ = db.characters().update_wallet(char_id, Some(balance.0)).await;
-    character.set_isk_balance(Some(balance.0));
+  match char_client.wallet_balance().await {
+    Ok(balance) => {
+      if let Err(e) = db.characters().update_wallet(char_id, Some(balance.0)).await {
+        tracing::warn!("sync: failed to persist wallet balance for character {char_id}: {e}");
+      }
+      character.set_isk_balance(Some(balance.0));
+    }
+    Err(e) => tracing::warn!("sync: failed to fetch wallet balance for character {char_id}: {e}"),
   }
 }
 
@@ -258,26 +291,33 @@ async fn sync_assets(
   db: &pod_db::Repo,
 ) {
   let char_client = esi.character(grant);
-  if let Ok(raw) = char_client.assets().await {
-    let assets: Vec<CharacterAsset> = raw
-      .into_iter()
-      .map(|a| CharacterAsset {
-        character_id: char_id,
-        is_blueprint_copy: a.is_blueprint_copy,
-        is_singleton: a.is_singleton,
-        item_id: a.item_id,
-        location_flag: a.location_flag,
-        location_id: a.location_id,
-        location_type: a.location_type,
-        quantity: a.quantity,
-        type_id: a.type_id,
-        ..Default::default()
-      })
-      .collect();
-    let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-    let _ = db.characters().upsert_assets(char_id, &assets).await;
-    let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
-    cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
+  match char_client.assets().await {
+    Ok(raw) => {
+      let assets: Vec<CharacterAsset> = raw
+        .into_iter()
+        .map(|a| CharacterAsset {
+          character_id: char_id,
+          is_blueprint_copy: a.is_blueprint_copy,
+          is_singleton: a.is_singleton,
+          item_id: a.item_id,
+          location_flag: a.location_flag,
+          location_id: a.location_id,
+          location_type: a.location_type,
+          quantity: a.quantity,
+          type_id: a.type_id,
+          ..Default::default()
+        })
+        .collect();
+      let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+      if let Err(e) = db.characters().upsert_assets(char_id, &assets).await {
+        tracing::warn!("sync: failed to persist assets for character {char_id}: {e}");
+      }
+      if let Err(e) = db.characters().delete_stale_assets(char_id, &keep_ids).await {
+        tracing::warn!("sync: failed to delete stale assets for character {char_id}: {e}");
+      }
+      cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
+    }
+    Err(e) => tracing::warn!("sync: failed to fetch assets for character {char_id}: {e}"),
   }
 }
 
@@ -391,12 +431,19 @@ async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo
       .collect();
 
     let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-    let _ = db.assets().upsert_corporation_assets(corp_id, &assets).await;
-    let _ = db.assets().delete_stale_corporation_assets(corp_id, &keep_ids).await;
-    let _ = db
+    if let Err(e) = db.assets().upsert_corporation_assets(corp_id, &assets).await {
+      tracing::warn!("sync: failed to persist assets for corp {corp_id}: {e}");
+    }
+    if let Err(e) = db.assets().delete_stale_corporation_assets(corp_id, &keep_ids).await {
+      tracing::warn!("sync: failed to delete stale assets for corp {corp_id}: {e}");
+    }
+    if let Err(e) = db
       .assets()
       .upsert_asset_sync_state("corporation", corp_id, Some(now), Some(now + 3600))
-      .await;
+      .await
+    {
+      tracing::warn!("sync: failed to update asset sync state for corp {corp_id}: {e}");
+    }
   }
 }
 async fn propagate_skill_names(character: &mut Character, esi: &Client) {

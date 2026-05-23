@@ -158,12 +158,24 @@ impl Model {
     self
   }
 
+  /// Sets the eagerly loaded race associated with this bloodline.
+  pub fn set_race(&mut self, race: Option<crate::race::Model>) -> &mut Self {
+    self.race = race;
+    self
+  }
+
   /// Sets the item type ID of the starter ship granted to characters of this bloodline.
   pub fn set_ship_item_type_id(&mut self, ship_item_type_id: i32) -> &mut Self {
     self.ship_item_type_id = ship_item_type_id;
     if self.persisted {
       self.dirty = true;
     }
+    self
+  }
+
+  /// Sets the eagerly loaded item type for the starter ship associated with this bloodline.
+  pub fn set_ship_item_type(&mut self, ship_item_type: Option<crate::item_type::Model>) -> &mut Self {
+    self.ship_item_type = ship_item_type;
     self
   }
 

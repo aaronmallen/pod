@@ -74,6 +74,12 @@ impl From<ModelEx> for Bloodline {
       .set_ship_item_type_id(entity.ship_item_type_id)
       .set_will_power(entity.will_power)
       .mark_persisted();
+    if let Some(race) = entity.race.into_option() {
+      model.set_race(Some(race.into()));
+    }
+    if let Some(ship_item_type) = entity.ship_item_type.into_option() {
+      model.set_ship_item_type(Some(ship_item_type.into()));
+    }
     model
   }
 }

@@ -80,6 +80,9 @@ pub mod m0000000046_add_active_ship_to_character_assets;
 pub mod m0000000047_create_corporation_assets;
 pub mod m0000000048_create_asset_sync_state;
 
+// Canonical asset valuation
+pub mod m0000000049_add_adjusted_price_to_type_prices;
+
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
 
@@ -153,6 +156,8 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000046_add_active_ship_to_character_assets::Migration),
       Box::new(m0000000047_create_corporation_assets::Migration),
       Box::new(m0000000048_create_asset_sync_state::Migration),
+      // Canonical asset valuation
+      Box::new(m0000000049_add_adjusted_price_to_type_prices::Migration),
     ]
   }
 }

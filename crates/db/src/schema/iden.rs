@@ -533,6 +533,7 @@ pub enum ShipMasteryCerts {
 
 #[derive(DeriveIden)]
 pub enum TypePrices {
+  AdjustedPrice,
   FetchedAt,
   Id,
   Price,

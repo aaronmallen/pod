@@ -21,8 +21,19 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   let Some(idx) = state.characters.iter().position(|c| *c.id() == *character.id()) else {
     return;
   };
+  // Tags live in characters::State.all_characters when that view is active;
+  // state.characters never has them loaded.
+  let tags = match &state.active_view {
+    ActiveView::Characters(s) => s
+      .all_characters
+      .iter()
+      .find(|c| *c.id() == *character.id())
+      .map(|c| c.tags().clone())
+      .unwrap_or_default(),
+    _ => state.characters[idx].tags().clone(),
+  };
   let mut character = character;
-  *character.tags_mut() = state.characters[idx].tags().clone();
+  *character.tags_mut() = tags;
   state.characters[idx] = character.clone();
   let updated = state.characters.clone();
   match &mut state.active_view {
@@ -772,6 +783,43 @@ mod tests {
       let mut existing = Character::new(1, "Alpha");
       *existing.tags_mut() = vec![(1, "pvp".to_string()), (2, "trader".to_string())];
       let mut state = make_state(existing);
+      let synced = Character::new(1, "Alpha");
+
+      apply_synced_character(&mut state, synced);
+
+      assert_eq!(
+        state.characters[0].tags(),
+        &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
+      );
+    }
+
+    #[test]
+    fn it_preserves_tags_from_all_characters_when_characters_view_is_active() {
+      use pod_ui::views::characters::State as CharactersState;
+
+      let mut existing = Character::new(1, "Alpha");
+      *existing.tags_mut() = vec![(1, "pvp".to_string()), (2, "trader".to_string())];
+      let chars_view = CharactersState::new(vec![existing]);
+      let mut state = State {
+        active_nav: Nav::Characters,
+        active_view: ActiveView::Characters(chars_view),
+        characters: vec![Character::new(1, "Alpha")],
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      };
       let synced = Character::new(1, "Alpha");
 
       apply_synced_character(&mut state, synced);

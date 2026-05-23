@@ -10,8 +10,14 @@ use sea_orm::{ActiveValue, Set, prelude::*};
 pub struct Model {
   /// OAuth access token for ESI API calls.
   pub access_token: String,
+  /// Assets belonging to this character.
+  #[sea_orm(has_many)]
+  pub assets: HasMany<super::character_asset::Entity>,
   /// ESI effective charisma (base + current implants), if synced.
   pub charisma: Option<i32>,
+  /// Jump clones belonging to this character.
+  #[sea_orm(has_many)]
+  pub clones: HasMany<super::character_clone::Entity>,
   /// ID of the corporation the character belongs to.
   pub corp_id: i64,
   /// Name of the corporation the character belongs to.
@@ -39,6 +45,9 @@ pub struct Model {
   pub portrait_tone: i32,
   /// OAuth refresh token.
   pub refresh_token: String,
+  /// Skills belonging to this character.
+  #[sea_orm(has_many)]
+  pub skills: HasMany<super::character_skill::Entity>,
   /// Display order for the character grid (lower = earlier).
   pub sort_order: i32,
   /// Unix timestamp at which the access token expires.
@@ -73,6 +82,9 @@ impl From<Model> for Character {
 impl From<ModelEx> for Character {
   fn from(entity: ModelEx) -> Self {
     let mut model = Character::new(entity.id, entity.name);
+    *model.assets_mut() = entity.assets.into_iter().map(Into::into).collect();
+    *model.clones_mut() = entity.clones.into_iter().map(Into::into).collect();
+    *model.skills_mut() = entity.skills.into_iter().map(Into::into).collect();
     model
       .set_access_token(entity.access_token)
       .set_corp_id(entity.corp_id)
@@ -119,7 +131,9 @@ impl From<Character> for ActiveModelEx {
   fn from(model: Character) -> Self {
     Self {
       access_token: Set(model.access_token().clone()),
+      assets: Default::default(),
       charisma: ActiveValue::NotSet,
+      clones: Default::default(),
       corp_id: Set(*model.corp_id()),
       corp_name: Set(model.corp_name().clone()),
       granted_scopes: Set(model.granted_scopes().clone()),
@@ -133,6 +147,7 @@ impl From<Character> for ActiveModelEx {
       perception: ActiveValue::NotSet,
       portrait_tone: Set(*model.portrait_tone()),
       refresh_token: Set(model.refresh_token().clone()),
+      skills: Default::default(),
       sort_order: Set(*model.sort_order()),
       token_expires_at: Set(*model.token_expires_at()),
       willpower: ActiveValue::NotSet,

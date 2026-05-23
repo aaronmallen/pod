@@ -8,6 +8,9 @@ use sea_orm::prelude::*;
 #[derive(Clone, Debug, DeriveEntityModel, PartialEq)]
 #[sea_orm(table_name = "character_clones")]
 pub struct Model {
+  /// The character that owns this clone.
+  #[sea_orm(belongs_to, from = "character_id", to = "id")]
+  pub character: HasOne<super::character::Entity>,
   /// ID of the owning character.
   pub character_id: i64,
   /// Primary key: EVE clone identifier (0 for the active implant set).

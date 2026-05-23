@@ -8,6 +8,9 @@ use sea_orm::prelude::*;
 #[derive(Clone, Debug, DeriveEntityModel, PartialEq)]
 #[sea_orm(table_name = "character_assets")]
 pub struct Model {
+  /// The character that owns this asset.
+  #[sea_orm(belongs_to, from = "character_id", to = "id")]
+  pub character: HasOne<super::character::Entity>,
   /// ID of the owning character.
   pub character_id: i64,
   /// True when this row is a synthetic active-ship entry injected by the sync job.
@@ -38,6 +41,24 @@ impl ActiveModelBehavior for ActiveModel {}
 
 impl From<Model> for CharacterAsset {
   fn from(m: Model) -> Self {
+    Self {
+      character_id: m.character_id,
+      is_active_ship: m.is_active_ship,
+      is_blueprint_copy: m.is_blueprint_copy,
+      is_singleton: m.is_singleton,
+      item_id: m.item_id,
+      location_flag: m.location_flag,
+      location_id: m.location_id,
+      location_type: m.location_type,
+      quantity: m.quantity,
+      ship_name: m.ship_name,
+      type_id: m.type_id,
+    }
+  }
+}
+
+impl From<ModelEx> for CharacterAsset {
+  fn from(m: ModelEx) -> Self {
     Self {
       character_id: m.character_id,
       is_active_ship: m.is_active_ship,

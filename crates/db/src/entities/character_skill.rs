@@ -10,6 +10,9 @@ use sea_orm::prelude::*;
 pub struct Model {
   /// The currently active (trained) skill level.
   pub active_level: i32,
+  /// The character that owns this skill.
+  #[sea_orm(belongs_to, from = "character_id", to = "id")]
+  pub character: HasOne<super::character::Entity>,
   /// ID of the owning character (composite primary key).
   #[sea_orm(primary_key, auto_increment = false)]
   pub character_id: i64,
@@ -35,6 +38,25 @@ impl ActiveModelBehavior for ActiveModel {}
 
 impl From<Model> for CharacterSkill {
   fn from(m: Model) -> Self {
+    Self {
+      character_id: m.character_id,
+      skill_id: m.skill_id,
+      trained_level: m.trained_level,
+      active_level: m.active_level,
+      skillpoints: m.skillpoints,
+      training_end_time: m.training_end_time,
+      training_level_end_sp: None,
+      training_level_start_sp: None,
+      training_start_time: m.training_start_time,
+      training_start_sp: m.training_start_sp,
+      is_active_training: m.is_active_training,
+      skill_name: None,
+    }
+  }
+}
+
+impl From<ModelEx> for CharacterSkill {
+  fn from(m: ModelEx) -> Self {
     Self {
       character_id: m.character_id,
       skill_id: m.skill_id,

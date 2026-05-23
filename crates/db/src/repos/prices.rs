@@ -94,9 +94,12 @@ impl<'a> Repo<'a> {
 
   /// Returns the most recent price for each `type_id` in the input slice.
   ///
-  /// Queries `type_prices` (intraday) for all IDs in one call, then falls back
-  /// to `type_price_histories.close` for any IDs not found intraday. Returns
-  /// an empty map when `type_ids` is empty.
+  /// Applies the canonical price waterfall per type:
+  /// 1. `lowest_jita_sell` (`price`) if > 0
+  /// 2. `adjusted_price` if present and > 0
+  /// 3. `type_price_histories.close` if no intraday row exists
+  ///
+  /// Returns an empty map when `type_ids` is empty.
   pub async fn latest_prices(&self, type_ids: &[i32]) -> Result<HashMap<i32, f64>, Error> {
     if type_ids.is_empty() {
       return Ok(HashMap::new());
@@ -110,7 +113,13 @@ impl<'a> Repo<'a> {
 
     let mut result: HashMap<i32, f64> = HashMap::new();
     for row in intraday {
-      result.entry(row.type_id).or_insert(row.price);
+      result.entry(row.type_id).or_insert_with(|| {
+        if row.price > 0.0 {
+          row.price
+        } else {
+          row.adjusted_price.filter(|&ap| ap > 0.0).unwrap_or(0.0)
+        }
+      });
     }
 
     let missing: Vec<i32> = type_ids.iter().copied().filter(|id| !result.contains_key(id)).collect();
@@ -524,6 +533,34 @@ mod tests {
 
       assert_eq!(result.get(&34), Some(&5.5));
       assert_eq!(result.get(&35), Some(&3.0));
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_adjusted_price_when_jita_price_is_zero() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo
+        .insert_price(34, 0.0, Some(1_200_000_000.0), utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
+
+      let result = repo.latest_prices(&[34]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&1_200_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_returns_zero_when_neither_price_is_available() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo
+        .insert_price(34, 0.0, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
+
+      let result = repo.latest_prices(&[34]).await.unwrap();
+
+      assert_eq!(result.get(&34), Some(&0.0));
     }
   }
 

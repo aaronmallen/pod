@@ -15,6 +15,9 @@ pub struct Model {
   /// Unique planet identifier.
   #[get = "pub"]
   id: i32,
+  /// Eagerly loaded item type record for this planet.
+  #[get = "pub"]
+  item_type: Option<crate::item_type::Model>,
   /// EVE item type ID for this planet.
   #[get = "pub"]
   item_type_id: i32,
@@ -46,6 +49,7 @@ impl Model {
     Self {
       dirty: false,
       id,
+      item_type: None,
       item_type_id: 0,
       name: name.into(),
       persisted: false,
@@ -64,6 +68,12 @@ impl Model {
   /// Returns `true` if this model was loaded from or has been saved to the database.
   pub fn is_persisted(&self) -> bool {
     self.persisted
+  }
+
+  /// Sets the eagerly loaded item type record.
+  pub fn set_item_type(&mut self, item_type: Option<crate::item_type::Model>) -> &mut Self {
+    self.item_type = item_type;
+    self
   }
 
   /// Sets the item type ID, marking the model dirty if it is already persisted.

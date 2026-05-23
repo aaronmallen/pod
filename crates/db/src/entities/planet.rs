@@ -50,6 +50,7 @@ impl From<ModelEx> for Planet {
   fn from(entity: ModelEx) -> Self {
     let mut model = Planet::new(entity.id, entity.name);
     model
+      .set_item_type(entity.item_type.into_option().map(Into::into))
       .set_item_type_id(entity.item_type_id)
       .set_position(entity.position_x, entity.position_y, entity.position_z)
       .set_solar_system_id(entity.solar_system_id)

@@ -6,9 +6,11 @@ use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFi
 use crate::{
   Error,
   entities::{
-    character_clone::{ActiveModel as CloneActive, Column as CloneColumn, Entity as CloneEntity, Model as CloneModel},
+    character_clone::{
+      self, ActiveModel as CloneActive, Column as CloneColumn, Entity as CloneEntity, Model as CloneModel,
+    },
     character_clone_implant::{
-      ActiveModel as ImplantActive, Column as ImplantColumn, Entity as ImplantEntity, Model as ImplantModel,
+      self, ActiveModel as ImplantActive, Column as ImplantColumn, Entity as ImplantEntity, Model as ImplantModel,
     },
   },
 };
@@ -114,19 +116,20 @@ impl<'a> Repo<'a> {
 
   /// Returns all clone rows for the given character, each paired with its implants.
   pub async fn find_for_character(&self, character_id: i64) -> Result<Vec<(CloneModel, Vec<ImplantModel>)>, Error> {
-    let clones = CloneEntity::find()
+    let rows = character_clone::Entity::load()
+      .with(character_clone_implant::Entity)
       .filter(CloneColumn::CharacterId.eq(character_id))
       .all(self.db)
       .await?;
-
-    let mut result = Vec::with_capacity(clones.len());
-    for clone in clones {
-      let implants = ImplantEntity::find()
-        .filter(ImplantColumn::CloneId.eq(clone.id))
-        .all(self.db)
-        .await?;
-      result.push((clone, implants));
-    }
+    let result = rows
+      .into_iter()
+      .map(|mut row| {
+        let raw_implants = std::mem::take(&mut row.implants);
+        let implants: Vec<ImplantModel> = raw_implants.into_iter().map(Into::into).collect();
+        let clone: CloneModel = row.into();
+        (clone, implants)
+      })
+      .collect();
     Ok(result)
   }
 

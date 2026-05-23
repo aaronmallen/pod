@@ -5,7 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use getset::{Getters, MutGetters};
 use validator::Validate;
 
-use crate::{character_attributes::Model as NeuralAttributes, character_skill::Model as CharacterSkill};
+use crate::{
+  character_asset::Model as CharacterAsset, character_attributes::Model as NeuralAttributes,
+  character_skill::Model as CharacterSkill, clone::Clone as CharacterClone,
+};
 
 /// One entry in the EVE training queue (transient, not persisted).
 #[derive(Clone, Debug)]
@@ -62,6 +65,12 @@ pub struct Model {
   /// Neural attribute allocation fetched from ESI; not persisted to DB.
   #[get = "pub"]
   attributes: Option<NeuralAttributes>,
+  /// Assets belonging to this character.
+  #[getset(get = "pub", get_mut = "pub")]
+  assets: Vec<CharacterAsset>,
+  /// Clones belonging to this character.
+  #[getset(get = "pub", get_mut = "pub")]
+  clones: Vec<CharacterClone>,
   /// Raw portrait PNG bytes fetched from the EVE image server.
   #[getset(get = "pub", get_mut = "pub")]
   portrait_data: Option<Vec<u8>>,
@@ -94,7 +103,9 @@ impl Model {
   pub fn new(id: i64, name: impl Into<String>) -> Self {
     Self {
       access_token: String::new(),
+      assets: Vec::new(),
       attributes: None,
+      clones: Vec::new(),
       corp_id: 0,
       corp_name: String::new(),
       dirty: false,

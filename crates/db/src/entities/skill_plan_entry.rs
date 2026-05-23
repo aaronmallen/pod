@@ -1,5 +1,6 @@
 //! Database entity for skill plan entries.
 
+use pod_model::SkillPlanEntry;
 use sea_orm::prelude::*;
 
 /// A single skill training entry stored in the `skill_plan_entries` table.
@@ -14,6 +15,9 @@ pub struct Model {
   pub id: String,
   /// Optional user note attached to this entry.
   pub note: Option<String>,
+  /// The skill plan that owns this entry.
+  #[sea_orm(belongs_to, from = "plan_id", to = "id")]
+  pub plan: HasOne<super::skill_plan::Entity>,
   /// FK to the owning skill plan in `skill_plans`.
   pub plan_id: String,
   /// Display order of this entry within the plan.
@@ -28,3 +32,33 @@ pub struct Model {
 
 /// Default active-model behaviour with no custom hooks.
 impl ActiveModelBehavior for ActiveModel {}
+
+impl From<Model> for SkillPlanEntry {
+  fn from(entity: Model) -> Self {
+    Self {
+      auto: entity.auto != 0,
+      id: entity.id,
+      note: entity.note,
+      plan_id: entity.plan_id,
+      position: entity.position,
+      priority: entity.priority,
+      skill_name: entity.skill_name,
+      to_level: entity.to_level,
+    }
+  }
+}
+
+impl From<ModelEx> for SkillPlanEntry {
+  fn from(entity: ModelEx) -> Self {
+    Self {
+      auto: entity.auto != 0,
+      id: entity.id,
+      note: entity.note,
+      plan_id: entity.plan_id,
+      position: entity.position,
+      priority: entity.priority,
+      skill_name: entity.skill_name,
+      to_level: entity.to_level,
+    }
+  }
+}

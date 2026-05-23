@@ -457,10 +457,18 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let saved = services::window_state::load();
-  let (target_width, target_height) = saved
-    .as_ref()
-    .map(|g| (g.width, g.height))
-    .unwrap_or((layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT));
+  let position_valid = saved.as_ref().is_none_or(|g| g.is_position_valid());
+  if let Some(g) = saved.as_ref().filter(|_| !position_valid) {
+    tracing::warn!(
+      x = g.x,
+      y = g.y,
+      "discarding saved window position: out of valid range, using defaults"
+    );
+  }
+  let (target_width, target_height) = match (&saved, position_valid) {
+    (Some(g), true) => (g.width, g.height),
+    _ => (layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
+  };
   let (main_state, init_task) = main_ctrl::new(
     app.characters.clone(),
     &services,
@@ -474,11 +482,18 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
   app.window_size = Size::new(target_width, target_height);
   if let Some(geo) = &saved {
     apply_saved_geometry(app, geo);
+    if !position_valid {
+      app.window_position = None;
+    }
   }
-  let position = saved
-    .as_ref()
-    .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
-    .unwrap_or(window::Position::Default);
+  let position = if position_valid {
+    saved
+      .as_ref()
+      .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
+      .unwrap_or(window::Position::Default)
+  } else {
+    window::Position::Default
+  };
   let main_settings = window::Settings {
     size: Size::new(target_width, target_height),
     position,
@@ -602,6 +617,7 @@ fn update_menu(app: &mut App, msg: menu::MenuMessage) -> Task<Message> {
       Task::done(Message::Updater(services::updater::Message::CheckRequested))
     }
     menu::MenuMessage::ClearCacheRequested => Task::future(services::cache_cleaner::clear_esi_cache()).discard(),
+    menu::MenuMessage::QuitRequested => iced::exit(),
   }
 }
 
@@ -612,6 +628,9 @@ fn handle_window_close(app: &mut App, id: window::Id) -> Task<Message> {
   if app.about_window.as_ref().map(|(wid, _)| *wid) == Some(id) {
     app.about_window = None;
     return window::close(id);
+  }
+  if app.window_id == Some(id) {
+    return iced::exit();
   }
   Task::none()
 }

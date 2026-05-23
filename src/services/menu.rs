@@ -1,11 +1,15 @@
 //! Native menu bar service: builds the muda menu and provides an iced subscription.
 
 use iced::Subscription;
-use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use muda::{
+  Menu, MenuItem, PredefinedMenuItem, Submenu,
+  accelerator::{Accelerator, CMD_OR_CTRL, Code},
+};
 
 pub const ABOUT_ID: &str = "menu_about";
 pub const CHECK_UPDATES_ID: &str = "menu_check_updates";
 pub const CLEAR_CACHE_ID: &str = "menu_clear_cache";
+pub const QUIT_ID: &str = "menu_quit";
 
 /// Messages produced by the native menu.
 #[derive(Clone, Debug)]
@@ -14,6 +18,7 @@ pub enum MenuMessage {
   AboutRequested,
   CheckForUpdatesRequested,
   ClearCacheRequested,
+  QuitRequested,
 }
 
 /// Builds and registers the native menu bar. Call once on the main thread
@@ -22,6 +27,12 @@ pub fn init() -> Menu {
   let about = MenuItem::with_id(ABOUT_ID, "About Pod", true, None);
   let check_updates = MenuItem::with_id(CHECK_UPDATES_ID, "Check for Updates\u{2026}", true, None);
   let clear_cache = MenuItem::with_id(CLEAR_CACHE_ID, "Clear Cache", true, None);
+  let quit = MenuItem::with_id(
+    QUIT_ID,
+    "Quit Pod",
+    true,
+    Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyQ)),
+  );
 
   let pod_menu = Submenu::with_items(
     "Pod",
@@ -32,7 +43,7 @@ pub fn init() -> Menu {
       &PredefinedMenuItem::separator(),
       &clear_cache,
       &PredefinedMenuItem::separator(),
-      &PredefinedMenuItem::quit(Some("Quit Pod")),
+      &quit,
     ],
   )
   .expect("failed to build Pod submenu");
@@ -62,6 +73,7 @@ fn stream() -> impl iced::futures::Stream<Item = MenuMessage> {
           ABOUT_ID => Some(MenuMessage::AboutRequested),
           CHECK_UPDATES_ID => Some(MenuMessage::CheckForUpdatesRequested),
           CLEAR_CACHE_ID => Some(MenuMessage::ClearCacheRequested),
+          QUIT_ID => Some(MenuMessage::QuitRequested),
           _ => None,
         };
         if let Some(m) = msg {

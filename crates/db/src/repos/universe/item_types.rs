@@ -11,7 +11,7 @@ use crate::{
   entities::{
     dogma_attribute,
     item_group::{Column as GroupColumn, Entity as GroupEntity},
-    item_type::{ActiveModel, Column, Entity, Model as ItemTypeModel},
+    item_type::{ActiveModel, Column, Entity, ModelEx as ItemTypeModelEx},
     ship_mastery_cert::{Column as MasteryColumn, Entity as MasteryEntity},
   },
 };
@@ -67,8 +67,7 @@ async fn resolve_skill_names(db: &DatabaseConnection, type_ids: &[i32]) -> HashM
 
 fn add_skill_to_groups(
   groups: &mut Vec<pod_model::SkillGroupDef>,
-  item: ItemTypeModel,
-  skill_groups: &HashMap<i32, String>,
+  item: ItemTypeModelEx,
   prereq_names: &HashMap<i32, String>,
 ) {
   let attrs = &item.dogma_attributes.0;
@@ -102,7 +101,12 @@ fn add_skill_to_groups(
     prereqs,
   };
   let group_id_str = item.item_group_id.to_string();
-  let group_name = skill_groups.get(&item.item_group_id).cloned().unwrap_or_default();
+  let group_name = item
+    .item_group
+    .as_ref()
+    .map(|g| g.name.as_str())
+    .unwrap_or_default()
+    .to_owned();
   match groups.iter_mut().find(|g| g.id == group_id_str) {
     Some(group) => group.skills.push(skill),
     None => groups.push(pod_model::SkillGroupDef {
@@ -113,7 +117,7 @@ fn add_skill_to_groups(
   }
 }
 
-fn collect_raw_skill_ids(raw: &[(&ItemTypeModel, Vec<(i32, u8)>)]) -> Vec<i32> {
+fn collect_raw_skill_ids(raw: &[(&ItemTypeModelEx, Vec<(i32, u8)>)]) -> Vec<i32> {
   raw
     .iter()
     .flat_map(|(_, reqs)| reqs.iter().map(|&(tid, _)| tid))
@@ -122,10 +126,18 @@ fn collect_raw_skill_ids(raw: &[(&ItemTypeModel, Vec<(i32, u8)>)]) -> Vec<i32> {
     .collect()
 }
 
+fn group_name_from_ex(item: &ItemTypeModelEx) -> String {
+  item
+    .item_group
+    .as_ref()
+    .map(|g| g.name.as_str())
+    .unwrap_or_default()
+    .to_owned()
+}
+
 fn build_ship_summary(
-  item: &ItemTypeModel,
+  item: &ItemTypeModelEx,
   reqs: Vec<(i32, u8)>,
-  ship_groups: &HashMap<i32, String>,
   mastery_map: &HashMap<i32, HashMap<i32, String>>,
   names: &HashMap<i32, String>,
 ) -> ItemTypeSummary {
@@ -133,7 +145,7 @@ fn build_ship_summary(
   ItemTypeSummary {
     id: item.id,
     name: item.name.clone(),
-    group_name: ship_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
+    group_name: group_name_from_ex(item),
     skill_requirements: reqs
       .into_iter()
       .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
@@ -144,16 +156,11 @@ fn build_ship_summary(
   }
 }
 
-fn build_module_summary(
-  item: &ItemTypeModel,
-  reqs: Vec<(i32, u8)>,
-  module_groups: &HashMap<i32, String>,
-  names: &HashMap<i32, String>,
-) -> ItemTypeSummary {
+fn build_module_summary(item: &ItemTypeModelEx, reqs: Vec<(i32, u8)>, names: &HashMap<i32, String>) -> ItemTypeSummary {
   ItemTypeSummary {
     id: item.id,
     name: item.name.clone(),
-    group_name: module_groups.get(&item.item_group_id).cloned().unwrap_or_default(),
+    group_name: group_name_from_ex(item),
     skill_requirements: reqs
       .into_iter()
       .filter_map(|(tid, lvl)| names.get(&tid).map(|n| (n.clone(), lvl)))
@@ -177,16 +184,16 @@ impl<'a> Repo<'a> {
 
   /// Returns published ships whose name matches the given search string (case-insensitive).
   pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
-    let ship_groups: HashMap<i32, String> = GroupEntity::find()
+    let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(6))
       .all(self.db)
       .await?
       .into_iter()
-      .map(|g| (g.id, g.name))
+      .map(|g| g.id)
       .collect();
 
-    let group_ids: Vec<i32> = ship_groups.keys().copied().collect();
-    let mut items = Entity::find()
+    let mut items = Entity::load()
+      .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
       .filter(Column::Published.eq(true))
       .filter(Column::Name.contains(search))
@@ -194,8 +201,8 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
     items.sort_by(|a, b| {
-      let ga = ship_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
-      let gb = ship_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
+      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
       ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
     });
 
@@ -227,7 +234,7 @@ impl<'a> Repo<'a> {
     Ok(
       raw
         .into_iter()
-        .map(|(item, reqs)| build_ship_summary(item, reqs, &ship_groups, &mastery_map, &names))
+        .map(|(item, reqs)| build_ship_summary(item, reqs, &mastery_map, &names))
         .collect(),
     )
   }
@@ -235,16 +242,16 @@ impl<'a> Repo<'a> {
   /// Returns published modules whose name matches the given search string (case-insensitive).
   /// Only modules that have at least one skill requirement are returned.
   pub async fn find_modules(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
-    let module_groups: HashMap<i32, String> = GroupEntity::find()
+    let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(7))
       .all(self.db)
       .await?
       .into_iter()
-      .map(|g| (g.id, g.name))
+      .map(|g| g.id)
       .collect();
 
-    let group_ids: Vec<i32> = module_groups.keys().copied().collect();
-    let mut items = Entity::find()
+    let mut items = Entity::load()
+      .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
       .filter(Column::Published.eq(true))
       .filter(Column::Name.contains(search))
@@ -252,8 +259,8 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
     items.sort_by(|a, b| {
-      let ga = module_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
-      let gb = module_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
+      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
       ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
     });
 
@@ -271,31 +278,31 @@ impl<'a> Repo<'a> {
     Ok(
       raw
         .into_iter()
-        .map(|(item, reqs)| build_module_summary(item, reqs, &module_groups, &names))
+        .map(|(item, reqs)| build_module_summary(item, reqs, &names))
         .collect(),
     )
   }
 
   /// Returns all published skills (EVE category 16) grouped by item group.
   pub async fn find_skill_groups(&self) -> Result<Vec<pod_model::SkillGroupDef>, Error> {
-    let skill_groups: HashMap<i32, String> = GroupEntity::find()
+    let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(16))
       .all(self.db)
       .await?
       .into_iter()
-      .map(|g| (g.id, g.name))
+      .map(|g| g.id)
       .collect();
 
-    let group_ids: Vec<i32> = skill_groups.keys().copied().collect();
-    let mut items = Entity::find()
+    let mut items = Entity::load()
+      .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
       .filter(Column::Published.eq(true))
       .order_by(Column::Name, Order::Asc)
       .all(self.db)
       .await?;
     items.sort_by(|a, b| {
-      let ga = skill_groups.get(&a.item_group_id).map(|s| s.as_str()).unwrap_or("");
-      let gb = skill_groups.get(&b.item_group_id).map(|s| s.as_str()).unwrap_or("");
+      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
+      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
       ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
     });
 
@@ -313,7 +320,7 @@ impl<'a> Repo<'a> {
 
     let mut groups: Vec<pod_model::SkillGroupDef> = Vec::new();
     for item in items {
-      add_skill_to_groups(&mut groups, item, &skill_groups, &prereq_names);
+      add_skill_to_groups(&mut groups, item, &prereq_names);
     }
 
     Ok(groups)

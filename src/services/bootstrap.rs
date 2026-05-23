@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use iced::{Task, futures::SinkExt as _};
 use pod_esi::Client;
-use pod_model::{Character, CharacterAsset, CharacterAttributes, NeuralAttributes};
+use pod_model::{Character, CharacterAsset, CharacterAttributes, CorporationAsset, NeuralAttributes};
 use tracing::Instrument as _;
 
-use crate::services::character as character_service;
+use crate::services::{character as character_service, corporation as corporation_service};
 
 type Tx = iced::futures::channel::mpsc::Sender<Message>;
 
@@ -152,6 +152,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
     sync_neural_attributes(&mut character, char_id, &esi, &grant, &db).await;
     sync_wallet(&mut character, char_id, &esi, &grant, &db).await;
     sync_assets(&mut character, char_id, &esi, &grant, &db).await;
+    sync_corp_assets(&character, &esi, &db).await;
 
     let char_client = esi.character(&grant);
     let (clones_res, implants_res) = tokio::join!(char_client.clones(), char_client.implants());
@@ -276,6 +277,73 @@ async fn sync_assets(
     let _ = db.characters().upsert_assets(char_id, &assets).await;
     let _ = db.characters().delete_stale_assets(char_id, &keep_ids).await;
     cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
+  }
+}
+
+async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo) {
+  let all_corps = match db.corporations().all().await {
+    Ok(corps) => corps,
+    Err(e) => {
+      tracing::warn!("background sync: failed to load corporations: {e}");
+      return;
+    }
+  };
+
+  let now = chrono::Utc::now().timestamp();
+
+  for corp in all_corps
+    .into_iter()
+    .filter(|c| *c.auth_character_id() == *character.id())
+  {
+    let corp_id = *corp.id();
+
+    if let Ok(Some(state)) = db.assets().get_asset_sync_state("corporation", corp_id).await
+      && let Some(expires_at) = state.cache_expires_at
+      && expires_at > now
+    {
+      continue;
+    }
+
+    let token = match corporation_service::ensure_valid_token(&corp, esi, db).await {
+      Some(t) => t,
+      None => {
+        tracing::warn!("background sync: skipping corp {corp_id} — token refresh failed");
+        continue;
+      }
+    };
+
+    let grant = corporation_service::refresh_grant(&corp, &token);
+
+    let raw = match esi.corporation(corp_id).auth(&grant).assets().await {
+      Ok(r) => r,
+      Err(e) => {
+        tracing::warn!("background sync: failed to fetch assets for corp {corp_id}: {e}");
+        continue;
+      }
+    };
+
+    let assets: Vec<CorporationAsset> = raw
+      .into_iter()
+      .map(|a| CorporationAsset {
+        corporation_id: corp_id,
+        is_blueprint_copy: a.is_blueprint_copy,
+        is_singleton: a.is_singleton,
+        item_id: a.item_id,
+        location_flag: a.location_flag,
+        location_id: a.location_id,
+        location_type: a.location_type,
+        quantity: a.quantity,
+        type_id: a.type_id,
+      })
+      .collect();
+
+    let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+    let _ = db.assets().upsert_corporation_assets(corp_id, &assets).await;
+    let _ = db.assets().delete_stale_corporation_assets(corp_id, &keep_ids).await;
+    let _ = db
+      .assets()
+      .upsert_asset_sync_state("corporation", corp_id, Some(now), Some(now + 3600))
+      .await;
   }
 }
 

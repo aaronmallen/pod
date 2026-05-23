@@ -50,6 +50,7 @@ impl From<ModelEx> for Constellation {
     model
       .set_position(entity.position_x, entity.position_y, entity.position_z)
       .set_region_id(entity.region_id)
+      .set_region(entity.region.into_option().map(Into::into))
       .mark_persisted();
     model
   }

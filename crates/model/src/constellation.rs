@@ -95,6 +95,12 @@ impl Model {
     self
   }
 
+  /// Sets the parent region model without marking the model dirty.
+  pub fn set_region(&mut self, region: Option<crate::region::Model>) -> &mut Self {
+    self.region = region;
+    self
+  }
+
   /// Marks this model as loaded from the database without affecting the dirty flag.
   pub fn mark_persisted(&mut self) -> &mut Self {
     self.persisted = true;

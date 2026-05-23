@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityLoaderTrait, EntityTrait, QueryFilter};
 
 use crate::{
   Error,
@@ -10,7 +10,7 @@ use crate::{
     character_asset::{Column as AssetColumn, Entity as AssetEntity},
     item_type::{Column as TypeColumn, Entity as TypeEntity},
     stockpile::{ActiveModel as StockpileActive, Entity as StockpileEntity},
-    stockpile_item::{ActiveModel as ItemActive, Column as ItemColumn, Entity as ItemEntity},
+    stockpile_item::{self, ActiveModel as ItemActive, Column as ItemColumn, Entity as ItemEntity},
   },
 };
 
@@ -93,29 +93,31 @@ impl<'a> Repo<'a> {
 
   /// Returns all stockpiles with their item requirements loaded.
   pub async fn list_stockpiles(&self) -> Result<Vec<StockpileWithItems>, Error> {
-    let rows = StockpileEntity::find().all(self.db).await?;
-    let mut result = Vec::with_capacity(rows.len());
-    for row in rows {
-      let item_rows = ItemEntity::find()
-        .filter(ItemColumn::StockpileId.eq(row.id))
-        .all(self.db)
-        .await?;
-      let items = item_rows
-        .into_iter()
-        .map(|r| StockpileItem {
-          id: r.id,
-          type_id: r.type_id,
-          target_quantity: r.target_quantity,
-        })
-        .collect();
-      result.push(StockpileWithItems {
-        id: row.id,
-        name: row.name,
-        location_id: row.location_id,
-        character_id: row.character_id,
-        items,
-      });
-    }
+    let rows = StockpileEntity::load()
+      .with(stockpile_item::Entity)
+      .all(self.db)
+      .await?;
+    let result = rows
+      .into_iter()
+      .map(|row| {
+        let items = row
+          .items
+          .into_iter()
+          .map(|r| StockpileItem {
+            id: r.id,
+            type_id: r.type_id,
+            target_quantity: r.target_quantity,
+          })
+          .collect();
+        StockpileWithItems {
+          id: row.id,
+          name: row.name,
+          location_id: row.location_id,
+          character_id: row.character_id,
+          items,
+        }
+      })
+      .collect();
     Ok(result)
   }
 
@@ -179,20 +181,20 @@ impl<'a> Repo<'a> {
   /// `character_assets` filtered by the stockpile's `location_id` (when set)
   /// and `character_id` (when set). `type_name` is resolved from `item_types`.
   pub async fn stockpile_fill_status(&self, id: i64) -> Result<Vec<StockpileItemStatus>, Error> {
-    let Some(pile) = StockpileEntity::find_by_id(id).one(self.db).await? else {
+    let Some(pile) = StockpileEntity::load()
+      .filter_by_id(id)
+      .with(stockpile_item::Entity)
+      .one(self.db)
+      .await?
+    else {
       return Ok(Vec::new());
     };
 
-    let items = ItemEntity::find()
-      .filter(ItemColumn::StockpileId.eq(id))
-      .all(self.db)
-      .await?;
-
-    if items.is_empty() {
+    if pile.items.is_empty() {
       return Ok(Vec::new());
     }
 
-    let type_ids: Vec<i32> = items.iter().map(|i| i.type_id).collect();
+    let type_ids: Vec<i32> = pile.items.iter().map(|i| i.type_id).collect();
 
     let mut asset_query = AssetEntity::find().filter(AssetColumn::TypeId.is_in(type_ids.clone()));
     if let Some(loc) = pile.location_id {
@@ -209,6 +211,17 @@ impl<'a> Repo<'a> {
       .await?
       .into_iter()
       .map(|t| (t.id, t.name))
+      .collect();
+
+    let items: Vec<_> = pile
+      .items
+      .into_iter()
+      .map(|i| stockpile_item::Model {
+        id: i.id,
+        stockpile_id: i.stockpile_id,
+        target_quantity: i.target_quantity,
+        type_id: i.type_id,
+      })
       .collect();
 
     Ok(build_fill_statuses(&items, assets, type_name_map))

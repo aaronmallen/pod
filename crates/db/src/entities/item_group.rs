@@ -42,6 +42,7 @@ impl From<Model> for ItemGroup {
 impl From<ModelEx> for ItemGroup {
   fn from(entity: ModelEx) -> Self {
     let mut model = ItemGroup::new(entity.id, entity.item_category_id, entity.name);
+    model.set_item_category(entity.item_category.into_option().map(Into::into));
     *model.item_types_mut() = entity.item_types.into_iter().map(Into::into).collect();
     if !entity.published {
       model.unpublish();

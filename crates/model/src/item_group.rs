@@ -65,6 +65,12 @@ impl Model {
     self
   }
 
+  /// Sets the resolved item category model without affecting the dirty flag.
+  pub fn set_item_category(&mut self, item_category: Option<crate::item_category::Model>) -> &mut Self {
+    self.item_category = item_category;
+    self
+  }
+
   /// Updates the item category, flagging the record as dirty if already persisted.
   pub fn set_item_category_id(&mut self, item_category_id: i32) -> &mut Self {
     self.item_category_id = item_category_id;

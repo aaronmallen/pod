@@ -72,9 +72,15 @@ pub struct Model {
   /// The unique type ID.
   #[get = "pub"]
   id: i32,
+  /// The resolved item group record, if eagerly loaded.
+  #[get = "pub"]
+  item_group: Option<crate::item_group::Model>,
   /// The item group this type belongs to.
   #[get = "pub"]
   item_group_id: i32,
+  /// The resolved market group record, if eagerly loaded.
+  #[get = "pub"]
+  market_group: Option<crate::market_group::Model>,
   /// The market group this type belongs to, if any.
   #[get = "pub"]
   market_group_id: Option<i32>,
@@ -115,7 +121,9 @@ impl Model {
       graphic_id: None,
       id,
       icon_id: None,
+      item_group: None,
       item_group_id: 0,
+      market_group: None,
       market_group_id: None,
       mass: None,
       name: name.into(),

@@ -122,6 +122,7 @@ thread_local! {
 }
 
 fn boot() -> (App, Task<Message>) {
+  tracing::info!("pod {} starting", env!("CARGO_PKG_VERSION"));
   MENU.with(|m| {
     m.get_or_init(menu::init);
   });
@@ -157,9 +158,11 @@ fn main() -> iced::Result {
     .build(&log_dir)
     .expect("failed to initialize log file appender");
   let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+  let filter =
+    tracing_subscriber::EnvFilter::new("pod=debug,pod_db=debug,pod_esi=debug,pod_model=debug,pod_ui=debug,warn");
   tracing_subscriber::fmt()
     .with_ansi(false)
-    .with_max_level(tracing::Level::TRACE)
+    .with_env_filter(filter)
     .with_writer(non_blocking)
     .init();
 
@@ -428,7 +431,7 @@ fn handle_splash_bootstrap(app: &mut App, msg: services::bootstrap::Message) -> 
   ) {
     splash_ctrl::HandleResult::Bootstrap(t) => t.map(Message::Bootstrap),
     splash_ctrl::HandleResult::Fatal(e) => {
-      eprintln!("pod: fatal startup error: {e}");
+      tracing::error!("fatal startup error: {e}");
       iced::exit()
     }
     splash_ctrl::HandleResult::None => Task::none(),
@@ -466,6 +469,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     saved.as_ref().and_then(|g| g.mail_message_list_width),
     saved.as_ref().and_then(|g| g.wallet_right_rail_width),
   );
+  tracing::info!("splash complete, opening main window");
   app.phase = AppPhase::Main(main_state);
   app.window_size = Size::new(target_width, target_height);
   if let Some(geo) = &saved {
@@ -844,10 +848,9 @@ pub(crate) fn open_skill_plan_window(
             false,
           ),
           None => {
-            eprintln!(
-              "[pod] character {character_id}: effective \
-              attributes not yet synced; using all-20 \
-              fallback for skill plan"
+            tracing::warn!(
+              "character {character_id}: effective attributes not yet synced, \
+              using all-20 fallback for skill plan"
             );
             (fallback.clone(), true)
           }

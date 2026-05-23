@@ -5,8 +5,8 @@ use pod_model::{
   WalletTransaction,
 };
 use sea_orm::{
-  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect,
-  sea_query::OnConflict,
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityLoaderTrait, EntityTrait, Order, QueryFilter, QueryOrder,
+  QuerySelect, sea_query::OnConflict,
 };
 use validator::Validate;
 
@@ -14,9 +14,10 @@ use crate::{
   Error,
   entities::{
     character::{ActiveModel as CharacterActive, Column as CharacterColumn, Entity as CharacterEntity},
-    character_asset::{ActiveModel as AssetActive, Column as AssetColumn, Entity as AssetEntity},
+    character_asset::{self, ActiveModel as AssetActive, Column as AssetColumn, Entity as AssetEntity},
+    character_clone,
     character_contract::{ActiveModel as ContractActive, Column as ContractColumn, Entity as ContractEntity},
-    character_skill::{ActiveModel as SkillActive, Column as SkillColumn, Entity as SkillEntity},
+    character_skill::{self, ActiveModel as SkillActive, Column as SkillColumn, Entity as SkillEntity},
     entity_tag::{Column as EntityTagColumn, Entity as EntityTagEntity},
     mail_header::{ActiveModel as MailHeaderActive, Column as MailHeaderColumn, Entity as MailHeaderEntity},
     snoozed_mail::{
@@ -40,20 +41,17 @@ impl<'a> Repo<'a> {
     }
   }
 
-  /// Returns all characters ordered by sort_order, each with their skills loaded.
+  /// Returns all characters ordered by sort_order, each with their skills,
+  /// assets, and clones eagerly loaded.
   pub async fn all(&self) -> Result<Vec<Character>, Error> {
-    let rows = CharacterEntity::find()
+    let rows = CharacterEntity::load()
       .order_by(CharacterColumn::SortOrder, Order::Asc)
+      .with(character_skill::Entity)
+      .with(character_asset::Entity)
+      .with(character_clone::Entity)
       .all(self.db)
       .await?;
-    let mut characters = Vec::with_capacity(rows.len());
-    for row in rows {
-      let mut character = Character::from(row);
-      let skills = self.skills_for(*character.id()).await?;
-      *character.skills_mut() = skills;
-      characters.push(character);
-    }
-    Ok(characters)
+    Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Deletes a character and all associated skills, assets, and tag assignments.
@@ -75,15 +73,17 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
-  /// Finds a character by EVE character ID, loading skills as well.
+  /// Finds a character by EVE character ID, with skills, assets, and clones
+  /// eagerly loaded.
   pub async fn find(&self, id: i64) -> Result<Option<Character>, Error> {
-    let Some(row) = CharacterEntity::find_by_id(id).one(self.db).await? else {
-      return Ok(None);
-    };
-    let mut character = Character::from(row);
-    let skills = self.skills_for(id).await?;
-    *character.skills_mut() = skills;
-    Ok(Some(character))
+    let row = CharacterEntity::load()
+      .filter_by_id(id)
+      .with(character_skill::Entity)
+      .with(character_asset::Entity)
+      .with(character_clone::Entity)
+      .one(self.db)
+      .await?;
+    Ok(row.map(Into::into))
   }
 
   /// Returns the next available slot index (one past the current maximum sort_order).
@@ -345,15 +345,6 @@ impl<'a> Repo<'a> {
         .await?;
     }
     Ok(())
-  }
-
-  /// Loads all skill rows for the given character ID.
-  async fn skills_for(&self, character_id: i64) -> Result<Vec<CharacterSkill>, Error> {
-    let rows = SkillEntity::find()
-      .filter(SkillColumn::CharacterId.eq(character_id))
-      .all(self.db)
-      .await?;
-    Ok(rows.into_iter().map(CharacterSkill::from).collect())
   }
 
   /// Upserts wallet journal entries for the given character.

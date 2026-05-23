@@ -25,35 +25,6 @@ impl<'a> Client<'a> {
     }
   }
 
-  /// Listens on `localhost:<port>` for the OAuth2 redirect and returns the
-  /// `(code, state)` query parameters once the callback arrives.
-  pub async fn await_callback(&self, port: u16) -> Result<(String, String), Error> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-      .await
-      .map_err(|e| Error::Internal(format!("bind failed: {e}")))?;
-
-    let (mut stream, _) = listener
-      .accept()
-      .await
-      .map_err(|e| Error::Internal(format!("accept failed: {e}")))?;
-
-    let mut buf = vec![0u8; 4096];
-    let n = stream
-      .read(&mut buf)
-      .await
-      .map_err(|e| Error::Internal(format!("read failed: {e}")))?;
-
-    let request = String::from_utf8_lossy(&buf[..n]);
-    let (code, state) = parse_oauth_callback(&request)?;
-
-    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAuthorized. You may close this tab.";
-    let _ = stream.write_all(response.as_bytes()).await;
-
-    Ok((code, state))
-  }
-
   /// Computes the PKCE S256 code challenge from a code verifier.
   pub fn derive_challenge(verifier: &str) -> String {
     let hash = Sha256::digest(verifier.as_bytes());
@@ -217,41 +188,6 @@ fn pad_base64url(stripped: &str) -> String {
   }
 }
 
-/// Parses the first HTTP request line from `request` and extracts the `code` and `state`
-/// OAuth2 callback query parameters.
-fn parse_oauth_callback(request: &str) -> Result<(String, String), Error> {
-  let first_line = request
-    .lines()
-    .next()
-    .ok_or_else(|| Error::Internal("empty HTTP request".into()))?;
-
-  let path = first_line
-    .split_whitespace()
-    .nth(1)
-    .ok_or_else(|| Error::Internal("malformed HTTP request".into()))?;
-
-  let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
-  extract_query_params(query)
-}
-
-/// Scans `&`-delimited key=value pairs for `code` and `state` and returns them as a tuple.
-fn extract_query_params(query: &str) -> Result<(String, String), Error> {
-  let mut code = None;
-  let mut state = None;
-  for pair in query.split('&') {
-    if let Some((k, v)) = pair.split_once('=') {
-      match k {
-        "code" => code = Some(v.to_owned()),
-        "state" => state = Some(v.to_owned()),
-        _ => {}
-      }
-    }
-  }
-  let code = code.ok_or_else(|| Error::Internal("missing code in callback".into()))?;
-  let state = state.ok_or_else(|| Error::Internal("missing state in callback".into()))?;
-  Ok((code, state))
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -269,61 +205,6 @@ mod tests {
 
   fn make_esi_client() -> crate::Client {
     crate::ClientBuilder::new("test-client").build().unwrap()
-  }
-
-  mod await_callback {
-    use tokio::io::AsyncWriteExt as _;
-
-    use super::*;
-
-    async fn send_request(port: u16, request_line: &str) {
-      tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-      let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
-        .await
-        .unwrap();
-      let req = format!("{request_line}\r\nHost: localhost\r\n\r\n");
-      stream.write_all(req.as_bytes()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_extracts_code_and_state_from_oauth_redirect() {
-      let port = 19877u16;
-      let esi = make_esi_client();
-      let auth = Client::new(&esi);
-
-      tokio::spawn(send_request(port, "GET /?code=mycode&state=mystate HTTP/1.1"));
-
-      let (code, state) = auth.await_callback(port).await.unwrap();
-
-      assert_eq!(code, "mycode");
-      assert_eq!(state, "mystate");
-    }
-
-    #[tokio::test]
-    async fn it_returns_error_when_code_is_missing() {
-      let port = 19878u16;
-      let esi = make_esi_client();
-      let auth = Client::new(&esi);
-
-      tokio::spawn(send_request(port, "GET /?state=only HTTP/1.1"));
-
-      let result = auth.await_callback(port).await;
-
-      assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn it_returns_error_when_state_is_missing() {
-      let port = 19879u16;
-      let esi = make_esi_client();
-      let auth = Client::new(&esi);
-
-      tokio::spawn(send_request(port, "GET /?code=only HTTP/1.1"));
-
-      let result = auth.await_callback(port).await;
-
-      assert!(result.is_err());
-    }
   }
 
   mod build_grant {
@@ -417,49 +298,6 @@ mod tests {
       let expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
       assert_eq!(Client::derive_challenge(verifier), expected);
-    }
-  }
-
-  mod extract_query_params {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_extracts_code_and_state() {
-      let (code, state) = extract_query_params("code=abc123&state=xyz").unwrap();
-
-      assert_eq!(code, "abc123");
-      assert_eq!(state, "xyz");
-    }
-
-    #[test]
-    fn it_extracts_with_reversed_param_order() {
-      let (code, state) = extract_query_params("state=xyz&code=abc123").unwrap();
-
-      assert_eq!(code, "abc123");
-      assert_eq!(state, "xyz");
-    }
-
-    #[test]
-    fn it_returns_error_when_code_is_missing() {
-      let result = extract_query_params("state=xyz");
-
-      assert!(result.is_err());
-    }
-
-    #[test]
-    fn it_returns_error_when_state_is_missing() {
-      let result = extract_query_params("code=abc123");
-
-      assert!(result.is_err());
-    }
-
-    #[test]
-    fn it_returns_error_on_empty_query() {
-      let result = extract_query_params("");
-
-      assert!(result.is_err());
     }
   }
 
@@ -589,47 +427,6 @@ mod tests {
     fn it_returns_error_for_malformed_sub() {
       let token = make_jwt("BADINPUT", "Test Character");
       let result = Client::parse_character_id(&token);
-
-      assert!(result.is_err());
-    }
-  }
-
-  mod parse_oauth_callback {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_extracts_code_and_state_from_get_request() {
-      let request = "GET /?code=mycode&state=mystate HTTP/1.1\r\nHost: localhost\r\n\r\n";
-
-      let (code, state) = parse_oauth_callback(request).unwrap();
-
-      assert_eq!(code, "mycode");
-      assert_eq!(state, "mystate");
-    }
-
-    #[test]
-    fn it_returns_error_on_empty_request() {
-      let result = parse_oauth_callback("");
-
-      assert!(result.is_err());
-    }
-
-    #[test]
-    fn it_returns_error_when_path_has_no_query_string() {
-      let request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-
-      let result = parse_oauth_callback(request);
-
-      assert!(result.is_err());
-    }
-
-    #[test]
-    fn it_returns_error_when_code_is_missing_from_query() {
-      let request = "GET /?state=only HTTP/1.1\r\nHost: localhost\r\n\r\n";
-
-      let result = parse_oauth_callback(request);
 
       assert!(result.is_err());
     }

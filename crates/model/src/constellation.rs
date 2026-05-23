@@ -31,6 +31,9 @@ pub struct Model {
   /// Parent region identifier.
   #[get = "pub"]
   region_id: i32,
+  /// Parent region, populated when loaded via eager loading.
+  #[get = "pub"]
+  region: Option<crate::region::Model>,
   /// Child solar systems, populated when loaded via eager loading.
   #[getset(get = "pub", get_mut = "pub")]
   solar_systems: Vec<crate::solar_system::Model>,
@@ -48,6 +51,7 @@ impl Model {
       position_y: 0.0,
       position_z: 0.0,
       region_id: 0,
+      region: None,
       solar_systems: Vec::new(),
     }
   }

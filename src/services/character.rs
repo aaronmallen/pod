@@ -147,6 +147,11 @@ fn skill_from_active_entry(character_id: i64, a: &SkillQueueEntry) -> CharacterS
 /// the character silently).
 pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) -> Option<String> {
   if !character.access_token_expired() {
+    tracing::debug!(
+      "auth: token valid for character {} ({}), skipping refresh",
+      character.id(),
+      character.name()
+    );
     return Some(character.access_token().clone());
   }
 
@@ -160,7 +165,22 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
     vec![],
   );
 
-  let new_grant = esi.auth().refresh(&grant).await.ok()?;
+  tracing::info!(
+    "auth: refreshing token for character {} ({})",
+    character.id(),
+    character.name()
+  );
+  let new_grant = match esi.auth().refresh(&grant).await {
+    Ok(g) => g,
+    Err(e) => {
+      tracing::warn!(
+        "auth: token refresh failed for character {} ({}): {e}",
+        character.id(),
+        character.name()
+      );
+      return None;
+    }
+  };
 
   let new_expires_at = new_grant
     .expires_at()
@@ -168,7 +188,8 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
     .map(|d| d.as_secs() as i64)
     .unwrap_or(0);
 
-  db.characters()
+  if let Err(e) = db
+    .characters()
     .update_token(
       *character.id(),
       new_grant.access_token(),
@@ -176,8 +197,20 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
       new_expires_at,
     )
     .await
-    .ok()?;
+  {
+    tracing::error!(
+      "auth: failed to persist refreshed token for character {} ({}): {e}",
+      character.id(),
+      character.name()
+    );
+    return None;
+  }
 
+  tracing::info!(
+    "auth: token refreshed for character {} ({})",
+    character.id(),
+    character.name()
+  );
   Some(new_grant.access_token().clone())
 }
 

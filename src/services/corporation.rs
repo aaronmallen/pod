@@ -9,6 +9,11 @@ use pod_model::Corporation;
 /// should skip the corporation silently).
 pub async fn ensure_valid_token(corp: &Corporation, esi: &pod_esi::Client, db: &pod_db::Repo) -> Option<String> {
   if !corp.access_token_expired() {
+    tracing::debug!(
+      "auth: token valid for corporation {} ({}), skipping refresh",
+      corp.id(),
+      corp.name()
+    );
     return Some(corp.access_token().clone());
   }
 
@@ -22,7 +27,18 @@ pub async fn ensure_valid_token(corp: &Corporation, esi: &pod_esi::Client, db: &
     corp.scopes().clone(),
   );
 
-  let new_grant = esi.auth().refresh(&grant).await.ok()?;
+  tracing::info!("auth: refreshing token for corporation {} ({})", corp.id(), corp.name());
+  let new_grant = match esi.auth().refresh(&grant).await {
+    Ok(g) => g,
+    Err(e) => {
+      tracing::warn!(
+        "auth: token refresh failed for corporation {} ({}): {e}",
+        corp.id(),
+        corp.name()
+      );
+      return None;
+    }
+  };
 
   let new_expires_at = new_grant
     .expires_at()
@@ -30,7 +46,8 @@ pub async fn ensure_valid_token(corp: &Corporation, esi: &pod_esi::Client, db: &
     .map(|d| d.as_secs() as i64)
     .unwrap_or(0);
 
-  db.corporations()
+  if let Err(e) = db
+    .corporations()
     .update_token(
       *corp.id(),
       new_grant.access_token(),
@@ -38,8 +55,16 @@ pub async fn ensure_valid_token(corp: &Corporation, esi: &pod_esi::Client, db: &
       new_expires_at,
     )
     .await
-    .ok()?;
+  {
+    tracing::error!(
+      "auth: failed to persist refreshed token for corporation {} ({}): {e}",
+      corp.id(),
+      corp.name()
+    );
+    return None;
+  }
 
+  tracing::info!("auth: token refreshed for corporation {} ({})", corp.id(), corp.name());
   Some(new_grant.access_token().clone())
 }
 

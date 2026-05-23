@@ -263,6 +263,18 @@ impl Model {
     self
   }
 
+  /// Sets the resolved item group record without affecting the dirty flag.
+  pub fn set_item_group(&mut self, item_group: Option<crate::item_group::Model>) -> &mut Self {
+    self.item_group = item_group;
+    self
+  }
+
+  /// Sets the resolved market group record without affecting the dirty flag.
+  pub fn set_market_group(&mut self, market_group: Option<crate::market_group::Model>) -> &mut Self {
+    self.market_group = market_group;
+    self
+  }
+
   /// Marks this model as loaded from the database without affecting the dirty flag.
   pub fn mark_persisted(&mut self) -> &mut Self {
     self.persisted = true;

@@ -146,7 +146,6 @@ fn build_initial_tasks(
   let esi_b = esi.clone();
   let chars_a = characters.clone();
   let db_a = db.clone();
-  let esi_a = esi.clone();
   let chars_c = characters.clone();
   let db_c = db.clone();
   let esi_c = esi.clone();
@@ -165,7 +164,7 @@ fn build_initial_tasks(
       Message::AllCorpBalancesLoaded,
     ),
     iced::Task::perform(
-      async move { fetch_asset_values(chars_a, esi_a, db_a).await },
+      async move { fetch_asset_values(chars_a, db_a).await },
       Message::AssetValuesLoaded,
     ),
     iced::Task::perform(
@@ -313,7 +312,7 @@ async fn fetch_all_corp_totals(
   totals
 }
 
-async fn fetch_asset_values(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i64, f64)> {
+async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec<(i64, f64)> {
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
   if char_ids.is_empty() {
     return Vec::new();
@@ -329,14 +328,8 @@ async fn fetch_asset_values(characters: Vec<Character>, esi: pod_esi::Client, db
     return Vec::new();
   }
 
-  let prices: std::collections::HashMap<i32, f64> = esi
-    .market()
-    .prices()
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|p| (p.type_id, p.adjusted_price.or(p.average_price).unwrap_or(0.0)))
-    .collect();
+  let type_ids: Vec<i32> = asset_rows.iter().map(|a| a.type_id).collect();
+  let prices = db.prices().latest_prices(&type_ids).await.unwrap_or_default();
 
   let mut totals: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
   for asset in &asset_rows {

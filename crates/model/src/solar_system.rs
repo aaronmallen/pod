@@ -10,6 +10,9 @@ use validator::Validate;
 /// changes are present via the `dirty` flag.
 #[derive(Clone, Debug, Deserialize, Getters, MutGetters, PartialEq, Serialize, Validate)]
 pub struct Model {
+  /// Parent constellation, if loaded.
+  #[get = "pub"]
+  constellation: Option<crate::constellation::Model>,
   /// Parent constellation identifier.
   #[get = "pub"]
   constellation_id: i32,
@@ -58,6 +61,7 @@ impl Model {
   /// association collections to empty.
   pub fn new(id: i32, name: impl Into<String>) -> Self {
     Self {
+      constellation: None,
       constellation_id: 0,
       dirty: false,
       id,

@@ -40,18 +40,23 @@ fn stream() -> impl iced::futures::Stream<Item = (String, String)> {
 
     loop {
       let Ok((mut stream, _)) = listener.accept().await else {
+        tracing::warn!("auth: failed to accept OAuth callback connection");
         continue;
       };
 
-      let mut buf = vec![0u8; 4096];
+      let mut buf = vec![0u8; 32768];
       let Ok(n) = stream.read(&mut buf).await else {
+        tracing::warn!("auth: failed to read OAuth callback request");
         continue;
       };
 
       let request = String::from_utf8_lossy(&buf[..n]);
       let Ok((code, state)) = parse_callback(&request) else {
+        tracing::warn!("auth: received malformed OAuth callback request");
         continue;
       };
+
+      tracing::info!("auth: OAuth callback received, code and state parsed");
 
       let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAuthorized. You may close this tab.";
       let _ = stream.write_all(response.as_bytes()).await;

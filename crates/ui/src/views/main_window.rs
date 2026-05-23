@@ -61,6 +61,8 @@ pub enum Message {
 pub struct State {
   pub active_nav: Nav,
   pub active_view: ActiveView,
+  /// Preserved assets view state for instant restore on navigation return.
+  pub cached_assets_state: Option<assets::State>,
   pub characters: Vec<Character>,
   pub corporations: Vec<Corporation>,
   pub esi_connected: bool,

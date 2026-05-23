@@ -52,6 +52,17 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   }
 }
 
+/// Spawns a background asset reload to keep `cached_assets_state` fresh.
+///
+/// Called after a character sync so the next Assets restore shows current data.
+/// Returns `Task::none()` when no cache exists or assets is already active.
+pub fn refresh_cached_assets_if_needed(state: &State, services: &Services) -> iced::Task<Message> {
+  if state.cached_assets_state.is_none() || matches!(state.active_view, ActiveView::Assets(_)) {
+    return iced::Task::none();
+  }
+  assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services).map(Message::Assets)
+}
+
 /// Creates a new shell state and a startup task that initializes the default view.
 pub fn new(
   characters: Vec<Character>,
@@ -66,6 +77,7 @@ pub fn new(
   let state = State {
     active_nav: Nav::Characters,
     active_view: ActiveView::Characters(chars_state),
+    cached_assets_state: None,
     characters,
     corporations: Vec::new(),
     esi_connected: true,
@@ -165,6 +177,17 @@ fn show_toast(state: &mut State, msg: String) -> iced::Task<Message> {
 fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
   if let assets::Message::ReauthorizeCharacter(_) = &msg {
     return trigger_reauth(services);
+  }
+  // When assets is not the active view, an AssetsLoaded from a background
+  // refresh should update the cache rather than be discarded.
+  if let assets::Message::AssetsLoaded(ref records) = msg
+    && !matches!(state.active_view, ActiveView::Assets(_))
+  {
+    if let Some(cached) = state.cached_assets_state.as_mut() {
+      cached.assets = records.clone();
+      cached.loading = false;
+    }
+    return iced::Task::none();
   }
   let ActiveView::Assets(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -541,13 +564,19 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
   state.active_nav = nav;
   match nav {
     Nav::Assets => {
+      if let Some(cached) = state.cached_assets_state.take() {
+        // Restore cached state instantly and refresh in background.
+        let refresh = assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services);
+        state.active_view = ActiveView::Assets(cached);
+        return refresh.map(Message::Assets);
+      }
       let (s, task) = assets_ctrl::new(state.characters.clone(), state.corporations.clone(), services);
       state.active_view = ActiveView::Assets(s);
       task.map(Message::Assets)
     }
     Nav::Characters => {
       let (chars_state, init_task) = characters_ctrl::new(state.characters.clone(), services);
-      state.active_view = ActiveView::Characters(chars_state);
+      swap_active_view(state, ActiveView::Characters(chars_state));
       init_task.map(Message::Characters)
     }
     Nav::Mail => {
@@ -557,17 +586,17 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
         state.mail_folder_pane_width,
         state.mail_message_list_width,
       );
-      state.active_view = ActiveView::Mail(s);
+      swap_active_view(state, ActiveView::Mail(s));
       task.map(Message::Mail)
     }
     Nav::Settings => {
       let (s, task) = settings_ctrl::new(services.config.features());
-      state.active_view = ActiveView::Settings(s);
+      swap_active_view(state, ActiveView::Settings(s));
       task.map(Message::Settings)
     }
     Nav::Skills => {
       let (s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
-      state.active_view = ActiveView::Skills(s);
+      swap_active_view(state, ActiveView::Skills(s));
       task.map(Message::Skills)
     }
     Nav::Wallet => {
@@ -577,9 +606,18 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
         services,
         state.wallet_right_rail_width,
       );
-      state.active_view = ActiveView::Wallet(s);
+      swap_active_view(state, ActiveView::Wallet(s));
       task.map(Message::Wallet)
     }
+  }
+}
+
+/// Replaces `state.active_view` with `new_view`; saves the prior view to
+/// `cached_assets_state` if it was an Assets view.
+fn swap_active_view(state: &mut State, new_view: ActiveView) {
+  let prev = std::mem::replace(&mut state.active_view, new_view);
+  if let ActiveView::Assets(s) = prev {
+    state.cached_assets_state = Some(s);
   }
 }
 
@@ -740,6 +778,7 @@ mod tests {
       State {
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
+        cached_assets_state: None,
         characters: vec![character],
         corporations: Vec::new(),
         esi_connected: false,
@@ -796,6 +835,7 @@ mod tests {
       let mut state = State {
         active_nav: Nav::Characters,
         active_view: ActiveView::Characters(chars_view),
+        cached_assets_state: None,
         characters: vec![Character::new(1, "Alpha")],
         corporations: Vec::new(),
         esi_connected: false,
@@ -821,6 +861,54 @@ mod tests {
         state.characters[0].tags(),
         &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
       );
+    }
+  }
+
+  mod swap_active_view {
+    use super::*;
+
+    fn make_state() -> State {
+      State {
+        active_nav: Nav::Settings,
+        active_view: ActiveView::Settings(settings::State::default()),
+        cached_assets_state: None,
+        characters: Vec::new(),
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_saves_assets_state_to_cache_when_previous_view_was_assets() {
+      let mut state = make_state();
+      state.active_view = ActiveView::Assets(assets::new(vec![], vec![]));
+
+      swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
+
+      assert!(state.cached_assets_state.is_some());
+      assert!(matches!(state.active_view, ActiveView::Settings(_)));
+    }
+
+    #[test]
+    fn it_does_not_touch_cache_when_previous_view_was_not_assets() {
+      let mut state = make_state();
+
+      swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
+
+      assert!(state.cached_assets_state.is_none());
     }
   }
 }

@@ -136,6 +136,24 @@ pub async fn delete_stockpile(db: pod_db::Repo, id: i64) -> Vec<StockpileWithSta
   load_stockpiles_with_status(db).await
 }
 
+/// Spawns a background DB reload of all assets without creating new view state.
+///
+/// Used to keep `cached_assets_state` fresh after a background character sync.
+pub fn background_reload(
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  services: &Services,
+) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  let esi = services.esi_client.clone();
+  iced::Task::perform(
+    load_all_assets_from_db(db, characters, corporations, esi),
+    Message::AssetsLoaded,
+  )
+}
+
 fn category_name_to_key(name: &str) -> &'static str {
   match name {
     "Ship" => "ship",

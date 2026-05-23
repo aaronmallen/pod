@@ -295,6 +295,13 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
       }
       if let AppPhase::Main(state) = &mut app.phase {
         main_ctrl::apply_synced_character(state, character);
+        let services = Services {
+          config: app.config.clone(),
+          db: app.db.clone(),
+          esi_client: app.esi_client.clone(),
+          oauth_callback_tx: app.oauth_callback_tx.clone(),
+        };
+        return main_ctrl::refresh_cached_assets_if_needed(state, &services).map(Message::Main);
       }
       Task::none()
     }

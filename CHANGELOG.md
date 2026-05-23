@@ -7,6 +7,20 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4]
+
+### Fixed
+
+- Asset value is now consistent between the wallet and inventory tabs — previously the wallet fetched live prices from
+  EVE's servers and could show a different total than the assets view.
+- Rare and infrequently-traded items (supercarriers, faction modules, and similar) now show a price in your inventory
+  and portfolio instead of 0 ISK — the app falls back to CCP's adjusted price when no Jita sell order is available.
+
+### Performance
+
+- Character data, clones, stockpiles, skill plans, and item types all load noticeably faster — related information is
+  now fetched together in a single operation instead of separate round trips.
+
 ## [0.4.3]
 
 ### Added
@@ -149,7 +163,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.3...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.4...HEAD
+[0.4.4]: https://github.com/aaronmallen/pod/compare/0.4.3...0.4.4
 [0.4.3]: https://github.com/aaronmallen/pod/compare/0.4.2...0.4.3
 [0.4.2]: https://github.com/aaronmallen/pod/compare/0.4.1...0.4.2
 [0.4.1]: https://github.com/aaronmallen/pod/compare/0.4.0...0.4.1

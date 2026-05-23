@@ -857,6 +857,7 @@ async fn add_character(
   if let Some(db) = db {
     persist_character(&db, &mut character, &character_skills, &character_assets).await?;
   }
+  tracing::info!("auth: character added — {} ({})", character.name(), character.id());
   Ok(character)
 }
 
@@ -1106,6 +1107,7 @@ async fn add_corporation(
   if let Some(db) = db {
     db.corporations().upsert(&corp).await.map_err(|e| e.to_string())?;
   }
+  tracing::info!("auth: corporation added — {} ({})", corp.name(), corp.id());
   Ok(corp)
 }
 
@@ -1117,18 +1119,32 @@ async fn exchange_oauth_grant(
   oauth_state: String,
 ) -> Result<pod_esi::models::auth::Grant, String> {
   let mut rx = oauth_callback_tx.subscribe();
+  let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+  heartbeat.tick().await; // consume the immediate first tick
   let code = loop {
-    match rx.recv().await {
-      Ok((code, returned_state)) if returned_state == oauth_state => break code,
-      Ok(_) => continue,
-      Err(e) => return Err(format!("OAuth callback error: {e}")),
+    tokio::select! {
+      result = rx.recv() => match result {
+        Ok((code, returned_state)) if returned_state == oauth_state => break code,
+        Ok(_) => continue,
+        Err(e) => {
+          tracing::error!("auth: OAuth callback channel error: {e}");
+          return Err(format!("OAuth callback error: {e}"));
+        }
+      },
+      _ = heartbeat.tick() => {
+        tracing::info!("auth: still waiting for OAuth callback\u{2026}");
+      }
     }
   };
+  tracing::info!("auth: OAuth code received, exchanging for grant");
   esi
     .auth()
     .exchange_code(&code, "http://127.0.0.1:47823/callback", &verifier)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| {
+      tracing::error!("auth: token exchange failed: {e}");
+      e.to_string()
+    })
 }
 
 /// Assembles a `Corporation` from grant data and ESI detail.
@@ -1634,7 +1650,11 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
       let (url, verifier, oauth_state) = esi
         .auth()
         .sign_in(pod_esi::scopes::Scopes::ALL, "http://127.0.0.1:47823/callback");
-      let _ = open::that_detached(&url);
+      tracing::info!("auth: opening browser for OAuth (add character)");
+      if let Err(e) = open::that_detached(&url) {
+        tracing::warn!("auth: failed to open browser: {e}");
+      }
+      tracing::info!("auth: waiting for OAuth callback on port 47823");
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
       let oauth_tx = services.oauth_callback_tx.clone();
@@ -1653,7 +1673,11 @@ fn update_header(state: &mut State, msg: header::Message, services: &Services) -
       };
       let corp_scopes = services.config.features().required_scopes_for_corporation();
       let (url, verifier, oauth_state) = esi.auth().sign_in(&corp_scopes, "http://127.0.0.1:47823/callback");
-      let _ = open::that_detached(&url);
+      tracing::info!("auth: opening browser for OAuth (add corporation)");
+      if let Err(e) = open::that_detached(&url) {
+        tracing::warn!("auth: failed to open browser: {e}");
+      }
+      tracing::info!("auth: waiting for OAuth callback on port 47823");
       state.add_status = Some("Waiting for browser login\u{2026}".to_string());
       let db = services.db.clone();
       let oauth_tx = services.oauth_callback_tx.clone();

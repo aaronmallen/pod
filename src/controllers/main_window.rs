@@ -740,7 +740,11 @@ fn trigger_reauth(services: &Services) -> iced::Task<Message> {
   };
   let scopes = services.config.features().required_scopes_for_character();
   let (url, verifier, oauth_state) = esi.auth().sign_in(&scopes, "http://127.0.0.1:47823/callback");
-  let _ = open::that_detached(&url);
+  tracing::info!("auth: opening browser for OAuth (reauthorize character)");
+  if let Err(e) = open::that_detached(&url) {
+    tracing::warn!("auth: failed to open browser: {e}");
+  }
+  tracing::info!("auth: waiting for OAuth callback on port 47823");
   let db = services.db.clone();
   let oauth_tx = services.oauth_callback_tx.clone();
   iced::Task::perform(

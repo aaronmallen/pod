@@ -8,7 +8,7 @@ use validator::Validate;
 ///
 /// Tracks dirty/persisted state so callers can detect unsaved changes before writing to the
 /// database.
-#[derive(Clone, Debug, Deserialize, Eq, Getters, Hash, MutGetters, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, Getters, MutGetters, PartialEq, Serialize, Validate)]
 pub struct Model {
   /// ID of the NPC alliance associated with this race.
   #[get = "pub"]

@@ -8,7 +8,7 @@ use validator::Validate;
 ///
 /// Tracks both the static EVE data (attribute scores, associated corporation and
 /// starter ship) and dirty/persisted state for change detection before database writes.
-#[derive(Clone, Debug, Deserialize, Eq, Getters, Hash, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, Getters, PartialEq, Serialize, Validate)]
 pub struct Model {
   /// Base charisma attribute bonus granted to characters of this bloodline.
   #[get = "pub"]
@@ -40,9 +40,15 @@ pub struct Model {
   /// Foreign key referencing the parent race.
   #[get = "pub"]
   race_id: i32,
+  /// Eagerly loaded race associated with this bloodline, if available.
+  #[get = "pub"]
+  race: Option<crate::race::Model>,
   /// Item type ID of the starter ship granted to characters of this bloodline.
   #[get = "pub"]
   ship_item_type_id: i32,
+  /// Eagerly loaded item type for the starter ship, if available.
+  #[get = "pub"]
+  ship_item_type: Option<crate::item_type::Model>,
   /// Base willpower attribute bonus granted to characters of this bloodline.
   #[get = "pub"]
   will_power: i32,
@@ -63,7 +69,9 @@ impl Model {
       perception: 0,
       persisted: false,
       race_id: 0,
+      race: None,
       ship_item_type_id: 0,
+      ship_item_type: None,
       will_power: 0,
     }
   }

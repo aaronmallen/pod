@@ -568,9 +568,7 @@ fn space_system_location_ids(rows: &[RawAssetRow]) -> Vec<i32> {
   unique_ids(
     rows
       .iter()
-      .filter(|a| {
-        (a.location_type == "solar_system" || a.location_type == "space") && a.location_id < i32::MAX as i64
-      })
+      .filter(|a| (a.location_type == "solar_system" || a.location_type == "space") && a.location_id < i32::MAX as i64)
       .filter_map(|a| i32::try_from(a.location_id).ok()),
   )
 }

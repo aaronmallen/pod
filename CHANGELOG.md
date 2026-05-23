@@ -7,6 +7,26 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3]
+
+### Added
+
+- Your active ship now appears in the inventory alongside your other assets — modules, rigs, and cargo are grouped
+  under the ship even when you are undocked in space.
+- Corporation assets are now synced in the background during character refresh, so inventory data is always current
+  without manually navigating to the assets tab.
+- The inventory view now restores instantly when you navigate away and return — switching tabs no longer triggers a
+  fresh reload.
+- Re-authorizing a character on Windows is now more reliable; repeated auth attempts no longer fail due to a
+  port-conflict error between flows.
+
+### Fixed
+
+- Ships docked inside player-owned structures (citadels, engineering complexes, etc.) now show the correct structure
+  name and solar system in the inventory view.
+- Character tags now survive background sync reliably — the fix in 0.4.2 was incomplete and only worked when the
+  character list was the active tab.
+
 ## [0.4.2]
 
 ### Fixed
@@ -129,7 +149,9 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.1...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.3...HEAD
+[0.4.3]: https://github.com/aaronmallen/pod/compare/0.4.2...0.4.3
+[0.4.2]: https://github.com/aaronmallen/pod/compare/0.4.1...0.4.2
 [0.4.1]: https://github.com/aaronmallen/pod/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/aaronmallen/pod/compare/0.3.1...0.4.0
 [0.3.1]: https://github.com/aaronmallen/pod/compare/0.3.0...0.3.1

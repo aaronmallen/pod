@@ -204,20 +204,16 @@ fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   items.push(locations_label());
   items.push(all_assets_row(state.selected_loc.is_none()));
 
-  let source: &[super::AssetRecord] = if state.selected_corporation().is_some() {
-    &state.corp_assets
-  } else {
-    &state.assets
-  };
-  let char_id = state.selected_character();
+  let source: &[super::AssetRecord] = &state.assets;
+  let owner_id = state.selected_corporation().or_else(|| state.selected_character());
   let selected_loc = state.selected_loc.as_deref();
 
-  for sys_name in &collect_systems(source, char_id) {
-    push_system_rows(&mut items, source, sys_name, char_id, selected_loc);
+  for sys_name in &collect_systems(source, owner_id) {
+    push_system_rows(&mut items, source, sys_name, owner_id, selected_loc);
   }
 
-  for loc_name in &collect_structure_locs(source, char_id) {
-    push_location_rows(&mut items, source, loc_name, char_id, selected_loc);
+  for loc_name in &collect_structure_locs(source, owner_id) {
+    push_location_rows(&mut items, source, loc_name, owner_id, selected_loc);
   }
 
   items

@@ -169,10 +169,6 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
   let ActiveView::Assets(s) = &mut state.active_view else {
     return iced::Task::none();
   };
-  if let assets::Message::FetchCorpAssets(corp_id) = &msg {
-    let corp_id = *corp_id;
-    return assets_ctrl::fetch_corp_assets(corp_id, s, services).map(Message::Assets);
-  }
   if let assets::Message::RefreshNavHistory = &msg {
     return handle_assets_refresh_nav_history(s, services);
   }
@@ -217,15 +213,12 @@ fn handle_assets_refresh_nav_history(s: &mut assets::State, services: &Services)
 
 fn should_assets_refresh_values(msg: &assets::Message, s: &assets::State) -> bool {
   matches!(msg, assets::Message::TabSelected(assets::Tab::Values))
-    || (matches!(
-      msg,
-      assets::Message::AssetsLoaded(_) | assets::Message::CorpAssetsLoaded(_)
-    ) && s.active_tab == assets::Tab::Values)
+    || (matches!(msg, assets::Message::AssetsLoaded(_)) && s.active_tab == assets::Tab::Values)
 }
 
 fn collect_new_item_icons(msg: &assets::Message, s: &assets::State) -> Option<Vec<(i32, String)>> {
   match msg {
-    assets::Message::AssetsLoaded(records) | assets::Message::CorpAssetsLoaded(records) => {
+    assets::Message::AssetsLoaded(records) => {
       let items: Vec<(i32, String)> = records
         .iter()
         .map(|r| (r.type_id, r.icon_variant.clone()))

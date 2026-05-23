@@ -279,8 +279,6 @@ pub struct AssetValuesData {
 #[derive(Clone, Debug)]
 pub enum Message {
   AssetsLoaded(Vec<AssetRecord>),
-  CorpAssetsLoaded(Vec<AssetRecord>),
-  FetchCorpAssets(i64),
   InventoryTab(inventory_tab::Message),
   ItemIconsLoaded(Vec<(i32, String, Vec<u8>)>),
   LoadMoreAssets,
@@ -304,7 +302,6 @@ pub struct State {
   pub assets: Vec<AssetRecord>,
   pub category: Category,
   pub characters: Vec<Character>,
-  pub corp_assets: Vec<AssetRecord>,
   pub corporations: Vec<Corporation>,
   pub expanded_containers: HashSet<i64>,
   pub item_icons: HashMap<(i32, String), image::Handle>,
@@ -325,11 +322,7 @@ pub struct State {
 
 impl State {
   pub fn all_assets(&self) -> &[AssetRecord] {
-    if self.picker.selected_corporation_id().is_some() {
-      &self.corp_assets
-    } else {
-      &self.assets
-    }
+    &self.assets
   }
 
   pub fn selected_character(&self) -> Option<i64> {
@@ -367,14 +360,9 @@ impl State {
     let q = self.search_query.to_lowercase();
     let loc = self.selected_loc.clone();
 
-    let source: &[AssetRecord] = if corp_id.is_some() {
-      &self.corp_assets
-    } else {
-      &self.assets
-    };
-
-    source.iter().filter(move |a| {
-      if let Some(id) = char_id
+    self.assets.iter().filter(move |a| {
+      let owner_id = corp_id.or(char_id);
+      if let Some(id) = owner_id
         && a.character_id != id
       {
         return false;
@@ -465,7 +453,6 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State 
     assets: Vec::new(),
     category: Category::All,
     characters,
-    corp_assets: Vec::new(),
     corporations,
     expanded_containers: HashSet::new(),
     item_icons: HashMap::new(),
@@ -672,14 +659,7 @@ fn update_edit_stockpile(state: &mut State, id: i64) {
 fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Task<Message> {
   if let character_picker::Message::Select(_) = &msg {
     state.visible_count = 100;
-  }
-  if let character_picker::Message::Select(character_picker::PickerSelection::Corporation(id)) = &msg {
-    let corp_id = *id;
-    state.picker.update(msg);
-    state.loading = true;
-    state.corp_assets = Vec::new();
     state.selected_loc = None;
-    return iced::Task::done(Message::FetchCorpAssets(corp_id));
   }
   state.picker.update(msg);
   iced::Task::none()
@@ -712,10 +692,6 @@ fn apply_data_loaded(state: &mut State, message: Message) {
       state.assets = assets;
       state.loading = false;
     }
-    Message::CorpAssetsLoaded(records) => {
-      state.corp_assets = records;
-      state.loading = false;
-    }
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
     Message::NavHistoryLoaded(history) => update_nav_history(state, history),
     Message::StockpilesLoaded(piles) => {
@@ -732,7 +708,7 @@ fn apply_data_loaded(state: &mut State, message: Message) {
 /// Processes an assets message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::FetchCorpAssets(_) | Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
+    Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
     Message::InventoryTab(msg) => update_inventory_tab(state, msg),
     Message::LoadMoreAssets => {
       state.visible_count += 50;

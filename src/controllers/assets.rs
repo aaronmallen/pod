@@ -9,11 +9,12 @@ use pod_ui::views::assets::{
   StockpileWithStatus, TopItem,
 };
 
-use crate::services::{Services, character as character_service, corporation as corporation_service};
+use crate::services::{Services, character as character_service};
 
 /// A uniform asset row abstracted over both the DB entity and the ESI response.
 struct RawAssetRow {
   character_id: i64,
+  is_active_ship: bool,
   is_blueprint_copy: Option<bool>,
   is_singleton: bool,
   item_id: i64,
@@ -21,6 +22,7 @@ struct RawAssetRow {
   location_id: i64,
   location_type: String,
   quantity: i32,
+  ship_name: Option<String>,
   type_id: i32,
 }
 
@@ -71,6 +73,7 @@ pub fn new(
   services: &Services,
 ) -> (State, iced::Task<Message>) {
   let chars_for_load = characters.clone();
+  let corps_for_load = corporations.clone();
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
   let state = assets::new(characters, corporations);
   let task = if let Some(db) = services.db.clone() {
@@ -79,7 +82,10 @@ pub fn new(
     let db_stockpiles = db.clone();
     let db_nav = db.clone();
     let nav_char_ids = char_ids.clone();
-    let assets_task = iced::Task::perform(load_assets_from_db(db, chars_for_load, esi), Message::AssetsLoaded);
+    let assets_task = iced::Task::perform(
+      load_all_assets_from_db(db, chars_for_load, corps_for_load, esi),
+      Message::AssetsLoaded,
+    );
     let icons_task = iced::Task::perform(
       async move { load_all_cached_icons(db_icons).await },
       Message::ItemIconsLoaded,
@@ -128,21 +134,6 @@ pub async fn update_stockpile(
 pub async fn delete_stockpile(db: pod_db::Repo, id: i64) -> Vec<StockpileWithStatus> {
   let _ = db.stockpiles().delete_stockpile(id).await;
   load_stockpiles_with_status(db).await
-}
-
-/// Starts a background task to fetch and resolve corp hangar assets from ESI.
-pub fn fetch_corp_assets(corp_id: i64, state: &State, services: &Services) -> iced::Task<Message> {
-  let Some(corp) = state.corporations.iter().find(|c| *c.id() == corp_id).cloned() else {
-    return iced::Task::done(Message::CorpAssetsLoaded(Vec::new()));
-  };
-  let (Some(db), Some(esi)) = (services.db.clone(), services.esi_client.clone()) else {
-    return iced::Task::done(Message::CorpAssetsLoaded(Vec::new()));
-  };
-  let characters = state.characters.clone();
-  iced::Task::perform(
-    load_corp_assets_from_esi(corp, characters, db, esi),
-    Message::CorpAssetsLoaded,
-  )
 }
 
 fn category_name_to_key(name: &str) -> &'static str {
@@ -631,10 +622,11 @@ fn resolve_container_for_row(row: &RawAssetRow, maps: &AssetMaps) -> (String, i6
 
 /// Maps one `RawAssetRow` to an `AssetRecord` using the resolved lookup maps.
 fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> AssetRecord {
-  let type_name = maps
-    .type_name_map
-    .get(&row.type_id)
-    .cloned()
+  let type_name = row
+    .ship_name
+    .clone()
+    .filter(|_| row.is_active_ship)
+    .or_else(|| maps.type_name_map.get(&row.type_id).cloned())
     .unwrap_or_else(|| format!("Type {}", row.type_id));
   let group_id = maps.type_group_map.get(&row.type_id).copied();
   let group_name = group_id
@@ -723,37 +715,46 @@ async fn build_asset_maps(
   }
 }
 
-async fn load_assets_from_db(
+/// Loads all character and corporation assets from DB and returns combined records.
+async fn load_all_assets_from_db(
   db: pod_db::Repo,
   characters: Vec<Character>,
+  corporations: Vec<Corporation>,
   esi: Option<pod_esi::Client>,
 ) -> Vec<AssetRecord> {
   if characters.is_empty() {
     return Vec::new();
   }
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
-  let asset_rows = db
-    .characters()
-    .assets_for_character_ids(&char_ids)
-    .await
-    .unwrap_or_default();
-  if asset_rows.is_empty() {
+  let chars_repo = db.characters();
+  let (char_rows_result, corp_rows) = tokio::join!(
+    chars_repo.assets_for_character_ids(&char_ids),
+    load_corp_asset_rows(&db, &characters, &corporations),
+  );
+  let char_asset_rows = char_rows_result.unwrap_or_default();
+
+  if char_asset_rows.is_empty() && corp_rows.is_empty() {
     return Vec::new();
   }
-  let rows: Vec<RawAssetRow> = asset_rows
+
+  let mut rows: Vec<RawAssetRow> = char_asset_rows
     .into_iter()
     .map(|a| RawAssetRow {
       character_id: a.character_id,
-      item_id: a.item_id,
+      is_active_ship: a.is_active_ship,
       is_blueprint_copy: a.is_blueprint_copy,
       is_singleton: a.is_singleton,
+      item_id: a.item_id,
       location_flag: a.location_flag,
       location_id: a.location_id,
       location_type: a.location_type,
       quantity: a.quantity,
+      ship_name: a.ship_name,
       type_id: a.type_id,
     })
     .collect();
+  rows.extend(corp_rows);
+
   let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
   let station_ids = station_location_ids(&rows);
   let mut station_map = load_station_map(&db, &station_ids).await;
@@ -781,68 +782,46 @@ async fn load_assets_from_db(
   rows
     .into_iter()
     .map(|a| {
-      let char_id = a.character_id;
-      map_row_to_record(a, char_id, &maps)
+      let owner_id = a.character_id;
+      map_row_to_record(a, owner_id, &maps)
     })
     .collect()
 }
 
-async fn load_corp_assets_from_esi(
-  corp: Corporation,
-  characters: Vec<Character>,
-  db: pod_db::Repo,
-  esi: pod_esi::Client,
-) -> Vec<AssetRecord> {
-  let Some(token) = corporation_service::ensure_valid_token(&corp, &esi, &db).await else {
-    return Vec::new();
-  };
-  let grant = corporation_service::refresh_grant(&corp, &token);
-  let corp_id = *corp.id();
-  let asset_rows = match esi.corporation(corp_id).auth(&grant).assets().await {
-    Ok(rows) => rows,
-    Err(_) => return Vec::new(),
-  };
-  if asset_rows.is_empty() {
+/// Loads corporation asset rows from DB for all corps linked to the given characters.
+async fn load_corp_asset_rows(
+  db: &pod_db::Repo,
+  characters: &[Character],
+  corporations: &[Corporation],
+) -> Vec<RawAssetRow> {
+  let char_id_set: HashSet<i64> = characters.iter().map(|c| *c.id()).collect();
+  let corp_ids: Vec<i64> = corporations
+    .iter()
+    .filter(|c| char_id_set.contains(c.auth_character_id()))
+    .map(|c| *c.id())
+    .collect();
+  if corp_ids.is_empty() {
     return Vec::new();
   }
-  let rows: Vec<RawAssetRow> = asset_rows
+  db.assets()
+    .corporation_assets_for_corporation_ids(&corp_ids)
+    .await
+    .unwrap_or_default()
     .into_iter()
     .map(|a| RawAssetRow {
-      character_id: corp_id,
-      item_id: a.item_id,
+      character_id: a.corporation_id,
+      is_active_ship: false,
       is_blueprint_copy: a.is_blueprint_copy,
       is_singleton: a.is_singleton,
+      item_id: a.item_id,
       location_flag: a.location_flag,
       location_id: a.location_id,
       location_type: a.location_type,
       quantity: a.quantity,
+      ship_name: None,
       type_id: a.type_id,
     })
-    .collect();
-  let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
-  let station_ids = station_location_ids(&rows);
-  let mut station_map = load_station_map(&db, &station_ids).await;
-  fetch_missing_stations(&db, &esi, &station_ids, &mut station_map).await;
-  let item_index = build_item_index(&rows);
-  let is_container_set = build_is_container_set(&item_index);
-  let corp_char_id = characters.first().map(|c| *c.id()).unwrap_or(corp_id);
-  let structure_locs: Vec<(i64, i64)> = rows
-    .iter()
-    .filter(|a| a.location_id >= i32::MAX as i64 && !item_index.contains_key(&a.location_id))
-    .map(|a| (a.location_id, corp_char_id))
-    .collect();
-  let maps = build_asset_maps(
-    &db,
-    &type_ids,
-    structure_locs,
-    &characters,
-    Some(&esi),
-    station_map,
-    item_index,
-    is_container_set,
-  )
-  .await;
-  rows.into_iter().map(|a| map_row_to_record(a, corp_id, &maps)).collect()
+    .collect()
 }
 
 async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, String, Vec<u8>)> {
@@ -1171,6 +1150,7 @@ mod tests {
     fn make_row(item_id: i64, location_id: i64, location_type: &str, flag: &str, type_id: i32) -> RawAssetRow {
       RawAssetRow {
         character_id: 1,
+        is_active_ship: false,
         is_blueprint_copy: None,
         is_singleton: false,
         item_id,
@@ -1178,6 +1158,7 @@ mod tests {
         location_id,
         location_type: location_type.to_string(),
         quantity: 1,
+        ship_name: None,
         type_id,
       }
     }
@@ -1272,6 +1253,7 @@ mod tests {
     fn space_row(location_id: i64) -> RawAssetRow {
       RawAssetRow {
         character_id: 1,
+        is_active_ship: false,
         is_blueprint_copy: None,
         is_singleton: false,
         item_id: 1,
@@ -1279,6 +1261,7 @@ mod tests {
         location_id,
         location_type: "space".to_string(),
         quantity: 1,
+        ship_name: None,
         type_id: 1,
       }
     }

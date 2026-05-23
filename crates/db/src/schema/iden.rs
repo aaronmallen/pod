@@ -3,6 +3,15 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveIden)]
+pub enum AssetSyncState {
+  CacheExpiresAt,
+  LastSyncedAt,
+  OwnerId,
+  OwnerType,
+  Table,
+}
+
+#[derive(DeriveIden)]
 pub enum Bloodlines {
   Charisma,
   CorporationId,
@@ -21,6 +30,22 @@ pub enum Bloodlines {
 #[derive(DeriveIden)]
 pub enum CharacterAssets {
   CharacterId,
+  IsActiveShip,
+  IsBlueprintCopy,
+  IsSingleton,
+  ItemId,
+  LocationFlag,
+  LocationId,
+  LocationType,
+  Quantity,
+  ShipName,
+  Table,
+  TypeId,
+}
+
+#[derive(DeriveIden)]
+pub enum CorporationAssets {
+  CorporationId,
   IsBlueprintCopy,
   IsSingleton,
   ItemId,

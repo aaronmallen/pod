@@ -75,6 +75,11 @@ pub mod m0000000044_add_solar_system_id_to_structure_cache;
 // Character auth
 pub mod m0000000045_add_granted_scopes_to_characters;
 
+// Offline-first asset sync
+pub mod m0000000046_add_active_ship_to_character_assets;
+pub mod m0000000047_create_corporation_assets;
+pub mod m0000000048_create_asset_sync_state;
+
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
 
@@ -144,6 +149,10 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000044_add_solar_system_id_to_structure_cache::Migration),
       // Character auth
       Box::new(m0000000045_add_granted_scopes_to_characters::Migration),
+      // Offline-first asset sync
+      Box::new(m0000000046_add_active_ship_to_character_assets::Migration),
+      Box::new(m0000000047_create_corporation_assets::Migration),
+      Box::new(m0000000048_create_asset_sync_state::Migration),
     ]
   }
 }

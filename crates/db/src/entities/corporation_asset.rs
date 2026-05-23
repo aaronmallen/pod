@@ -1,17 +1,15 @@
-//! Database entity for EVE Online character assets.
+//! Database entity for EVE Online corporation assets.
 
-use pod_model::CharacterAsset;
+use pod_model::CorporationAsset;
 use sea_orm::prelude::*;
 
-/// An asset row stored in the `character_assets` table.
+/// An asset row stored in the `corporation_assets` table.
 #[sea_orm::model]
 #[derive(Clone, Debug, DeriveEntityModel, PartialEq)]
-#[sea_orm(table_name = "character_assets")]
+#[sea_orm(table_name = "corporation_assets")]
 pub struct Model {
-  /// ID of the owning character.
-  pub character_id: i64,
-  /// True when this row is a synthetic active-ship entry injected by the sync job.
-  pub is_active_ship: bool,
+  /// ID of the owning corporation.
+  pub corporation_id: i64,
   /// True if this is a blueprint copy; false if original; None if not a blueprint.
   pub is_blueprint_copy: Option<bool>,
   /// Whether this item is a packaged singleton.
@@ -19,7 +17,7 @@ pub struct Model {
   /// Unique EVE item instance ID (primary key).
   #[sea_orm(primary_key, auto_increment = false)]
   pub item_id: i64,
-  /// Asset container flag (e.g. "Cargo", "HiSlot0").
+  /// Asset container flag (e.g. "CorpSAG1", "Cargo").
   pub location_flag: String,
   /// ID of the location where the asset resides.
   pub location_id: i64,
@@ -27,8 +25,6 @@ pub struct Model {
   pub location_type: String,
   /// Stack size.
   pub quantity: i32,
-  /// Display name of the ship when `is_active_ship` is true; `None` otherwise.
-  pub ship_name: Option<String>,
   /// EVE type ID of the item.
   pub type_id: i32,
 }
@@ -36,11 +32,10 @@ pub struct Model {
 /// Default active-model behaviour with no custom hooks.
 impl ActiveModelBehavior for ActiveModel {}
 
-impl From<Model> for CharacterAsset {
+impl From<Model> for CorporationAsset {
   fn from(m: Model) -> Self {
     Self {
-      character_id: m.character_id,
-      is_active_ship: m.is_active_ship,
+      corporation_id: m.corporation_id,
       is_blueprint_copy: m.is_blueprint_copy,
       is_singleton: m.is_singleton,
       item_id: m.item_id,
@@ -48,7 +43,6 @@ impl From<Model> for CharacterAsset {
       location_id: m.location_id,
       location_type: m.location_type,
       quantity: m.quantity,
-      ship_name: m.ship_name,
       type_id: m.type_id,
     }
   }

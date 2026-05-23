@@ -613,6 +613,7 @@ mod tests {
     use crate::entities::character_asset::{ActiveModel as AssetActive, Entity as AssetEntity};
     AssetEntity::insert(AssetActive {
       character_id: Set(char_id),
+      is_active_ship: Set(false),
       is_blueprint_copy: Set(None),
       is_singleton: Set(false),
       item_id: Set(type_id as i64 * 1000 + char_id),
@@ -620,6 +621,7 @@ mod tests {
       location_id: Set(60003760),
       location_type: Set("station".to_string()),
       quantity: Set(qty),
+      ship_name: Set(None),
       type_id: Set(type_id),
     })
     .exec(db)

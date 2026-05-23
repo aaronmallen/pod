@@ -1006,15 +1006,16 @@ fn map_character_assets(character_id: i64, raw: Vec<pod_esi::models::character::
   raw
     .into_iter()
     .map(|a| CharacterAsset {
-      item_id: a.item_id,
       character_id,
-      type_id: a.type_id,
+      is_blueprint_copy: a.is_blueprint_copy,
+      is_singleton: a.is_singleton,
+      item_id: a.item_id,
+      location_flag: a.location_flag,
       location_id: a.location_id,
       location_type: a.location_type,
-      location_flag: a.location_flag,
       quantity: a.quantity,
-      is_singleton: a.is_singleton,
-      is_blueprint_copy: a.is_blueprint_copy,
+      type_id: a.type_id,
+      ..Default::default()
     })
     .collect()
 }

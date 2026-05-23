@@ -1,5 +1,6 @@
 //! Repository root and sub-repository modules.
 
+pub mod assets;
 pub mod characters;
 pub mod clones;
 pub mod contacts;
@@ -27,6 +28,11 @@ impl Root {
     Self {
       connection,
     }
+  }
+
+  /// Returns an assets sub-repository (corporation assets and sync state).
+  pub fn assets(&self) -> assets::Repo<'_> {
+    assets::Repo::new(&self.connection)
   }
 
   /// Returns a characters sub-repository.

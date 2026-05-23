@@ -256,28 +256,32 @@ impl<'a> Repo<'a> {
     for asset in assets {
       asset.validate()?;
       let active = AssetActive {
-        item_id: ActiveValue::Set(asset.item_id),
         character_id: ActiveValue::Set(character_id),
-        type_id: ActiveValue::Set(asset.type_id),
+        is_active_ship: ActiveValue::Set(asset.is_active_ship),
+        is_blueprint_copy: ActiveValue::Set(asset.is_blueprint_copy),
+        is_singleton: ActiveValue::Set(asset.is_singleton),
+        item_id: ActiveValue::Set(asset.item_id),
+        location_flag: ActiveValue::Set(asset.location_flag.clone()),
         location_id: ActiveValue::Set(asset.location_id),
         location_type: ActiveValue::Set(asset.location_type.clone()),
-        location_flag: ActiveValue::Set(asset.location_flag.clone()),
         quantity: ActiveValue::Set(asset.quantity),
-        is_singleton: ActiveValue::Set(asset.is_singleton),
-        is_blueprint_copy: ActiveValue::Set(asset.is_blueprint_copy),
+        ship_name: ActiveValue::Set(asset.ship_name.clone()),
+        type_id: ActiveValue::Set(asset.type_id),
       };
       AssetEntity::insert(active)
         .on_conflict(
           OnConflict::column(AssetColumn::ItemId)
             .update_columns([
               AssetColumn::CharacterId,
-              AssetColumn::TypeId,
+              AssetColumn::IsActiveShip,
+              AssetColumn::IsBlueprintCopy,
+              AssetColumn::IsSingleton,
+              AssetColumn::LocationFlag,
               AssetColumn::LocationId,
               AssetColumn::LocationType,
-              AssetColumn::LocationFlag,
               AssetColumn::Quantity,
-              AssetColumn::IsSingleton,
-              AssetColumn::IsBlueprintCopy,
+              AssetColumn::ShipName,
+              AssetColumn::TypeId,
             ])
             .to_owned(),
         )
@@ -287,17 +291,20 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
-  /// Deletes asset rows for `character_id` whose `item_id` is not in `keep_ids`.
-  /// If `keep_ids` is empty all assets for the character are removed.
+  /// Deletes non-active-ship asset rows for `character_id` whose `item_id` is not in `keep_ids`.
+  /// If `keep_ids` is empty all non-active-ship assets for the character are removed.
+  /// Active ship rows (`is_active_ship = true`) are never touched by this method.
   pub async fn delete_stale_assets(&self, character_id: i64, keep_ids: &[i64]) -> Result<u64, Error> {
     let result = if keep_ids.is_empty() {
       AssetEntity::delete_many()
         .filter(AssetColumn::CharacterId.eq(character_id))
+        .filter(AssetColumn::IsActiveShip.eq(false))
         .exec(self.db)
         .await?
     } else {
       AssetEntity::delete_many()
         .filter(AssetColumn::CharacterId.eq(character_id))
+        .filter(AssetColumn::IsActiveShip.eq(false))
         .filter(AssetColumn::ItemId.is_not_in(keep_ids.to_vec()))
         .exec(self.db)
         .await?
@@ -762,15 +769,16 @@ mod tests {
 
     async fn insert_asset(db: &DatabaseConnection, character_id: i64, item_id: i64) {
       let asset = CharacterAsset {
-        item_id,
         character_id,
-        type_id: 1,
+        is_blueprint_copy: None,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_string(),
         location_id: 60003760,
         location_type: "station".to_string(),
-        location_flag: "Hangar".to_string(),
         quantity: 1,
-        is_singleton: false,
-        is_blueprint_copy: None,
+        type_id: 1,
+        ..Default::default()
       };
       let repo = Repo::new(db);
       repo.upsert_assets(character_id, &[asset]).await.unwrap();

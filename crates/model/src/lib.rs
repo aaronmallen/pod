@@ -1,5 +1,6 @@
 //! Domain models shared across the Pod crate ecosystem.
 
+mod asset_sync_state;
 mod bloodline;
 mod certificate;
 mod character;
@@ -12,6 +13,7 @@ mod clone;
 mod constellation;
 mod contact;
 mod corporation;
+mod corporation_asset;
 mod faction;
 mod item_category;
 mod item_group;
@@ -36,6 +38,7 @@ mod station;
 mod wallet_journal_entry;
 mod wallet_transaction;
 
+pub use asset_sync_state::Model as AssetSyncState;
 pub use bloodline::Model as Bloodline;
 pub use certificate::Certificate;
 pub use character::{Model as Character, TrainingQueueEntry};
@@ -51,6 +54,7 @@ pub use clone::{Clone, CloneImplant};
 pub use constellation::Model as Constellation;
 pub use contact::{Contact, ContactLabel, ContactType};
 pub use corporation::Model as Corporation;
+pub use corporation_asset::Model as CorporationAsset;
 pub use faction::Model as Faction;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;

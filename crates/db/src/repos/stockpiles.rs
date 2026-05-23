@@ -276,6 +276,7 @@ mod tests {
     let item_id = NEXT_ITEM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     AssetEntity::insert(AssetActive {
       character_id: Set(character_id),
+      is_active_ship: Set(false),
       is_blueprint_copy: Set(None),
       is_singleton: Set(false),
       item_id: Set(item_id),
@@ -283,6 +284,7 @@ mod tests {
       location_id: Set(location_id),
       location_type: Set("station".to_string()),
       quantity: Set(quantity),
+      ship_name: Set(None),
       type_id: Set(type_id),
     })
     .exec(db)

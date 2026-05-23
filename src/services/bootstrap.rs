@@ -269,6 +269,7 @@ async fn sync_assets(
         location_type: a.location_type,
         quantity: a.quantity,
         type_id: a.type_id,
+        ..Default::default()
       })
       .collect();
     let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();

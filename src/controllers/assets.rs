@@ -476,9 +476,15 @@ async fn fetch_missing_stations(
   }
 }
 
-/// Builds a solar-system name map from systems referenced by the station map.
-async fn load_system_name_map(db: &pod_db::Repo, station_map: &HashMap<i32, Station>) -> HashMap<i32, String> {
-  let sys_ids: Vec<i32> = unique_ids(station_map.values().map(|s| *s.solar_system_id()));
+/// Builds a solar-system name map from systems referenced by stations or direct space locations.
+async fn load_system_name_map(
+  db: &pod_db::Repo,
+  station_map: &HashMap<i32, Station>,
+  space_sys_ids: &[i32],
+) -> HashMap<i32, String> {
+  let mut ids: Vec<i32> = unique_ids(station_map.values().map(|s| *s.solar_system_id()));
+  ids.extend_from_slice(space_sys_ids);
+  let sys_ids = unique_ids(ids.into_iter());
   db.universe()
     .solar_systems()
     .find_by_ids(&sys_ids)
@@ -554,6 +560,18 @@ fn station_location_ids(rows: &[RawAssetRow]) -> Vec<i32> {
       .iter()
       .filter(|a| a.location_type == "station" && a.location_id < i32::MAX as i64)
       .map(|a| a.location_id as i32),
+  )
+}
+
+/// Extracts solar system IDs from rows whose location is a solar system or open space.
+fn space_system_location_ids(rows: &[RawAssetRow]) -> Vec<i32> {
+  unique_ids(
+    rows
+      .iter()
+      .filter(|a| {
+        (a.location_type == "solar_system" || a.location_type == "space") && a.location_id < i32::MAX as i64
+      })
+      .filter_map(|a| i32::try_from(a.location_id).ok()),
   )
 }
 
@@ -696,6 +714,7 @@ async fn build_asset_maps(
   characters: &[Character],
   esi: Option<&pod_esi::Client>,
   station_map: HashMap<i32, Station>,
+  space_sys_ids: Vec<i32>,
   item_index: HashMap<i64, (i64, String, String, i32)>,
   is_container_set: HashSet<i64>,
 ) -> AssetMaps {
@@ -706,7 +725,7 @@ async fn build_asset_maps(
     price_cache,
   ) = tokio::join!(
     load_type_maps(db, type_ids),
-    load_system_name_map(db, &station_map),
+    load_system_name_map(db, &station_map, &space_sys_ids),
     resolve_structure_names(&structure_locs, characters, esi, db),
     build_price_cache(db, type_ids),
   );
@@ -775,6 +794,7 @@ async fn load_all_assets_from_db(
 
   let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
   let station_ids = station_location_ids(&rows);
+  let space_sys_ids = space_system_location_ids(&rows);
   let mut station_map = load_station_map(&db, &station_ids).await;
   if let Some(ref esi_client) = esi {
     fetch_missing_stations(&db, esi_client, &station_ids, &mut station_map).await;
@@ -793,6 +813,7 @@ async fn load_all_assets_from_db(
     &characters,
     esi.as_ref(),
     station_map,
+    space_sys_ids,
     item_index,
     is_container_set,
   )

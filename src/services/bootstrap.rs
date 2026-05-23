@@ -308,11 +308,12 @@ async fn sync_active_ship(
     }
   };
 
-  let location_id = location.station_id.unwrap_or(location.solar_system_id);
-  let location_type = if location.station_id.is_some() {
-    "station"
+  let (location_id, location_type) = if let Some(id) = location.station_id {
+    (id, "station")
+  } else if let Some(id) = location.structure_id {
+    (id, "item")
   } else {
-    "solar_system"
+    (location.solar_system_id, "solar_system")
   };
 
   let synthetic = CharacterAsset {

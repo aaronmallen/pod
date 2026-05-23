@@ -14,6 +14,8 @@ pub struct Model {
   #[get = "pub"]
   id: i32,
   #[get = "pub"]
+  item_category: Option<crate::item_category::Model>,
+  #[get = "pub"]
   item_category_id: i32,
   #[getset(get = "pub", get_mut = "pub")]
   item_types: Vec<crate::item_type::Model>,
@@ -30,6 +32,7 @@ impl Model {
     Self {
       dirty: false,
       id,
+      item_category: None,
       item_category_id,
       item_types: Vec::new(),
       name: name.into(),

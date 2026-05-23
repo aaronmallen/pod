@@ -7,6 +7,8 @@ use sea_orm::prelude::*;
 #[derive(Clone, Debug, DeriveEntityModel, PartialEq)]
 #[sea_orm(table_name = "type_prices")]
 pub struct Model {
+  /// CCP's adjusted price for this type from `/v1/markets/prices/`.
+  pub adjusted_price: Option<f64>,
   /// ISO-8601 timestamp when the price was fetched.
   pub fetched_at: String,
   /// Auto-increment primary key.

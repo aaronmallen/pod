@@ -50,12 +50,19 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts a new intraday price observation for `type_id`.
-  pub async fn insert_price(&self, type_id: i32, price: f64, fetched_at: DateTime<Utc>) -> Result<(), Error> {
+  pub async fn insert_price(
+    &self,
+    type_id: i32,
+    price: f64,
+    adjusted_price: Option<f64>,
+    fetched_at: DateTime<Utc>,
+  ) -> Result<(), Error> {
     let active = PriceActive {
-      id: ActiveValue::NotSet,
-      type_id: ActiveValue::Set(type_id),
-      price: ActiveValue::Set(price),
+      adjusted_price: ActiveValue::Set(adjusted_price),
       fetched_at: ActiveValue::Set(fetched_at.to_rfc3339()),
+      id: ActiveValue::NotSet,
+      price: ActiveValue::Set(price),
+      type_id: ActiveValue::Set(type_id),
     };
     PriceEntity::insert(active).exec(self.db).await?;
     Ok(())
@@ -343,7 +350,7 @@ mod tests {
       let db = setup_db().await;
       let repo = Repo::new(&db);
       let ts = utc(2025, 1, 1, 12, 0, 0);
-      repo.insert_price(34, 5.5, ts).await.unwrap();
+      repo.insert_price(34, 5.5, None, ts).await.unwrap();
 
       let result = repo.latest_price(34).await.unwrap();
       assert_eq!(result, Some(5.5));
@@ -353,9 +360,18 @@ mod tests {
     async fn returns_most_recent_intraday_when_multiple_exist() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      repo.insert_price(34, 5.5, utc(2025, 1, 1, 10, 0, 0)).await.unwrap();
-      repo.insert_price(34, 6.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
-      repo.insert_price(34, 5.8, utc(2025, 1, 1, 11, 0, 0)).await.unwrap();
+      repo
+        .insert_price(34, 5.5, None, utc(2025, 1, 1, 10, 0, 0))
+        .await
+        .unwrap();
+      repo
+        .insert_price(34, 6.0, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
+      repo
+        .insert_price(34, 5.8, None, utc(2025, 1, 1, 11, 0, 0))
+        .await
+        .unwrap();
 
       let result = repo.latest_price(34).await.unwrap();
       assert_eq!(result, Some(6.0));
@@ -458,7 +474,10 @@ mod tests {
     async fn it_returns_intraday_price_when_present() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      repo.insert_price(34, 5.5, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      repo
+        .insert_price(34, 5.5, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
 
       let result = repo.latest_prices(&[34]).await.unwrap();
 
@@ -480,7 +499,10 @@ mod tests {
     async fn it_prefers_intraday_over_history() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      repo.insert_price(34, 7.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      repo
+        .insert_price(34, 7.0, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
       insert_history(&db, 34, "2025-01-01", 5.9).await;
 
       let result = repo.latest_prices(&[34]).await.unwrap();
@@ -492,7 +514,10 @@ mod tests {
     async fn it_resolves_multiple_type_ids_in_one_call() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      repo.insert_price(34, 5.5, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
+      repo
+        .insert_price(34, 5.5, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
       insert_history(&db, 35, "2025-01-01", 3.0).await;
 
       let result = repo.latest_prices(&[34, 35]).await.unwrap();
@@ -559,8 +584,14 @@ mod tests {
       let db = setup_db().await;
       let repo = Repo::new(&db);
 
-      repo.insert_price(34, 5.0, utc(2025, 1, 1, 12, 0, 0)).await.unwrap();
-      repo.insert_price(34, 5.5, utc(2025, 1, 3, 12, 0, 0)).await.unwrap();
+      repo
+        .insert_price(34, 5.0, None, utc(2025, 1, 1, 12, 0, 0))
+        .await
+        .unwrap();
+      repo
+        .insert_price(34, 5.5, None, utc(2025, 1, 3, 12, 0, 0))
+        .await
+        .unwrap();
 
       let before = NaiveDate::from_ymd_opt(2025, 1, 3).unwrap();
       let result = repo.dates_needing_aggregation(before).await.unwrap();
@@ -570,17 +601,56 @@ mod tests {
   }
 
   mod insert_price {
+    use sea_orm::EntityTrait;
+
     use super::*;
+    use crate::entities::type_price::{Column as PriceColumn, Entity as PriceEntity};
 
     #[tokio::test]
-    async fn inserts_price_row() {
+    async fn it_inserts_price_row() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
       let ts = utc(2025, 1, 1, 12, 0, 0);
-      repo.insert_price(34, 5.5, ts).await.unwrap();
+      repo.insert_price(34, 5.5, None, ts).await.unwrap();
 
       let result = repo.latest_price(34).await.unwrap();
       assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_persists_adjusted_price_when_provided() {
+      use sea_orm::{ColumnTrait, QueryFilter};
+
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let ts = utc(2025, 1, 1, 12, 0, 0);
+      repo.insert_price(34, 5.5, Some(4.8), ts).await.unwrap();
+
+      let row = PriceEntity::find()
+        .filter(PriceColumn::TypeId.eq(34))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(row.adjusted_price, Some(4.8));
+    }
+
+    #[tokio::test]
+    async fn it_stores_null_adjusted_price_when_not_provided() {
+      use sea_orm::{ColumnTrait, QueryFilter};
+
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let ts = utc(2025, 1, 1, 12, 0, 0);
+      repo.insert_price(34, 5.5, None, ts).await.unwrap();
+
+      let row = PriceEntity::find()
+        .filter(PriceColumn::TypeId.eq(34))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(row.adjusted_price, None);
     }
   }
 

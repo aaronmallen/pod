@@ -1,5 +1,6 @@
 //! Database entity for EVE Online character clones.
 
+use pod_model::Clone as CloneModel;
 use sea_orm::prelude::*;
 
 /// A clone record stored in the `character_clones` table.
@@ -12,6 +13,9 @@ pub struct Model {
   /// Primary key: EVE clone identifier (0 for the active implant set).
   #[sea_orm(primary_key, auto_increment = false)]
   pub id: i64,
+  /// Implants installed in this clone.
+  #[sea_orm(has_many)]
+  pub implants: HasMany<super::character_clone_implant::Entity>,
   /// ISO-8601 timestamp when the clone was installed, if known.
   pub installed_at: Option<String>,
   /// Whether this is the character's active clone.
@@ -32,3 +36,35 @@ pub struct Model {
 
 /// Default active-model behaviour with no custom hooks.
 impl ActiveModelBehavior for ActiveModel {}
+
+impl From<Model> for CloneModel {
+  fn from(entity: Model) -> Self {
+    let mut model = CloneModel::new(
+      entity.name.unwrap_or_default(),
+      entity.station_name,
+      entity.system_id as i64,
+      entity.region_name,
+    );
+    model
+      .set_implants(vec![])
+      .set_installed_at(entity.installed_at)
+      .set_is_active(entity.is_active);
+    model
+  }
+}
+
+impl From<ModelEx> for CloneModel {
+  fn from(entity: ModelEx) -> Self {
+    let mut model = CloneModel::new(
+      entity.name.unwrap_or_default(),
+      entity.station_name,
+      entity.system_id as i64,
+      entity.region_name,
+    );
+    model
+      .set_implants(entity.implants.into_iter().map(Into::into).collect())
+      .set_installed_at(entity.installed_at)
+      .set_is_active(entity.is_active);
+    model
+  }
+}

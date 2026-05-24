@@ -1,7 +1,8 @@
 //! Repository for global tag and entity-tag assignment persistence.
 
 use sea_orm::{
-  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait, sea_query::OnConflict,
+  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+  sea_query::{Expr, OnConflict},
 };
 
 use crate::{
@@ -25,10 +26,52 @@ impl<'a> Repo<'a> {
     }
   }
 
-  /// Returns all global tags.
+  /// Creates a new tag with the given name, appended at the end of the sort order.
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn create(&self, name: &str) -> Result<Tag, Error> {
+    let next_sort_order = TagEntity::find()
+      .all(self.db)
+      .await?
+      .into_iter()
+      .map(|t| t.sort_order)
+      .max()
+      .map(|m| m + 1)
+      .unwrap_or(0);
+    let active = TagActive {
+      color: ActiveValue::NotSet,
+      id: ActiveValue::NotSet,
+      name: ActiveValue::Set(name.to_string()),
+      sort_order: ActiveValue::Set(next_sort_order),
+    };
+    let result = TagEntity::insert(active).exec(self.db).await?;
+    Ok(
+      TagEntity::find_by_id(result.last_insert_id)
+        .one(self.db)
+        .await?
+        .expect("tag must exist after insert"),
+    )
+  }
+
+  /// Deletes a tag and its entity-tag assignments.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
+  pub async fn delete(&self, id: i32) -> Result<(), Error> {
+    EntityTagEntity::delete_many()
+      .filter(EntityTagColumn::TagId.eq(id))
+      .exec(self.db)
+      .await?;
+    TagEntity::delete_by_id(id).exec(self.db).await?;
+    Ok(())
+  }
+
+  /// Returns all global tags ordered by sort_order ascending.
   #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_all(&self) -> Result<Vec<Tag>, Error> {
-    Ok(TagEntity::find().all(self.db).await?)
+    Ok(
+      TagEntity::find()
+        .order_by_asc(TagColumn::SortOrder)
+        .all(self.db)
+        .await?,
+    )
   }
 
   /// Returns an existing tag by name, or inserts it and returns the new row.
@@ -38,8 +81,10 @@ impl<'a> Repo<'a> {
       return Ok(existing);
     }
     let active = TagActive {
+      color: ActiveValue::NotSet,
       id: ActiveValue::NotSet,
       name: ActiveValue::Set(name.to_string()),
+      sort_order: ActiveValue::NotSet,
     };
     TagEntity::insert(active)
       .on_conflict(OnConflict::column(TagColumn::Name).do_nothing().to_owned())
@@ -52,6 +97,75 @@ impl<'a> Repo<'a> {
         .await?
         .expect("tag must exist after insert"),
     )
+  }
+
+  /// Renames a tag, returning the updated row.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
+  pub async fn rename(&self, id: i32, name: &str) -> Result<Tag, Error> {
+    TagEntity::update_many()
+      .col_expr(TagColumn::Name, Expr::value(name.to_string()))
+      .filter(TagColumn::Id.eq(id))
+      .exec(self.db)
+      .await?;
+    Ok(
+      TagEntity::find_by_id(id)
+        .one(self.db)
+        .await?
+        .expect("tag must exist after rename"),
+    )
+  }
+
+  /// Updates the sort order for a slice of tag IDs, assigning each its slice index.
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn reorder(&self, ordered_ids: &[i32]) -> Result<(), Error> {
+    let ordered_ids = ordered_ids.to_vec();
+    self
+      .db
+      .transaction::<_, (), sea_orm::DbErr>(|txn| {
+        Box::pin(async move {
+          for (i, id) in ordered_ids.iter().enumerate() {
+            TagEntity::update_many()
+              .col_expr(TagColumn::SortOrder, Expr::value(i as i32))
+              .filter(TagColumn::Id.eq(*id))
+              .exec(txn)
+              .await?;
+          }
+          Ok(())
+        })
+      })
+      .await
+      .map_err(|e| match e {
+        sea_orm::TransactionError::Transaction(db_err) => Error::Database(db_err),
+        sea_orm::TransactionError::Connection(db_err) => Error::Database(db_err),
+      })
+  }
+
+  /// Replaces all tag assignments for a character atomically.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
+  pub async fn set_character_tags(&self, character_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
+    self.set_entity_tags(character_id, "character", tag_ids).await
+  }
+
+  /// Sets or clears the color for a tag, returning the updated row.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
+  pub async fn set_color(&self, id: i32, color: Option<&str>) -> Result<Tag, Error> {
+    TagEntity::update_many()
+      .col_expr(TagColumn::Color, Expr::value(color.map(|s| s.to_string())))
+      .filter(TagColumn::Id.eq(id))
+      .exec(self.db)
+      .await?;
+    Ok(
+      TagEntity::find_by_id(id)
+        .one(self.db)
+        .await?
+        .expect("tag must exist after set_color"),
+    )
+  }
+
+  /// Replaces all tag assignments for a corporation atomically.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
+  pub async fn set_corporation_tags(&self, corporation_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
+    self.set_entity_tags(corporation_id, "corporation", tag_ids).await
   }
 
   /// Replaces all tag assignments for an entity atomically.
@@ -88,7 +202,19 @@ impl<'a> Repo<'a> {
       })
   }
 
-  /// Returns all tags assigned to the given entity.
+  /// Returns all tags assigned to the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
+  pub async fn tags_for_character(&self, character_id: i64) -> Result<Vec<Tag>, Error> {
+    self.tags_for_entity(character_id, "character").await
+  }
+
+  /// Returns all tags assigned to the given corporation.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
+  pub async fn tags_for_corporation(&self, corporation_id: i64) -> Result<Vec<Tag>, Error> {
+    self.tags_for_entity(corporation_id, "corporation").await
+  }
+
+  /// Returns all tags assigned to the given entity, ordered by sort_order.
   #[tracing::instrument(level = "trace", skip(self), fields(entity_id = entity_id))]
   pub async fn tags_for_entity(&self, entity_id: i64, entity_type: &str) -> Result<Vec<Tag>, Error> {
     let tag_ids: Vec<i32> = EntityTagEntity::find()
@@ -107,33 +233,10 @@ impl<'a> Repo<'a> {
     Ok(
       TagEntity::find()
         .filter(TagColumn::Id.is_in(tag_ids))
+        .order_by_asc(TagColumn::SortOrder)
         .all(self.db)
         .await?,
     )
-  }
-
-  /// Replaces all tag assignments for a character atomically.
-  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
-  pub async fn set_character_tags(&self, character_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
-    self.set_entity_tags(character_id, "character", tag_ids).await
-  }
-
-  /// Returns all tags assigned to the given character.
-  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
-  pub async fn tags_for_character(&self, character_id: i64) -> Result<Vec<Tag>, Error> {
-    self.tags_for_entity(character_id, "character").await
-  }
-
-  /// Replaces all tag assignments for a corporation atomically.
-  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
-  pub async fn set_corporation_tags(&self, corporation_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
-    self.set_entity_tags(corporation_id, "corporation", tag_ids).await
-  }
-
-  /// Returns all tags assigned to the given corporation.
-  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
-  pub async fn tags_for_corporation(&self, corporation_id: i64) -> Result<Vec<Tag>, Error> {
-    self.tags_for_entity(corporation_id, "corporation").await
   }
 }
 
@@ -176,82 +279,228 @@ mod tests {
     .unwrap();
   }
 
-  mod find_all {
+  mod create {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[tokio::test]
-    async fn returns_empty_when_no_tags_exist() {
+    async fn it_creates_a_tag_with_the_given_name() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      let result = repo.find_all().await.unwrap();
-      assert!(result.is_empty());
-    }
+      let tag = repo.create("pvp").await.unwrap();
 
-    #[tokio::test]
-    async fn returns_all_tags_after_creation() {
-      let db = setup_db().await;
-      let repo = Repo::new(&db);
-      repo.find_or_create("pvp").await.unwrap();
-      repo.find_or_create("industry").await.unwrap();
-
-      let result = repo.find_all().await.unwrap();
-      assert_eq!(result.len(), 2);
-    }
-  }
-
-  mod find_or_create {
-    use super::*;
-
-    #[tokio::test]
-    async fn creates_new_tag_when_not_found() {
-      let db = setup_db().await;
-      let repo = Repo::new(&db);
-      let tag = repo.find_or_create("pvp").await.unwrap();
       assert_eq!(tag.name, "pvp");
     }
 
     #[tokio::test]
-    async fn returns_existing_tag_when_found() {
+    async fn it_sets_color_to_none() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      let first = repo.find_or_create("pvp").await.unwrap();
-      let second = repo.find_or_create("pvp").await.unwrap();
-      assert_eq!(first.id, second.id);
+      let tag = repo.create("pvp").await.unwrap();
+
+      assert_eq!(tag.color, None);
     }
 
     #[tokio::test]
-    async fn creates_distinct_tags_for_different_names() {
+    async fn it_assigns_ascending_sort_orders() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      let a = repo.find_or_create("pvp").await.unwrap();
-      let b = repo.find_or_create("pve").await.unwrap();
-      assert_ne!(a.id, b.id);
+      let first = repo.create("alpha").await.unwrap();
+      let second = repo.create("beta").await.unwrap();
+
+      assert!(first.sort_order < second.sort_order);
+    }
+
+    #[tokio::test]
+    async fn it_starts_at_sort_order_zero_when_table_is_empty() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+
+      assert_eq!(tag.sort_order, 0);
     }
   }
 
-  mod tags_for_entity {
+  mod delete {
     use super::*;
 
     #[tokio::test]
-    async fn returns_empty_when_entity_has_no_tags() {
+    async fn it_removes_the_tag() {
       let db = setup_db().await;
       let repo = Repo::new(&db);
-      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      let tag = repo.create("pvp").await.unwrap();
+      repo.delete(tag.id).await.unwrap();
+
+      let all = repo.find_all().await.unwrap();
+      assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_removes_entity_tag_assignments() {
+      let db = setup_db().await;
+      insert_character(&db, 1, "Alice").await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+      repo.set_character_tags(1, vec![tag.id]).await.unwrap();
+      repo.delete(tag.id).await.unwrap();
+
+      let result = repo.tags_for_character(1).await.unwrap();
+      assert!(result.is_empty());
+    }
+  }
+
+  mod find_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_tags_exist() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.find_all().await.unwrap();
+
       assert!(result.is_empty());
     }
 
     #[tokio::test]
-    async fn returns_tags_after_set_entity_tags() {
+    async fn it_returns_all_tags_ordered_by_sort_order() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.create("gamma").await.unwrap();
+      repo.create("alpha").await.unwrap();
+      repo.reorder(&[2, 1]).await.unwrap();
+
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result[0].sort_order, 0);
+      assert_eq!(result[1].sort_order, 1);
+    }
+  }
+
+  mod find_or_create {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_creates_new_tag_when_not_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.find_or_create("pvp").await.unwrap();
+
+      assert_eq!(tag.name, "pvp");
+    }
+
+    #[tokio::test]
+    async fn it_returns_existing_tag_when_found() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let first = repo.find_or_create("pvp").await.unwrap();
+      let second = repo.find_or_create("pvp").await.unwrap();
+
+      assert_eq!(first.id, second.id);
+    }
+
+    #[tokio::test]
+    async fn it_creates_distinct_tags_for_different_names() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let a = repo.find_or_create("pvp").await.unwrap();
+      let b = repo.find_or_create("pve").await.unwrap();
+
+      assert_ne!(a.id, b.id);
+    }
+  }
+
+  mod rename {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_updates_the_tag_name() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+      let updated = repo.rename(tag.id, "pve").await.unwrap();
+
+      assert_eq!(updated.name, "pve");
+    }
+
+    #[tokio::test]
+    async fn it_preserves_other_fields() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+      let updated = repo.rename(tag.id, "pve").await.unwrap();
+
+      assert_eq!(updated.id, tag.id);
+      assert_eq!(updated.sort_order, tag.sort_order);
+    }
+  }
+
+  mod reorder {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_assigns_sort_order_by_slice_index() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let a = repo.create("alpha").await.unwrap();
+      let b = repo.create("beta").await.unwrap();
+      repo.reorder(&[b.id, a.id]).await.unwrap();
+
+      let result = repo.find_all().await.unwrap();
+      assert_eq!(result[0].name, "beta");
+      assert_eq!(result[1].name, "alpha");
+    }
+  }
+
+  mod set_character_tags {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_delegates_to_set_entity_tags_with_character_type() {
       let db = setup_db().await;
       insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
+      let pvp = repo.find_or_create("pvp").await.unwrap();
 
-      let tag = repo.find_or_create("pvp").await.unwrap();
-      repo.set_entity_tags(1, "character", vec![tag.id]).await.unwrap();
+      repo.set_character_tags(1, vec![pvp.id]).await.unwrap();
 
-      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      let result = repo.tags_for_character(1).await.unwrap();
       assert_eq!(result.len(), 1);
       assert_eq!(result[0].name, "pvp");
+    }
+  }
+
+  mod set_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_sets_the_color() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+      let updated = repo.set_color(tag.id, Some("#ff0000")).await.unwrap();
+
+      assert_eq!(updated.color, Some("#ff0000".to_string()));
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_color_when_passed_none() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let tag = repo.create("pvp").await.unwrap();
+      repo.set_color(tag.id, Some("#ff0000")).await.unwrap();
+      let updated = repo.set_color(tag.id, None).await.unwrap();
+
+      assert_eq!(updated.color, None);
     }
   }
 
@@ -259,11 +508,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn replaces_previous_tags_atomically() {
+    async fn it_replaces_previous_tags_atomically() {
       let db = setup_db().await;
       insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
-
       let pvp = repo.find_or_create("pvp").await.unwrap();
       let pve = repo.find_or_create("pve").await.unwrap();
 
@@ -276,12 +524,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_empty_removes_all_tags() {
+    async fn it_removes_all_tags_when_given_empty_list() {
       let db = setup_db().await;
       insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
-
       let pvp = repo.find_or_create("pvp").await.unwrap();
+
       repo.set_entity_tags(1, "character", vec![pvp.id]).await.unwrap();
       repo.set_entity_tags(1, "character", vec![]).await.unwrap();
 
@@ -290,12 +538,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_affect_tags_for_different_entity_type() {
+    async fn it_does_not_affect_tags_for_different_entity_type() {
       let db = setup_db().await;
       insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
-
       let pvp = repo.find_or_create("pvp").await.unwrap();
+
       repo.set_entity_tags(1, "character", vec![pvp.id]).await.unwrap();
       repo.set_entity_tags(1, "corporation", vec![]).await.unwrap();
 
@@ -304,21 +552,31 @@ mod tests {
     }
   }
 
-  mod set_character_tags {
+  mod tags_for_entity {
     use super::*;
 
     #[tokio::test]
-    async fn delegates_to_set_entity_tags_with_character_type() {
+    async fn it_returns_empty_when_entity_has_no_tags() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_tags_ordered_by_sort_order() {
       let db = setup_db().await;
       insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
+      let a = repo.create("alpha").await.unwrap();
+      let b = repo.create("beta").await.unwrap();
+      repo.reorder(&[b.id, a.id]).await.unwrap();
+      repo.set_entity_tags(1, "character", vec![a.id, b.id]).await.unwrap();
 
-      let pvp = repo.find_or_create("pvp").await.unwrap();
-      repo.set_character_tags(1, vec![pvp.id]).await.unwrap();
-
-      let result = repo.tags_for_character(1).await.unwrap();
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].name, "pvp");
+      let result = repo.tags_for_entity(1, "character").await.unwrap();
+      assert_eq!(result[0].name, "beta");
+      assert_eq!(result[1].name, "alpha");
     }
   }
 }

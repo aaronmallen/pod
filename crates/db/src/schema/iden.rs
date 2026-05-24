@@ -397,8 +397,10 @@ pub enum Stations {
 
 #[derive(DeriveIden)]
 pub enum Tags {
+  Color,
   Id,
   Name,
+  SortOrder,
   Table,
 }
 

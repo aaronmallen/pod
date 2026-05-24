@@ -7,9 +7,11 @@ use sea_orm::entity::prelude::*;
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "tags")]
 pub struct Model {
+  pub color: Option<String>,
   #[sea_orm(primary_key)]
   pub id: i32,
   pub name: String,
+  pub sort_order: i32,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

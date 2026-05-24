@@ -30,6 +30,7 @@ pub mod m0000000019_create_character_assets;
 // Tags
 pub mod m0000000020_create_tags;
 pub mod m0000000021_create_entity_tags;
+pub mod m0000000050_add_color_and_sort_order_to_tags;
 
 // Wallet
 pub mod m0000000022_create_wallet_journal_entries;
@@ -118,6 +119,7 @@ impl MigratorTrait for Migrator {
       // Tags
       Box::new(m0000000020_create_tags::Migration),
       Box::new(m0000000021_create_entity_tags::Migration),
+      Box::new(m0000000050_add_color_and_sort_order_to_tags::Migration),
       // Wallet
       Box::new(m0000000022_create_wallet_journal_entries::Migration),
       Box::new(m0000000023_create_wallet_transactions::Migration),

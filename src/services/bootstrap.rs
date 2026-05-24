@@ -1,6 +1,9 @@
 //! Application startup bootstrap sequence.
 
-use std::path::PathBuf;
+use std::{
+  collections::{HashMap, HashSet},
+  path::PathBuf,
+};
 
 use iced::{Task, futures::SinkExt as _};
 use pod_esi::Client;
@@ -15,7 +18,7 @@ type Tx = iced::futures::channel::mpsc::Sender<Message>;
 #[derive(Clone, Debug)]
 pub enum Message {
   /// A character's background sync completed; carries the updated character.
-  CharacterSynced(Character),
+  CharacterSynced(Box<Character>),
   /// Bootstrap completed; carries the open DB, loaded characters, and ESI client.
   Complete(pod_db::Repo, Vec<Character>, Option<pod_esi::Client>),
   /// A non-fatal error description.
@@ -170,7 +173,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
 
     propagate_skill_names(&mut character, &esi).await;
 
-    Message::CharacterSynced(character)
+    Message::CharacterSynced(Box::new(character))
   }
   .instrument(span)
   .await
@@ -446,10 +449,11 @@ async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo
     }
   }
 }
+
 async fn propagate_skill_names(character: &mut Character, esi: &Client) {
   let resolved = character_service::inject_skill_names(character.skills().to_vec(), esi).await;
   *character.skills_mut() = resolved;
-  let name_map: std::collections::HashMap<i32, String> = character
+  let name_map: HashMap<i32, String> = character
     .skills()
     .iter()
     .filter_map(|s| s.skill_name.as_ref().map(|n| (s.skill_id, n.clone())))
@@ -484,8 +488,6 @@ async fn cache_structure_names_from_assets(
   esi: &Client,
   db: &pod_db::Repo,
 ) {
-  use std::collections::HashSet;
-
   let structure_ids: Vec<i64> = assets
     .iter()
     .filter(|a| a.location_type != "item" && a.location_id >= i32::MAX as i64)
@@ -498,7 +500,7 @@ async fn cache_structure_names_from_assets(
     return;
   }
 
-  let cached: std::collections::HashSet<i64> = db
+  let cached: HashSet<i64> = db
     .universe()
     .structure_cache()
     .find_by_ids(&structure_ids)
@@ -558,7 +560,7 @@ async fn sync_clones_to_db(
     .await
     .unwrap_or_default();
 
-  let data_map: std::collections::HashMap<i32, (String, i32, String)> = implant_rows
+  let data_map: HashMap<i32, (String, i32, String)> = implant_rows
     .into_iter()
     .map(|(tid, bonus, slot, name)| (tid, (bonus, slot, name)))
     .collect();

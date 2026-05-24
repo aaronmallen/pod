@@ -60,7 +60,7 @@ enum Message {
   AboutWindow(about_window::Message),
   BackgroundSync(services::bootstrap::Message),
   Bootstrap(services::bootstrap::Message),
-  Main(main_ctrl::Message),
+  Main(Box<main_ctrl::Message>),
   Menu(menu::MenuMessage),
   OAuthCallback(String, String),
   SkillPlan(window::Id, skill_plan_window::Message),
@@ -228,9 +228,9 @@ fn phase_tick_subscription(phase: &AppPhase) -> Subscription<Message> {
 }
 
 fn main_phase_subscriptions(state: &main_ctrl::State) -> Subscription<Message> {
-  let main_subs = main_ctrl::subscription(state).map(Message::Main);
-  let eve_tick =
-    iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Main(main_ctrl::Message::EveTimeTick));
+  let main_subs = main_ctrl::subscription(state).map(|m| Message::Main(Box::new(m)));
+  let eve_tick = iced::time::every(std::time::Duration::from_secs(1))
+    .map(|_| Message::Main(Box::new(main_ctrl::Message::EveTimeTick)));
   let update_check = iced::time::every(services::updater::check_interval())
     .map(|_| Message::Updater(services::updater::Message::CheckRequested));
   iced::Subscription::batch([main_subs, eve_tick, update_check])
@@ -261,7 +261,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     Message::AboutWindow(msg) => update_about_window(app, msg),
     Message::BackgroundSync(msg) => update_background_sync(app, msg),
     Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
-    Message::Main(msg) => update_main(app, msg),
+    Message::Main(msg) => update_main(app, *msg),
     Message::Menu(msg) => update_menu(app, msg),
     Message::OAuthCallback(code, state) => {
       let _ = app.oauth_callback_tx.send((code, state));
@@ -294,17 +294,17 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
   match msg {
     BootMsg::CharacterSynced(character) => {
       if let Some(idx) = app.characters.iter().position(|c| *c.id() == *character.id()) {
-        app.characters[idx] = character.clone();
+        app.characters[idx] = (*character).clone();
       }
       if let AppPhase::Main(state) = &mut app.phase {
-        main_ctrl::apply_synced_character(state, character);
+        main_ctrl::apply_synced_character(state, *character);
         let services = Services {
           config: app.config.clone(),
           db: app.db.clone(),
           esi_client: app.esi_client.clone(),
           oauth_callback_tx: app.oauth_callback_tx.clone(),
         };
-        return main_ctrl::refresh_cached_assets_if_needed(state, &services).map(Message::Main);
+        return main_ctrl::refresh_cached_assets_if_needed(state, &services).map(|m| Message::Main(Box::new(m)));
       }
       Task::none()
     }
@@ -318,7 +318,7 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
         esi_client: app.esi_client.clone(),
         oauth_callback_tx: app.oauth_callback_tx.clone(),
       };
-      main_ctrl::reauth(&services).map(Message::Main)
+      main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
     }
     _ => Task::none(),
   }
@@ -378,7 +378,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   if let Some(cfg) = new_config {
     app.config = cfg;
   }
-  let task = task.map(Message::Main);
+  let task = task.map(|m| Message::Main(Box::new(m)));
   if is_assets_pane_drag_end || is_mail_pane_drag_end || is_skills_pane_drag_end || is_wallet_pane_drag_end {
     save_geometry(app);
   }
@@ -409,9 +409,9 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
     }
     Task::batch([
       plan_task,
-      Task::done(Message::Main(main_window::Message::Skills(
+      Task::done(Message::Main(Box::new(main_window::Message::Skills(
         skills::Message::PlansTabOpened,
-      ))),
+      )))),
     ])
   } else {
     plan_task
@@ -508,7 +508,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
   let splash_id = app.window_id.replace(new_id);
   let mut tasks = vec![
     splash_task,
-    init_task.map(Message::Main),
+    init_task.map(|m| Message::Main(Box::new(m))),
     open_task.map(Message::WindowOpened),
     services::updater::check().map(Message::Updater),
   ];
@@ -768,7 +768,7 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
       let content = main_window::Component::new(state)
         .window_size(app.window_size.width, app.window_size.height)
         .render()
-        .map(Message::Main);
+        .map(|m| Message::Main(Box::new(m)));
       match banner_state(&app.update_state, app.update_dismissed) {
         Some(state) => iced::widget::column([
           update_banner::Component::new(state).render().map(Message::UpdateBanner),

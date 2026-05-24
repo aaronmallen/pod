@@ -21,6 +21,7 @@ use pod_model::{Character, Corporation, missing_scopes};
 pub use sidebar::Component as Sidebar;
 
 use crate::{
+  asset_filter_query::AssetFilterQuery,
   components::{
     CharacterPicker, ScopeMissing,
     character_picker::{self, CharacterEntry, CorporationEntry},
@@ -370,7 +371,7 @@ impl State {
     let corp_id = self.selected_corporation();
     let char_id = self.selected_character();
     let cat_key = self.category.key();
-    let q = self.search_query.to_lowercase();
+    let query = AssetFilterQuery::parse(&self.search_query).with_me(char_id);
     let loc = self.selected_loc.clone();
 
     self.assets.iter().filter(move |a| {
@@ -388,7 +389,7 @@ impl State {
       {
         return false;
       }
-      if !q.is_empty() && !asset_matches_query(a, &q) {
+      if !query.matches(a) {
         return false;
       }
       true
@@ -540,13 +541,6 @@ fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
   } else {
     true
   }
-}
-
-pub(super) fn asset_matches_query(a: &AssetRecord, q: &str) -> bool {
-  let name_lc = a.type_name.to_lowercase();
-  let grp_lc = a.group_name.to_lowercase();
-  let loc_lc = a.location_name.to_lowercase();
-  name_lc.contains(q) || grp_lc.contains(q) || loc_lc.contains(q)
 }
 
 fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {

@@ -18,8 +18,9 @@ pub use location_row::Component as LocationRow;
 pub use region_row::Component as RegionRow;
 pub use system_row::Component as SystemRow;
 
-use super::{Message, State, asset_matches_query, asset_value};
+use super::{Message, State, asset_value};
 use crate::{
+  asset_filter_query::AssetFilterQuery,
   components::section_label,
   style::{
     button as btn_style, color,
@@ -202,7 +203,7 @@ fn push_region_tree<'a>(
   char_id: Option<i64>,
   selected_loc: Option<&str>,
   collapsed_groups: &std::collections::HashSet<String>,
-  search_query: &str,
+  query: &AssetFilterQuery,
 ) {
   // Group: region → constellation → systems (only assets with a region name)
   let mut tree: BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
@@ -230,7 +231,7 @@ fn push_region_tree<'a>(
     let region_key = format!("region:{}", region_name);
     let region_collapsed = collapsed_groups.contains(&region_key);
 
-    let region_count = count_filtered(source, char_id, search_query, |a| a.region_name == *region_name);
+    let region_count = count_filtered(source, char_id, query, |a| a.region_name == *region_name);
     items.push(RegionRow::new(*region_name, region_key, region_collapsed, region_count).render());
 
     if region_collapsed {
@@ -241,9 +242,7 @@ fn push_region_tree<'a>(
       let constellation_key = format!("constellation:{}", constellation_name);
       let constellation_collapsed = collapsed_groups.contains(&constellation_key);
 
-      let constellation_count = count_filtered(source, char_id, search_query, |a| {
-        a.constellation_name == *constellation_name
-      });
+      let constellation_count = count_filtered(source, char_id, query, |a| a.constellation_name == *constellation_name);
       items.push(
         ConstellationRow::new(
           *constellation_name,
@@ -268,7 +267,7 @@ fn push_region_tree<'a>(
 fn count_filtered(
   source: &[super::AssetRecord],
   char_id: Option<i64>,
-  search_query: &str,
+  query: &AssetFilterQuery,
   group_filter: impl Fn(&super::AssetRecord) -> bool,
 ) -> u64 {
   source
@@ -282,7 +281,7 @@ fn count_filtered(
       if !group_filter(a) {
         return false;
       }
-      if !search_query.is_empty() && !asset_matches_query(a, search_query) {
+      if !query.matches(a) {
         return false;
       }
       true
@@ -299,7 +298,7 @@ fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let source: &[super::AssetRecord] = &state.assets;
   let owner_id = state.selected_corporation().or_else(|| state.selected_character());
   let selected_loc = state.selected_loc.as_deref();
-  let search_query = state.search_query.to_lowercase();
+  let query = AssetFilterQuery::parse(&state.search_query).with_me(state.selected_character());
 
   push_region_tree(
     &mut items,
@@ -307,7 +306,7 @@ fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
     owner_id,
     selected_loc,
     &state.collapsed_sidebar_groups,
-    &search_query,
+    &query,
   );
 
   for loc_name in &collect_structure_locs(source, owner_id) {

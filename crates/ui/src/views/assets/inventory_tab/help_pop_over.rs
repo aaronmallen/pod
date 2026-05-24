@@ -10,7 +10,7 @@ use crate::{
 
 const HELP_EXAMPLES: &[(&str, &str)] = &[
   ("category:ship", "all ships"),
-  ("region:The Forge", "in The Forge"),
+  ("region:\"The Forge\"", "in The Forge"),
   ("name:Tritanium", "name contains Tritanium"),
   ("category:ship -name:Rifter", "ships, not Rifters"),
   ("system:Jita type:stack", "stacks in Jita"),

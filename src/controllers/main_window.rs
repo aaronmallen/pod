@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn it_preserves_tags_from_the_existing_character() {
       let mut existing = Character::new(1, "Alpha");
-      *existing.tags_mut() = vec![(1, "pvp".to_string()), (2, "trader".to_string())];
+      *existing.tags_mut() = vec![(1, "pvp".to_string(), None), (2, "trader".to_string(), None)];
       let mut state = make_state(existing);
       let synced = Character::new(1, "Alpha");
 
@@ -868,7 +868,7 @@ mod tests {
 
       assert_eq!(
         state.characters[0].tags(),
-        &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
+        &vec![(1, "pvp".to_string(), None), (2, "trader".to_string(), None)]
       );
     }
 
@@ -877,7 +877,7 @@ mod tests {
       use pod_ui::views::characters::State as CharactersState;
 
       let mut existing = Character::new(1, "Alpha");
-      *existing.tags_mut() = vec![(1, "pvp".to_string()), (2, "trader".to_string())];
+      *existing.tags_mut() = vec![(1, "pvp".to_string(), None), (2, "trader".to_string(), None)];
       let chars_view = CharactersState::new(vec![existing]);
       let mut state = State {
         active_nav: Nav::Characters,
@@ -907,7 +907,7 @@ mod tests {
 
       assert_eq!(
         state.characters[0].tags(),
-        &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
+        &vec![(1, "pvp".to_string(), None), (2, "trader".to_string(), None)]
       );
     }
   }

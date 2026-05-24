@@ -286,7 +286,7 @@ fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
   let mut items: Vec<Element<'a, Message>> = corporation
     .tags()
     .iter()
-    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
+    .map(|(_, name, _)| components::Badge::tag(name).render::<Message>())
     .collect();
   items.push(plus_btn.into());
 

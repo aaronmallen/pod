@@ -180,7 +180,7 @@ fn match_token(token: &FilterToken, character: &Character) -> bool {
       {
         haystack_parts.push(skill_name.to_lowercase());
       }
-      for (_, tag_name) in character.tags() {
+      for (_, tag_name, _) in character.tags() {
         haystack_parts.push(tag_name.to_lowercase());
       }
       haystack_parts.iter().any(|part| part.contains(needle.as_str()))
@@ -189,7 +189,11 @@ fn match_token(token: &FilterToken, character: &Character) -> bool {
 }
 
 fn match_tag(values: &[String], character: &Character) -> bool {
-  let char_tags: Vec<String> = character.tags().iter().map(|(_, name)| name.to_lowercase()).collect();
+  let char_tags: Vec<String> = character
+    .tags()
+    .iter()
+    .map(|(_, name, _)| name.to_lowercase())
+    .collect();
   values.iter().any(|v| char_tags.contains(v))
 }
 

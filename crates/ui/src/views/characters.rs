@@ -60,7 +60,7 @@ pub struct State {
   /// All loaded corporations (unfiltered).
   pub all_corporations: Vec<Corporation>,
   /// All known tags.
-  pub all_tags: Vec<(i32, String)>,
+  pub all_tags: Vec<(i32, String, Option<String>)>,
   /// Characters tab state.
   pub character_pane: characters_tab::State,
   /// Filtered character list (may equal all_characters).
@@ -123,7 +123,7 @@ pub enum Message {
   /// An error occurred while adding a corporation.
   AddCorporationError(String),
   /// All tags were loaded.
-  AllTagsLoaded(Vec<(i32, String)>),
+  AllTagsLoaded(Vec<(i32, String, Option<String>)>),
   /// Message from the character grid tab.
   CharactersTab(characters_tab::Message),
   /// Confirm removal of the pending character.

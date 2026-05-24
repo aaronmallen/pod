@@ -66,7 +66,7 @@ pub struct Model {
   scopes: Vec<String>,
   /// Tags assigned to this corporation.
   #[getset(get = "pub", get_mut = "pub")]
-  tags: Vec<(i32, String)>,
+  tags: Vec<(i32, String, Option<String>)>,
   /// Number of shares the corporation has issued.
   #[get = "pub"]
   shares: Option<i64>,

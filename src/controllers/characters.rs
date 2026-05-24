@@ -224,7 +224,7 @@ fn build_tag_corpus(characters: &[Character]) -> Vec<(String, usize)> {
   use std::collections::HashMap;
   let mut counts: HashMap<String, usize> = HashMap::new();
   for c in characters {
-    for (_, name) in c.tags() {
+    for (_, name, _) in c.tags() {
       *counts.entry(name.clone()).or_default() += 1;
     }
   }
@@ -237,7 +237,7 @@ fn build_corp_tag_corpus(corporations: &[Corporation]) -> Vec<(String, usize)> {
   use std::collections::HashMap;
   let mut counts: HashMap<String, usize> = HashMap::new();
   for c in corporations {
-    for (_, name) in c.tags() {
+    for (_, name, _) in c.tags() {
       *counts.entry(name.clone()).or_default() += 1;
     }
   }
@@ -409,7 +409,7 @@ fn handle_tag_commit_highlighted(state: &mut State, services: &Services) -> iced
   let tag_name = item.name;
   let entity_id = m.entity_id;
   let entity_type = m.entity_type.clone();
-  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _, _)| *id).collect();
   state.tag_modal = None;
   apply_tag_task(entity_id, entity_type, tag_name, existing_ids, services)
 }
@@ -420,7 +420,7 @@ fn handle_tag_confirm(state: &mut State, name: String, services: &Services) -> i
   };
   let entity_id = m.entity_id;
   let entity_type = m.entity_type.clone();
-  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  let existing_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _, _)| *id).collect();
   state.tag_modal = None;
   apply_tag_task(entity_id, entity_type, name, existing_ids, services)
 }
@@ -429,10 +429,10 @@ fn handle_tag_remove(state: &mut State, tag_id: i32, services: &Services) -> ice
   let Some(m) = &mut state.tag_modal else {
     return iced::Task::none();
   };
-  m.existing_tags.retain(|(id, _)| *id != tag_id);
+  m.existing_tags.retain(|(id, _, _)| *id != tag_id);
   let entity_id = m.entity_id;
   let entity_type = m.entity_type.clone();
-  let new_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _)| *id).collect();
+  let new_ids: Vec<i32> = m.existing_tags.iter().map(|(id, _, _)| *id).collect();
   let Some(db) = services.db.clone() else {
     return iced::Task::none();
   };
@@ -448,7 +448,10 @@ fn remove_corporation_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Re
     async move {
       db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
       let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      Some((
+        entity_id,
+        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
+      ))
     },
     |result| match result {
       Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
@@ -462,7 +465,10 @@ fn remove_character_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo
     async move {
       db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
       let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      Some((
+        entity_id,
+        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
+      ))
     },
     |result| match result {
       Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
@@ -503,7 +509,10 @@ fn apply_corporation_tag_task(
       }
       db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
       let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      Some((
+        entity_id,
+        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
+      ))
     },
     |result| match result {
       Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
@@ -527,7 +536,10 @@ fn apply_character_tag_task(
       }
       db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
       let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-      Some((entity_id, tags.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()))
+      Some((
+        entity_id,
+        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
+      ))
     },
     |result| match result {
       Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
@@ -653,7 +665,7 @@ fn startup_tasks(state: &State, services: &Services) -> iced::Task<Message> {
           .await
           .unwrap_or_default()
           .into_iter()
-          .map(|t| (t.id, t.name))
+          .map(|t| (t.id, t.name, t.color))
           .collect()
       },
       Message::AllTagsLoaded,
@@ -694,7 +706,7 @@ fn startup_char_tag_tasks(char_ids: Vec<i64>, db: pod_db::Repo) -> iced::Task<Me
           .await
           .unwrap_or_default()
           .into_iter()
-          .map(|t| (t.id, t.name))
+          .map(|t| (t.id, t.name, t.color))
           .collect();
         (char_id, tags)
       },
@@ -1367,7 +1379,11 @@ fn handle_character_public_refreshed(state: &mut State, updates: Vec<(i64, i64, 
   iced::Task::none()
 }
 
-fn handle_character_tags_loaded(state: &mut State, id: i64, tags: Vec<(i32, String)>) -> iced::Task<Message> {
+fn handle_character_tags_loaded(
+  state: &mut State,
+  id: i64,
+  tags: Vec<(i32, String, Option<String>)>,
+) -> iced::Task<Message> {
   if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == id) {
     *c.tags_mut() = tags;
   }
@@ -1524,7 +1540,11 @@ fn handle_corporation_added(state: &mut State, corp: Corporation) -> iced::Task<
   iced::Task::none()
 }
 
-fn handle_corporation_tags_loaded(state: &mut State, id: i64, tags: Vec<(i32, String)>) -> iced::Task<Message> {
+fn handle_corporation_tags_loaded(
+  state: &mut State,
+  id: i64,
+  tags: Vec<(i32, String, Option<String>)>,
+) -> iced::Task<Message> {
   if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == id) {
     *c.tags_mut() = tags.clone();
   }
@@ -1567,7 +1587,7 @@ fn corps_tag_tasks(corps: &[Corporation], services: &Services) -> iced::Task<Mes
           .await
           .unwrap_or_default()
           .into_iter()
-          .map(|t| (t.id, t.name))
+          .map(|t| (t.id, t.name, t.color))
           .collect();
         (corp_id, tags)
       },
@@ -1996,9 +2016,9 @@ mod tests {
     #[test]
     fn it_counts_tags_across_characters() {
       let mut c1 = make_character(1, "Alpha");
-      *c1.tags_mut() = vec![(1, "pvp".to_string()), (2, "highsec".to_string())];
+      *c1.tags_mut() = vec![(1, "pvp".to_string(), None), (2, "highsec".to_string(), None)];
       let mut c2 = make_character(2, "Beta");
-      *c2.tags_mut() = vec![(1, "pvp".to_string())];
+      *c2.tags_mut() = vec![(1, "pvp".to_string(), None)];
 
       let corpus = build_tag_corpus(&[c1, c2]);
 
@@ -2011,11 +2031,11 @@ mod tests {
     #[test]
     fn it_sorts_by_count_descending_then_name_ascending() {
       let mut c1 = make_character(1, "Alpha");
-      *c1.tags_mut() = vec![(1, "rare".to_string())];
+      *c1.tags_mut() = vec![(1, "rare".to_string(), None)];
       let mut c2 = make_character(2, "Beta");
-      *c2.tags_mut() = vec![(2, "common".to_string())];
+      *c2.tags_mut() = vec![(2, "common".to_string(), None)];
       let mut c3 = make_character(3, "Gamma");
-      *c3.tags_mut() = vec![(2, "common".to_string())];
+      *c3.tags_mut() = vec![(2, "common".to_string(), None)];
 
       let corpus = build_tag_corpus(&[c1, c2, c3]);
 
@@ -2041,9 +2061,9 @@ mod tests {
     #[test]
     fn it_counts_tags_across_corporations() {
       let mut c1 = make_corporation(1, "Corp A", "CA");
-      *c1.tags_mut() = vec![(1, "industrial".to_string()), (2, "sov".to_string())];
+      *c1.tags_mut() = vec![(1, "industrial".to_string(), None), (2, "sov".to_string(), None)];
       let mut c2 = make_corporation(2, "Corp B", "CB");
-      *c2.tags_mut() = vec![(1, "industrial".to_string())];
+      *c2.tags_mut() = vec![(1, "industrial".to_string(), None)];
 
       let corpus = build_corp_tag_corpus(&[c1, c2]);
 
@@ -2056,11 +2076,11 @@ mod tests {
     #[test]
     fn it_sorts_by_count_descending_then_name_ascending() {
       let mut c1 = make_corporation(1, "Corp A", "CA");
-      *c1.tags_mut() = vec![(1, "mining".to_string())];
+      *c1.tags_mut() = vec![(1, "mining".to_string(), None)];
       let mut c2 = make_corporation(2, "Corp B", "CB");
-      *c2.tags_mut() = vec![(2, "pvp".to_string())];
+      *c2.tags_mut() = vec![(2, "pvp".to_string(), None)];
       let mut c3 = make_corporation(3, "Corp C", "CC");
-      *c3.tags_mut() = vec![(2, "pvp".to_string())];
+      *c3.tags_mut() = vec![(2, "pvp".to_string(), None)];
 
       let corpus = build_corp_tag_corpus(&[c1, c2, c3]);
 

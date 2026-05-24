@@ -259,7 +259,7 @@ fn tags_row<'a>(character: &'a Character) -> Element<'a, Message> {
   let mut items: Vec<Element<'a, Message>> = character
     .tags()
     .iter()
-    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
+    .map(|(_, name, _)| components::Badge::tag(name).render::<Message>())
     .collect();
   items.push(plus_btn.into());
 

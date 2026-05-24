@@ -186,7 +186,7 @@ pub enum Message {
   /// Periodic character public data refresh tick.
   CharacterPublicRefreshTick,
   /// Tags were loaded for a specific character.
-  CharacterTagsLoaded(i64, Vec<(i32, String)>),
+  CharacterTagsLoaded(i64, Vec<(i32, String, Option<String>)>),
   /// Forwarded from the context menu.
   ContextMenu(context_menu::Message),
   /// Cursor moved; carries the new position.
@@ -608,7 +608,7 @@ fn ghost_tags<'a>(character: &'a Character) -> Element<'a, Message> {
   let tag_children: Vec<Element<'a, Message>> = character
     .tags()
     .iter()
-    .map(|(_, name)| components::Badge::tag(name).render::<Message>())
+    .map(|(_, name, _)| components::Badge::tag(name).render::<Message>())
     .collect();
 
   if tag_children.is_empty() {

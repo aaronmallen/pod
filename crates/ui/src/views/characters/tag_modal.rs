@@ -15,7 +15,7 @@ pub struct State {
   pub entity_id: i64,
   pub entity_name: String,
   pub entity_type: String,
-  pub existing_tags: Vec<(i32, String)>,
+  pub existing_tags: Vec<(i32, String, Option<String>)>,
   pub highlighted: usize,
   pub input_id: iced::widget::Id,
   pub query: String,
@@ -26,7 +26,7 @@ impl State {
     entity_id: i64,
     entity_type: impl Into<String>,
     entity_name: impl Into<String>,
-    existing_tags: Vec<(i32, String)>,
+    existing_tags: Vec<(i32, String, Option<String>)>,
   ) -> Self {
     Self {
       entity_id,
@@ -61,7 +61,7 @@ pub struct Item {
 pub fn compute_items(state: &State, corpus: &[(String, usize)]) -> Vec<Item> {
   let trimmed = state.query.trim().to_string();
   let lc = trimmed.to_lowercase();
-  let existing_lower: HashSet<String> = state.existing_tags.iter().map(|(_, n)| n.to_lowercase()).collect();
+  let existing_lower: HashSet<String> = state.existing_tags.iter().map(|(_, n, _)| n.to_lowercase()).collect();
 
   let filtered: Vec<(String, usize)> = corpus
     .iter()
@@ -292,7 +292,7 @@ fn render_existing_tags<'a>(state: &'a State) -> Option<Element<'a, Message>> {
   let chips: Vec<Element<'a, Message>> = state
     .existing_tags
     .iter()
-    .map(|(tag_id, name)| render_tag_chip(*tag_id, name))
+    .map(|(tag_id, name, _)| render_tag_chip(*tag_id, name))
     .collect();
 
   Some(

@@ -89,7 +89,7 @@ pub struct Model {
   skills: Vec<CharacterSkill>,
   /// Tags assigned to this character.
   #[getset(get = "pub", get_mut = "pub")]
-  tags: Vec<(i32, String)>,
+  tags: Vec<(i32, String, Option<String>)>,
   /// Full training queue fetched from ESI (transient, not persisted).
   #[getset(get = "pub", get_mut = "pub")]
   training_queue: Vec<TrainingQueueEntry>,

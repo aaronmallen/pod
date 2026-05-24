@@ -96,7 +96,7 @@ pub enum Message {
   /// A corporation was removed.
   CorporationRemoved(i64),
   /// Tags were reloaded for a corporation.
-  CorporationTagsLoaded(i64, Vec<(i32, String)>),
+  CorporationTagsLoaded(i64, Vec<(i32, String, Option<String>)>),
   /// The corporations list was loaded.
   CorporationsLoaded(Vec<Corporation>),
   /// HQ station names resolved for corporations; carries (corp_id, station_name) pairs.

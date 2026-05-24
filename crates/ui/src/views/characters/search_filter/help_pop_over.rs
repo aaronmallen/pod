@@ -51,11 +51,11 @@ pub enum Message {
 }
 
 pub struct Component<'a> {
-  all_tags: &'a [(i32, String)],
+  all_tags: &'a [(i32, String, Option<String>)],
 }
 
 impl<'a> Component<'a> {
-  pub fn new(_state: &'a State, all_tags: &'a [(i32, String)]) -> Self {
+  pub fn new(_state: &'a State, all_tags: &'a [(i32, String, Option<String>)]) -> Self {
     Self {
       all_tags,
     }
@@ -104,7 +104,7 @@ impl<'a> Component<'a> {
     let tag_chips: Vec<Element<'a, Message>> = self
       .all_tags
       .iter()
-      .map(|(_, name)| {
+      .map(|(_, name, _)| {
         let q = format!("tag:{name}");
         let q2 = q.clone();
         components::Button::close(code_chip(&q, false))

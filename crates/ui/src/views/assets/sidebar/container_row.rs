@@ -84,7 +84,7 @@ impl<'a> Component<'a> {
     .padding(Padding {
       top: 5.0,
       bottom: 5.0,
-      left: 36.0,
+      left: 60.0,
       right: 12.0,
     })
     .width(Length::Fill)

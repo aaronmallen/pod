@@ -71,12 +71,14 @@ pub fn new(
   mail_folder_pane_width: Option<f32>,
   mail_message_list_width: Option<f32>,
   wallet_right_rail_width: Option<f32>,
+  assets_sidebar_width: Option<f32>,
 ) -> (State, iced::Task<Message>) {
   let features = services.config.features();
   let (chars_state, chars_task) = characters_ctrl::new(characters.clone(), services);
   let state = State {
     active_nav: Nav::Characters,
     active_view: ActiveView::Characters(chars_state),
+    assets_sidebar_width: assets_sidebar_width.unwrap_or(232.0),
     cached_assets_state: None,
     characters,
     corporations: Vec::new(),
@@ -178,6 +180,7 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
   if let assets::Message::ReauthorizeCharacter(_) = &msg {
     return trigger_reauth(services);
   }
+  let is_drag_end = matches!(&msg, assets::Message::PaneDragEnd);
   // When assets is not the active view, an AssetsLoaded from a background
   // refresh should update the cache rather than be discarded.
   if let assets::Message::AssetsLoaded(ref records) = msg
@@ -217,7 +220,18 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
     return iced::Task::none();
   };
   let base_task = assets::update(s, msg).map(Message::Assets);
-  build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services)
+  let task = build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services);
+  if is_drag_end {
+    let width = if let ActiveView::Assets(s) = &state.active_view {
+      Some(s.sidebar_width)
+    } else {
+      None
+    };
+    if let Some(w) = width {
+      state.assets_sidebar_width = w;
+    }
+  }
+  task
 }
 
 fn handle_assets_refresh_nav_history(s: &mut assets::State, services: &Services) -> iced::Task<Message> {
@@ -570,7 +584,12 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
         state.active_view = ActiveView::Assets(cached);
         return refresh.map(Message::Assets);
       }
-      let (s, task) = assets_ctrl::new(state.characters.clone(), state.corporations.clone(), services);
+      let (s, task) = assets_ctrl::new(
+        state.characters.clone(),
+        state.corporations.clone(),
+        services,
+        state.assets_sidebar_width,
+      );
       state.active_view = ActiveView::Assets(s);
       task.map(Message::Assets)
     }
@@ -782,6 +801,7 @@ mod tests {
       State {
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
+        assets_sidebar_width: 232.0,
         cached_assets_state: None,
         characters: vec![character],
         corporations: Vec::new(),
@@ -839,6 +859,7 @@ mod tests {
       let mut state = State {
         active_nav: Nav::Characters,
         active_view: ActiveView::Characters(chars_view),
+        assets_sidebar_width: 232.0,
         cached_assets_state: None,
         characters: vec![Character::new(1, "Alpha")],
         corporations: Vec::new(),
@@ -875,6 +896,7 @@ mod tests {
       State {
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
+        assets_sidebar_width: 232.0,
         cached_assets_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
@@ -898,7 +920,7 @@ mod tests {
     #[test]
     fn it_saves_assets_state_to_cache_when_previous_view_was_assets() {
       let mut state = make_state();
-      state.active_view = ActiveView::Assets(assets::new(vec![], vec![]));
+      state.active_view = ActiveView::Assets(assets::new(vec![], vec![], 232.0));
 
       swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
 

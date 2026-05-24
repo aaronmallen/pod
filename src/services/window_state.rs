@@ -30,6 +30,8 @@ pub struct WindowGeometry {
   pub plan_picker_pane_width: Option<f32>,
   #[serde(default)]
   pub plan_summary_pane_width: Option<f32>,
+  #[serde(default)]
+  pub assets_sidebar_width: Option<f32>,
 }
 
 impl WindowGeometry {
@@ -81,6 +83,7 @@ mod tests {
       plan_window_y: None,
       plan_picker_pane_width: None,
       plan_summary_pane_width: None,
+      assets_sidebar_width: None,
     }
   }
 

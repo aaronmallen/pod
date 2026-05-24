@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 pub use header::Component as Header;
 use iced::{
-  Element, Length, Padding, Subscription,
-  widget::{column, container, image},
+  Element, Event, Length, Padding, Subscription, mouse,
+  widget::{Space, column, container, image, mouse_area},
 };
 pub use main_panel::Component as MainPanel;
 use pod_model::{Character, Corporation, missing_scopes};
@@ -288,6 +288,9 @@ pub enum Message {
   LoadMoreAssets,
   LocationSelected(Option<String>),
   NavHistoryLoaded(Vec<(NaiveDate, f64)>),
+  PaneDrag(f32),
+  PaneDragEnd,
+  PaneDragStart,
   Picker(character_picker::Message),
   ReauthorizeCharacter(i64),
   RefreshNavHistory,
@@ -309,14 +312,17 @@ pub struct State {
   pub characters: Vec<Character>,
   pub collapsed_sidebar_groups: HashSet<String>,
   pub corporations: Vec<Corporation>,
+  pub dragging_pane: bool,
   pub expanded_containers: HashSet<i64>,
   pub item_icons: HashMap<(i32, String), image::Handle>,
+  pub last_drag_x: f32,
   pub loading: bool,
   pub nav_history: Vec<(NaiveDate, f64)>,
   pub nav_series: Vec<f64>,
   pub picker: CharacterPicker,
   pub search_query: String,
   pub selected_loc: Option<String>,
+  pub sidebar_width: f32,
   pub sort_asc: bool,
   pub sort_col: SortCol,
   pub stockpile_form: Option<StockpileForm>,
@@ -445,7 +451,7 @@ pub fn title() -> &'static str {
 }
 
 /// Creates a new assets state.
-pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State {
+pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_width: f32) -> State {
   let picker_entries = build_picker_entries(&characters);
   let corp_entries = build_corp_picker_entries(&corporations);
   let picker = CharacterPicker::new()
@@ -461,14 +467,17 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State 
     characters,
     collapsed_sidebar_groups: HashSet::new(),
     corporations,
+    dragging_pane: false,
     expanded_containers: HashSet::new(),
     item_icons: HashMap::new(),
+    last_drag_x: 0.0,
     loading: true,
     nav_history: Vec::new(),
     nav_series: Vec::new(),
     picker,
     search_query: String::new(),
     selected_loc: None,
+    sidebar_width,
     sort_asc: true,
     sort_col: SortCol::Name,
     stockpile_form: None,
@@ -750,9 +759,26 @@ fn apply_data_loaded(state: &mut State, message: Message) {
   }
 }
 
+fn update_pane_drag(state: &mut State, x: f32) {
+  if state.last_drag_x > 0.0 {
+    let delta = x - state.last_drag_x;
+    state.sidebar_width = (state.sidebar_width + delta).max(160.0);
+  }
+  state.last_drag_x = x;
+}
+
 /// Processes an assets message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
+    Message::PaneDrag(x) => update_pane_drag(state, x),
+    Message::PaneDragEnd => {
+      state.dragging_pane = false;
+      state.last_drag_x = 0.0;
+    }
+    Message::PaneDragStart => {
+      state.dragging_pane = true;
+      state.last_drag_x = 0.0;
+    }
     Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
     Message::InventoryTab(msg) => update_inventory_tab(state, msg),
     Message::LoadMoreAssets => {
@@ -782,9 +808,20 @@ pub fn asset_value(a: &AssetRecord) -> f64 {
   a.unit_price * a.quantity as f64
 }
 
-/// Returns a subscription that refreshes nav history every 30 minutes.
-pub fn subscription(_state: &State) -> Subscription<Message> {
-  iced::time::every(std::time::Duration::from_secs(1800)).map(|_| Message::RefreshNavHistory)
+/// Returns subscriptions for nav history refresh and pane drag tracking.
+pub fn subscription(state: &State) -> Subscription<Message> {
+  let nav_refresh = iced::time::every(std::time::Duration::from_secs(1800)).map(|_| Message::RefreshNavHistory);
+  if !state.dragging_pane {
+    return nav_refresh;
+  }
+  let drag = iced::event::listen_with(|event, _status, _id| match event {
+    Event::Mouse(mouse::Event::CursorMoved {
+      position,
+    }) => Some(Message::PaneDrag(position.x)),
+    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
+    _ => None,
+  });
+  Subscription::batch([nav_refresh, drag])
 }
 
 pub fn asset_volume(a: &AssetRecord) -> f64 {
@@ -895,21 +932,41 @@ impl<'a> Component<'a> {
       })
       .into();
 
-    if state.picker.is_open {
-      let dropdown = state.picker.dropdown().map(Message::Picker);
-      let overlay = container(dropdown)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Left)
-        .padding(Padding {
-          top: spacing::layout::HEADER_HEIGHT + 8.0,
-          left: spacing::SPACE_8,
-          ..Padding::ZERO
-        })
-        .into();
-      stack([base, overlay]).into()
+    let drag_overlay: Option<Element<'_, Message>> = if state.dragging_pane {
+      Some(
+        mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+          .on_move(|pt| Message::PaneDrag(pt.x))
+          .on_release(Message::PaneDragEnd)
+          .interaction(iced::mouse::Interaction::ResizingHorizontally)
+          .into(),
+      )
     } else {
-      base
+      None
+    };
+
+    let picker_overlay: Option<Element<'_, Message>> = if state.picker.is_open {
+      let dropdown = state.picker.dropdown().map(Message::Picker);
+      Some(
+        container(dropdown)
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .align_x(iced::alignment::Horizontal::Left)
+          .padding(Padding {
+            top: spacing::layout::HEADER_HEIGHT + 8.0,
+            left: spacing::SPACE_8,
+            ..Padding::ZERO
+          })
+          .into(),
+      )
+    } else {
+      None
+    };
+
+    match (drag_overlay, picker_overlay) {
+      (None, None) => base,
+      (None, Some(p)) => stack([base, p]).into(),
+      (Some(d), None) => stack([base, d]).into(),
+      (Some(d), Some(p)) => stack([base, d, p]).into(),
     }
   }
 }

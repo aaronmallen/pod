@@ -353,7 +353,7 @@ impl<'a> Component<'a> {
     let items = build_sidebar_items(self.state);
     let content = scrollable(column(items).width(Length::Fill)).height(Length::Fill);
     container(content)
-      .width(Length::Fixed(232.0))
+      .width(Length::Fixed(self.state.sidebar_width))
       .height(Length::Fill)
       .style(|_| container::Style {
         background: Some(Background::Color(color::surface::SUNKEN)),

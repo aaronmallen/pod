@@ -15,7 +15,7 @@ use pod_ui::{
   components::update_banner,
   plan_math::BaseAttrs,
   style::{spacing::layout, typography::bytes as font_bytes},
-  views::{mail, main_window, skills, splash, wallet},
+  views::{assets, mail, main_window, skills, splash, wallet},
 };
 use services::{Services, menu};
 
@@ -325,6 +325,7 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
 }
 
 fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
+  let is_assets_pane_drag_end = matches!(&msg, main_window::Message::Assets(assets::Message::PaneDragEnd));
   let is_mail_pane_drag_end = matches!(&msg, main_window::Message::Mail(mail::Message::PaneDragEnd));
   let is_skills_pane_drag_end = matches!(&msg, main_window::Message::Skills(skills::Message::PaneDragEnd));
   let is_wallet_pane_drag_end = matches!(&msg, main_window::Message::Wallet(wallet::Message::PaneDragEnd));
@@ -378,7 +379,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     app.config = cfg;
   }
   let task = task.map(Message::Main);
-  if is_mail_pane_drag_end || is_skills_pane_drag_end || is_wallet_pane_drag_end {
+  if is_assets_pane_drag_end || is_mail_pane_drag_end || is_skills_pane_drag_end || is_wallet_pane_drag_end {
     save_geometry(app);
   }
   task
@@ -476,6 +477,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     saved.as_ref().and_then(|g| g.mail_folder_pane_width),
     saved.as_ref().and_then(|g| g.mail_message_list_width),
     saved.as_ref().and_then(|g| g.wallet_right_rail_width),
+    saved.as_ref().and_then(|g| g.assets_sidebar_width),
   );
   tracing::info!("splash complete, opening main window");
   app.phase = AppPhase::Main(main_state);
@@ -705,6 +707,7 @@ fn save_geometry(app: &App) {
     height: app.window_size.height,
     x: pos.x,
     y: pos.y,
+    assets_sidebar_width: Some(state.assets_sidebar_width),
     skills_left_pane_width: Some(state.skills_left_pane_width),
     mail_folder_pane_width: Some(state.mail_folder_pane_width),
     mail_message_list_width: Some(state.mail_message_list_width),

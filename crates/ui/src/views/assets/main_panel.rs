@@ -1,8 +1,8 @@
 //! Main panel — tab strip + active tab dispatch.
 
 use iced::{
-  Element, Length,
-  widget::{column, row},
+  Background, Element, Length,
+  widget::{Space, column, container, mouse_area, row},
 };
 
 use super::{
@@ -47,6 +47,21 @@ fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
   })
 }
 
+fn pane_drag_handle() -> Element<'static, Message> {
+  mouse_area(
+    container(Space::new().width(4.0).height(Length::Fill))
+      .width(4.0)
+      .height(Length::Fill)
+      .style(|_| container::Style {
+        background: Some(Background::Color(crate::style::color::border::SUBTLE)),
+        ..container::Style::default()
+      }),
+  )
+  .on_press(Message::PaneDragStart)
+  .interaction(iced::mouse::Interaction::ResizingHorizontally)
+  .into()
+}
+
 /// Builder for the main panel (tab strip + active tab body).
 pub struct Component<'a> {
   state: &'a State,
@@ -67,6 +82,7 @@ impl<'a> Component<'a> {
     let body: Element<'_, Message> = match state.active_tab {
       Tab::Inventory => row([
         super::sidebar::Component::new(state).render(),
+        pane_drag_handle(),
         Inventory::new(state).render().map(Message::InventoryTab),
       ])
       .width(Length::Fill)

@@ -79,11 +79,12 @@ pub fn new(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
   services: &Services,
+  sidebar_width: f32,
 ) -> (State, iced::Task<Message>) {
   let chars_for_load = characters.clone();
   let corps_for_load = corporations.clone();
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
-  let state = assets::new(characters, corporations);
+  let state = assets::new(characters, corporations, sidebar_width);
   let task = if let Some(db) = services.db.clone() {
     let esi = services.esi_client.clone();
     let db_icons = db.clone();

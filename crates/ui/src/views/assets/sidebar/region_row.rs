@@ -52,7 +52,7 @@ impl Component {
         .into(),
       text(self.region_name.clone())
         .font(mono::REGULAR)
-        .size(11.0)
+        .size(12.0)
         .style(|_: &Theme| iced::widget::text::Style {
           color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.60)),
         })

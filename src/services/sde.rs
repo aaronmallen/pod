@@ -468,7 +468,8 @@ async fn seed_regions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let mut m = models::Region::new(id, format!("Region {id}"));
+      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Region {id}"));
+      let mut m = models::Region::new(id, name);
       m.set_description(e.description.map(|d| d.en()));
       m
     })
@@ -735,6 +736,7 @@ struct SdeBloodlineEntry {
 #[derive(Deserialize)]
 struct SdeRegionMap {
   description: Option<LocalizedString>,
+  name: Option<LocalizedString>,
 }
 
 #[derive(Deserialize)]

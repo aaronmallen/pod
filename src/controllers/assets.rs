@@ -880,29 +880,26 @@ async fn build_asset_maps(
   })
 }
 
-/// Loads all character and corporation assets from DB and returns combined records.
-async fn load_all_assets_from_db(
-  db: pod_db::Repo,
-  characters: Vec<Character>,
-  corporations: Vec<Corporation>,
-  esi: Option<pod_esi::Client>,
-) -> Result<Vec<AssetRecord>, String> {
-  if characters.is_empty() {
-    return Ok(Vec::new());
-  }
-  let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
-  let chars_repo = db.characters();
-  let (char_rows_result, corp_rows) = tokio::join!(
-    chars_repo.assets_for_character_ids(&char_ids),
-    load_corp_asset_rows(&db, &characters, &corporations),
-  );
-  let char_asset_rows = char_rows_result.unwrap_or_default();
+fn collect_char_ids(characters: &[Character]) -> Vec<i64> {
+  characters.iter().map(|c| *c.id()).collect()
+}
 
-  if char_asset_rows.is_empty() && corp_rows.is_empty() {
-    return Ok(Vec::new());
-  }
+fn collect_structure_locs(
+  rows: &[RawAssetRow],
+  item_index: &HashMap<i64, (i64, String, String, i32)>,
+) -> Vec<(i64, i64)> {
+  rows
+    .iter()
+    .filter(|a| a.location_id >= i32::MAX as i64 && !item_index.contains_key(&a.location_id))
+    .map(|a| (a.location_id, a.character_id))
+    .collect()
+}
 
-  let mut rows: Vec<RawAssetRow> = char_asset_rows
+async fn load_char_asset_rows(db: &pod_db::Repo, char_ids: &[i64]) -> Vec<RawAssetRow> {
+  db.characters()
+    .assets_for_character_ids(char_ids)
+    .await
+    .unwrap_or_default()
     .into_iter()
     .map(|a| RawAssetRow {
       character_id: a.character_id,
@@ -917,9 +914,28 @@ async fn load_all_assets_from_db(
       ship_name: a.ship_name,
       type_id: a.type_id,
     })
-    .collect();
-  rows.extend(corp_rows);
+    .collect()
+}
 
+/// Loads all character and corporation assets from DB and returns combined records.
+async fn load_all_assets_from_db(
+  db: pod_db::Repo,
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  esi: Option<pod_esi::Client>,
+) -> Result<Vec<AssetRecord>, String> {
+  if characters.is_empty() {
+    return Ok(Vec::new());
+  }
+  let char_ids = collect_char_ids(&characters);
+  let (mut rows, corp_rows) = tokio::join!(
+    load_char_asset_rows(&db, &char_ids),
+    load_corp_asset_rows(&db, &characters, &corporations),
+  );
+  rows.extend(corp_rows);
+  if rows.is_empty() {
+    return Ok(Vec::new());
+  }
   let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
   let station_ids = station_location_ids(&rows);
   let space_sys_ids = space_system_location_ids(&rows);
@@ -929,11 +945,7 @@ async fn load_all_assets_from_db(
   }
   let item_index = build_item_index(&rows);
   let is_container_set = build_is_container_set(&item_index);
-  let structure_locs: Vec<(i64, i64)> = rows
-    .iter()
-    .filter(|a| a.location_id >= i32::MAX as i64 && !item_index.contains_key(&a.location_id))
-    .map(|a| (a.location_id, a.character_id))
-    .collect();
+  let structure_locs = collect_structure_locs(&rows, &item_index);
   let maps = build_asset_maps(
     &db,
     &type_ids,
@@ -1286,6 +1298,91 @@ mod tests {
     fn it_falls_back_to_commodity_for_unknown() {
       assert_eq!(category_name_to_key("Unknown"), "commodity");
       assert_eq!(category_name_to_key(""), "commodity");
+    }
+  }
+
+  mod collect_char_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_extracts_all_character_ids() {
+      let chars = vec![Character::new(1, "Alpha"), Character::new(2, "Beta")];
+
+      let result = collect_char_ids(&chars);
+
+      assert_eq!(result, vec![1, 2]);
+    }
+
+    #[test]
+    fn it_returns_empty_for_no_characters() {
+      let result = collect_char_ids(&[]);
+
+      assert_eq!(result, Vec::<i64>::new());
+    }
+  }
+
+  mod collect_structure_locs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_row(item_id: i64, location_id: i64, char_id: i64) -> RawAssetRow {
+      RawAssetRow {
+        character_id: char_id,
+        is_active_ship: false,
+        is_blueprint_copy: None,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_string(),
+        location_id,
+        location_type: "item".to_string(),
+        quantity: 1,
+        ship_name: None,
+        type_id: 42,
+      }
+    }
+
+    #[test]
+    fn it_includes_unknown_structure_locations() {
+      let structure_id = i32::MAX as i64 + 1;
+      let rows = vec![make_row(10, structure_id, 100)];
+
+      let result = collect_structure_locs(&rows, &HashMap::new());
+
+      assert_eq!(result, vec![(structure_id, 100)]);
+    }
+
+    #[test]
+    fn it_excludes_locations_below_structure_threshold() {
+      let rows = vec![make_row(10, 60_000_000, 100)];
+
+      let result = collect_structure_locs(&rows, &HashMap::new());
+
+      assert_eq!(result, Vec::<(i64, i64)>::new());
+    }
+
+    #[test]
+    fn it_includes_location_at_exact_structure_threshold() {
+      let structure_id = i32::MAX as i64;
+      let rows = vec![make_row(10, structure_id, 100)];
+
+      let result = collect_structure_locs(&rows, &HashMap::new());
+
+      assert_eq!(result, vec![(structure_id, 100)]);
+    }
+
+    #[test]
+    fn it_excludes_structure_ids_already_in_item_index() {
+      let structure_id = i32::MAX as i64 + 1;
+      let rows = vec![make_row(10, structure_id, 100)];
+      let mut index = HashMap::new();
+      index.insert(structure_id, (0i64, String::new(), String::new(), 0i32));
+
+      let result = collect_structure_locs(&rows, &index);
+
+      assert_eq!(result, Vec::<(i64, i64)>::new());
     }
   }
 

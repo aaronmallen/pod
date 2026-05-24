@@ -40,6 +40,18 @@ impl<'a> Repo<'a> {
     Ok(row.map(Into::into))
   }
 
+  /// Returns all regions matching the given IDs.
+  pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<Region>, Error> {
+    if ids.is_empty() {
+      return Ok(Vec::new());
+    }
+    let rows = Entity::find()
+      .filter(Column::Id.is_in(ids.to_vec()))
+      .all(self.db)
+      .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+  }
+
   /// Inserts or updates a region row.
   pub async fn upsert(&self, record: &Region) -> Result<(), Error> {
     record.validate()?;
@@ -158,6 +170,30 @@ mod tests {
       repo.upsert(&make_region(10, "The Forge")).await.unwrap();
       let result = repo.find_by_name("The Forge").await.unwrap();
       assert!(result.is_some());
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_matching_regions() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_region(10, "The Forge")).await.unwrap();
+      repo.upsert(&make_region(20, "Lonetrek")).await.unwrap();
+      let result = repo.find_by_ids(&[10]).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(*result[0].id(), 10);
     }
   }
 

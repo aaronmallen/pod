@@ -30,6 +30,10 @@ struct RawAssetRow {
 struct AssetMaps {
   /// category_key per category ID.
   cat_key_map: HashMap<i32, &'static str>,
+  /// constellation_id → name.
+  constellation_name_map: HashMap<i32, String>,
+  /// constellation_id → region_id.
+  constellation_region_id_map: HashMap<i32, i32>,
   /// group name per group ID.
   group_name_map: HashMap<i32, String>,
   /// Set of item IDs that act as containers.
@@ -38,6 +42,8 @@ struct AssetMaps {
   item_index: HashMap<i64, (i64, String, String, i32)>,
   /// Latest Jita price per type ID.
   price_cache: HashMap<i32, f64>,
+  /// region_id → name.
+  region_name_map: HashMap<i32, String>,
   /// Station models keyed by NPC station ID.
   station_map: HashMap<i32, Station>,
   /// structure_id → (name, solar_system_id).
@@ -46,6 +52,8 @@ struct AssetMaps {
   structure_name_only: HashMap<i64, String>,
   /// solar_system_id → name, only for systems referenced by structures.
   structure_system_name_map: HashMap<i32, String>,
+  /// solar_system_id → constellation_id, all systems.
+  sys_constellation_id_map: HashMap<i32, i32>,
   /// solar_system_id → name, for systems referenced by stations.
   system_name_map: HashMap<i32, String>,
   /// category ID per group ID.
@@ -476,23 +484,24 @@ async fn fetch_missing_stations(
   }
 }
 
-/// Builds a solar-system name map from systems referenced by stations or direct space locations.
-async fn load_system_name_map(
+/// Builds name and constellation-id maps from systems referenced by stations or direct space.
+async fn load_station_space_sys_maps(
   db: &pod_db::Repo,
   station_map: &HashMap<i32, Station>,
   space_sys_ids: &[i32],
-) -> HashMap<i32, String> {
+) -> (HashMap<i32, String>, HashMap<i32, i32>) {
   let mut ids: Vec<i32> = unique_ids(station_map.values().map(|s| *s.solar_system_id()));
   ids.extend_from_slice(space_sys_ids);
   let sys_ids = unique_ids(ids.into_iter());
-  db.universe()
+  let rows = db
+    .universe()
     .solar_systems()
     .find_by_ids(&sys_ids)
     .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|r| (r.id, r.name))
-    .collect()
+    .unwrap_or_default();
+  let name_map = rows.iter().map(|r| (r.id, r.name.clone())).collect();
+  let constellation_id_map = rows.iter().map(|r| (r.id, r.constellation_id)).collect();
+  (name_map, constellation_id_map)
 }
 
 /// Builds the item index: item_id → (location_id, location_type, location_flag, type_id).
@@ -524,11 +533,11 @@ fn build_is_container_set(item_index: &HashMap<i64, (i64, String, String, i32)>)
   set
 }
 
-/// Resolves solar-system names for structures referenced in `structure_name_map`.
-async fn load_structure_sys_name_map(
+/// Resolves solar-system name and constellation-id maps for structure-referenced systems.
+async fn load_structure_sys_maps(
   db: &pod_db::Repo,
   structure_name_map: &HashMap<i64, (String, i64)>,
-) -> HashMap<i32, String> {
+) -> (HashMap<i32, String>, HashMap<i32, i32>) {
   let solar_sys_ids: Vec<i32> =
     unique_ids(structure_name_map.values().filter_map(
       |(_, sys_id)| {
@@ -536,15 +545,50 @@ async fn load_structure_sys_name_map(
       },
     ));
   if solar_sys_ids.is_empty() {
-    return HashMap::new();
+    return (HashMap::new(), HashMap::new());
   }
-  db.universe()
+  let rows = db
+    .universe()
     .solar_systems()
     .find_by_ids(&solar_sys_ids)
     .await
+    .unwrap_or_default();
+  let name_map = rows.iter().map(|r| (r.id, r.name.clone())).collect();
+  let constellation_id_map = rows.iter().map(|r| (r.id, r.constellation_id)).collect();
+  (name_map, constellation_id_map)
+}
+
+/// Builds constellation name and region-id maps for the given constellation IDs.
+async fn load_constellation_maps(
+  db: &pod_db::Repo,
+  constellation_ids: &[i32],
+) -> (HashMap<i32, String>, HashMap<i32, i32>) {
+  if constellation_ids.is_empty() {
+    return (HashMap::new(), HashMap::new());
+  }
+  let rows = db
+    .universe()
+    .constellations()
+    .find_by_ids(constellation_ids)
+    .await
+    .unwrap_or_default();
+  let name_map = rows.iter().map(|c| (*c.id(), c.name().clone())).collect();
+  let region_id_map = rows.iter().map(|c| (*c.id(), *c.region_id())).collect();
+  (name_map, region_id_map)
+}
+
+/// Builds a region name map for the given region IDs.
+async fn load_region_name_map(db: &pod_db::Repo, region_ids: &[i32]) -> HashMap<i32, String> {
+  if region_ids.is_empty() {
+    return HashMap::new();
+  }
+  db.universe()
+    .regions()
+    .find_by_ids(region_ids)
+    .await
     .unwrap_or_default()
     .into_iter()
-    .map(|s| (s.id, s.name))
+    .map(|r| (*r.id(), r.name().clone()))
     .collect()
 }
 
@@ -638,6 +682,58 @@ fn resolve_structure_location(
   (name, sys)
 }
 
+/// Resolves (constellation_id, constellation_name, region_id, region_name) for one asset row.
+fn resolve_constellation_region(row: &RawAssetRow, maps: &AssetMaps) -> (i32, String, i32, String) {
+  let constellation_id = resolve_solar_system_id(row, maps)
+    .and_then(|sid| maps.sys_constellation_id_map.get(&sid).copied())
+    .unwrap_or(0);
+  let constellation_name = if constellation_id > 0 {
+    maps
+      .constellation_name_map
+      .get(&constellation_id)
+      .cloned()
+      .unwrap_or_default()
+  } else {
+    String::new()
+  };
+  let region_id = if constellation_id > 0 {
+    maps
+      .constellation_region_id_map
+      .get(&constellation_id)
+      .copied()
+      .unwrap_or(0)
+  } else {
+    0
+  };
+  let region_name = if region_id > 0 {
+    maps.region_name_map.get(&region_id).cloned().unwrap_or_default()
+  } else {
+    String::new()
+  };
+  (constellation_id, constellation_name, region_id, region_name)
+}
+
+/// Returns the solar system ID for a row's top-level location, if resolvable.
+fn resolve_solar_system_id(row: &RawAssetRow, maps: &AssetMaps) -> Option<i32> {
+  if row.location_type == "station" && row.location_id < i32::MAX as i64 {
+    maps
+      .station_map
+      .get(&(row.location_id as i32))
+      .map(|s| *s.solar_system_id())
+  } else if (row.location_type == "solar_system" || row.location_type == "space") && row.location_id < i32::MAX as i64 {
+    i32::try_from(row.location_id).ok()
+  } else {
+    let is_at_structure = row.location_id >= i32::MAX as i64 && !maps.item_index.contains_key(&row.location_id);
+    if is_at_structure {
+      maps.structure_name_map.get(&row.location_id).and_then(|(_, sys_id)| {
+        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
+      })
+    } else {
+      None
+    }
+  }
+}
+
 /// Resolves the container path and container ID for one asset row.
 fn resolve_container_for_row(row: &RawAssetRow, maps: &AssetMaps) -> (String, i64) {
   let is_at_structure = row.location_id >= i32::MAX as i64 && !maps.item_index.contains_key(&row.location_id);
@@ -681,11 +777,12 @@ fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> Asset
   let (container_path, container_id) = resolve_container_for_row(&row, maps);
   let depth = compute_depth(row.item_id, &maps.item_index);
   let is_container = maps.is_container_set.contains(&row.item_id);
+  let (constellation_id, constellation_name, region_id, region_name) = resolve_constellation_region(&row, maps);
   AssetRecord {
     category_key: cat_key.to_string(),
     character_id: owner_id,
-    constellation_id: 0,
-    constellation_name: String::new(),
+    constellation_id,
+    constellation_name,
     container_id,
     container_path,
     depth,
@@ -697,8 +794,8 @@ fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> Asset
     location_id: row.location_id,
     location_name,
     quantity: row.quantity as i64,
-    region_id: 0,
-    region_name: String::new(),
+    region_id,
+    region_name,
     system_name,
     type_id: row.type_id,
     type_name,
@@ -722,30 +819,45 @@ async fn build_asset_maps(
 ) -> AssetMaps {
   let (
     (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map),
-    system_name_map,
+    (system_name_map, station_space_constellation_ids),
     structure_name_map,
     price_cache,
   ) = tokio::join!(
     load_type_maps(db, type_ids),
-    load_system_name_map(db, &station_map, &space_sys_ids),
+    load_station_space_sys_maps(db, &station_map, &space_sys_ids),
     resolve_structure_names(&structure_locs, characters, esi, db),
     build_price_cache(db, type_ids),
   );
-  let structure_system_name_map = load_structure_sys_name_map(db, &structure_name_map).await;
+  let (structure_system_name_map, structure_sys_constellation_ids) =
+    load_structure_sys_maps(db, &structure_name_map).await;
   let structure_name_only: HashMap<i64, String> = structure_name_map
     .iter()
     .map(|(&id, (name, _))| (id, name.clone()))
     .collect();
+
+  let mut sys_constellation_id_map = station_space_constellation_ids;
+  sys_constellation_id_map.extend(structure_sys_constellation_ids);
+
+  let constellation_ids = unique_ids(sys_constellation_id_map.values().copied().filter(|&id| id > 0));
+  let (constellation_name_map, constellation_region_id_map) = load_constellation_maps(db, &constellation_ids).await;
+
+  let region_ids = unique_ids(constellation_region_id_map.values().copied().filter(|&id| id > 0));
+  let region_name_map = load_region_name_map(db, &region_ids).await;
+
   AssetMaps {
     cat_key_map,
+    constellation_name_map,
+    constellation_region_id_map,
     group_name_map,
     is_container_set,
     item_index,
     price_cache,
+    region_name_map,
     station_map,
     structure_name_map,
     structure_name_only,
     structure_system_name_map,
+    sys_constellation_id_map,
     system_name_map,
     type_cat_map,
     type_group_map,
@@ -1312,14 +1424,18 @@ mod tests {
       system_name_map.insert(system_id, name.to_string());
       AssetMaps {
         cat_key_map: HashMap::new(),
+        constellation_name_map: HashMap::new(),
+        constellation_region_id_map: HashMap::new(),
         group_name_map: HashMap::new(),
         is_container_set: HashSet::new(),
         item_index: HashMap::new(),
         price_cache: HashMap::new(),
+        region_name_map: HashMap::new(),
         station_map: HashMap::new(),
         structure_name_map: HashMap::new(),
         structure_name_only: HashMap::new(),
         structure_system_name_map: HashMap::new(),
+        sys_constellation_id_map: HashMap::new(),
         system_name_map,
         type_cat_map: HashMap::new(),
         type_group_map: HashMap::new(),

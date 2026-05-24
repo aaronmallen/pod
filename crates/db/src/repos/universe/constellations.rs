@@ -40,6 +40,18 @@ impl<'a> Repo<'a> {
     Ok(row.map(Into::into))
   }
 
+  /// Returns all constellations matching the given IDs.
+  pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<Constellation>, Error> {
+    if ids.is_empty() {
+      return Ok(Vec::new());
+    }
+    let rows = Entity::find()
+      .filter(Column::Id.is_in(ids.to_vec()))
+      .all(self.db)
+      .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+  }
+
   /// Inserts or updates a constellation row.
   pub async fn upsert(&self, record: &Constellation) -> Result<(), Error> {
     record.validate()?;
@@ -169,6 +181,30 @@ mod tests {
       let repo = Repo::new(&db);
       repo.upsert(&make_constellation(1, "Alpha")).await.unwrap();
       assert!(repo.find_by_name("Alpha").await.unwrap().is_some());
+    }
+  }
+
+  mod find_by_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_empty_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      assert!(repo.find_by_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_matching_constellations() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      repo.upsert(&make_constellation(1, "Alpha")).await.unwrap();
+      repo.upsert(&make_constellation(2, "Beta")).await.unwrap();
+      let result = repo.find_by_ids(&[1]).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(*result[0].id(), 1);
     }
   }
 

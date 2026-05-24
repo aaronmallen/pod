@@ -71,21 +71,9 @@ fn add_skill_to_groups(
   prereq_names: &HashMap<i32, String>,
 ) {
   let attrs = &item.dogma_attributes.0;
-  let rank = attrs
-    .iter()
-    .find(|a| a.attribute_id == 275)
-    .map(|a| a.value as u8)
-    .unwrap_or(1);
-  let primary_id = attrs
-    .iter()
-    .find(|a| a.attribute_id == 180)
-    .map(|a| a.value as u8)
-    .unwrap_or(167);
-  let secondary_id = attrs
-    .iter()
-    .find(|a| a.attribute_id == 181)
-    .map(|a| a.value as u8)
-    .unwrap_or(168);
+  let rank = find_attr_u8(attrs, 275, 1);
+  let primary_id = find_attr_u8(attrs, 180, 167);
+  let secondary_id = find_attr_u8(attrs, 181, 168);
   let prereqs = skill_reqs_from_attrs(attrs)
     .into_iter()
     .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
@@ -156,6 +144,17 @@ fn build_ship_summary(
   }
 }
 
+fn attr_to_neural_name(id: i32) -> Option<&'static str> {
+  match id {
+    175 => Some("charisma"),
+    176 => Some("intelligence"),
+    177 => Some("memory"),
+    178 => Some("perception"),
+    179 => Some("willpower"),
+    _ => None,
+  }
+}
+
 fn build_module_summary(item: &ItemTypeModelEx, reqs: Vec<(i32, u8)>, names: &HashMap<i32, String>) -> ItemTypeSummary {
   ItemTypeSummary {
     id: item.id,
@@ -167,6 +166,33 @@ fn build_module_summary(item: &ItemTypeModelEx, reqs: Vec<(i32, u8)>, names: &Ha
       .collect(),
     mastery_cert_ids: vec![],
   }
+}
+
+fn extract_implant_attrs(attrs: &[dogma_attribute::Entry]) -> (serde_json::Map<String, serde_json::Value>, i32) {
+  let mut bonus = serde_json::Map::new();
+  let mut slot = 0i32;
+  for attr in attrs {
+    if let Some(name) = attr_to_neural_name(attr.attribute_id) {
+      bonus.insert(name.into(), (attr.value as i64).into());
+    } else if attr.attribute_id == 331 {
+      slot = attr.value as i32;
+    }
+  }
+  (bonus, slot)
+}
+
+fn find_attr_u8(attrs: &[dogma_attribute::Entry], id: i32, default: u8) -> u8 {
+  attrs
+    .iter()
+    .find(|a| a.attribute_id == id)
+    .map(|a| a.value as u8)
+    .unwrap_or(default)
+}
+
+fn sort_cmp_group_name(a: &ItemTypeModelEx, b: &ItemTypeModelEx) -> std::cmp::Ordering {
+  let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
+  let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
+  ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
 }
 
 /// Repository for item type CRUD operations.
@@ -200,11 +226,7 @@ impl<'a> Repo<'a> {
       .order_by(Column::Name, Order::Asc)
       .all(self.db)
       .await?;
-    items.sort_by(|a, b| {
-      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
-    });
+    items.sort_by(sort_cmp_group_name);
 
     let type_ids: Vec<i32> = items.iter().map(|t| t.id).collect();
     let mastery_rows = MasteryEntity::find()
@@ -258,11 +280,7 @@ impl<'a> Repo<'a> {
       .order_by(Column::Name, Order::Asc)
       .all(self.db)
       .await?;
-    items.sort_by(|a, b| {
-      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
-    });
+    items.sort_by(sort_cmp_group_name);
 
     let raw: Vec<_> = items
       .iter()
@@ -300,11 +318,7 @@ impl<'a> Repo<'a> {
       .order_by(Column::Name, Order::Asc)
       .all(self.db)
       .await?;
-    items.sort_by(|a, b| {
-      let ga = a.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      let gb = b.item_group.as_ref().map(|g| g.name.as_str()).unwrap_or("");
-      ga.cmp(gb).then_with(|| a.name.cmp(&b.name))
-    });
+    items.sort_by(sort_cmp_group_name);
 
     let all_prereq_ids: Vec<i32> = items
       .iter()
@@ -370,31 +384,7 @@ impl<'a> Repo<'a> {
       rows
         .iter()
         .map(|row| {
-          let mut bonus = serde_json::Map::new();
-          let mut slot = 0i32;
-          for attr in &row.dogma_attributes.0 {
-            match attr.attribute_id {
-              175 => {
-                bonus.insert("charisma".into(), (attr.value as i64).into());
-              }
-              176 => {
-                bonus.insert("intelligence".into(), (attr.value as i64).into());
-              }
-              177 => {
-                bonus.insert("memory".into(), (attr.value as i64).into());
-              }
-              178 => {
-                bonus.insert("perception".into(), (attr.value as i64).into());
-              }
-              179 => {
-                bonus.insert("willpower".into(), (attr.value as i64).into());
-              }
-              331 => {
-                slot = attr.value as i32;
-              }
-              _ => {}
-            }
-          }
+          let (bonus, slot) = extract_implant_attrs(&row.dogma_attributes.0);
           (
             row.id,
             serde_json::Value::Object(bonus).to_string(),
@@ -524,6 +514,104 @@ mod tests {
     }
   }
 
+  mod attr_to_neural_name {
+    use super::*;
+
+    #[test]
+    fn it_maps_175_to_charisma() {
+      assert_eq!(attr_to_neural_name(175), Some("charisma"));
+    }
+
+    #[test]
+    fn it_maps_176_to_intelligence() {
+      assert_eq!(attr_to_neural_name(176), Some("intelligence"));
+    }
+
+    #[test]
+    fn it_maps_177_to_memory() {
+      assert_eq!(attr_to_neural_name(177), Some("memory"));
+    }
+
+    #[test]
+    fn it_maps_178_to_perception() {
+      assert_eq!(attr_to_neural_name(178), Some("perception"));
+    }
+
+    #[test]
+    fn it_maps_179_to_willpower() {
+      assert_eq!(attr_to_neural_name(179), Some("willpower"));
+    }
+
+    #[test]
+    fn it_returns_none_for_unknown_attribute() {
+      assert_eq!(attr_to_neural_name(999), None);
+    }
+  }
+
+  mod extract_implant_attrs {
+    use super::*;
+
+    fn make_attr(id: i32, value: f64) -> dogma_attribute::Entry {
+      dogma_attribute::Entry {
+        attribute_id: id,
+        value,
+      }
+    }
+
+    #[test]
+    fn it_returns_empty_bonus_and_zero_slot_for_no_attrs() {
+      let (bonus, slot) = extract_implant_attrs(&[]);
+
+      assert!(bonus.is_empty());
+      assert_eq!(slot, 0);
+    }
+
+    #[test]
+    fn it_extracts_charisma_bonus() {
+      let attrs = vec![make_attr(175, 3.0)];
+
+      let (bonus, slot) = extract_implant_attrs(&attrs);
+
+      assert_eq!(bonus.get("charisma").and_then(|v| v.as_i64()), Some(3));
+      assert_eq!(slot, 0);
+    }
+
+    #[test]
+    fn it_extracts_slot_from_attribute_331() {
+      let attrs = vec![make_attr(331, 1.0)];
+
+      let (bonus, slot) = extract_implant_attrs(&attrs);
+
+      assert!(bonus.is_empty());
+      assert_eq!(slot, 1);
+    }
+
+    #[test]
+    fn it_extracts_all_neural_attributes() {
+      let attrs = vec![
+        make_attr(175, 3.0),
+        make_attr(176, 4.0),
+        make_attr(177, 4.0),
+        make_attr(178, 4.0),
+        make_attr(179, 4.0),
+      ];
+
+      let (bonus, _) = extract_implant_attrs(&attrs);
+
+      assert_eq!(bonus.len(), 5);
+    }
+
+    #[test]
+    fn it_ignores_unknown_attributes() {
+      let attrs = vec![make_attr(999, 5.0)];
+
+      let (bonus, slot) = extract_implant_attrs(&attrs);
+
+      assert!(bonus.is_empty());
+      assert_eq!(slot, 0);
+    }
+  }
+
   mod find {
     use super::*;
 
@@ -547,6 +635,38 @@ mod tests {
 
       assert!(result.is_some());
       assert_eq!(*result.unwrap().id(), 34);
+    }
+  }
+
+  mod find_attr_u8 {
+    use super::*;
+
+    fn make_attr(id: i32, value: f64) -> dogma_attribute::Entry {
+      dogma_attribute::Entry {
+        attribute_id: id,
+        value,
+      }
+    }
+
+    #[test]
+    fn it_returns_value_for_matching_attribute() {
+      let attrs = vec![make_attr(275, 5.0)];
+
+      assert_eq!(find_attr_u8(&attrs, 275, 1), 5);
+    }
+
+    #[test]
+    fn it_returns_default_when_attribute_not_found() {
+      let attrs: Vec<dogma_attribute::Entry> = vec![];
+
+      assert_eq!(find_attr_u8(&attrs, 275, 1), 1);
+    }
+
+    #[test]
+    fn it_returns_default_for_wrong_attribute_id() {
+      let attrs = vec![make_attr(180, 3.0)];
+
+      assert_eq!(find_attr_u8(&attrs, 275, 1), 1);
     }
   }
 

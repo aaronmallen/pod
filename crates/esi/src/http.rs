@@ -39,11 +39,21 @@ impl Client {
   }
 
   /// Fetches a URL and returns the raw response bytes.
+  #[tracing::instrument(skip(self))]
   pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "GET", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.get(url).send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "GET",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     if (200u16..300).contains(&status) {
       return Ok(resp.bytes().await?.to_vec());
     }
@@ -54,8 +64,11 @@ impl Client {
   ///
   /// `timeout_secs` sets a per-request deadline — use a long value (e.g. 600)
   /// for large downloads where the default request timeout would be too short.
+  #[tracing::instrument(skip(self, dest))]
   pub async fn download_to_file(&self, url: &str, dest: &std::path::Path, timeout_secs: u64) -> Result<(), Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "GET", url = url, "esi: request");
+    let start = Instant::now();
     let mut resp = self
       .inner
       .get(url)
@@ -65,8 +78,16 @@ impl Client {
     self.rate_limit.update_from_response(&resp);
 
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "GET",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     if status == 420 {
       let secs = retry_after_secs(&resp);
+      tracing::warn!(url = url, status = 420, retry_after_secs = secs, "esi: rate limited");
       return Err(self.rate_limit.handle_420(secs).await);
     }
     if !(200u16..300).contains(&status) {
@@ -77,11 +98,21 @@ impl Client {
   }
 
   /// Sends an authenticated DELETE request and discards the response body.
+  #[tracing::instrument(skip(self, token))]
   pub async fn delete_empty(&self, url: &str, token: &str) -> Result<(), Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "DELETE", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.delete(url).bearer_auth(token).send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "DELETE",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     if (200u16..300).contains(&status) {
       return Ok(());
     }
@@ -102,9 +133,18 @@ impl Client {
       req = req.bearer_auth(t);
     }
 
+    tracing::trace!(method = "GET", url = url, cached = cached.is_some(), "esi: request");
+    let start = Instant::now();
     let resp = req.send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "GET",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
 
     if status == 304 {
       let body = cached.expect("304 requires a cached entry").1;
@@ -136,12 +176,27 @@ impl Client {
       req = req.bearer_auth(t);
     }
 
+    tracing::trace!(method = "GET", url = url_base, page = 1, "esi: request");
+    let start = Instant::now();
     let resp = req.send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "GET",
+      url = url_base,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
 
     if status == 420 {
       let secs = retry_after_secs(&resp);
+      tracing::warn!(
+        url = url_base,
+        status = 420,
+        retry_after_secs = secs,
+        "esi: rate limited"
+      );
       return Err(self.rate_limit.handle_420(secs).await);
     }
     if !(200u16..300).contains(&status) {
@@ -161,11 +216,21 @@ impl Client {
   }
 
   /// Sends an authenticated JSON POST and discards the response body.
+  #[tracing::instrument(skip(self, body, token))]
   pub async fn post_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "POST", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.post(url).bearer_auth(token).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "POST",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     if (200u16..300).contains(&status) {
       return Ok(());
     }
@@ -173,14 +238,26 @@ impl Client {
   }
 
   /// Sends an unauthenticated form-encoded POST and deserializes the JSON response.
+  #[tracing::instrument(skip(self, body))]
   pub async fn post_form_anon<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "POST", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.post(url).form(body).send().await?;
     self.rate_limit.update_from_response(&resp);
+    let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "POST",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an authenticated JSON POST and deserializes the JSON response.
+  #[tracing::instrument(skip(self, body, token))]
   pub async fn post_json<B: Serialize, T: DeserializeOwned>(
     &self,
     url: &str,
@@ -188,25 +265,56 @@ impl Client {
     token: &str,
   ) -> Result<T, Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "POST", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.post(url).bearer_auth(token).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
+    let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "POST",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an unauthenticated JSON POST and deserializes the JSON response.
+  #[tracing::instrument(skip(self, body))]
   pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "POST", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.post(url).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
+    let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "POST",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     consume_json_response(resp, &self.rate_limit).await
   }
 
   /// Sends an authenticated JSON PUT and discards the response body.
+  #[tracing::instrument(skip(self, body, token))]
   pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
     self.rate_limit.check().await;
+    tracing::trace!(method = "PUT", url = url, "esi: request");
+    let start = Instant::now();
     let resp = self.inner.put(url).bearer_auth(token).json(body).send().await?;
     self.rate_limit.update_from_response(&resp);
     let status = resp.status().as_u16();
+    tracing::trace!(
+      method = "PUT",
+      url = url,
+      status = status,
+      elapsed_ms = start.elapsed().as_millis() as u64,
+      "esi: response"
+    );
     if (200u16..300).contains(&status) {
       return Ok(());
     }
@@ -254,6 +362,7 @@ impl Client {
   async fn map_error_status(&self, status: u16, resp: reqwest::Response) -> Error {
     if status == 420 {
       let secs = retry_after_secs(&resp);
+      tracing::warn!(status = 420, retry_after_secs = secs, "esi: rate limited");
       self.rate_limit.handle_420(secs).await
     } else {
       api_error(resp).await
@@ -460,6 +569,7 @@ async fn consume_json_response<T: DeserializeOwned>(
   }
   if status == 420 {
     let secs = retry_after_secs(&resp);
+    tracing::warn!(status = 420, retry_after_secs = secs, "esi: rate limited");
     return Err(rate_limit.handle_420(secs).await);
   }
   Err(api_error(resp).await)

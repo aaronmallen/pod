@@ -33,6 +33,7 @@ impl<'a> Client<'a> {
 
   /// Exchanges an authorization code for a [`Grant`].
   pub async fn exchange_code(&self, code: &str, redirect_uri: &str, verifier: &str) -> Result<Grant, Error> {
+    tracing::debug!("auth: exchanging OAuth authorization code");
     let resp: TokenResponse = self
       .esi
       .http()
@@ -47,7 +48,9 @@ impl<'a> Client<'a> {
         ],
       )
       .await?;
-    self.build_grant(resp)
+    let grant = self.build_grant(resp)?;
+    tracing::info!(character_id = grant.character_id(), character_name = %grant.character_name(), "auth: OAuth code exchange successful");
+    Ok(grant)
   }
 
   /// Generates a random PKCE state string for CSRF protection.
@@ -78,6 +81,7 @@ impl<'a> Client<'a> {
   /// Uses the refresh token in `grant` to obtain a new [`Grant`].
   #[tracing::instrument(skip(self, grant), fields(character_id = grant.character_id()))]
   pub async fn refresh(&self, grant: &Grant) -> Result<Grant, Error> {
+    tracing::debug!(character_id = grant.character_id(), "auth: refreshing token");
     let resp: TokenResponse = self
       .esi
       .http()
@@ -89,8 +93,17 @@ impl<'a> Client<'a> {
           ("client_id", self.esi.id()),
         ],
       )
-      .await?;
-    self.build_grant(resp)
+      .await
+      .map_err(|e| {
+        tracing::warn!(character_id = grant.character_id(), error = %e, "auth: token refresh failed");
+        e
+      })?;
+    let new_grant = self.build_grant(resp)?;
+    tracing::info!(
+      character_id = new_grant.character_id(),
+      "auth: token refresh successful"
+    );
+    Ok(new_grant)
   }
 
   /// Builds the EVE SSO authorization URL and returns it with the PKCE verifier and state.

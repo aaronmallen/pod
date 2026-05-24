@@ -36,10 +36,16 @@ impl Store {
   /// Retrieves the cached ETag and body for `url`, if present.
   #[tracing::instrument(skip(self))]
   pub(crate) fn get(&self, url: &str) -> Option<(String, Bytes)> {
-    match self {
+    let result = match self {
       Self::Disk(cache) => cache.get(url),
       Self::Memory(cache) => cache.get(url),
+    };
+    if result.is_some() {
+      tracing::trace!(url = url, "esi: cache hit");
+    } else {
+      tracing::trace!(url = url, "esi: cache miss");
     }
+    result
   }
 
   /// Stores `body` along with its `etag` under `url`.
@@ -115,6 +121,7 @@ impl DiskStore {
       };
       let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
       if age > MAX_CACHE_AGE {
+        tracing::debug!(path = ?entry.path(), "esi: evicting stale cache entry");
         std::fs::remove_file(entry.path()).ok();
       }
     }

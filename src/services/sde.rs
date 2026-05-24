@@ -327,7 +327,7 @@ async fn seed_market_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Market Group {id}"));
+      let name = e.name.expect("market group name must be present in SDE YAML").en();
       let mut m = models::MarketGroup::new(id, name);
       m.set_parent_market_group_id(e.parent_group_id);
       m
@@ -399,7 +399,7 @@ async fn seed_factions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Faction {id}"));
+      let name = e.name.expect("faction name must be present in SDE YAML").en();
       let mut m = models::Faction::new(id, name);
       m.set_size_factor(e.size_factor);
       m.set_solar_system_id(e.solar_system_id);
@@ -422,7 +422,7 @@ async fn seed_races(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Race {id}"));
+      let name = e.name.expect("race name must be present in SDE YAML").en();
       let mut m = models::Race::new(id, name);
       if let Some(aid) = e.alliance_id {
         m.set_alliance_id(aid);
@@ -445,7 +445,7 @@ async fn seed_bloodlines(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Bloodline {id}"));
+      let name = e.name.expect("bloodline name must be present in SDE YAML").en();
       let mut m = models::Bloodline::new(id, name);
       m.set_race_id(e.race_id);
       m.set_corporation_id(e.corporation_id);
@@ -473,7 +473,7 @@ async fn seed_regions(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Region {id}"));
+      let name = e.name.expect("region name must be present in SDE YAML").en();
       let mut m = models::Region::new(id, name);
       m.set_description(e.description.map(|d| d.en()));
       m
@@ -494,7 +494,7 @@ async fn seed_constellations(db: &pod_db::Repo, path: &Path) -> Result<(), Strin
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("Constellation {id}"));
+      let name = e.name.expect("constellation name must be present in SDE YAML").en();
       let mut m = models::Constellation::new(id, &name);
       m.set_region_id(e.region_id);
       if let Some(pos) = e.center {
@@ -518,7 +518,7 @@ async fn seed_solar_systems(db: &pod_db::Repo, path: &Path) -> Result<(), String
   let records: Vec<_> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(|n| n.en()).unwrap_or_else(|| format!("System {id}"));
+      let name = e.name.expect("solar system name must be present in SDE YAML").en();
       let mut m = models::SolarSystem::new(id, &name);
       m.set_constellation_id(e.constellation_id);
       m.set_security_status(e.security_status.unwrap_or(0.0));

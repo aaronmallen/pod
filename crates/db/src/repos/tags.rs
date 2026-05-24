@@ -26,11 +26,13 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all global tags.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_all(&self) -> Result<Vec<Tag>, Error> {
     Ok(TagEntity::find().all(self.db).await?)
   }
 
   /// Returns an existing tag by name, or inserts it and returns the new row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_or_create(&self, name: &str) -> Result<Tag, Error> {
     if let Some(existing) = TagEntity::find().filter(TagColumn::Name.eq(name)).one(self.db).await? {
       return Ok(existing);
@@ -53,6 +55,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Replaces all tag assignments for an entity atomically.
+  #[tracing::instrument(level = "trace", skip(self), fields(entity_id = entity_id))]
   pub async fn set_entity_tags(&self, entity_id: i64, entity_type: &str, tag_ids: Vec<i32>) -> Result<(), Error> {
     let entity_type = entity_type.to_string();
     self
@@ -86,6 +89,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all tags assigned to the given entity.
+  #[tracing::instrument(level = "trace", skip(self), fields(entity_id = entity_id))]
   pub async fn tags_for_entity(&self, entity_id: i64, entity_type: &str) -> Result<Vec<Tag>, Error> {
     let tag_ids: Vec<i32> = EntityTagEntity::find()
       .filter(EntityTagColumn::EntityId.eq(entity_id))
@@ -109,21 +113,25 @@ impl<'a> Repo<'a> {
   }
 
   /// Replaces all tag assignments for a character atomically.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn set_character_tags(&self, character_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
     self.set_entity_tags(character_id, "character", tag_ids).await
   }
 
   /// Returns all tags assigned to the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn tags_for_character(&self, character_id: i64) -> Result<Vec<Tag>, Error> {
     self.tags_for_entity(character_id, "character").await
   }
 
   /// Replaces all tag assignments for a corporation atomically.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn set_corporation_tags(&self, corporation_id: i64, tag_ids: Vec<i32>) -> Result<(), Error> {
     self.set_entity_tags(corporation_id, "corporation", tag_ids).await
   }
 
   /// Returns all tags assigned to the given corporation.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn tags_for_corporation(&self, corporation_id: i64) -> Result<Vec<Tag>, Error> {
     self.tags_for_entity(corporation_id, "corporation").await
   }

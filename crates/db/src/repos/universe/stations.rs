@@ -23,24 +23,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all stations.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<Station>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds a station by its unique ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i32) -> Result<Option<Station>, Error> {
     let row = Entity::find_by_id(id).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Finds a station by its display name (exact match).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_name(&self, name: &str) -> Result<Option<Station>, Error> {
     let row = Entity::find().filter(Column::Name.eq(name)).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Returns stations for the given IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<Station>, Error> {
     let rows = Entity::find()
       .filter(Column::Id.is_in(ids.to_vec()))
@@ -50,6 +54,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates a station row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, record: &Station) -> Result<(), Error> {
     record.validate()?;
     let active: ActiveModel = record.clone().into();
@@ -79,6 +84,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts station rows in chunks of 200.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[Station]) -> Result<(), Error> {
     if records.is_empty() {
       return Ok(());

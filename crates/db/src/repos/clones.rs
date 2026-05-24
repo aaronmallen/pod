@@ -71,6 +71,7 @@ impl<'a> Repo<'a> {
   /// synced from ESI). Returns `Ok(Some(attrs))` when the clone record is
   /// present — even if all attribute bonuses are zero (the character simply
   /// has no neural attribute implants).
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn active_clone_implant_bonus(&self, character_id: i64) -> Result<Option<NeuralAttributes>, Error> {
     let active_clone = CloneEntity::find()
       .filter(CloneColumn::CharacterId.eq(character_id))
@@ -115,6 +116,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all clone rows for the given character, each paired with its implants.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn find_for_character(&self, character_id: i64) -> Result<Vec<(CloneModel, Vec<ImplantModel>)>, Error> {
     let rows = character_clone::Entity::load()
       .with(character_clone_implant::Entity)
@@ -137,6 +139,7 @@ impl<'a> Repo<'a> {
   ///
   /// Each `(clone_model, implants)` pair is written using ON CONFLICT DO UPDATE so
   /// stale data is always replaced with the latest ESI response.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_for_character(&self, clones: &[(CloneModel, Vec<ImplantModel>)]) -> Result<(), Error> {
     for (clone, implants) in clones {
       let active = CloneActive {
@@ -200,6 +203,7 @@ impl<'a> Repo<'a> {
   ///
   /// Accepts the minimal data produced during bootstrap (no location names or system IDs),
   /// so that `active_clone_implant_bonus` works correctly as soon as startup completes.
+  #[tracing::instrument(level = "trace", skip(self, clones))]
   pub async fn upsert_startup_clones(&self, clones: &[(StartupClone, Vec<StartupImplant>)]) -> Result<(), Error> {
     for (clone, implants) in clones {
       let active = CloneActive {

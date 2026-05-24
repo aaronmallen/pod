@@ -23,24 +23,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all factions.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<Faction>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds a faction by its unique ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i32) -> Result<Option<Faction>, Error> {
     let row = Entity::find_by_id(id).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Finds a faction by its display name (exact match).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_name(&self, name: &str) -> Result<Option<Faction>, Error> {
     let row = Entity::find().filter(Column::Name.eq(name)).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Inserts or updates a faction row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, record: &Faction) -> Result<(), Error> {
     record.validate()?;
     let active: ActiveModel = record.clone().into();
@@ -62,6 +66,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts faction rows in a single batch.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[Faction]) -> Result<(), Error> {
     if records.is_empty() {
       return Ok(());

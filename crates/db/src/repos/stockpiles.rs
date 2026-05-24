@@ -92,6 +92,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all stockpiles with their item requirements loaded.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn list_stockpiles(&self) -> Result<Vec<StockpileWithItems>, Error> {
     let rows = StockpileEntity::load()
       .with(stockpile_item::Entity)
@@ -124,6 +125,7 @@ impl<'a> Repo<'a> {
   /// Inserts a new stockpile with the given items and returns the new stockpile ID.
   ///
   /// `items` is a slice of `(type_id, target_quantity)` pairs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn create_stockpile(
     &self,
     name: &str,
@@ -146,6 +148,7 @@ impl<'a> Repo<'a> {
   /// Replaces all fields and items for the given stockpile atomically.
   ///
   /// Existing item rows are deleted and re-inserted from `items`.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn update_stockpile(
     &self,
     id: i64,
@@ -170,6 +173,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Deletes a stockpile by ID; items cascade via the FK constraint.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn delete_stockpile(&self, id: i64) -> Result<(), Error> {
     StockpileEntity::delete_by_id(id).exec(self.db).await?;
     Ok(())
@@ -180,6 +184,7 @@ impl<'a> Repo<'a> {
   /// For each item, the `have_quantity` is the sum of `quantity` from
   /// `character_assets` filtered by the stockpile's `location_id` (when set)
   /// and `character_id` (when set). `type_name` is resolved from `item_types`.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn stockpile_fill_status(&self, id: i64) -> Result<Vec<StockpileItemStatus>, Error> {
     let Some(pile) = StockpileEntity::load()
       .filter_by_id(id)

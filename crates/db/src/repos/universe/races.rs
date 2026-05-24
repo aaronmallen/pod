@@ -23,24 +23,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all races.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<Race>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds a race by its unique ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i32) -> Result<Option<Race>, Error> {
     let row = Entity::find_by_id(id).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Finds a race by its display name (exact match).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_name(&self, name: &str) -> Result<Option<Race>, Error> {
     let row = Entity::find().filter(Column::Name.eq(name)).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Inserts or updates a race row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, record: &Race) -> Result<(), Error> {
     record.validate()?;
     let active: ActiveModel = record.clone().into();
@@ -56,6 +60,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts race rows in a single batch.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[Race]) -> Result<(), Error> {
     if records.is_empty() {
       return Ok(());

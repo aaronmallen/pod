@@ -23,6 +23,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all killmail rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn find_for_character(&self, character_id: i64) -> Result<Vec<KillModel>, Error> {
     let rows = KillEntity::find()
       .filter(KillColumn::CharacterId.eq(character_id))
@@ -32,6 +33,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts all killmail rows for the given character using ON CONFLICT DO UPDATE.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_for_character(&self, character_id: i64, kills: &[KillModel]) -> Result<(), Error> {
     for kill in kills {
       let active = KillActive {

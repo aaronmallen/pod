@@ -209,6 +209,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns published ships whose name matches the given search string (case-insensitive).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(6))
@@ -263,6 +264,7 @@ impl<'a> Repo<'a> {
 
   /// Returns published modules whose name matches the given search string (case-insensitive).
   /// Only modules that have at least one skill requirement are returned.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_modules(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(7))
@@ -302,6 +304,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all published skills (EVE category 16) grouped by item group.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_skill_groups(&self) -> Result<Vec<pod_model::SkillGroupDef>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(16))
@@ -341,24 +344,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all item types.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<ItemType>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds an item type by its unique ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i32) -> Result<Option<ItemType>, Error> {
     let row = Entity::find_by_id(id).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Finds an item type by its display name (exact match).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_name(&self, name: &str) -> Result<Option<ItemType>, Error> {
     let row = Entity::find().filter(Column::Name.eq(name)).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Returns raw entity rows for the given type IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<crate::entities::item_type::Model>, Error> {
     let rows = Entity::find()
       .filter(Column::Id.is_in(ids.to_vec()))
@@ -372,6 +379,7 @@ impl<'a> Repo<'a> {
   /// The `attribute_bonus_json` is a JSON object mapping neural attribute names to their bonus
   /// amounts (e.g. `{"perception":4,"willpower":4}`). The slot is derived from dogma attribute
   /// 331. Used by the startup ESI sync to build implant DB records without exposing entity types.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn implant_data_for_ids(&self, ids: &[i32]) -> Result<Vec<(i32, String, i32, String)>, Error> {
     if ids.is_empty() {
       return Ok(Vec::new());
@@ -397,6 +405,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates an item type row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, record: &ItemType) -> Result<(), Error> {
     record.validate()?;
     let active: ActiveModel = record.clone().into();
@@ -428,6 +437,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts item type rows in chunks of 200.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[ItemType]) -> Result<(), Error> {
     if records.is_empty() {
       return Ok(());

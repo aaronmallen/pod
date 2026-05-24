@@ -23,18 +23,21 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all corporations.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<Corporation>, Error> {
     let rows = CorpEntity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Corporation::from).collect())
   }
 
   /// Deletes a corporation by EVE corporation ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn delete(&self, corporation_id: i64) -> Result<(), Error> {
     CorpEntity::delete_by_id(corporation_id).exec(self.db).await?;
     Ok(())
   }
 
   /// Finds a corporation by EVE corporation ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i64) -> Result<Option<Corporation>, Error> {
     let Some(row) = CorpEntity::find_by_id(id).one(self.db).await? else {
       return Ok(None);
@@ -43,6 +46,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates only the OAuth token fields for a corporation.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn update_token(
     &self,
     corporation_id: i64,
@@ -62,6 +66,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates a corporation row, validating first.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, corporation: &Corporation) -> Result<(), Error> {
     corporation.validate()?;
     let active = CorpActive::from(corporation.clone());

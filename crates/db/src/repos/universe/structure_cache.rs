@@ -18,6 +18,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns cached entries for the given structure IDs as `(id, name, solar_system_id)` triples.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i64]) -> Result<Vec<(i64, String, Option<i64>)>, Error> {
     if ids.is_empty() {
       return Ok(Vec::new());
@@ -30,6 +31,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates a structure name entry.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn upsert(&self, id: i64, name: &str) -> Result<(), Error> {
     let active = structure_cache::ActiveModel {
       id: Set(id),
@@ -48,6 +50,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts structure name entries with solar system IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, entries: &[(i64, String, Option<i64>)]) -> Result<(), Error> {
     if entries.is_empty() {
       return Ok(());

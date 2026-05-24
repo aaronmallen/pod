@@ -21,6 +21,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all cached icon bytes as `(type_id, variant, data)` tuples.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_all(&self) -> Result<Vec<(i32, String, Vec<u8>)>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(|r| (r.type_id, r.variant, r.data)).collect())
@@ -28,6 +29,7 @@ impl<'a> Repo<'a> {
 
   /// Returns cached icon bytes for the given type IDs and variant,
   /// as `(type_id, data)` tuples.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i32], variant: &str) -> Result<Vec<(i32, Vec<u8>)>, Error> {
     let rows = Entity::find()
       .filter(Column::TypeId.is_in(ids.to_vec()))
@@ -38,6 +40,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or replaces icon bytes for a `(type_id, variant)` pair.
+  #[tracing::instrument(level = "trace", skip(self), fields(type_id = type_id))]
   pub async fn upsert(&self, type_id: i32, variant: &str, data: Vec<u8>) -> Result<(), Error> {
     let model = ActiveModel {
       type_id: Set(type_id),

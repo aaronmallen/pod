@@ -27,6 +27,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all skill plans for the given character, each with their entries loaded.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn all_for_character(&self, character_id: i64) -> Result<Vec<SkillPlan>, Error> {
     let rows = PlanEntity::load()
       .filter(PlanColumn::CharacterId.eq(character_id))
@@ -38,6 +39,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Finds a skill plan by ID, loading its entries as well.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: &str) -> Result<Option<SkillPlan>, Error> {
     let row = PlanEntity::load()
       .filter_by_id(id.to_string())
@@ -48,24 +50,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts a skill plan and all of its entries.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn create(&self, plan: &SkillPlan) -> Result<(), Error> {
     PlanEntity::insert(plan_to_active(plan)).exec(self.db).await?;
     self.upsert_entries(&plan.id, &plan.entries).await
   }
 
   /// Updates the skill plan row and re-syncs its entries.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn update(&self, plan: &SkillPlan) -> Result<(), Error> {
     PlanEntity::update(plan_to_active(plan)).exec(self.db).await?;
     self.upsert_entries(&plan.id, &plan.entries).await
   }
 
   /// Deletes a skill plan by ID; entries cascade via the FK constraint.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn delete(&self, id: &str) -> Result<(), Error> {
     PlanEntity::delete_by_id(id.to_string()).exec(self.db).await?;
     Ok(())
   }
 
   /// Replaces all entries for the given plan with the provided slice, ordered by position.
+  #[tracing::instrument(level = "trace", skip(self), fields(plan_id = plan_id))]
   pub async fn upsert_entries(&self, plan_id: &str, entries: &[SkillPlanEntry]) -> Result<(), Error> {
     EntryEntity::delete_many()
       .filter(EntryColumn::PlanId.eq(plan_id))

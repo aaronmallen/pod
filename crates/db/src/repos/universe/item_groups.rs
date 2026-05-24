@@ -23,24 +23,28 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all item groups.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<ItemGroup>, Error> {
     let rows = Entity::find().all(self.db).await?;
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
   /// Finds an item group by its unique ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i32) -> Result<Option<ItemGroup>, Error> {
     let row = Entity::find_by_id(id).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Finds an item group by its display name (exact match).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_name(&self, name: &str) -> Result<Option<ItemGroup>, Error> {
     let row = Entity::find().filter(Column::Name.eq(name)).one(self.db).await?;
     Ok(row.map(Into::into))
   }
 
   /// Returns raw entity rows for the given group IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<crate::entities::item_group::Model>, Error> {
     let rows = Entity::find()
       .filter(Column::Id.is_in(ids.to_vec()))
@@ -50,6 +54,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates an item group row.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, record: &ItemGroup) -> Result<(), Error> {
     record.validate()?;
     let active: ActiveModel = record.clone().into();
@@ -65,6 +70,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Bulk-upserts item group rows in chunks of 500.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[ItemGroup]) -> Result<(), Error> {
     if records.is_empty() {
       return Ok(());

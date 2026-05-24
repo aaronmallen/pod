@@ -25,6 +25,7 @@ pub enum Error {
   Validation(#[from] validator::ValidationErrors),
 }
 
+#[tracing::instrument]
 pub async fn open(path: &Path) -> Result<Repo, Error> {
   if let Some(parent) = path.parent() {
     std::fs::create_dir_all(parent).ok();

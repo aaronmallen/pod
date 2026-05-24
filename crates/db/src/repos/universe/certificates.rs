@@ -24,6 +24,7 @@ impl<'a> Repo<'a> {
     }
   }
 
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_all(&self) -> Result<Vec<Certificate>, Error> {
     let rows = CertEntity::find()
       .order_by(CertColumn::Name, Order::Asc)
@@ -32,6 +33,7 @@ impl<'a> Repo<'a> {
     Ok(rows.into_iter().map(cert_from_row).collect())
   }
 
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_by_ids(&self, ids: &[i32]) -> Result<Vec<Certificate>, Error> {
     if ids.is_empty() {
       return Ok(vec![]);
@@ -43,6 +45,7 @@ impl<'a> Repo<'a> {
     Ok(rows.into_iter().map(cert_from_row).collect())
   }
 
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, certs: &[Certificate]) -> Result<(), Error> {
     for cert in certs {
       let skills_json = serde_json::to_string(
@@ -81,6 +84,7 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_ship_masteries(&self, entries: &[(i32, i32, Vec<i32>)]) -> Result<(), Error> {
     for (ship_id, mastery_level, cert_ids) in entries {
       let cert_ids_json = serde_json::to_string(cert_ids).unwrap_or_else(|_| "[]".to_string());

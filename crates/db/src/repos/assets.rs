@@ -26,6 +26,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns raw corporation asset entity rows for all given corporation IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn corporation_assets_for_corporation_ids(
     &self,
     corp_ids: &[i64],
@@ -39,6 +40,7 @@ impl<'a> Repo<'a> {
 
   /// Deletes corporation asset rows whose `item_id` is not in `keep_ids`.
   /// If `keep_ids` is empty all assets for the corporation are removed.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn delete_stale_corporation_assets(&self, corporation_id: i64, keep_ids: &[i64]) -> Result<u64, Error> {
     let result = if keep_ids.is_empty() {
       CorpAssetEntity::delete_many()
@@ -56,6 +58,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns the sync state record for the given owner, if present.
+  #[tracing::instrument(level = "trace", skip(self), fields(owner_id = owner_id))]
   pub async fn get_asset_sync_state(&self, owner_type: &str, owner_id: i64) -> Result<Option<AssetSyncState>, Error> {
     let row = SyncStateEntity::find_by_id((owner_id, owner_type.to_string()))
       .one(self.db)
@@ -64,6 +67,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts all corporation asset rows for the given corporation.
+  #[tracing::instrument(level = "trace", skip(self), fields(corporation_id = corporation_id))]
   pub async fn upsert_corporation_assets(&self, corporation_id: i64, assets: &[CorporationAsset]) -> Result<(), Error> {
     for asset in assets {
       asset.validate()?;
@@ -100,6 +104,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts the sync state record for the given owner.
+  #[tracing::instrument(level = "trace", skip(self), fields(owner_id = owner_id))]
   pub async fn upsert_asset_sync_state(
     &self,
     owner_type: &str,

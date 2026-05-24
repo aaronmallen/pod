@@ -50,6 +50,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts a new intraday price observation for `type_id`.
+  #[tracing::instrument(level = "trace", skip(self), fields(type_id = type_id))]
   pub async fn insert_price(
     &self,
     type_id: i32,
@@ -72,6 +73,7 @@ impl<'a> Repo<'a> {
   ///
   /// Checks `type_prices` first (intraday rows), falling back to the most
   /// recent `type_price_histories.close` when no intraday row exists.
+  #[tracing::instrument(level = "trace", skip(self), fields(type_id = type_id))]
   pub async fn latest_price(&self, type_id: i32) -> Result<Option<f64>, Error> {
     let intraday = PriceEntity::find()
       .filter(PriceColumn::TypeId.eq(type_id))
@@ -100,6 +102,7 @@ impl<'a> Repo<'a> {
   /// 3. `type_price_histories.close` if no intraday row exists
   ///
   /// Returns an empty map when `type_ids` is empty.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn latest_prices(&self, type_ids: &[i32]) -> Result<HashMap<i32, f64>, Error> {
     if type_ids.is_empty() {
       return Ok(HashMap::new());
@@ -143,6 +146,7 @@ impl<'a> Repo<'a> {
   ///
   /// The set is the UNION of type IDs present in `character_assets` and
   /// `type_price_histories`.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn types_to_track(&self) -> Result<Vec<i32>, Error> {
     let asset_ids: HashSet<i32> = AssetEntity::find()
       .all(self.db)
@@ -168,6 +172,7 @@ impl<'a> Repo<'a> {
   /// high (max), low (min), close (last fetched), avg (mean), and
   /// sample_count, then upserts into `type_price_histories`. Processed
   /// intraday rows are deleted after all upserts complete.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn aggregate_and_prune(&self, date: NaiveDate) -> Result<(), Error> {
     let date_str = date.format("%Y-%m-%d").to_string();
     let next_str = (date + Duration::days(1)).format("%Y-%m-%d").to_string();
@@ -239,6 +244,7 @@ impl<'a> Repo<'a> {
   ///
   /// Computes NAV = sum(price * quantity) per day, sorted ascending. Returns an
   /// empty vec if fewer than 2 data points exist.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn nav_history(&self, char_ids: &[i64], days: u32) -> Result<Vec<(NaiveDate, f64)>, Error> {
     if char_ids.is_empty() {
       return Ok(Vec::new());
@@ -301,6 +307,7 @@ impl<'a> Repo<'a> {
 
   /// Returns distinct UTC calendar dates that have intraday rows older than
   /// `before_date` (used to discover which dates need EOD aggregation).
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn dates_needing_aggregation(&self, before_date: NaiveDate) -> Result<Vec<NaiveDate>, Error> {
     let before_str = before_date.format("%Y-%m-%d").to_string();
 

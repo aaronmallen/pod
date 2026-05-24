@@ -23,6 +23,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all notification rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn find_for_character(&self, character_id: i64) -> Result<Vec<NotifModel>, Error> {
     let rows = NotifEntity::find()
       .filter(NotifColumn::CharacterId.eq(character_id))
@@ -32,6 +33,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts all notification rows for the given character using ON CONFLICT DO UPDATE.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_for_character(&self, character_id: i64, notifications: &[NotifModel]) -> Result<(), Error> {
     for notif in notifications {
       let active = NotifActive {

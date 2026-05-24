@@ -28,6 +28,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all contact rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn find_for_character(&self, character_id: i64) -> Result<Vec<ContactModel>, Error> {
     let rows = ContactEntity::find()
       .filter(ContactColumn::CharacterId.eq(character_id))
@@ -37,6 +38,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all contact label rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn find_labels_for_character(&self, character_id: i64) -> Result<Vec<LabelModel>, Error> {
     let rows = LabelEntity::find()
       .filter(LabelColumn::CharacterId.eq(character_id))
@@ -46,6 +48,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts contacts and labels for the given character using ON CONFLICT DO UPDATE.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_for_character(
     &self,
     character_id: i64,

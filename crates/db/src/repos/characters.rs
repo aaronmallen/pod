@@ -43,6 +43,7 @@ impl<'a> Repo<'a> {
 
   /// Returns all characters ordered by sort_order, each with their skills,
   /// assets, and clones eagerly loaded.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all(&self) -> Result<Vec<Character>, Error> {
     let rows = CharacterEntity::load()
       .order_by(CharacterColumn::SortOrder, Order::Asc)
@@ -55,6 +56,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Deletes a character and all associated skills, assets, and tag assignments.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn delete(&self, character_id: i64) -> Result<(), Error> {
     EntityTagEntity::delete_many()
       .filter(EntityTagColumn::EntityId.eq(character_id))
@@ -75,6 +77,7 @@ impl<'a> Repo<'a> {
 
   /// Finds a character by EVE character ID, with skills, assets, and clones
   /// eagerly loaded.
+  #[tracing::instrument(level = "trace", skip(self), fields(id = id))]
   pub async fn find(&self, id: i64) -> Result<Option<Character>, Error> {
     let row = CharacterEntity::load()
       .filter_by_id(id)
@@ -89,6 +92,7 @@ impl<'a> Repo<'a> {
   /// Returns the next available slot index (one past the current maximum sort_order).
   ///
   /// Returns 0 when no characters exist yet.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn next_sort_order(&self) -> Result<i32, Error> {
     let rows = CharacterEntity::find()
       .order_by(CharacterColumn::SortOrder, Order::Desc)
@@ -102,6 +106,7 @@ impl<'a> Repo<'a> {
   /// Characters are fetched ordered by sort_order ascending (then id for stability). If any two
   /// share the same slot index the entire list is reassigned sequential indices 0, 1, 2 … in that
   /// order. No-ops when all slot indices are already unique.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn normalize_sort_orders(&self) -> Result<(), Error> {
     let rows = CharacterEntity::find()
       .order_by(CharacterColumn::SortOrder, Order::Asc)
@@ -122,6 +127,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates only the location fields for a character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_location(
     &self,
     character_id: i64,
@@ -139,6 +145,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates only the OAuth token fields for a character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_token(
     &self,
     character_id: i64,
@@ -157,6 +164,7 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_granted_scopes(&self, character_id: i64, scopes: &str) -> Result<(), Error> {
     let active = CharacterActive {
       id: ActiveValue::Set(character_id),
@@ -168,6 +176,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates only the wallet balance for a character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_wallet(&self, character_id: i64, isk_balance: Option<f64>) -> Result<(), Error> {
     let active = CharacterActive {
       id: ActiveValue::Set(character_id),
@@ -179,6 +188,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates only the corporation fields for a character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_corp(&self, character_id: i64, corp_id: i64, corp_name: String) -> Result<(), Error> {
     let active = CharacterActive {
       id: ActiveValue::Set(character_id),
@@ -191,6 +201,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Inserts or updates a character row, validating first.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert(&self, character: &Character) -> Result<(), Error> {
     character.validate()?;
     let active = CharacterActive {
@@ -237,6 +248,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Updates the sort_order for each (character_id, order) pair.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn update_sort_orders(&self, updates: &[(i64, i32)]) -> Result<(), Error> {
     for &(id, order) in updates {
       let active = CharacterActive {
@@ -250,6 +262,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts all asset rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_assets(&self, character_id: i64, assets: &[CharacterAsset]) -> Result<(), Error> {
     use crate::entities::character_asset::Entity as AssetEntity;
 
@@ -294,6 +307,7 @@ impl<'a> Repo<'a> {
   /// Deletes non-active-ship asset rows for `character_id` whose `item_id` is not in `keep_ids`.
   /// If `keep_ids` is empty all non-active-ship assets for the character are removed.
   /// Active ship rows (`is_active_ship = true`) are never touched by this method.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn delete_stale_assets(&self, character_id: i64, keep_ids: &[i64]) -> Result<u64, Error> {
     let result = if keep_ids.is_empty() {
       AssetEntity::delete_many()
@@ -313,6 +327,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts all skill rows for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_skills(&self, character_id: i64, skills: &[CharacterSkill]) -> Result<(), Error> {
     for skill in skills {
       skill.validate()?;
@@ -348,6 +363,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts wallet journal entries for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_journal_entries(&self, character_id: i64, entries: &[WalletJournalEntry]) -> Result<(), Error> {
     for entry in entries {
       entry.validate()?;
@@ -384,6 +400,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns the 200 most-recent wallet journal entries for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn journal_entries(&self, character_id: i64) -> Result<Vec<WalletJournalEntry>, Error> {
     let rows = JournalEntity::find()
       .filter(JournalColumn::CharacterId.eq(character_id))
@@ -395,6 +412,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts wallet transactions for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_transactions(&self, character_id: i64, txns: &[WalletTransaction]) -> Result<(), Error> {
     for txn in txns {
       txn.validate()?;
@@ -431,6 +449,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns the 200 most-recent wallet transactions for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn transactions(&self, character_id: i64) -> Result<Vec<WalletTransaction>, Error> {
     let rows = TxnEntity::find()
       .filter(TxnColumn::CharacterId.eq(character_id))
@@ -442,6 +461,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts mail headers for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_mail_headers(&self, character_id: i64, headers: &[MailHeader]) -> Result<(), Error> {
     for header in headers {
       header.validate()?;
@@ -474,6 +494,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts a snoozed mail deadline.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_snoozed_mail(&self, character_id: i64, mail_id: i64, snooze_until: &str) -> Result<(), Error> {
     let active = SnoozedActive {
       id: ActiveValue::NotSet,
@@ -493,6 +514,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Removes a snoozed mail record.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn delete_snoozed_mail(&self, character_id: i64, mail_id: i64) -> Result<(), Error> {
     SnoozedEntity::delete_many()
       .filter(SnoozedColumn::CharacterId.eq(character_id))
@@ -503,6 +525,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all snoozed mail records whose deadline is at or before `now_iso`.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn expired_snoozed_mails(&self, now_iso: &str) -> Result<Vec<SnoozedModel>, Error> {
     let rows = SnoozedEntity::find()
       .filter(SnoozedColumn::SnoozeUntil.lte(now_iso))
@@ -512,6 +535,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all snoozed mail records.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn all_snoozed_mails(&self) -> Result<Vec<SnoozedModel>, Error> {
     let rows = SnoozedEntity::find().all(self.db).await?;
     Ok(rows)
@@ -519,6 +543,7 @@ impl<'a> Repo<'a> {
 
   /// Returns the stored ESI effective neural attributes for the given
   /// character, or `None` if attributes have not yet been synced.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn effective_attributes(&self, character_id: i64) -> Result<Option<NeuralAttributes>, Error> {
     let Some(row) = CharacterEntity::find_by_id(character_id).one(self.db).await? else {
       return Ok(None);
@@ -542,6 +567,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Persists ESI effective neural attributes for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn update_neural_attributes(&self, character_id: i64, attrs: &NeuralAttributes) -> Result<(), Error> {
     let active = CharacterActive {
       id: ActiveValue::Set(character_id),
@@ -557,6 +583,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns raw asset entity rows for all given character IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
   pub async fn assets_for_character_ids(
     &self,
     char_ids: &[i64],
@@ -569,6 +596,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts character contracts for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_contracts(&self, character_id: i64, contracts: &[CharacterContract]) -> Result<(), Error> {
     for contract in contracts {
       contract.validate()?;
@@ -613,6 +641,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns the 200 most-recent contracts for the given character.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn contracts(&self, character_id: i64) -> Result<Vec<CharacterContract>, Error> {
     let rows = ContractEntity::find()
       .filter(ContractColumn::CharacterId.eq(character_id))
@@ -624,6 +653,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Deletes a single mail header by character and mail ID.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn delete_mail_header(&self, character_id: i64, mail_id: i64) -> Result<(), Error> {
     MailHeaderEntity::delete_many()
       .filter(MailHeaderColumn::CharacterId.eq(character_id))
@@ -634,6 +664,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns all mail headers for the given character, newest first.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn mail_headers(&self, character_id: i64) -> Result<Vec<MailHeader>, Error> {
     let rows = MailHeaderEntity::find()
       .filter(MailHeaderColumn::CharacterId.eq(character_id))

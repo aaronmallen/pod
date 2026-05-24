@@ -121,47 +121,48 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   })
 }
 
+/// Format SP as compact string: "47.32M", "5.10K", "256"
+pub fn fmt_sp(sp: u64) -> String {
+  if sp >= 1_000_000 {
+    format!("{:.2}M", sp as f64 / 1_000_000.0)
+  } else if sp >= 1_000 {
+    format!("{:.0}K", sp as f64 / 1_000.0)
+  } else {
+    sp.to_string()
+  }
+}
+
+/// Build the queue_levels map: skill_name → highest queued level.
+pub fn queue_levels(queue: &[QueueItem]) -> HashMap<String, u8> {
+  let mut m = HashMap::new();
+  for item in queue {
+    let entry = m.entry(item.skill_name.clone()).or_insert(0u8);
+    if item.to_level > *entry {
+      *entry = item.to_level;
+    }
+  }
+  m
+}
+
 /// Processes a skills message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::PaneDrag(x) => update_pane_drag(state, x),
-    Message::PaneDragEnd => {
-      state.dragging_pane = false;
-      state.last_drag_x = 0.0;
-    }
-    Message::PaneDragStart => {
-      state.dragging_pane = true;
-      state.last_drag_x = 0.0;
-    }
-    Message::Picker(msg) => {
-      state.picker.update(msg);
-    }
-    Message::RightPanel(msg) => update_right_panel(state, msg),
-    Message::PlansLoaded(plans) => {
-      state.plans = plans;
-      state.plans_loaded = true;
-    }
-    Message::PlanDeleteRequested(id) => {
-      state.confirm_delete_plan_id = Some(id);
-    }
-    Message::PlanDeleteCancelled => {
-      state.confirm_delete_plan_id = None;
-    }
-    Message::PlanDeleted(id) => {
-      state.plans.retain(|p| p.id != id);
-      state.confirm_delete_plan_id = None;
-    }
-    Message::SkillGroupsLoaded(groups) => {
-      state.skill_groups = groups;
-    }
-    Message::PlansTabOpened
-    | Message::PlanOpenRequested(_)
-    | Message::PlanNewRequested
-    | Message::PlanFromQueueRequested
-    | Message::PlanDeleteConfirmed(_)
-    | Message::ReauthorizeCharacter(_) => {}
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart => update_pane_drag_start(state),
+    Message::Picker(msg) => update_picker(state, msg),
+    msg => update_non_pane(state, msg),
   }
   iced::Task::none()
+}
+
+fn update_non_pane(state: &mut State, msg: Message) {
+  match msg {
+    Message::RightPanel(msg) => update_right_panel(state, msg),
+    Message::PlansLoaded(plans) => update_plans_loaded(state, plans),
+    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
+    msg => update_plan_lifecycle(state, msg),
+  }
 }
 
 fn update_pane_drag(state: &mut State, x: f32) {
@@ -172,29 +173,80 @@ fn update_pane_drag(state: &mut State, x: f32) {
   state.last_drag_x = x;
 }
 
+fn update_pane_drag_end(state: &mut State) {
+  state.dragging_pane = false;
+  state.last_drag_x = 0.0;
+}
+
+fn update_pane_drag_start(state: &mut State) {
+  state.dragging_pane = true;
+  state.last_drag_x = 0.0;
+}
+
+fn update_picker(state: &mut State, msg: character_picker::Message) {
+  state.picker.update(msg);
+}
+
+fn update_plan_delete_cancelled(state: &mut State) {
+  state.confirm_delete_plan_id = None;
+}
+
+fn update_plan_delete_requested(state: &mut State, id: String) {
+  state.confirm_delete_plan_id = Some(id);
+}
+
+fn update_plan_deleted(state: &mut State, id: String) {
+  state.plans.retain(|p| p.id != id);
+  state.confirm_delete_plan_id = None;
+}
+
+fn update_plan_lifecycle(state: &mut State, msg: Message) {
+  match msg {
+    Message::PlanDeleteCancelled => update_plan_delete_cancelled(state),
+    Message::PlanDeleteRequested(id) => update_plan_delete_requested(state, id),
+    Message::PlanDeleted(id) => update_plan_deleted(state, id),
+    _ => {}
+  }
+}
+
+fn update_plans_loaded(state: &mut State, plans: Vec<SkillPlan>) {
+  state.plans = plans;
+  state.plans_loaded = true;
+}
+
+fn update_right_browser_tab(state: &mut State, tab_msg: right_panel::browser_tab::Message) {
+  match tab_msg {
+    right_panel::browser_tab::Message::GroupToggle(id) => update_group_toggle(state, id),
+    right_panel::browser_tab::Message::SearchChanged(q) => update_search_changed(state, q),
+  }
+}
+
 fn update_right_panel(state: &mut State, msg: right_panel::Message) {
   match msg {
     right_panel::Message::AttributesTab(_) => {}
-    right_panel::Message::BrowserTab(tab_msg) => match tab_msg {
-      right_panel::browser_tab::Message::GroupToggle(id) => update_group_toggle(state, id),
-      right_panel::browser_tab::Message::SearchChanged(q) => update_search_changed(state, q),
-    },
-    right_panel::Message::PlansTab(tab_msg) => match tab_msg {
-      right_panel::plans_tab::Message::NewPlan => {}
-      right_panel::plans_tab::Message::FromQueue => {}
-      right_panel::plans_tab::Message::OpenPlan(_) => {}
-      right_panel::plans_tab::Message::DeleteRequested(id) => {
-        state.confirm_delete_plan_id = Some(id);
-      }
-      right_panel::plans_tab::Message::DeleteConfirmed(_) => {}
-      right_panel::plans_tab::Message::DeleteCancelled => {
-        state.confirm_delete_plan_id = None;
-      }
-    },
-    right_panel::Message::TabSelected(tab) => {
-      state.right_tab = tab;
-    }
+    right_panel::Message::BrowserTab(tab_msg) => update_right_browser_tab(state, tab_msg),
+    right_panel::Message::PlansTab(tab_msg) => update_right_plans_tab(state, tab_msg),
+    right_panel::Message::TabSelected(tab) => state.right_tab = tab,
   }
+}
+
+fn update_right_plans_tab(state: &mut State, tab_msg: right_panel::plans_tab::Message) {
+  match tab_msg {
+    right_panel::plans_tab::Message::DeleteCancelled => {
+      state.confirm_delete_plan_id = None;
+    }
+    right_panel::plans_tab::Message::DeleteConfirmed(_) => {}
+    right_panel::plans_tab::Message::DeleteRequested(id) => {
+      state.confirm_delete_plan_id = Some(id);
+    }
+    right_panel::plans_tab::Message::FromQueue => {}
+    right_panel::plans_tab::Message::NewPlan => {}
+    right_panel::plans_tab::Message::OpenPlan(_) => {}
+  }
+}
+
+fn update_skill_groups_loaded(state: &mut State, groups: Vec<SkillGroupDef>) {
+  state.skill_groups = groups;
 }
 
 /// Computed data for one queue entry.
@@ -213,29 +265,6 @@ pub struct ComputedQueueItem {
   pub sp_now: u64,
   pub sp_to: u64,
   pub to_level: u8,
-}
-
-/// Build the queue_levels map: skill_name → highest queued level.
-pub fn queue_levels(queue: &[QueueItem]) -> HashMap<String, u8> {
-  let mut m = HashMap::new();
-  for item in queue {
-    let entry = m.entry(item.skill_name.clone()).or_insert(0u8);
-    if item.to_level > *entry {
-      *entry = item.to_level;
-    }
-  }
-  m
-}
-
-/// Format SP as compact string: "47.32M", "5.10K", "256"
-pub fn fmt_sp(sp: u64) -> String {
-  if sp >= 1_000_000 {
-    format!("{:.2}M", sp as f64 / 1_000_000.0)
-  } else if sp >= 1_000 {
-    format!("{:.0}K", sp as f64 / 1_000.0)
-  } else {
-    sp.to_string()
-  }
 }
 
 /// Builder for the skills view.

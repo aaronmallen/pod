@@ -514,17 +514,29 @@ fn update_transactions_loaded(state: &mut State, entries: Vec<MarketEntry>) {
 
 fn update_simple(state: &mut State, msg: Message) {
   match msg {
-    Message::ReauthorizeCharacter(_) | Message::ContractsTab(_) => {}
     Message::AllCorpBalancesLoaded(b) => update_all_corp_balances(state, b),
     Message::AssetValuesLoaded(v) => update_asset_values(state, v),
     Message::ContractsLoaded(e) => update_contracts_loaded(state, e),
-    Message::DivisionSelected(d) => update_division_selected(state, d),
+    msg => update_simple_data(state, msg),
+  }
+}
+
+fn update_simple_data(state: &mut State, msg: Message) {
+  match msg {
     Message::ItemIconsLoaded(i) => update_item_icons(state, i),
     Message::JournalLoaded(e) => update_journal_loaded(state, e),
+    Message::TransactionsLoaded(e) => update_transactions_loaded(state, e),
+    msg => update_simple_display(state, msg),
+  }
+}
+
+fn update_simple_display(state: &mut State, msg: Message) {
+  match msg {
+    Message::ContractsTab(_) | Message::ReauthorizeCharacter(_) => {}
+    Message::DivisionSelected(d) => update_division_selected(state, d),
     Message::SearchChanged(q) => update_search_changed(state, q),
     Message::TabSelected(t) => update_tab_selected(state, t),
     Message::TimeframeChanged(tf) => update_timeframe_changed(state, tf),
-    Message::TransactionsLoaded(e) => update_transactions_loaded(state, e),
     _ => {}
   }
 }

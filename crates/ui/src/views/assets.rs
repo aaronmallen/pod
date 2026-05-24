@@ -203,16 +203,18 @@ pub struct StockpileItemStatus {
 /// A stockpile combined with fill status for each item.
 #[derive(Clone, Debug)]
 pub struct StockpileWithStatus {
-  /// Database ID.
-  pub id: i64,
-  /// Display name.
-  pub name: String,
-  /// Optional location scope.
-  pub location_id: Option<i64>,
   /// Optional character scope.
   pub character_id: Option<i64>,
+  /// Database ID.
+  pub id: i64,
   /// Per-item fill status.
   pub items: Vec<StockpileItemStatus>,
+  /// Optional location scope.
+  pub location_id: Option<i64>,
+  /// Resolved display name for the location, or None if the ID is unscoped.
+  pub location_name: Option<String>,
+  /// Display name.
+  pub name: String,
   /// Overall fill fraction (0.0–1.0).
   pub overall_pct: f32,
   /// True when every item meets its target.

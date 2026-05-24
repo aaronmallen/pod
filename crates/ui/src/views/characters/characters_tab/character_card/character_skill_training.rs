@@ -46,10 +46,7 @@ impl<'a> Component<'a> {
 
 fn active_training<'a, MSG: 'static>(character: &'a Character) -> Element<'a, MSG> {
   let skill = character.active_training().expect("checked before call");
-  let skill_name = skill
-    .skill_name
-    .clone()
-    .unwrap_or_else(|| format!("Skill {}", skill.skill_id));
+  let skill_name = skill.skill_name.clone().expect("skill name must be present");
   let level_roman = ["I", "II", "III", "IV", "V"]
     .get((skill.active_level as usize).saturating_sub(1).min(4))
     .copied()

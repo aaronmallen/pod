@@ -1002,6 +1002,7 @@ async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatu
     Ok(p) => p,
     Err(_) => return Vec::new(),
   };
+  let location_name_map = resolve_stockpile_location_names(&db, &piles).await;
   let mut result = Vec::with_capacity(piles.len());
   for pile in piles {
     let statuses = db.stockpiles().stockpile_fill_status(pile.id).await.unwrap_or_default();
@@ -1017,17 +1018,59 @@ async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatu
     };
     let ready = statuses.iter().all(|s| s.have_quantity >= s.target_quantity as i64);
     let items = statuses.into_iter().map(stockpile_item_status).collect();
+    let location_name = pile.location_id.and_then(|id| location_name_map.get(&id).cloned());
     result.push(StockpileWithStatus {
-      id: pile.id,
-      name: pile.name,
-      location_id: pile.location_id,
       character_id: pile.character_id,
+      id: pile.id,
       items,
+      location_id: pile.location_id,
+      location_name,
+      name: pile.name,
       overall_pct,
       ready,
     });
   }
   result
+}
+
+async fn resolve_stockpile_location_names(
+  db: &pod_db::Repo,
+  piles: &[pod_db::StockpileWithItems],
+) -> HashMap<i64, String> {
+  let location_ids: Vec<i64> = piles.iter().filter_map(|p| p.location_id).collect();
+  if location_ids.is_empty() {
+    return HashMap::new();
+  }
+  let mut names: HashMap<i64, String> = HashMap::new();
+  let station_ids: Vec<i32> = location_ids.iter().filter_map(|&id| i32::try_from(id).ok()).collect();
+  if !station_ids.is_empty() {
+    let stations = db
+      .universe()
+      .stations()
+      .find_by_ids(&station_ids)
+      .await
+      .unwrap_or_default();
+    for s in stations {
+      names.insert(*s.id() as i64, s.name().clone());
+    }
+  }
+  let structure_ids: Vec<i64> = location_ids
+    .iter()
+    .copied()
+    .filter(|&id| i32::try_from(id).is_err() && !names.contains_key(&id))
+    .collect();
+  if !structure_ids.is_empty() {
+    let cached = db
+      .universe()
+      .structure_cache()
+      .find_by_ids(&structure_ids)
+      .await
+      .unwrap_or_default();
+    for (id, name, _) in cached {
+      names.insert(id, name);
+    }
+  }
+  names
 }
 
 /// Converts a raw fill-status row into the UI `StockpileItemStatus` type.

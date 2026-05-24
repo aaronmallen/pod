@@ -309,10 +309,7 @@ fn card_header(pile: &StockpileWithStatus) -> Element<'_, Message> {
     color::accent::PLASMA
   };
 
-  let location_label = pile
-    .location_id
-    .map(|l| format!("Location {}", l))
-    .unwrap_or_else(|| "All locations".to_string());
+  let location_label = pile.location_name.as_deref().unwrap_or("All locations").to_string();
 
   column([
     card_title_row(pile, dot_color, pct, pct_color),

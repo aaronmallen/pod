@@ -71,7 +71,7 @@ fn build_fill_statuses(
       type_name: type_name_map
         .get(&item.type_id)
         .cloned()
-        .unwrap_or_else(|| format!("Type {}", item.type_id)),
+        .expect("item type must exist in SDE"),
     })
     .collect();
   result.sort_by(|a, b| a.type_name.cmp(&b.type_name));
@@ -248,9 +248,36 @@ mod tests {
   use super::*;
 
   async fn setup_db() -> DatabaseConnection {
+    use sea_orm::ConnectionTrait;
     let db = Database::connect("sqlite::memory:").await.unwrap();
     crate::migrations::run(&db).await.unwrap();
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await.unwrap();
     db
+  }
+
+  async fn insert_item_type(db: &DatabaseConnection, id: i32, name: &str) {
+    use sea_orm::ActiveValue::Set;
+    crate::entities::item_type::Entity::insert(crate::entities::item_type::ActiveModel {
+      capacity: Set(None),
+      description: Set(String::new()),
+      dogma_attributes: Set(crate::entities::dogma_attribute::List(vec![])),
+      dogma_effects: Set(crate::entities::dogma_effect::List(vec![])),
+      graphic_id: Set(None),
+      icon_id: Set(None),
+      id: Set(id),
+      item_group_id: Set(0),
+      market_group_id: Set(None),
+      mass: Set(None),
+      name: Set(name.to_string()),
+      packaged_volume: Set(None),
+      portion_size: Set(None),
+      published: Set(true),
+      radius: Set(None),
+      volume: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
   }
 
   async fn insert_character(db: &DatabaseConnection, id: i64) {
@@ -424,6 +451,7 @@ mod tests {
     #[tokio::test]
     async fn returns_zero_have_quantity_when_no_assets() {
       let db = setup_db().await;
+      insert_item_type(&db, 34, "Tritanium").await;
       let repo = Repo::new(&db);
       let id = repo
         .create_stockpile("Unfilled", None, None, &[(34, 500)])
@@ -439,6 +467,7 @@ mod tests {
     #[tokio::test]
     async fn sums_asset_quantities_without_filter() {
       let db = setup_db().await;
+      insert_item_type(&db, 34, "Tritanium").await;
       insert_character(&db, 1).await;
       insert_character(&db, 2).await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
@@ -453,6 +482,7 @@ mod tests {
     #[tokio::test]
     async fn filters_by_location_id_when_set() {
       let db = setup_db().await;
+      insert_item_type(&db, 34, "Tritanium").await;
       insert_character(&db, 1).await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
       insert_asset(&db, 1, 34, 60004588, 200).await;
@@ -469,6 +499,7 @@ mod tests {
     #[tokio::test]
     async fn filters_by_character_id_when_set() {
       let db = setup_db().await;
+      insert_item_type(&db, 34, "Tritanium").await;
       insert_character(&db, 1).await;
       insert_character(&db, 2).await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
@@ -486,6 +517,7 @@ mod tests {
     #[tokio::test]
     async fn filters_by_both_location_and_character_when_both_set() {
       let db = setup_db().await;
+      insert_item_type(&db, 34, "Tritanium").await;
       insert_character(&db, 1).await;
       insert_character(&db, 2).await;
       insert_asset(&db, 1, 34, 60003760, 100).await;

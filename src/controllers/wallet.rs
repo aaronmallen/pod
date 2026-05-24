@@ -49,6 +49,33 @@ pub fn update(
     Message::CharacterPicker(msg) => update_character_picker(state, msg, corporations, services, icon_type_ids),
     Message::DivisionSelected(div) => update_division_selected(state, div, corporations, services, icon_type_ids),
     other => {
+      match &other {
+        Message::JournalLoaded(entries) => tracing::debug!("wallet: {} journal entries loaded", entries.len()),
+        Message::TransactionsLoaded(entries) => tracing::debug!("wallet: {} transactions loaded", entries.len()),
+        Message::AllCorpBalancesLoaded(b) => tracing::debug!("wallet: corp balances loaded for {} corp(s)", b.len()),
+        Message::AssetValuesLoaded(v) => tracing::debug!("wallet: asset values loaded for {} character(s)", v.len()),
+        Message::ContractsLoaded(Ok(c)) => tracing::debug!("wallet: {} contracts loaded", c.len()),
+        Message::ContractsLoaded(Err(e)) => tracing::warn!("wallet: contracts load failed — {e}"),
+        Message::CorpDataLoaded {
+          divisions,
+          journal,
+          market,
+        } => tracing::debug!(
+          "wallet: corp data loaded — {} division(s), {} journal entries, {} market entries",
+          divisions.len(),
+          journal.len(),
+          market.len()
+        ),
+        Message::TabSelected(t) => tracing::info!("wallet: tab selected — {t:?}"),
+        Message::TimeframeChanged(tf) => tracing::info!("wallet: timeframe changed — {tf:?}"),
+        Message::JournalTab(pod_ui::views::wallet::journal_tab::Message::SignFilterChanged(sign)) => {
+          tracing::info!("wallet: sign filter changed — {sign:?}");
+        }
+        Message::MarketTab(pod_ui::views::wallet::market_tab::Message::SideFilterChanged(side)) => {
+          tracing::info!("wallet: side filter changed — {side:?}");
+        }
+        _ => {}
+      }
       let base = pod_ui::views::wallet::update(state, other);
       recompute_derived(state);
       attach_icon_task(base, icon_type_ids, services)
@@ -324,6 +351,7 @@ fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
     .filter(|ids| !ids.is_empty())
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_all_corp_totals(
   corporations: Vec<Corporation>,
   esi: pod_esi::Client,
@@ -346,6 +374,7 @@ async fn fetch_all_corp_totals(
   totals
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec<(i64, f64)> {
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
   if char_ids.is_empty() {
@@ -375,6 +404,7 @@ async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec
   totals.into_iter().collect()
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_contracts(
   characters: Vec<Character>,
   esi: pod_esi::Client,
@@ -420,6 +450,7 @@ async fn fetch_contracts(
   Ok(all)
 }
 
+#[tracing::instrument(skip(corporations, esi, db))]
 async fn fetch_corp_data(
   corp_id: i64,
   division: u8,
@@ -468,6 +499,7 @@ async fn fetch_corp_data(
   (divisions, journal, market)
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
   let mut all: Vec<JournalEntry> = Vec::new();
   for character in &characters {
@@ -513,6 +545,7 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
   all
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
   let mut all: Vec<MarketEntry> = Vec::new();
   for character in &characters {
@@ -555,6 +588,7 @@ async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db
   all
 }
 
+#[tracing::instrument(skip(esi, db))]
 async fn fetch_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
   let cached = db
     .universe()
@@ -893,6 +927,13 @@ fn update_character_picker(
   services: &Services,
   icon_type_ids: Option<Vec<i32>>,
 ) -> iced::Task<Message> {
+  if let pod_ui::components::character_picker::Message::Select(sel) = &msg {
+    match sel {
+      PickerSelection::All => tracing::info!("wallet: all wallets selected"),
+      PickerSelection::Character(id) => tracing::info!("wallet: character selected — character_id: {id}"),
+      PickerSelection::Corporation(id) => tracing::info!("wallet: corporation selected — corp_id: {id}"),
+    }
+  }
   if let pod_ui::components::character_picker::Message::Select(PickerSelection::Corporation(corp_id)) = &msg
     && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
   {
@@ -921,6 +962,7 @@ fn update_division_selected(
   services: &Services,
   icon_type_ids: Option<Vec<i32>>,
 ) -> iced::Task<Message> {
+  tracing::info!("wallet: division selected — {div}");
   if let Some(corp_id) = state.selected_corporation()
     && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
   {

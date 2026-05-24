@@ -102,52 +102,60 @@ fn is_recognized_key(key: &str) -> bool {
   RECOGNIZED_KEYS.contains(&key.to_lowercase().as_str())
 }
 
+fn match_category(values: &[String], asset: &AssetRecord) -> bool {
+  let cat = asset.category_key.to_lowercase();
+  values.iter().any(|v| cat == v.as_str())
+}
+
+fn match_constellation(values: &[String], asset: &AssetRecord) -> bool {
+  let c = asset.constellation_name.to_lowercase();
+  values.iter().any(|v| c == v.as_str())
+}
+
+fn match_group(values: &[String], asset: &AssetRecord) -> bool {
+  let g = asset.group_name.to_lowercase();
+  values.iter().any(|v| g.contains(v.as_str()))
+}
+
 fn match_key_value(key: &str, values: &[String], asset: &AssetRecord, me_id: Option<i64>) -> bool {
   match key {
-    "category" => {
-      let cat = asset.category_key.to_lowercase();
-      values.iter().any(|v| cat == v.as_str())
-    }
-    "constellation" => {
-      let c = asset.constellation_name.to_lowercase();
-      values.iter().any(|v| c == v.as_str())
-    }
-    "group" => {
-      let g = asset.group_name.to_lowercase();
-      values.iter().any(|v| g.contains(v.as_str()))
-    }
-    "location" => {
-      let loc = asset.location_name.to_lowercase();
-      values.iter().any(|v| loc.contains(v.as_str()))
-    }
-    "name" => {
-      let name = asset.type_name.to_lowercase();
-      values.iter().any(|v| name.contains(v.as_str()))
-    }
-    "owner" => values.iter().any(|v| {
-      if v == "me" {
-        me_id.is_some_and(|id| asset.character_id == id)
-      } else {
-        false
-      }
-    }),
-    "region" => {
-      let r = asset.region_name.to_lowercase();
-      values.iter().any(|v| r == v.as_str())
-    }
-    "system" => {
-      let s = asset.system_name.to_lowercase();
-      values.iter().any(|v| s.contains(v.as_str()))
-    }
-    "type" => values.iter().any(|v| match v.as_str() {
-      "bpc" => asset.icon_variant == "bpc",
-      "bpo" => asset.icon_variant == "bpo",
-      "singleton" => asset.is_singleton,
-      "stack" => !asset.is_singleton,
-      _ => false,
-    }),
+    "category" => match_category(values, asset),
+    "constellation" => match_constellation(values, asset),
+    "group" => match_group(values, asset),
+    "location" => match_location(values, asset),
+    "name" => match_name(values, asset),
+    "owner" => match_owner(values, asset, me_id),
+    "region" => match_region(values, asset),
+    "system" => match_system(values, asset),
+    "type" => match_type(values, asset),
     _ => false,
   }
+}
+
+fn match_location(values: &[String], asset: &AssetRecord) -> bool {
+  let loc = asset.location_name.to_lowercase();
+  values.iter().any(|v| loc.contains(v.as_str()))
+}
+
+fn match_name(values: &[String], asset: &AssetRecord) -> bool {
+  let name = asset.type_name.to_lowercase();
+  values.iter().any(|v| name.contains(v.as_str()))
+}
+
+fn match_owner(values: &[String], asset: &AssetRecord, me_id: Option<i64>) -> bool {
+  values
+    .iter()
+    .any(|v| v == "me" && me_id.is_some_and(|id| asset.character_id == id))
+}
+
+fn match_region(values: &[String], asset: &AssetRecord) -> bool {
+  let r = asset.region_name.to_lowercase();
+  values.iter().any(|v| r == v.as_str())
+}
+
+fn match_system(values: &[String], asset: &AssetRecord) -> bool {
+  let s = asset.system_name.to_lowercase();
+  values.iter().any(|v| s.contains(v.as_str()))
 }
 
 fn match_token(tok: &AssetFilterToken, asset: &AssetRecord, me_id: Option<i64>) -> bool {
@@ -167,6 +175,16 @@ fn match_token(tok: &AssetFilterToken, asset: &AssetRecord, me_id: Option<i64>) 
       if *negated { !matched } else { matched }
     }
   }
+}
+
+fn match_type(values: &[String], asset: &AssetRecord) -> bool {
+  values.iter().any(|v| match v.as_str() {
+    "bpc" => asset.icon_variant == "bpc",
+    "bpo" => asset.icon_variant == "bpo",
+    "singleton" => asset.is_singleton,
+    "stack" => !asset.is_singleton,
+    _ => false,
+  })
 }
 
 fn normalize_key(key: &str) -> String {
@@ -490,6 +508,229 @@ mod tests {
 
         assert!(q.matches(&make_asset()));
       }
+    }
+  }
+
+  mod match_category {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_an_exact_match() {
+      let asset = make_asset();
+      let values = vec!["ship".to_string()];
+
+      assert!(match_category(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_value_matches() {
+      let asset = make_asset();
+      let values = vec!["drone".to_string()];
+
+      assert!(!match_category(&values, &asset));
+    }
+  }
+
+  mod match_constellation {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_an_exact_match() {
+      let asset = make_asset();
+      let values = vec!["kimotoro".to_string()];
+
+      assert!(match_constellation(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_for_a_partial_match() {
+      let asset = make_asset();
+      let values = vec!["kimo".to_string()];
+
+      assert!(!match_constellation(&values, &asset));
+    }
+  }
+
+  mod match_group {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_a_substring_match() {
+      let asset = make_asset();
+      let values = vec!["frig".to_string()];
+
+      assert!(match_group(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_value_matches() {
+      let asset = make_asset();
+      let values = vec!["cruiser".to_string()];
+
+      assert!(!match_group(&values, &asset));
+    }
+  }
+
+  mod match_location {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_a_substring_match() {
+      let asset = make_asset();
+      let values = vec!["caldari navy".to_string()];
+
+      assert!(match_location(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_value_matches() {
+      let asset = make_asset();
+      let values = vec!["amarr".to_string()];
+
+      assert!(!match_location(&values, &asset));
+    }
+  }
+
+  mod match_name {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_a_substring_match() {
+      let asset = make_asset();
+      let values = vec!["rift".to_string()];
+
+      assert!(match_name(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_value_matches() {
+      let asset = make_asset();
+      let values = vec!["raven".to_string()];
+
+      assert!(!match_name(&values, &asset));
+    }
+  }
+
+  mod match_owner {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_when_me_id_matches_character_id() {
+      let asset = make_asset();
+      let values = vec!["me".to_string()];
+
+      assert!(match_owner(&values, &asset, Some(42)));
+    }
+
+    #[test]
+    fn it_returns_false_when_me_id_does_not_match() {
+      let asset = make_asset();
+      let values = vec!["me".to_string()];
+
+      assert!(!match_owner(&values, &asset, Some(99)));
+    }
+
+    #[test]
+    fn it_returns_false_when_me_id_is_none() {
+      let asset = make_asset();
+      let values = vec!["me".to_string()];
+
+      assert!(!match_owner(&values, &asset, None));
+    }
+
+    #[test]
+    fn it_returns_false_for_non_me_values() {
+      let asset = make_asset();
+      let values = vec!["other".to_string()];
+
+      assert!(!match_owner(&values, &asset, Some(42)));
+    }
+  }
+
+  mod match_region {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_an_exact_match() {
+      let asset = make_asset();
+      let values = vec!["the forge".to_string()];
+
+      assert!(match_region(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_for_a_partial_match() {
+      let asset = make_asset();
+      let values = vec!["forge".to_string()];
+
+      assert!(!match_region(&values, &asset));
+    }
+  }
+
+  mod match_system {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_a_substring_match() {
+      let asset = make_asset();
+      let values = vec!["jita".to_string()];
+
+      assert!(match_system(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_value_matches() {
+      let asset = make_asset();
+      let values = vec!["amarr".to_string()];
+
+      assert!(!match_system(&values, &asset));
+    }
+  }
+
+  mod match_type {
+    use super::*;
+
+    #[test]
+    fn it_matches_bpc_by_icon_variant() {
+      let mut asset = make_asset();
+      asset.icon_variant = "bpc".to_string();
+      let values = vec!["bpc".to_string()];
+
+      assert!(match_type(&values, &asset));
+    }
+
+    #[test]
+    fn it_matches_bpo_by_icon_variant() {
+      let mut asset = make_asset();
+      asset.icon_variant = "bpo".to_string();
+      let values = vec!["bpo".to_string()];
+
+      assert!(match_type(&values, &asset));
+    }
+
+    #[test]
+    fn it_matches_singleton_when_flag_is_true() {
+      let mut asset = make_asset();
+      asset.is_singleton = true;
+      let values = vec!["singleton".to_string()];
+
+      assert!(match_type(&values, &asset));
+    }
+
+    #[test]
+    fn it_matches_stack_when_singleton_is_false() {
+      let asset = make_asset();
+      let values = vec!["stack".to_string()];
+
+      assert!(match_type(&values, &asset));
+    }
+
+    #[test]
+    fn it_returns_false_for_an_unknown_type_value() {
+      let asset = make_asset();
+      let values = vec!["unknown".to_string()];
+
+      assert!(!match_type(&values, &asset));
     }
   }
 }

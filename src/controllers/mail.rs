@@ -48,6 +48,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   }
 }
 
+#[tracing::instrument(skip_all)]
 async fn apply_label_to_mail(
   esi: &pod_esi::Client,
   grant: &pod_esi::models::auth::Grant,
@@ -74,6 +75,7 @@ async fn apply_label_to_mail(
     .map_err(|e| format!("Failed to update mail labels: {e}"))
 }
 
+#[tracing::instrument(skip(characters, esi, db))]
 async fn apply_snooze_label(
   character_id: i64,
   mail_id: i64,
@@ -269,6 +271,7 @@ fn build_recipient_map(
   map
 }
 
+#[tracing::instrument(skip_all)]
 async fn check_expired_snoozes(
   characters: Vec<Character>,
   esi: Option<pod_esi::Client>,
@@ -326,6 +329,7 @@ fn date_bucket_label(ts: &str) -> String {
   }
 }
 
+#[tracing::instrument(skip(characters, esi, db))]
 async fn fetch_mail_body(
   msg_id: String,
   character_id: i64,
@@ -347,10 +351,14 @@ async fn fetch_mail_body(
       let html = esi_msg.body.unwrap_or_default();
       (msg_id, strip_html(&html))
     }
-    Err(_) => (msg_id, Vec::new()),
+    Err(e) => {
+      tracing::warn!("mail: failed to fetch body for mail {mail_id}: {e}");
+      (msg_id, Vec::new())
+    }
   }
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_character_mail(
   character: &Character,
   esi: &pod_esi::Client,
@@ -383,6 +391,7 @@ async fn fetch_character_mail(
   )
 }
 
+#[tracing::instrument(skip_all)]
 async fn fetch_mail_headers(
   characters: Vec<Character>,
   esi: pod_esi::Client,
@@ -575,6 +584,7 @@ async fn resolve_named_recipients(names: &[&str], esi: &pod_esi::Client) -> Resu
   Ok(out)
 }
 
+#[tracing::instrument(skip(characters, esi, db))]
 async fn search_recipients(
   query: String,
   characters: Vec<Character>,
@@ -592,7 +602,10 @@ async fn search_recipients(
 
   let ids = match char_client.search_characters(&query).await {
     Ok(ids) => ids,
-    Err(_) => return Vec::new(),
+    Err(e) => {
+      tracing::warn!("mail: recipient search failed for query {query:?}: {e}");
+      return Vec::new();
+    }
   };
   if ids.is_empty() {
     return Vec::new();
@@ -610,6 +623,7 @@ async fn search_recipients(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(characters, esi, db))]
 async fn send_composed_mail(
   from_id: i64,
   to: Vec<ComposeRecipient>,
@@ -637,6 +651,10 @@ async fn send_composed_mail(
   if resolved.is_empty() {
     return Err("No valid recipients found — check character/corporation names".to_string());
   }
+  tracing::info!(
+    "mail: sending — from_id: {from_id}, to {} recipient(s), subject: {subject}",
+    resolved.len()
+  );
   char_client
     .send_mail(NewMail {
       approved_cost: None,
@@ -765,6 +783,7 @@ fn update_account_picker(state: &mut State, msg: pod_ui::components::character_p
 fn update_archive(state: &mut State) -> iced::Task<Message> {
   state.context_menu = None;
   if let Some(id) = state.selected_message_id.clone() {
+    tracing::info!("mail: message archived — {id}");
     if let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) {
       msg.folder = "archive".to_string();
     }
@@ -801,9 +820,18 @@ fn update_compose(state: &mut State, compose_msg: compose_panel::Message, servic
       state.compose.update(compose_msg);
       handle_compose_search(val, state, services, compose_panel::Message::CcSearchResults)
     }
-    compose_panel::Message::SendPressed => prepare_and_send_mail(state, compose_msg, services),
-    compose_panel::Message::Sent(Ok(_)) => {
+    compose_panel::Message::SendPressed => {
+      tracing::info!("mail: send pressed");
+      prepare_and_send_mail(state, compose_msg, services)
+    }
+    compose_panel::Message::Sent(Ok(mail_id)) => {
+      tracing::info!("mail: mail sent — mail_id: {mail_id}");
       state.compose_open = false;
+      state.compose.update(compose_msg);
+      iced::Task::none()
+    }
+    compose_panel::Message::Sent(Err(e)) => {
+      tracing::warn!("mail: send failed — {e}");
       state.compose.update(compose_msg);
       iced::Task::none()
     }
@@ -815,6 +843,7 @@ fn update_compose(state: &mut State, compose_msg: compose_panel::Message, servic
 }
 
 fn update_compose_open(state: &mut State) -> iced::Task<Message> {
+  tracing::info!("mail: compose opened");
   let from_id = state.account_picker.selected.clone();
   state.compose_open = true;
   state.compose.reset();
@@ -829,6 +858,7 @@ fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> 
   {
     let mail_id = state.messages[pos].mail_id;
     let character_id = state.messages[pos].character_id;
+    tracing::info!("mail: delete requested — character_id: {character_id}, mail_id: {mail_id}");
     state.messages.remove(pos);
     state.selected_message_id = state
       .messages
@@ -858,6 +888,7 @@ fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> 
 }
 
 fn update_folder_selected(state: &mut State, folder: Folder) -> iced::Task<Message> {
+  tracing::info!("mail: folder selected — {folder:?}");
   state.selected_folder = folder;
   state.selected_message_id = None;
   iced::Task::none()
@@ -882,6 +913,10 @@ fn update_forward(state: &mut State) -> iced::Task<Message> {
   } else {
     format!("\n\n--- Forwarded message ---\n{}", msg.body.join("\n"))
   };
+  tracing::info!(
+    "mail: forward initiated — character_id: {}, subject: {subject}",
+    msg.character_id
+  );
   state.compose_open = true;
   state.compose.reset();
   state.compose.subject = subject;
@@ -892,6 +927,7 @@ fn update_forward(state: &mut State) -> iced::Task<Message> {
 }
 
 fn update_mail_body_loaded(state: &mut State, msg_id: String, paragraphs: Vec<String>) -> iced::Task<Message> {
+  tracing::debug!("mail: body loaded — {msg_id}");
   if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
     msg.body = paragraphs;
     msg.body_loaded = true;
@@ -909,10 +945,11 @@ fn update_mail_headers_loaded(state: &mut State, result: Result<Vec<MailMessage>
   let messages = match result {
     Ok(m) => m,
     Err(e) => {
-      eprintln!("mail: failed to load headers: {e}");
+      tracing::warn!("mail: failed to load headers: {e}");
       return iced::Task::none();
     }
   };
+  tracing::debug!("mail: {} header(s) loaded", messages.len());
   let mut unread_by_char: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
   for m in &messages {
     if m.unread && m.folder != "sent" {
@@ -954,6 +991,7 @@ fn update_message_right_clicked(state: &mut State, id: String) -> iced::Task<Mes
 }
 
 fn update_message_selected(state: &mut State, id: String, services: &Services) -> iced::Task<Message> {
+  tracing::info!("mail: message selected — {id}");
   state.context_menu = None;
   state.snooze_popover_open = false;
   state.selected_message_id = Some(id.clone());
@@ -1051,6 +1089,10 @@ fn update_reply(state: &mut State) -> iced::Task<Message> {
   } else {
     format!("Re: {}", msg.subject)
   };
+  tracing::info!(
+    "mail: reply initiated — character_id: {}, subject: {subject}",
+    msg.character_id
+  );
   state.compose_open = true;
   state.compose.reset();
   state.compose.to = vec![to];
@@ -1066,6 +1108,10 @@ fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services
     reading_pane::Message::DeletePressed => update_delete(state, services),
     reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
     reading_pane::Message::SnoozeSet(label) => update_snooze_set(state, label, services),
+    reading_pane::Message::SnoozeFailed(e) => {
+      tracing::warn!("mail: snooze operation failed — {e}");
+      iced::Task::none()
+    }
     reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
     _ => iced::Task::none(),
   }
@@ -1083,6 +1129,11 @@ fn update_snooze_set(state: &mut State, label: String, services: &Services) -> i
   let character_id = msg.character_id;
   let mail_id = msg.mail_id;
   let adding = !label.is_empty();
+  if adding {
+    tracing::info!("mail: snooze set — character_id: {character_id}, mail_id: {mail_id}, label: {label}");
+  } else {
+    tracing::info!("mail: snooze removed — character_id: {character_id}, mail_id: {mail_id}");
+  }
   let snooze_until = if adding { snooze_label_to_iso(&label) } else { None };
   if adding {
     msg.snoozed = Some(label);
@@ -1120,6 +1171,7 @@ fn update_snooze_toggle(state: &mut State) -> iced::Task<Message> {
 }
 
 fn update_snoozed_expired(state: &mut State, pairs: Vec<(i64, i64)>) -> iced::Task<Message> {
+  tracing::debug!("mail: {} snoozed mail(s) expired and restored to inbox", pairs.len());
   for (character_id, mail_id) in pairs {
     let msg_id = format!("{character_id}-{mail_id}");
     if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
@@ -1137,6 +1189,7 @@ fn update_star_toggle(state: &mut State) -> iced::Task<Message> {
     && let Some(msg) = state.messages.iter_mut().find(|m| m.id == id)
   {
     msg.starred = !msg.starred;
+    tracing::info!("mail: star toggled — {id}, starred: {}", msg.starred);
   }
   iced::Task::none()
 }

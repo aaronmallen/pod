@@ -7,6 +7,29 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.5]
+
+### Added
+
+- The inventory filter now supports structured queries — filter by name, group, category, region, constellation,
+  system, location, and item type, combine multiple terms with spaces (AND), separate values with commas (OR), and
+  prefix a term with `!` to exclude it.
+- A help button in the inventory search bar opens a quick-reference panel showing every supported filter keyword with
+  clickable example queries.
+- The assets sidebar now organizes your items in a full region → constellation → system → location → container tree,
+  making it easy to drill down to exactly where something is without leaving the tab.
+- The assets sidebar can now be resized by dragging its edge — your preferred width is remembered between sessions.
+
+### Fixed
+
+- Stockpile locations now show the actual station or structure name instead of a raw numeric ID.
+- Region names in the asset sidebar now display correctly instead of showing as "Region 12345678".
+- Windows users who were unable to complete the add-character or add-corporation flow (authentication hanging or
+  showing a "Request Too Long" error) should now authenticate successfully.
+- A corrupted or out-of-bounds saved window position no longer prevents the app from opening — it falls back to a
+  centered default.
+- Closing the main window now exits the app cleanly instead of leaving a background process running.
+
 ## [0.4.4]
 
 ### Fixed

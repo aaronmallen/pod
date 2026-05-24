@@ -7,6 +7,25 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.6]
+
+### Changed
+
+- The inventory search box now spans the full width of the panel — category pills and item count
+  move to a row below, giving you more space to type filter queries.
+- Mail folder and inbox icons, and the pin icon on messages, are now crisp vector graphics instead
+  of Unicode characters that could look different depending on your system font.
+
+### Fixed
+
+- Contracts received from another player now show that player's name as the counterparty — they
+  were previously showing your own character's name.
+- The Contracts, Journal, and Market tab counts now update when you switch between characters —
+  previously the counts showed the unfiltered total instead of the rows visible for the selected
+  character.
+- The app update notification banner now has consistent height and visual balance across all of
+  its states (checking, available, downloading, and ready to restart).
+
 ## [0.4.5]
 
 ### Added
@@ -186,7 +205,9 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.4...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.6...HEAD
+[0.4.6]: https://github.com/aaronmallen/pod/compare/0.4.5...0.4.6
+[0.4.5]: https://github.com/aaronmallen/pod/compare/0.4.4...0.4.5
 [0.4.4]: https://github.com/aaronmallen/pod/compare/0.4.3...0.4.4
 [0.4.3]: https://github.com/aaronmallen/pod/compare/0.4.2...0.4.3
 [0.4.2]: https://github.com/aaronmallen/pod/compare/0.4.1...0.4.2

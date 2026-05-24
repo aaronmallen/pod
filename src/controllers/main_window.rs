@@ -132,14 +132,24 @@ pub fn update(
   }
   match message {
     Message::Assets(msg) => (update_assets(state, msg, services), None),
-    Message::CharacterDetail(msg) => (update_character_detail(state, msg, services), None),
     Message::Characters(msg) => (update_characters(state, msg, services), None),
+    Message::Settings(msg) => update_settings(state, msg, services),
+    msg => handle_other_message(state, msg, services),
+  }
+}
+
+fn handle_other_message(
+  state: &mut State,
+  msg: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  match msg {
+    Message::CharacterDetail(msg) => (update_character_detail(state, msg, services), None),
     Message::Mail(msg) => (update_mail(state, msg, services), None),
     Message::Navigate(nav) => (update_navigate(state, nav, services), None),
     Message::RefreshAll | Message::StatusBar(status_bar::Message::RefreshPressed) => {
       (update_refresh_all(state, services), None)
     }
-    Message::Settings(msg) => update_settings(state, msg, services),
     Message::ShowToast(msg) => (show_toast(state, msg), None),
     Message::Skills(msg) => (update_skills(state, msg, services), None),
     Message::Wallet(msg) => (update_wallet(state, msg, services), None),
@@ -176,24 +186,49 @@ fn show_toast(state: &mut State, msg: String) -> iced::Task<Message> {
   )
 }
 
-fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
-  if let assets::Message::ReauthorizeCharacter(_) = &msg {
-    return trigger_reauth(services);
+fn apply_assets_loaded_to_cache(state: &mut State, result: &Result<Vec<pod_ui::views::assets::AssetRecord>, String>) {
+  if let Some(cached) = state.cached_assets_state.as_mut() {
+    if let Ok(records) = result {
+      cached.assets = records.clone();
+    }
+    cached.loading = false;
   }
-  let is_drag_end = matches!(&msg, assets::Message::PaneDragEnd);
+}
+
+fn try_handle_assets_early_exit(
+  state: &mut State,
+  msg: &assets::Message,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  if let assets::Message::ReauthorizeCharacter(_) = msg {
+    return Some(trigger_reauth(services));
+  }
   // When assets is not the active view, an AssetsLoaded from a background
   // refresh should update the cache rather than be discarded.
-  if let assets::Message::AssetsLoaded(ref result) = msg
+  if let assets::Message::AssetsLoaded(result) = msg
     && !matches!(state.active_view, ActiveView::Assets(_))
   {
-    if let Some(cached) = state.cached_assets_state.as_mut() {
-      if let Ok(records) = result {
-        cached.assets = records.clone();
-      }
-      cached.loading = false;
-    }
-    return iced::Task::none();
+    apply_assets_loaded_to_cache(state, result);
+    return Some(iced::Task::none());
   }
+  None
+}
+
+fn save_sidebar_width_if_drag_end(state: &mut State, is_drag_end: bool) {
+  if !is_drag_end {
+    return;
+  }
+  if let ActiveView::Assets(s) = &state.active_view {
+    state.assets_sidebar_width = s.sidebar_width;
+  }
+}
+
+fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
+  if let Some(task) = try_handle_assets_early_exit(state, &msg, services) {
+    return task;
+  }
+  let is_drag_end = matches!(&msg, assets::Message::PaneDragEnd);
+  let chars_snapshot = state.characters.clone();
   let ActiveView::Assets(s) = &mut state.active_view else {
     return iced::Task::none();
   };
@@ -202,37 +237,16 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
   }
   let should_refresh_values = should_assets_refresh_values(&msg, s);
   let new_items = collect_new_item_icons(&msg, s);
-
   if let assets::Message::StockpilesTab(assets::stockpiles_tab::Message::FormSave) = &msg {
-    if let Some(task) = handle_assets_stockpile_save(s, msg, services) {
-      return task;
-    }
-    return iced::Task::none();
+    return handle_assets_stockpile_save(s, msg, services);
   }
   if let assets::Message::StockpilesTab(assets::stockpiles_tab::Message::DeleteStockpile(id)) = &msg {
     let id = *id;
-    if let Some(task) = handle_assets_stockpile_delete(s, msg, id, services) {
-      return task;
-    }
-    return iced::Task::none();
+    return handle_assets_stockpile_delete(s, msg, id, services);
   }
-
-  let chars_snapshot = state.characters.clone();
-  let ActiveView::Assets(s) = &mut state.active_view else {
-    return iced::Task::none();
-  };
   let base_task = assets::update(s, msg).map(Message::Assets);
   let task = build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services);
-  if is_drag_end {
-    let width = if let ActiveView::Assets(s) = &state.active_view {
-      Some(s.sidebar_width)
-    } else {
-      None
-    };
-    if let Some(w) = width {
-      state.assets_sidebar_width = w;
-    }
-  }
+  save_sidebar_width_if_drag_end(state, is_drag_end);
   task
 }
 
@@ -275,9 +289,13 @@ fn handle_assets_stockpile_save(
   s: &mut assets::State,
   msg: assets::Message,
   services: &Services,
-) -> Option<iced::Task<Message>> {
-  let form = s.stockpile_form.clone()?;
-  let db = services.db.clone()?;
+) -> iced::Task<Message> {
+  let Some(form) = s.stockpile_form.clone() else {
+    return iced::Task::none();
+  };
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
   let name = form.name.clone();
   let location_id = form.location_id_text.trim().parse::<i64>().ok();
   let items: Vec<(i32, i32)> = form
@@ -302,7 +320,7 @@ fn handle_assets_stockpile_save(
     )
   };
   s.stockpile_form = None;
-  Some(iced::Task::batch([base_task, db_task]))
+  iced::Task::batch([base_task, db_task])
 }
 
 fn handle_assets_stockpile_delete(
@@ -310,13 +328,15 @@ fn handle_assets_stockpile_delete(
   msg: assets::Message,
   id: i64,
   services: &Services,
-) -> Option<iced::Task<Message>> {
-  let db = services.db.clone()?;
+) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
   let base_task = assets::update(s, msg).map(Message::Assets);
   let delete_task = iced::Task::perform(assets_ctrl::delete_stockpile(db, id), |piles| {
     Message::Assets(assets::Message::StockpilesLoaded(piles))
   });
-  Some(iced::Task::batch([base_task, delete_task]))
+  iced::Task::batch([base_task, delete_task])
 }
 
 fn build_assets_follow_up_tasks(
@@ -888,6 +908,186 @@ mod tests {
         state.characters[0].tags(),
         &vec![(1, "pvp".to_string()), (2, "trader".to_string())]
       );
+    }
+  }
+
+  mod apply_assets_loaded_to_cache {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_empty_assets_state() -> assets::State {
+      assets::new(vec![], vec![], 232.0)
+    }
+
+    fn make_main_state_with_cache(cached: assets::State) -> State {
+      State {
+        active_nav: Nav::Settings,
+        active_view: ActiveView::Settings(settings::State::default()),
+        assets_sidebar_width: 232.0,
+        cached_assets_state: Some(cached),
+        characters: Vec::new(),
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_clears_loading_flag_on_ok_result() {
+      let mut cached = make_empty_assets_state();
+      cached.loading = true;
+      let mut state = make_main_state_with_cache(cached);
+
+      apply_assets_loaded_to_cache(&mut state, &Ok(vec![]));
+
+      assert!(!state.cached_assets_state.as_ref().unwrap().loading);
+    }
+
+    #[test]
+    fn it_clears_loading_flag_on_err_result() {
+      let mut cached = make_empty_assets_state();
+      cached.loading = true;
+      let mut state = make_main_state_with_cache(cached);
+
+      apply_assets_loaded_to_cache(&mut state, &Err("db error".to_string()));
+
+      assert!(!state.cached_assets_state.as_ref().unwrap().loading);
+    }
+
+    #[test]
+    fn it_is_noop_when_no_cached_state() {
+      let mut state = State {
+        active_nav: Nav::Settings,
+        active_view: ActiveView::Settings(settings::State::default()),
+        assets_sidebar_width: 232.0,
+        cached_assets_state: None,
+        characters: Vec::new(),
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      };
+
+      apply_assets_loaded_to_cache(&mut state, &Ok(vec![]));
+
+      assert!(state.cached_assets_state.is_none());
+    }
+  }
+
+  mod save_sidebar_width_if_drag_end {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_state_with_assets_view(sidebar_width: f32) -> State {
+      let mut assets_state = assets::new(vec![], vec![], sidebar_width);
+      assets_state.sidebar_width = sidebar_width;
+      State {
+        active_nav: Nav::Assets,
+        active_view: ActiveView::Assets(assets_state),
+        assets_sidebar_width: 0.0,
+        cached_assets_state: None,
+        characters: Vec::new(),
+        corporations: Vec::new(),
+        esi_connected: false,
+        eve_time: String::new(),
+        feat_asset_tracking: false,
+        feat_mail: false,
+        feat_skill_monitoring: false,
+        feat_wallet: false,
+        hovered_nav: None,
+        mail_folder_pane_width: 0.0,
+        mail_message_list_width: 0.0,
+        refresh_successes: 0,
+        skills_left_pane_width: 0.0,
+        sync: status_bar::SyncState::default(),
+        toast: None,
+        wallet_right_rail_width: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_saves_sidebar_width_when_drag_ended() {
+      let mut state = make_state_with_assets_view(300.0);
+
+      save_sidebar_width_if_drag_end(&mut state, true);
+
+      assert_eq!(state.assets_sidebar_width, 300.0);
+    }
+
+    #[test]
+    fn it_does_nothing_when_not_drag_end() {
+      let mut state = make_state_with_assets_view(300.0);
+
+      save_sidebar_width_if_drag_end(&mut state, false);
+
+      assert_eq!(state.assets_sidebar_width, 0.0);
+    }
+  }
+
+  mod should_assets_refresh_values {
+    use super::*;
+
+    fn make_assets_state(active_tab: assets::Tab) -> assets::State {
+      let mut s = assets::new(vec![], vec![], 232.0);
+      s.active_tab = active_tab;
+      s
+    }
+
+    #[test]
+    fn it_returns_true_when_tab_selected_is_values() {
+      let s = make_assets_state(assets::Tab::Inventory);
+      let result = should_assets_refresh_values(&assets::Message::TabSelected(assets::Tab::Values), &s);
+
+      assert!(result);
+    }
+
+    #[test]
+    fn it_returns_true_when_assets_loaded_and_active_tab_is_values() {
+      let s = make_assets_state(assets::Tab::Values);
+      let result = should_assets_refresh_values(&assets::Message::AssetsLoaded(Ok(vec![])), &s);
+
+      assert!(result);
+    }
+
+    #[test]
+    fn it_returns_false_when_assets_loaded_but_active_tab_is_not_values() {
+      let s = make_assets_state(assets::Tab::Inventory);
+      let result = should_assets_refresh_values(&assets::Message::AssetsLoaded(Ok(vec![])), &s);
+
+      assert!(!result);
+    }
+
+    #[test]
+    fn it_returns_false_for_other_messages() {
+      let s = make_assets_state(assets::Tab::Values);
+      let result = should_assets_refresh_values(&assets::Message::TabSelected(assets::Tab::Inventory), &s);
+
+      assert!(!result);
     }
   }
 

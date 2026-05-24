@@ -267,6 +267,12 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
       let _ = app.oauth_callback_tx.send((code, state));
       Task::none()
     }
+    msg => update_secondary(app, msg),
+  }
+}
+
+fn update_secondary(app: &mut App, message: Message) -> Task<Message> {
+  match message {
     Message::SkillPlan(id, msg) => update_skill_plan(app, id, msg),
     Message::Splash(msg) => update_splash(app, SplashMessage::Splash(msg)),
     Message::Tick => update_splash(app, SplashMessage::Tick),
@@ -276,6 +282,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     | Message::WindowMoved(..)
     | Message::WindowOpened(_)
     | Message::WindowResized(..)) => dispatch_window_event(app, msg),
+    _ => Task::none(),
   }
 }
 
@@ -324,6 +331,23 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
   }
 }
 
+fn get_plan_seed(skills_msg: &skills::Message, state: &main_ctrl::State) -> Option<(i64, skill_plan_window::PlanSeed)> {
+  let char_id = state.active_view.skills_char_id();
+  match skills_msg {
+    skills::Message::PlanFromQueueRequested => {
+      let queue_items: Vec<(String, u8)> = if let main_window::ActiveView::Skills(s) = &state.active_view {
+        s.queue.iter().map(|q| (q.skill_name.clone(), q.to_level)).collect()
+      } else {
+        Vec::new()
+      };
+      Some((char_id, skill_plan_window::PlanSeed::FromQueue(queue_items)))
+    }
+    skills::Message::PlanNewRequested => Some((char_id, skill_plan_window::PlanSeed::New)),
+    skills::Message::PlanOpenRequested(id) => Some((char_id, skill_plan_window::PlanSeed::Existing(id.clone()))),
+    _ => None,
+  }
+}
+
 fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   let is_assets_pane_drag_end = matches!(&msg, main_window::Message::Assets(assets::Message::PaneDragEnd));
   let is_mail_pane_drag_end = matches!(&msg, main_window::Message::Mail(mail::Message::PaneDragEnd));
@@ -331,36 +355,10 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   let is_wallet_pane_drag_end = matches!(&msg, main_window::Message::Wallet(wallet::Message::PaneDragEnd));
 
   if let main_window::Message::Skills(ref skills_msg) = msg {
-    let open_result = match skills_msg {
-      skills::Message::PlanFromQueueRequested => {
-        let AppPhase::Main(state) = &mut app.phase else {
-          return Task::none();
-        };
-        let char_id = state.active_view.skills_char_id();
-        let queue_items: Vec<(String, u8)> = if let main_window::ActiveView::Skills(s) = &state.active_view {
-          s.queue.iter().map(|q| (q.skill_name.clone(), q.to_level)).collect()
-        } else {
-          Vec::new()
-        };
-        Some((char_id, skill_plan_window::PlanSeed::FromQueue(queue_items)))
-      }
-      skills::Message::PlanNewRequested => {
-        let AppPhase::Main(state) = &mut app.phase else {
-          return Task::none();
-        };
-        let char_id = state.active_view.skills_char_id();
-        Some((char_id, skill_plan_window::PlanSeed::New))
-      }
-      skills::Message::PlanOpenRequested(id) => {
-        let AppPhase::Main(state) = &mut app.phase else {
-          return Task::none();
-        };
-        let char_id = state.active_view.skills_char_id();
-        Some((char_id, skill_plan_window::PlanSeed::Existing(id.clone())))
-      }
-      _ => None,
+    let AppPhase::Main(state) = &mut app.phase else {
+      return Task::none();
     };
-    if let Some((char_id, seed)) = open_result {
+    if let Some((char_id, seed)) = get_plan_seed(skills_msg, state) {
       return open_skill_plan_window(app, char_id, seed);
     }
   }
@@ -450,14 +448,31 @@ fn apply_saved_geometry(app: &mut App, saved: &services::window_state::WindowGeo
   }
 }
 
-fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
-  let services = Services {
-    config: app.config.clone(),
-    db: app.db.clone(),
-    esi_client: app.esi_client.clone(),
-    oauth_callback_tx: app.oauth_callback_tx.clone(),
-  };
-  let saved = services::window_state::load();
+fn collect_transition_tasks(
+  app: &App,
+  splash_task: Task<Message>,
+  splash_id: Option<window::Id>,
+  init_task: Task<main_ctrl::Message>,
+  open_task: Task<window::Id>,
+) -> Task<Message> {
+  let mut tasks = vec![
+    splash_task,
+    init_task.map(|m| Message::Main(Box::new(m))),
+    open_task.map(Message::WindowOpened),
+    services::updater::check().map(Message::Updater),
+  ];
+  if let (Some(db), Some(esi)) = (app.db.clone(), app.esi_client.clone()) {
+    tasks.push(services::bootstrap::sync_characters(db, esi, app.characters.clone()).map(Message::BackgroundSync));
+  }
+  if let Some(id) = splash_id {
+    tasks.push(window::close(id));
+  }
+  Task::batch(tasks)
+}
+
+fn compute_transition_geometry(
+  saved: &Option<services::window_state::WindowGeometry>,
+) -> (f32, f32, bool, window::Position) {
   let position_valid = saved.as_ref().is_none_or(|g| g.is_position_valid());
   if let Some(g) = saved.as_ref().filter(|_| !position_valid) {
     tracing::warn!(
@@ -466,10 +481,30 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
       "discarding saved window position: out of valid range, using defaults"
     );
   }
-  let (target_width, target_height) = match (&saved, position_valid) {
+  let (target_width, target_height) = match (saved, position_valid) {
     (Some(g), true) => (g.width, g.height),
     _ => (layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
   };
+  let position = if position_valid {
+    saved
+      .as_ref()
+      .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
+      .unwrap_or(window::Position::Default)
+  } else {
+    window::Position::Default
+  };
+  (target_width, target_height, position_valid, position)
+}
+
+fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
+  let services = Services {
+    config: app.config.clone(),
+    db: app.db.clone(),
+    esi_client: app.esi_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
+  };
+  let saved = services::window_state::load();
+  let (target_width, target_height, position_valid, position) = compute_transition_geometry(&saved);
   let (main_state, init_task) = main_ctrl::new(
     app.characters.clone(),
     &services,
@@ -488,14 +523,6 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
       app.window_position = None;
     }
   }
-  let position = if position_valid {
-    saved
-      .as_ref()
-      .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
-      .unwrap_or(window::Position::Default)
-  } else {
-    window::Position::Default
-  };
   let main_settings = window::Settings {
     size: Size::new(target_width, target_height),
     position,
@@ -506,19 +533,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
   };
   let (new_id, open_task) = window::open(main_settings);
   let splash_id = app.window_id.replace(new_id);
-  let mut tasks = vec![
-    splash_task,
-    init_task.map(|m| Message::Main(Box::new(m))),
-    open_task.map(Message::WindowOpened),
-    services::updater::check().map(Message::Updater),
-  ];
-  if let (Some(db), Some(esi)) = (app.db.clone(), app.esi_client.clone()) {
-    tasks.push(services::bootstrap::sync_characters(db, esi, app.characters.clone()).map(Message::BackgroundSync));
-  }
-  if let Some(id) = splash_id {
-    tasks.push(window::close(id));
-  }
-  Task::batch(tasks)
+  collect_transition_tasks(app, splash_task, splash_id, init_task, open_task)
 }
 
 fn handle_splash_inner(app: &mut App, inner: splash_ctrl::Message) -> Task<Message> {

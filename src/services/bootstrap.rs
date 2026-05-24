@@ -373,7 +373,9 @@ async fn sync_active_ship(
     type_id: ship.ship_type_id,
   };
 
-  let _ = db.characters().upsert_assets(char_id, &[synthetic]).await;
+  if let Err(e) = db.characters().upsert_assets(char_id, &[synthetic]).await {
+    tracing::warn!("bootstrap: failed to persist active ship for character {char_id}: {e}");
+  }
 }
 
 fn sync_state_is_fresh(state: &AssetSyncState, now: i64) -> bool {
@@ -538,8 +540,13 @@ async fn cache_structure_names_from_assets(
     }
   }
 
-  if !resolved.is_empty() {
-    let _ = db.universe().structure_cache().upsert_many(&resolved).await;
+  if !resolved.is_empty()
+    && let Err(e) = db.universe().structure_cache().upsert_many(&resolved).await
+  {
+    tracing::warn!(
+      "bootstrap: failed to cache structure names for character {}: {e}",
+      character.name()
+    );
   }
 }
 
@@ -634,7 +641,9 @@ async fn sync_clones_to_db(
     clone_data.push((clone, implants));
   }
 
-  let _ = db.clones().upsert_startup_clones(&clone_data).await;
+  if let Err(e) = db.clones().upsert_startup_clones(&clone_data).await {
+    tracing::warn!("bootstrap: failed to persist clones for character {char_id}: {e}");
+  }
 }
 
 async fn step(tx: &mut Tx, label: String) {

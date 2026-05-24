@@ -7,11 +7,14 @@ use chrono::Utc;
 /// Aggregates any pending OHLC dates and fetches current Jita prices for all
 /// tracked types. Safe to call at startup or on a recurring timer.
 pub async fn sync(db: &pod_db::Repo, esi: &pod_esi::Client) {
+  tracing::debug!("prices: sync started");
   let today = Utc::now().date_naive();
 
   if let Ok(dates) = db.prices().dates_needing_aggregation(today).await {
     for date in dates {
-      let _ = db.prices().aggregate_and_prune(date).await;
+      if let Err(e) = db.prices().aggregate_and_prune(date).await {
+        tracing::warn!("prices: failed to aggregate OHLC for {date}: {e}");
+      }
     }
   }
 

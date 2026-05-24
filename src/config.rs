@@ -55,12 +55,20 @@ pub fn load() -> Result<Settings, Error> {
 /// fails — config loss is preferable to a crash on save.
 pub fn save(settings: &Settings) {
   let Some(path) = dir_spec::config_home().map(|p| p.join("pod/config.toml")) else {
+    tracing::warn!("config: could not determine config directory — settings not saved");
     return;
   };
-  if let Some(parent) = path.parent() {
-    std::fs::create_dir_all(parent).ok();
+  if let Some(parent) = path.parent()
+    && let Err(e) = std::fs::create_dir_all(parent)
+  {
+    tracing::warn!("config: failed to create config directory: {e}");
   }
-  if let Ok(content) = toml::to_string_pretty(settings) {
-    std::fs::write(path, content).ok();
+  match toml::to_string_pretty(settings) {
+    Ok(content) => {
+      if let Err(e) = std::fs::write(&path, content) {
+        tracing::warn!("config: failed to write config file: {e}");
+      }
+    }
+    Err(e) => tracing::warn!("config: failed to serialize settings: {e}"),
   }
 }

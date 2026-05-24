@@ -21,12 +21,24 @@ impl Component {
     Self::from_bytes(include_bytes!("../../../../assets/icons/characters.svg"))
   }
 
+  pub fn draft() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/draft.svg"))
+  }
+
   pub fn forward() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/forward.svg"))
   }
 
   pub fn help() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/help.svg"))
+  }
+
+  pub fn inbox() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/inbox.svg"))
+  }
+
+  pub fn inbox_all() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/inbox-all.svg"))
   }
 
   pub fn logo_mark() -> Self {
@@ -109,6 +121,10 @@ impl Component {
     Self::from_bytes(include_bytes!("../../../../assets/icons/pencil.svg"))
   }
 
+  pub fn pin() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/pin.svg"))
+  }
+
   pub fn reply() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/reply.svg"))
   }
@@ -119,6 +135,10 @@ impl Component {
 
   pub fn search() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/search.svg"))
+  }
+
+  pub fn send() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/send.svg"))
   }
 
   pub fn settings() -> Self {

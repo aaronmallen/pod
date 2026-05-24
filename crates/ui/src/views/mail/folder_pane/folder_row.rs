@@ -7,32 +7,39 @@ use iced::{
 
 use super::{Folder, Message};
 use crate::{
-  components::CountBadge,
-  style::{
-    color,
-    typography::{body, mono},
-  },
+  components::{CountBadge, Icon},
+  style::{color, typography::body},
 };
 
+fn folder_icon(folder: &Folder, active: bool) -> Element<'static, Message> {
+  let color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  };
+  match folder {
+    Folder::Archive => Icon::archive(),
+    Folder::Drafts => Icon::draft(),
+    Folder::Inbox => Icon::inbox(),
+    Folder::Sent => Icon::send(),
+    Folder::Snoozed => Icon::snooze(),
+    Folder::Starred => Icon::star(),
+    Folder::Trash => Icon::trash(),
+    _ => Icon::inbox(),
+  }
+  .size(16.0)
+  .color(color)
+  .render::<Message>()
+}
+
 fn folder_row_content(
-  icon: &'static str,
+  icon_el: Element<'static, Message>,
   label: &'static str,
   is_active: bool,
   count_el: Element<'static, Message>,
 ) -> iced::widget::Row<'static, Message> {
   row([
-    text(icon)
-      .font(mono::REGULAR)
-      .size(14.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        }),
-      })
-      .width(18.0)
-      .into(),
+    icon_el,
     text(label)
       .font(if is_active { body::MEDIUM } else { body::REGULAR })
       .size(13.0)
@@ -53,35 +60,26 @@ fn folder_row_content(
 
 /// Builder for an individual folder row button.
 pub struct Component {
-  label: &'static str,
-  icon: &'static str,
-  is_active: bool,
   count: u32,
-  unread: u32,
   folder: Folder,
+  is_active: bool,
   is_all_inboxes: bool,
+  label: &'static str,
   total_unread: u32,
+  unread: u32,
 }
 
 impl Component {
   /// Create a new folder row button.
-  pub fn new(
-    label: &'static str,
-    icon: &'static str,
-    is_active: bool,
-    count: u32,
-    unread: u32,
-    folder: Folder,
-  ) -> Self {
+  pub fn new(label: &'static str, is_active: bool, count: u32, unread: u32, folder: Folder) -> Self {
     Self {
-      label,
-      icon,
-      is_active,
       count,
-      unread,
       folder,
+      is_active,
       is_all_inboxes: false,
+      label,
       total_unread: 0,
+      unread,
     }
   }
 
@@ -98,8 +96,9 @@ impl Component {
     if self.is_all_inboxes {
       self.render_all_inboxes()
     } else {
+      let icon_el = folder_icon(&self.folder, is_active);
       let count_el = CountBadge::new(self.count).unread(self.unread).render();
-      button(folder_row_content(self.icon, self.label, is_active, count_el))
+      button(folder_row_content(icon_el, self.label, is_active, count_el))
         .padding(Padding {
           top: 7.0,
           bottom: 7.0,
@@ -136,7 +135,7 @@ impl Component {
     let total_unread = self.total_unread;
     button(
       row([
-        crate::components::Icon::mail()
+        Icon::inbox_all()
           .size(16.0)
           .color(if active {
             color::accent::PLASMA
@@ -198,18 +197,18 @@ impl Component {
 
 /// A label row for label-type folders.
 pub struct LabelRow<'a> {
-  label: &'a str,
-  is_active: bool,
   folder: Folder,
+  is_active: bool,
+  label: &'a str,
 }
 
 impl<'a> LabelRow<'a> {
   /// Create a new label row.
   pub fn new(label: &'a str, is_active: bool, folder: Folder) -> Self {
     Self {
-      label,
-      is_active,
       folder,
+      is_active,
+      label,
     }
   }
 
@@ -300,17 +299,4 @@ pub fn folder_counts(messages: &[super::MailMessage], account_id: i64, folder: &
     .iter()
     .filter(|m| message_in_folder_count(m, account_id, folder))
     .fold((0u32, 0u32), |(t, u), m| (t + 1, u + u32::from(m.unread)))
-}
-
-pub fn folder_icon_char(folder: &str) -> &'static str {
-  match folder {
-    "Inbox" => "▤",
-    "Starred" => "★",
-    "Snoozed" => "◷",
-    "Sent" => "▶",
-    "Drafts" => "◧",
-    "Archive" => "▣",
-    "Trash" => "▥",
-    _ => "·",
-  }
 }

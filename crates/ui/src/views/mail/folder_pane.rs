@@ -8,16 +8,16 @@ use iced::{
 };
 
 use super::{Folder, MailMessage, State};
+use crate::{
+  components::{self, section_label},
+  style::{color, typography::mono},
+};
 
 /// Messages produced by the folder pane.
 #[derive(Clone, Debug)]
 pub enum Message {
   FolderSelected(Folder),
 }
-use crate::{
-  components::{self, section_label},
-  style::{color, typography::mono},
-};
 
 fn folder_unified_section<'a>(all_inboxes_btn: Element<'a, Message>, account_count: usize) -> Element<'a, Message> {
   let mailbox_label = text(format!("{account_count} mailboxes combined"))
@@ -85,15 +85,7 @@ fn standard_folder_rows<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
     .map(|(folder, label)| {
       let (count, unread) = folder_row::folder_counts(&state.messages, state.current_account_id(), folder);
       let is_active = &state.selected_folder == folder;
-      folder_row::Component::new(
-        label,
-        folder_row::folder_icon_char(label),
-        is_active,
-        count,
-        unread,
-        folder.clone(),
-      )
-      .render()
+      folder_row::Component::new(label, is_active, count, unread, folder.clone()).render()
     })
     .collect()
 }
@@ -125,7 +117,7 @@ impl<'a> Component<'a> {
     let total_unread: u32 = state.accounts.iter().map(|a| a.unread).sum();
     let all_active = state.selected_folder == Folder::All;
 
-    let all_inboxes_btn = folder_row::Component::new("All Inboxes", "", all_active, 0, 0, Folder::All)
+    let all_inboxes_btn = folder_row::Component::new("All Inboxes", all_active, 0, 0, Folder::All)
       .all_inboxes(total_unread)
       .render();
 

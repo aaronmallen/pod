@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
   components::{
-    Separator,
+    Icon, Separator,
     avatar::{self, AvatarKind},
   },
   style::{
@@ -63,24 +63,13 @@ fn message_portrait_stack<'a>(msg: &'a MailMessage, portrait_handle: Option<imag
 fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
   let mut prefix: Vec<Element<'_, Message>> = Vec::new();
   if msg.pinned {
-    prefix.push(
-      text("⊕")
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::status::CAUTION),
-        })
-        .into(),
-    );
+    prefix.push(Icon::pin().size(12.0).color(color::status::CAUTION).render::<Message>());
   } else if msg.starred {
     prefix.push(
-      text("★")
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::status::CAUTION),
-        })
-        .into(),
+      Icon::star()
+        .size(12.0)
+        .color(color::status::CAUTION)
+        .render::<Message>(),
     );
   }
   let subject_font = if msg.unread { body::MEDIUM } else { body::REGULAR };
@@ -219,8 +208,8 @@ fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
 /// Builder for a single message preview row.
 pub struct Component<'a> {
   msg: &'a MailMessage,
-  selected: bool,
   portrait_handle: Option<image::Handle>,
+  selected: bool,
 }
 
 impl<'a> Component<'a> {
@@ -229,8 +218,8 @@ impl<'a> Component<'a> {
     let portrait_handle = msg.from_id.and_then(|id| state.portrait_handles.get(&id).cloned());
     Self {
       msg,
-      selected,
       portrait_handle,
+      selected,
     }
   }
 

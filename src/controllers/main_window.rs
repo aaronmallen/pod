@@ -619,7 +619,8 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
     Nav::Characters => {
       let (chars_state, init_task) = characters_ctrl::new(state.characters.clone(), services);
       swap_active_view(state, ActiveView::Characters(chars_state));
-      init_task.map(Message::Characters)
+      let tags_task = characters_ctrl::reload_all_tags_task(services).map(Message::Characters);
+      iced::Task::batch([init_task.map(Message::Characters), tags_task])
     }
     Nav::Mail => {
       let (s, task) = mail_ctrl::new(

@@ -11,7 +11,7 @@ pub use character_portrait::Component as CharacterPortrait;
 pub use character_skill_training::Component as CharacterSkillTraining;
 pub use character_wallet::Component as CharacterWallet;
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding,
   widget::{button, column, container, mouse_area, row, text},
 };
 use pod_model::Character;
@@ -259,7 +259,7 @@ fn tags_row<'a>(character: &'a Character) -> Element<'a, Message> {
   let mut items: Vec<Element<'a, Message>> = character
     .tags()
     .iter()
-    .map(|(_, name, _)| components::Badge::tag(name).render::<Message>())
+    .map(|(_, name, color_hex)| tag_chip(name, color_hex.as_deref()))
     .collect();
   items.push(plus_btn.into());
 
@@ -272,6 +272,63 @@ fn tags_row<'a>(character: &'a Character) -> Element<'a, Message> {
     })
     .width(Length::Fill)
     .into()
+}
+
+fn hex_to_color(hex: &str) -> Option<Color> {
+  let hex = hex.trim_start_matches('#');
+  if hex.len() != 6 {
+    return None;
+  }
+  let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+  let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+  let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+  Some(Color {
+    r,
+    g,
+    b,
+    a: 1.0,
+  })
+}
+
+fn tag_chip<'a, MSG: 'a>(name: &'a str, color_hex: Option<&'a str>) -> Element<'a, MSG> {
+  let (bg, fg, bd) = match color_hex.and_then(hex_to_color) {
+    Some(c) => (
+      Color {
+        a: 0.12,
+        ..c
+      },
+      c,
+      Color {
+        a: 0.45,
+        ..c
+      },
+    ),
+    None => (color::state::TAG_FILL, color::text::SECONDARY, color::border::SUBTLE),
+  };
+  container(
+    text(name)
+      .font(typography::body::MEDIUM)
+      .size(11.0)
+      .style(move |_| iced::widget::text::Style {
+        color: Some(fg),
+      }),
+  )
+  .padding(Padding {
+    top: 2.0,
+    bottom: 2.0,
+    left: 8.0,
+    right: 8.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(bg)),
+    border: Border {
+      color: bd,
+      radius: radius::FULL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn training_row<'a>(character: &'a Character, id: i64) -> Element<'a, Message> {

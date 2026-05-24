@@ -211,18 +211,18 @@ fn refilter(state: &mut State) {
 fn recompute_tag_corpus(state: &mut State) {
   if let Some(modal) = &state.tag_modal {
     if modal.entity_type == "corporation" {
-      state.tag_corpus = build_corp_tag_corpus(&state.all_corporations);
+      state.tag_corpus = build_corp_tag_corpus(&state.all_corporations, &state.all_tags);
     } else {
-      state.tag_corpus = build_tag_corpus(&state.all_characters);
+      state.tag_corpus = build_tag_corpus(&state.all_characters, &state.all_tags);
     }
   } else {
     state.tag_corpus = Vec::new();
   }
 }
 
-fn build_tag_corpus(characters: &[Character]) -> Vec<(String, usize)> {
+fn build_tag_corpus(characters: &[Character], all_tags: &[(i32, String, Option<String>)]) -> Vec<(String, usize)> {
   use std::collections::HashMap;
-  let mut counts: HashMap<String, usize> = HashMap::new();
+  let mut counts: HashMap<String, usize> = all_tags.iter().map(|(_, name, _)| (name.clone(), 0)).collect();
   for c in characters {
     for (_, name, _) in c.tags() {
       *counts.entry(name.clone()).or_default() += 1;
@@ -233,9 +233,12 @@ fn build_tag_corpus(characters: &[Character]) -> Vec<(String, usize)> {
   corpus
 }
 
-fn build_corp_tag_corpus(corporations: &[Corporation]) -> Vec<(String, usize)> {
+fn build_corp_tag_corpus(
+  corporations: &[Corporation],
+  all_tags: &[(i32, String, Option<String>)],
+) -> Vec<(String, usize)> {
   use std::collections::HashMap;
-  let mut counts: HashMap<String, usize> = HashMap::new();
+  let mut counts: HashMap<String, usize> = all_tags.iter().map(|(_, name, _)| (name.clone(), 0)).collect();
   for c in corporations {
     for (_, name, _) in c.tags() {
       *counts.entry(name.clone()).or_default() += 1;
@@ -648,6 +651,25 @@ fn ticker_subscriptions(state: &State) -> Vec<Subscription<Message>> {
   subs
 }
 
+/// Returns a task that reloads all global tags from the database.
+pub fn reload_all_tags_task(services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move {
+      db.tags()
+        .find_all()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| (t.id, t.name, t.color))
+        .collect()
+    },
+    Message::AllTagsLoaded,
+  )
+}
+
 /// Builds the startup batch task that pre-loads tags, corporations, and public data.
 fn startup_tasks(state: &State, services: &Services) -> iced::Task<Message> {
   let Some(db) = services.db.clone() else {
@@ -656,21 +678,7 @@ fn startup_tasks(state: &State, services: &Services) -> iced::Task<Message> {
 
   let char_ids: Vec<i64> = state.all_characters.iter().map(|c| *c.id()).collect();
 
-  let all_tags_task = {
-    let db = db.clone();
-    iced::Task::perform(
-      async move {
-        db.tags()
-          .find_all()
-          .await
-          .unwrap_or_default()
-          .into_iter()
-          .map(|t| (t.id, t.name, t.color))
-          .collect()
-      },
-      Message::AllTagsLoaded,
-    )
-  };
+  let all_tags_task = reload_all_tags_task(services);
 
   let char_tasks = startup_char_tag_tasks(char_ids, db.clone());
 
@@ -2008,7 +2016,7 @@ mod tests {
 
     #[test]
     fn it_returns_empty_for_no_characters() {
-      let corpus = build_tag_corpus(&[]);
+      let corpus = build_tag_corpus(&[], &[]);
 
       assert!(corpus.is_empty());
     }
@@ -2020,7 +2028,7 @@ mod tests {
       let mut c2 = make_character(2, "Beta");
       *c2.tags_mut() = vec![(1, "pvp".to_string(), None)];
 
-      let corpus = build_tag_corpus(&[c1, c2]);
+      let corpus = build_tag_corpus(&[c1, c2], &[]);
 
       let pvp = corpus.iter().find(|(name, _)| name == "pvp");
       assert_eq!(pvp, Some(&("pvp".to_string(), 2)));
@@ -2037,7 +2045,7 @@ mod tests {
       let mut c3 = make_character(3, "Gamma");
       *c3.tags_mut() = vec![(2, "common".to_string(), None)];
 
-      let corpus = build_tag_corpus(&[c1, c2, c3]);
+      let corpus = build_tag_corpus(&[c1, c2, c3], &[]);
 
       assert_eq!(corpus[0].0, "common");
       assert_eq!(corpus[0].1, 2);
@@ -2053,7 +2061,7 @@ mod tests {
 
     #[test]
     fn it_returns_empty_for_no_corporations() {
-      let corpus = build_corp_tag_corpus(&[]);
+      let corpus = build_corp_tag_corpus(&[], &[]);
 
       assert!(corpus.is_empty());
     }
@@ -2065,7 +2073,7 @@ mod tests {
       let mut c2 = make_corporation(2, "Corp B", "CB");
       *c2.tags_mut() = vec![(1, "industrial".to_string(), None)];
 
-      let corpus = build_corp_tag_corpus(&[c1, c2]);
+      let corpus = build_corp_tag_corpus(&[c1, c2], &[]);
 
       let industrial = corpus.iter().find(|(name, _)| name == "industrial");
       assert_eq!(industrial, Some(&("industrial".to_string(), 2)));
@@ -2082,7 +2090,7 @@ mod tests {
       let mut c3 = make_corporation(3, "Corp C", "CC");
       *c3.tags_mut() = vec![(2, "pvp".to_string(), None)];
 
-      let corpus = build_corp_tag_corpus(&[c1, c2, c3]);
+      let corpus = build_corp_tag_corpus(&[c1, c2, c3], &[]);
 
       assert_eq!(corpus[0].0, "pvp");
       assert_eq!(corpus[1].0, "mining");

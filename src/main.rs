@@ -158,13 +158,21 @@ fn main() -> iced::Result {
     .build(&log_dir)
     .expect("failed to initialize log file appender");
   let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-  let filter =
-    tracing_subscriber::EnvFilter::new("pod=debug,pod_db=debug,pod_esi=debug,pod_model=debug,pod_ui=debug,warn");
+  let default_filter = "pod=debug,pod_db=debug,pod_esi=debug,pod_model=debug,pod_ui=debug,warn";
+  let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
   tracing_subscriber::fmt()
     .with_ansi(false)
     .with_env_filter(filter)
     .with_writer(non_blocking)
     .init();
+
+  tracing::info!(
+    version = env!("CARGO_PKG_VERSION"),
+    log_dir = %log_dir.display(),
+    default_filter = default_filter,
+    "pod: starting up"
+  );
 
   iced::daemon(boot, update, view)
     .title(|_app: &App, _window: window::Id| "Pod".to_string())

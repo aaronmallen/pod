@@ -56,6 +56,28 @@ pub fn update(
   }
 }
 
+async fn apply_esi_names(loc_ids: &[i64], names: &mut HashMap<i64, String>, esi: &pod_esi::Client) {
+  let unresolved: Vec<i64> = loc_ids.iter().filter(|id| !names.contains_key(id)).copied().collect();
+  if !unresolved.is_empty()
+    && let Ok(resolved) = esi.universe().names(&unresolved).await
+  {
+    for r in resolved {
+      names.insert(r.id, r.name);
+    }
+  }
+}
+
+async fn apply_station_names(loc_ids: &[i64], names: &mut HashMap<i64, String>, db: &pod_db::Repo) {
+  let station_ids = collect_station_ids(loc_ids);
+  if !station_ids.is_empty()
+    && let Ok(stations) = db.universe().stations().find_by_ids(&station_ids).await
+  {
+    for s in stations {
+      names.insert(*s.id() as i64, s.name().clone());
+    }
+  }
+}
+
 fn attach_icon_task(
   base: iced::Task<Message>,
   icon_type_ids: Option<Vec<i32>>,
@@ -267,6 +289,14 @@ fn build_wallet_state(characters: &[Character], corporations: &[Corporation], ri
     sign_filter: SignFilter::All,
     timeframe: Timeframe::M3,
   }
+}
+
+fn collect_station_ids(loc_ids: &[i64]) -> Vec<i32> {
+  loc_ids
+    .iter()
+    .filter(|&&id| id < 100_000_000)
+    .filter_map(|&id| i32::try_from(id).ok())
+    .collect()
 }
 
 fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
@@ -669,21 +699,23 @@ fn map_txn_row(row: WalletTransaction, type_names: &HashMap<i32, String>) -> Mar
 }
 
 fn market_matches(m: &MarketEntry, corp_selected: bool, who: Option<i64>, side: &SideFilter, q: &str) -> bool {
-  if !corp_selected
-    && let Some(id) = who
-    && m.who != id
-  {
-    return false;
-  }
+  market_owner_matches(m, corp_selected, who) && market_side_matches(m, side) && market_query_matches(m, q)
+}
+
+fn market_owner_matches(m: &MarketEntry, corp_selected: bool, who: Option<i64>) -> bool {
+  corp_selected || who.is_none_or(|id| m.who == id)
+}
+
+fn market_query_matches(m: &MarketEntry, q: &str) -> bool {
+  q.is_empty() || m.item.to_lowercase().contains(&q.to_lowercase())
+}
+
+fn market_side_matches(m: &MarketEntry, side: &SideFilter) -> bool {
   match side {
-    SideFilter::Buy if m.side != "buy" => return false,
-    SideFilter::Sell if m.side != "sell" => return false,
-    _ => {}
+    SideFilter::All => true,
+    SideFilter::Buy => m.side == "buy",
+    SideFilter::Sell => m.side == "sell",
   }
-  if !q.is_empty() && !m.item.to_lowercase().contains(q) {
-    return false;
-  }
-  true
 }
 
 fn parse_iso_to_unix(s: &str) -> i64 {
@@ -836,34 +868,9 @@ async fn resolve_location_names(
   if loc_ids.is_empty() {
     return HashMap::new();
   }
-
   let mut names: HashMap<i64, String> = HashMap::new();
-
-  // NPC stations have IDs < 100_000_000 and are in the SDE station table.
-  let station_ids: Vec<i32> = loc_ids
-    .iter()
-    .filter(|&&id| id < 100_000_000)
-    .filter_map(|&id| i32::try_from(id).ok())
-    .collect();
-  if !station_ids.is_empty()
-    && let Ok(stations) = db.universe().stations().find_by_ids(&station_ids).await
-  {
-    for s in stations {
-      names.insert(*s.id() as i64, s.name().clone());
-    }
-  }
-
-  // For any remaining IDs not resolved from the DB, try the universe names API.
-  // This covers NPC stations not yet in the local DB and may cover some structures.
-  let unresolved: Vec<i64> = loc_ids.iter().filter(|id| !names.contains_key(id)).copied().collect();
-  if !unresolved.is_empty()
-    && let Ok(resolved) = esi.universe().names(&unresolved).await
-  {
-    for r in resolved {
-      names.insert(r.id, r.name);
-    }
-  }
-
+  apply_station_names(&loc_ids, &mut names, db).await;
+  apply_esi_names(&loc_ids, &mut names, esi).await;
   names
 }
 
@@ -1013,6 +1020,40 @@ mod tests {
     }
   }
 
+  mod collect_station_ids {
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_for_empty_input() {
+      let result = collect_station_ids(&[]);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_includes_ids_below_100_000_000() {
+      let result = collect_station_ids(&[60_003_760]);
+
+      assert_eq!(result, vec![60_003_760_i32]);
+    }
+
+    #[test]
+    fn it_excludes_ids_at_or_above_100_000_000() {
+      let result = collect_station_ids(&[100_000_000, 1_023_000_000]);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_filters_mixed_ids_keeping_only_npc_stations() {
+      let result = collect_station_ids(&[60_003_760, 1_023_000_000, 60_000_004]);
+
+      assert_eq!(result.len(), 2);
+      assert!(result.contains(&60_003_760_i32));
+      assert!(result.contains(&60_000_004_i32));
+    }
+  }
+
   mod journal_matches {
     use super::*;
 
@@ -1138,6 +1179,157 @@ mod tests {
       let entry = map_txn_row(row, &names);
 
       assert_eq!(entry.side, "sell");
+    }
+  }
+
+  mod market_owner_matches {
+    use super::*;
+
+    fn make_entry(who: i64) -> MarketEntry {
+      MarketEntry {
+        id: String::new(),
+        who,
+        type_id: 34,
+        side: "buy".to_string(),
+        qty: 1,
+        item: "Tritanium".to_string(),
+        unit: 5.0,
+        total: 5.0,
+        fee: 0.0,
+        ts_secs: 0,
+        location: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_allows_any_owner_when_corp_selected() {
+      let m = make_entry(999);
+
+      assert!(market_owner_matches(&m, true, Some(10)));
+    }
+
+    #[test]
+    fn it_allows_any_owner_when_who_is_none() {
+      let m = make_entry(999);
+
+      assert!(market_owner_matches(&m, false, None));
+    }
+
+    #[test]
+    fn it_includes_matching_owner() {
+      let m = make_entry(10);
+
+      assert!(market_owner_matches(&m, false, Some(10)));
+    }
+
+    #[test]
+    fn it_excludes_wrong_owner_when_not_corp_selected() {
+      let m = make_entry(999);
+
+      assert!(!market_owner_matches(&m, false, Some(10)));
+    }
+  }
+
+  mod market_query_matches {
+    use super::*;
+
+    fn make_entry(item: &str) -> MarketEntry {
+      MarketEntry {
+        id: String::new(),
+        who: 1,
+        type_id: 34,
+        side: "sell".to_string(),
+        qty: 1,
+        item: item.to_string(),
+        unit: 1.0,
+        total: 1.0,
+        fee: 0.0,
+        ts_secs: 0,
+        location: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_matches_when_query_is_empty() {
+      let m = make_entry("Tritanium");
+
+      assert!(market_query_matches(&m, ""));
+    }
+
+    #[test]
+    fn it_matches_case_insensitively() {
+      let m = make_entry("Tritanium");
+
+      assert!(market_query_matches(&m, "trit"));
+    }
+
+    #[test]
+    fn it_excludes_non_matching_item() {
+      let m = make_entry("Tritanium");
+
+      assert!(!market_query_matches(&m, "veldspar"));
+    }
+  }
+
+  mod market_side_matches {
+    use super::*;
+
+    fn make_entry(side: &str) -> MarketEntry {
+      MarketEntry {
+        id: String::new(),
+        who: 1,
+        type_id: 34,
+        side: side.to_string(),
+        qty: 1,
+        item: "Tritanium".to_string(),
+        unit: 1.0,
+        total: 1.0,
+        fee: 0.0,
+        ts_secs: 0,
+        location: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_matches_buy_entry_for_all_filter() {
+      let m = make_entry("buy");
+
+      assert!(market_side_matches(&m, &SideFilter::All));
+    }
+
+    #[test]
+    fn it_matches_sell_entry_for_all_filter() {
+      let m = make_entry("sell");
+
+      assert!(market_side_matches(&m, &SideFilter::All));
+    }
+
+    #[test]
+    fn it_matches_buy_entry_for_buy_filter() {
+      let m = make_entry("buy");
+
+      assert!(market_side_matches(&m, &SideFilter::Buy));
+    }
+
+    #[test]
+    fn it_excludes_sell_entry_for_buy_filter() {
+      let m = make_entry("sell");
+
+      assert!(!market_side_matches(&m, &SideFilter::Buy));
+    }
+
+    #[test]
+    fn it_matches_sell_entry_for_sell_filter() {
+      let m = make_entry("sell");
+
+      assert!(market_side_matches(&m, &SideFilter::Sell));
+    }
+
+    #[test]
+    fn it_excludes_buy_entry_for_sell_filter() {
+      let m = make_entry("buy");
+
+      assert!(!market_side_matches(&m, &SideFilter::Sell));
     }
   }
 

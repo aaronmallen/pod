@@ -116,10 +116,14 @@ pub async fn create_stockpile(
   character_id: Option<i64>,
   items: Vec<(i32, i32)>,
 ) -> Vec<StockpileWithStatus> {
-  let _ = db
+  tracing::info!("assets: creating stockpile — name: {name}, {} items", items.len());
+  if let Err(e) = db
     .stockpiles()
     .create_stockpile(&name, location_id, character_id, &items)
-    .await;
+    .await
+  {
+    tracing::warn!("assets: stockpile create failed — {e}");
+  }
   load_stockpiles_with_status(db).await
 }
 
@@ -132,16 +136,23 @@ pub async fn update_stockpile(
   character_id: Option<i64>,
   items: Vec<(i32, i32)>,
 ) -> Vec<StockpileWithStatus> {
-  let _ = db
+  tracing::info!("assets: updating stockpile — id: {id}, name: {name}");
+  if let Err(e) = db
     .stockpiles()
     .update_stockpile(id, &name, location_id, character_id, &items)
-    .await;
+    .await
+  {
+    tracing::warn!("assets: stockpile update failed — id: {id}, error: {e}");
+  }
   load_stockpiles_with_status(db).await
 }
 
 /// Deletes a stockpile and refreshes the list.
 pub async fn delete_stockpile(db: pod_db::Repo, id: i64) -> Vec<StockpileWithStatus> {
-  let _ = db.stockpiles().delete_stockpile(id).await;
+  tracing::info!("assets: deleting stockpile — id: {id}");
+  if let Err(e) = db.stockpiles().delete_stockpile(id).await {
+    tracing::warn!("assets: stockpile delete failed — id: {id}, error: {e}");
+  }
   load_stockpiles_with_status(db).await
 }
 

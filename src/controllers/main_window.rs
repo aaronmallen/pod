@@ -597,6 +597,7 @@ fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> ic
 }
 
 fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
+  tracing::info!("main: navigated to {nav:?}");
   state.active_nav = nav;
   match nav {
     Nav::Assets => {

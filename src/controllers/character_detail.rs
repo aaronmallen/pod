@@ -50,20 +50,27 @@ pub fn new(
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
     Message::TabChanged(tab) => {
+      tracing::info!(
+        "character: tab selected — {tab:?}, character_id: {}",
+        state.character_id
+      );
       state.active_tab = tab;
       iced::Task::none()
     }
     Message::ContactsFilterChanged(f) => {
+      tracing::info!("character: contacts filter changed — {f:?}");
       state.contact_filter = f;
       recompute_contact_filter(state);
       iced::Task::none()
     }
     Message::KilllogFilterChanged(f) => {
+      tracing::info!("character: killlog filter changed — {f:?}");
       state.killlog_filter = f;
       recompute_killlog_filter(state);
       iced::Task::none()
     }
     Message::NotificationsFilterChanged(f) => {
+      tracing::info!("character: notifications filter changed — {f:?}");
       state.notifications_filter = f;
       recompute_notifications_filter(state);
       iced::Task::none()
@@ -194,6 +201,10 @@ fn build_fetch_tasks(
 }
 
 fn handle_notification_read(state: &mut State, id: i64) -> iced::Task<Message> {
+  tracing::info!(
+    "character: notification read — notification_id: {id}, character_id: {}",
+    state.character_id
+  );
   if let LoadState::Loaded(ref mut notifications) = state.notifications
     && let Some(n) = notifications.iter_mut().find(|n| n.notification_id == id)
   {
@@ -234,12 +245,21 @@ fn handle_contacts_loaded(
 ) -> iced::Task<Message> {
   match result {
     Ok((contacts, labels)) => {
+      tracing::debug!(
+        "character: {} contacts loaded — character_id: {}",
+        contacts.len(),
+        state.character_id
+      );
       state.contact_labels = labels;
       state.contacts = LoadState::Loaded(contacts);
       recompute_contact_filter(state);
       iced::Task::none()
     }
     Err(e) => {
+      tracing::warn!(
+        "character: contacts load failed — character_id: {}, error: {e}",
+        state.character_id
+      );
       state.contacts = LoadState::Error(e);
       iced::Task::none()
     }
@@ -252,11 +272,20 @@ fn handle_notifications_loaded(
 ) -> iced::Task<Message> {
   match result {
     Ok(notifications) => {
+      tracing::debug!(
+        "character: {} notifications loaded — character_id: {}",
+        notifications.len(),
+        state.character_id
+      );
       state.notifications = LoadState::Loaded(notifications);
       recompute_notifications_filter(state);
       iced::Task::none()
     }
     Err(e) => {
+      tracing::warn!(
+        "character: notifications load failed — character_id: {}, error: {e}",
+        state.character_id
+      );
       state.notifications = LoadState::Error(e);
       iced::Task::none()
     }
@@ -269,10 +298,19 @@ fn handle_standings_loaded(
 ) -> iced::Task<Message> {
   match result {
     Ok(standings) => {
+      tracing::debug!(
+        "character: {} standings loaded — character_id: {}",
+        standings.len(),
+        state.character_id
+      );
       state.standings = LoadState::Loaded(standings);
       iced::Task::none()
     }
     Err(e) => {
+      tracing::warn!(
+        "character: standings load failed — character_id: {}, error: {e}",
+        state.character_id
+      );
       state.standings = LoadState::Error(e);
       iced::Task::none()
     }
@@ -292,6 +330,11 @@ fn handle_clones_loaded(
 ) -> iced::Task<Message> {
   match result {
     Ok(clones) => {
+      tracing::debug!(
+        "character: {} clones loaded — character_id: {}",
+        clones.len(),
+        state.character_id
+      );
       let type_ids: Vec<i32> = clones
         .iter()
         .flat_map(|c| c.implants.iter().map(|i| i.type_id))
@@ -311,6 +354,10 @@ fn handle_clones_loaded(
       iced::Task::none()
     }
     Err(e) => {
+      tracing::warn!(
+        "character: clones load failed — character_id: {}, error: {e}",
+        state.character_id
+      );
       state.clones = LoadState::Error(e);
       iced::Task::none()
     }
@@ -324,6 +371,11 @@ fn handle_killlog_loaded(
 ) -> iced::Task<Message> {
   match result {
     Ok(entries) => {
+      tracing::debug!(
+        "character: {} killlog entries loaded — character_id: {}",
+        entries.len(),
+        state.character_id
+      );
       let type_ids: Vec<i32> = entries
         .iter()
         .map(|e| e.ship_type_id)
@@ -344,6 +396,10 @@ fn handle_killlog_loaded(
       iced::Task::none()
     }
     Err(e) => {
+      tracing::warn!(
+        "character: killlog load failed — character_id: {}, error: {e}",
+        state.character_id
+      );
       state.killlog = LoadState::Error(e);
       iced::Task::none()
     }

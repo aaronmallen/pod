@@ -28,6 +28,7 @@ pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<M
 pub fn update(state: &mut State, msg: Message, _services: &Services) -> iced::Task<Message> {
   match msg {
     Message::ResetDefaults => {
+      tracing::info!("settings: reset to defaults");
       state.asset_tracking = true;
       state.clone_monitoring = true;
       state.combat_log = true;
@@ -45,6 +46,7 @@ pub fn update(state: &mut State, msg: Message, _services: &Services) -> iced::Ta
       iced::Task::none()
     }
     Message::ToggleFeature(feature) => {
+      tracing::info!("settings: feature toggled — {feature:?}");
       toggle_feature(state, &feature);
       iced::Task::none()
     }

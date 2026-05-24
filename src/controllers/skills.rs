@@ -96,6 +96,7 @@ fn apply_char_switch(state: &mut State, message: &Message) {
     return;
   };
   let id = *id;
+  tracing::info!("skills: character switched — character_id: {id}");
   state.queue = state
     .characters
     .iter()
@@ -110,6 +111,7 @@ fn apply_char_switch(state: &mut State, message: &Message) {
 
 fn handle_plans_tab_opened(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   let char_id = state.selected_char_id();
+  tracing::debug!("skills: plans tab opened — character_id: {char_id}");
   if let Some(db) = services.db.clone() {
     let task = iced::Task::perform(
       async move { db.skill_plans().all_for_character(char_id).await.unwrap_or_default() },
@@ -127,6 +129,7 @@ fn handle_plan_delete_confirmed(state: &mut State, message: Message, services: &
     return iced::Task::none();
   };
   let id = plan_id.clone();
+  tracing::info!("skills: plan delete confirmed — plan_id: {id}");
   state.confirm_delete_plan_id = None;
   if let Some(db) = services.db.clone() {
     let id_for_task = id.clone();

@@ -1333,19 +1333,38 @@ fn update_plan_messages(state: &mut State, message: Message, services: &Services
   }
 }
 
-fn update_plan_import_export_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+fn is_export_message(msg: &Message) -> bool {
+  matches!(
+    msg,
+    Message::ExportDropdownToggled | Message::ExportPathChosen(_) | Message::ExportToClipboard | Message::ExportToFile
+  )
+}
+
+fn update_export_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::ExportDropdownToggled => update_export_dropdown_toggled(state),
-    Message::ExportPathChosen(None) => iced::Task::none(),
     Message::ExportPathChosen(Some(path)) => update_export_path_chosen(state, path),
     Message::ExportToClipboard => update_export_clipboard(state),
     Message::ExportToFile => update_export_file(state),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_import_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::ImportDropdownToggled => update_import_dropdown_toggled(state),
     Message::ImportFromClipboard => update_import_clipboard(state),
     Message::ImportFromFile => update_import_file(state),
-    Message::ImportPathChosen(None) => iced::Task::none(),
     Message::ImportPathChosen(Some(path)) => update_import_path_chosen(state, path),
     _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_import_export_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  if is_export_message(&message) {
+    update_export_messages(state, message)
+  } else {
+    update_import_messages(state, message)
   }
 }
 
@@ -1368,23 +1387,54 @@ fn update_plan_pane_messages(state: &mut State, message: Message) -> iced::Task<
   }
 }
 
-fn update_plan_ui_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
-  match message {
+fn is_import_export_message(msg: &Message) -> bool {
+  matches!(
+    msg,
     Message::ExportDropdownToggled
-    | Message::ExportPathChosen(_)
-    | Message::ExportToClipboard
-    | Message::ExportToFile
-    | Message::ImportDropdownToggled
-    | Message::ImportFromClipboard
-    | Message::ImportFromFile
-    | Message::ImportPathChosen(_) => update_plan_import_export_messages(state, message),
+      | Message::ExportPathChosen(_)
+      | Message::ExportToClipboard
+      | Message::ExportToFile
+      | Message::ImportDropdownToggled
+      | Message::ImportFromClipboard
+      | Message::ImportFromFile
+      | Message::ImportPathChosen(_)
+  )
+}
+
+fn is_optimizer_message(msg: &Message) -> bool {
+  matches!(
+    msg,
     Message::ImplantSetChanged(_)
-    | Message::ImplantSuggestionsToggled
-    | Message::OptimizerCompleted(_)
-    | Message::OptimizerRequested => update_plan_optimizer_messages(state, message),
-    Message::PaneDrag(_) | Message::PaneDragEnd | Message::PaneDragStart(_) => {
-      update_plan_pane_messages(state, message)
-    }
+      | Message::ImplantSuggestionsToggled
+      | Message::OptimizerCompleted(_)
+      | Message::OptimizerRequested
+  )
+}
+
+fn is_pane_message(msg: &Message) -> bool {
+  matches!(
+    msg,
+    Message::PaneDrag(_) | Message::PaneDragEnd | Message::PaneDragStart(_)
+  )
+}
+
+fn update_plan_ui_lifecycle_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::SaveCompleted | Message::SaveRequested => update_plan_ui_save_messages(state, message, services),
+    msg => update_plan_ui_window_messages(state, msg),
+  }
+}
+
+fn update_plan_ui_save_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::SaveCompleted => update_save_completed(state),
+    Message::SaveRequested => update_save(state, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_ui_window_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::AttrsLoaded {
       base_attrs,
       current_effective_attrs,
@@ -1394,9 +1444,19 @@ fn update_plan_ui_messages(state: &mut State, message: Message, services: &Servi
     Message::CloseRequested => update_close(state),
     Message::ConfirmClose => iced::window::close(state.window_id),
     Message::NameChanged(name) => update_name_changed(state, name),
-    Message::SaveCompleted => update_save_completed(state),
-    Message::SaveRequested => update_save(state, services),
     _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_ui_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  if is_import_export_message(&message) {
+    update_plan_import_export_messages(state, message)
+  } else if is_optimizer_message(&message) {
+    update_plan_optimizer_messages(state, message)
+  } else if is_pane_message(&message) {
+    update_plan_pane_messages(state, message)
+  } else {
+    update_plan_ui_lifecycle_messages(state, message, services)
   }
 }
 
@@ -1831,6 +1891,99 @@ mod tests {
 
       assert!(!entries[0].auto);
       assert!(entries[1].auto);
+    }
+  }
+
+  mod is_export_message {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_export_dropdown_toggled() {
+      assert!(is_export_message(&Message::ExportDropdownToggled));
+    }
+
+    #[test]
+    fn it_returns_true_for_export_path_chosen_none() {
+      assert!(is_export_message(&Message::ExportPathChosen(None)));
+    }
+
+    #[test]
+    fn it_returns_true_for_export_to_clipboard() {
+      assert!(is_export_message(&Message::ExportToClipboard));
+    }
+
+    #[test]
+    fn it_returns_true_for_export_to_file() {
+      assert!(is_export_message(&Message::ExportToFile));
+    }
+
+    #[test]
+    fn it_returns_false_for_import_messages() {
+      assert!(!is_export_message(&Message::ImportDropdownToggled));
+    }
+
+    #[test]
+    fn it_returns_false_for_unrelated_messages() {
+      assert!(!is_export_message(&Message::PickerToggled));
+    }
+  }
+
+  mod is_import_export_message {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_export_messages() {
+      assert!(is_import_export_message(&Message::ExportDropdownToggled));
+      assert!(is_import_export_message(&Message::ExportToClipboard));
+      assert!(is_import_export_message(&Message::ExportToFile));
+    }
+
+    #[test]
+    fn it_returns_true_for_import_messages() {
+      assert!(is_import_export_message(&Message::ImportDropdownToggled));
+      assert!(is_import_export_message(&Message::ImportFromClipboard));
+      assert!(is_import_export_message(&Message::ImportFromFile));
+    }
+
+    #[test]
+    fn it_returns_false_for_non_import_export_messages() {
+      assert!(!is_import_export_message(&Message::PickerToggled));
+      assert!(!is_import_export_message(&Message::PaneDragEnd));
+    }
+  }
+
+  mod is_optimizer_message {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_implant_suggestions_toggled() {
+      assert!(is_optimizer_message(&Message::ImplantSuggestionsToggled));
+    }
+
+    #[test]
+    fn it_returns_true_for_optimizer_requested() {
+      assert!(is_optimizer_message(&Message::OptimizerRequested));
+    }
+
+    #[test]
+    fn it_returns_false_for_non_optimizer_messages() {
+      assert!(!is_optimizer_message(&Message::PickerToggled));
+      assert!(!is_optimizer_message(&Message::PaneDragEnd));
+    }
+  }
+
+  mod is_pane_message {
+    use super::*;
+
+    #[test]
+    fn it_returns_true_for_pane_drag_end() {
+      assert!(is_pane_message(&Message::PaneDragEnd));
+    }
+
+    #[test]
+    fn it_returns_false_for_non_pane_messages() {
+      assert!(!is_pane_message(&Message::PickerToggled));
+      assert!(!is_pane_message(&Message::ExportDropdownToggled));
     }
   }
 }

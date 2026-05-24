@@ -65,7 +65,8 @@ impl Component {
 
     let content = container(inner)
       .width(Length::Fill)
-      .height(36.0)
+      .height(40.0)
+      .align_y(iced::alignment::Vertical::Center)
       .padding(Padding {
         top: 0.0,
         bottom: 0.0,
@@ -91,6 +92,7 @@ fn render_downloading<'a>() -> Element<'a, Message> {
       color: Some(color::text::SECONDARY),
     })
     .into()])
+  .align_y(iced::alignment::Vertical::Center)
   .into()
 }
 

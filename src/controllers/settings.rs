@@ -1,6 +1,6 @@
 //! Settings controller: manages feature flag state and config persistence.
 
-use pod_ui::views::settings::{Category, Feature, Message, State};
+use pod_ui::views::settings::{Category, Feature, Message, State, TagSortMode};
 
 use crate::services::Services;
 
@@ -18,10 +18,15 @@ pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<M
     search_query: String::new(),
     skill_monitoring: *features.skill_monitoring(),
     standings: *features.standings(),
+    tag_color_hex_draft: String::new(),
     tag_color_open: None,
     tag_draft: String::new(),
+    tag_drag_over: None,
+    tag_dragging: None,
     tag_editing: None,
     tag_new_name: String::new(),
+    tag_search: String::new(),
+    tag_sort_mode: TagSortMode::default(),
     tags: Vec::new(),
     wallet: *features.wallet(),
   };
@@ -64,8 +69,41 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
       state.tag_color_open = None;
       iced::Task::none()
     }
+    Message::TagColorHexChanged(s) => {
+      state.tag_color_hex_draft = s;
+      iced::Task::none()
+    }
+    Message::TagColorHexCommit => {
+      let Some(id) = state.tag_color_open else {
+        return iced::Task::none();
+      };
+      let Some(normalized) = normalize_hex(&state.tag_color_hex_draft) else {
+        return iced::Task::none();
+      };
+      let Some(db) = services.db.clone() else {
+        return iced::Task::none();
+      };
+      let color = normalized.clone();
+      state.tag_color_hex_draft = normalized;
+      iced::Task::perform(
+        async move {
+          db.tags()
+            .set_color(id, Some(&color))
+            .await
+            .map(|t| (t.id, t.name, t.color))
+            .map_err(|e| e.to_string())
+        },
+        Message::TagColorSet,
+      )
+    }
     Message::TagColorOpen(id) => {
       state.tag_color_open = Some(id);
+      state.tag_color_hex_draft = state
+        .tags
+        .iter()
+        .find(|(tid, _, _)| *tid == id)
+        .and_then(|(_, _, c)| c.clone())
+        .unwrap_or_default();
       iced::Task::none()
     }
     Message::TagColorSet(result) => {
@@ -132,8 +170,39 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
       }
       iced::Task::none()
     }
+    Message::TagDragEnd => {
+      state.tag_dragging = None;
+      state.tag_drag_over = None;
+      iced::Task::none()
+    }
+    Message::TagDragStart(id) => {
+      state.tag_dragging = Some(id);
+      state.tag_drag_over = None;
+      state.tag_color_open = None;
+      state.tag_editing = None;
+      iced::Task::none()
+    }
     Message::TagDraftChanged(s) => {
       state.tag_draft = s;
+      iced::Task::none()
+    }
+    Message::TagDrop => {
+      let Some(drag_id) = state.tag_dragging.take() else {
+        return iced::Task::none();
+      };
+      let target_id = state.tag_drag_over.take();
+      if let Some(target) = target_id
+        && drag_id != target
+      {
+        let from = state.tags.iter().position(|(id, _, _)| *id == drag_id);
+        let to = state.tags.iter().position(|(id, _, _)| *id == target);
+        if let (Some(from), Some(to)) = (from, to) {
+          let item = state.tags.remove(from);
+          let insert_at = if from < to { to - 1 } else { to };
+          state.tags.insert(insert_at.min(state.tags.len()), item);
+          return reorder_task(state, services);
+        }
+      }
       iced::Task::none()
     }
     Message::TagEditStart(id) => {
@@ -147,26 +216,6 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
       state.tag_draft = draft;
       state.tag_color_open = None;
       iced::Task::none()
-    }
-    Message::TagMoveDown(id) => {
-      let Some(pos) = state.tags.iter().position(|(tid, _, _)| *tid == id) else {
-        return iced::Task::none();
-      };
-      if pos + 1 >= state.tags.len() {
-        return iced::Task::none();
-      }
-      state.tags.swap(pos, pos + 1);
-      reorder_task(state, services)
-    }
-    Message::TagMoveUp(id) => {
-      let Some(pos) = state.tags.iter().position(|(tid, _, _)| *tid == id) else {
-        return iced::Task::none();
-      };
-      if pos == 0 {
-        return iced::Task::none();
-      }
-      state.tags.swap(pos, pos - 1);
-      reorder_task(state, services)
     }
     Message::TagNewNameChanged(s) => {
       state.tag_new_name = s;
@@ -213,6 +262,10 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
       }
       iced::Task::none()
     }
+    Message::TagSearchChanged(s) => {
+      state.tag_search = s;
+      iced::Task::none()
+    }
     Message::TagSetColor(id, color) => {
       let Some(db) = services.db.clone() else {
         return iced::Task::none();
@@ -227,6 +280,16 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
         },
         Message::TagColorSet,
       )
+    }
+    Message::TagSlotEntered(id) => {
+      if state.tag_dragging.is_some() {
+        state.tag_drag_over = Some(id);
+      }
+      iced::Task::none()
+    }
+    Message::TagSortModeChanged(mode) => {
+      state.tag_sort_mode = mode;
+      iced::Task::none()
     }
     Message::TagsLoaded(tags) => {
       state.tags = tags;
@@ -276,6 +339,18 @@ fn load_tags_task(services: &Services) -> iced::Task<Message> {
     },
     Message::TagsLoaded,
   )
+}
+
+fn normalize_hex(raw: &str) -> Option<String> {
+  let s = raw.trim().trim_start_matches('#');
+  if s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+    Some(format!("#{}", s.to_uppercase()))
+  } else if s.len() == 3 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+    let expanded: String = s.chars().flat_map(|c| [c, c]).collect();
+    Some(format!("#{}", expanded.to_uppercase()))
+  } else {
+    None
+  }
 }
 
 fn reorder_task(state: &State, services: &Services) -> iced::Task<Message> {

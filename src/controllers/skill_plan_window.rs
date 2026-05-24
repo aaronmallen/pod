@@ -487,6 +487,7 @@ fn maybe_drag_overlay<'a>(state: &State, base_view: Element<'a, Message>) -> Ele
   iced::widget::stack([base_view, capture_overlay.into()]).into()
 }
 
+#[tracing::instrument(skip_all)]
 fn recompute(state: &mut State) {
   state.eff = effective_attrs(&state.base_attrs, &state.implant_bonus);
   state.computed = compute_plan(&state.entries, &state.eff, &state.skill_groups);
@@ -506,6 +507,11 @@ fn recompute(state: &mut State) {
       state.computed.total_sec,
     );
   }
+  tracing::debug!(
+    "skill_plan: plan recomputed — {} entries, {} total seconds",
+    state.entries.len(),
+    state.computed.total_sec
+  );
 }
 
 fn plan_snapshot(name: &str, entries: &[PlanEntry]) -> String {
@@ -834,6 +840,10 @@ fn update_attrs_loaded(
   current_effective_attrs: BaseAttrs,
   clone_data_missing: bool,
 ) -> iced::Task<Message> {
+  tracing::debug!(
+    "skill_plan: character attributes refreshed — character_id: {}",
+    state.character_id
+  );
   state.base_attrs = base_attrs;
   state.current_effective_attrs = current_effective_attrs;
   state.clone_data_missing = clone_data_missing;
@@ -854,6 +864,10 @@ fn update_cert_proficiency_changed(state: &mut State, cert_id: i32, prof: u8) ->
 }
 
 fn update_cert_selected(state: &mut State, cert_id: i32, prof: u8) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: certificate selected — cert_id: {cert_id}, proficiency: {prof}, plan: {}",
+    state.plan_name
+  );
   let type_id_to_name: HashMap<i32, String> = state
     .skill_groups
     .iter()
@@ -943,6 +957,10 @@ fn update_entry_note(state: &mut State, id: String, note: String) -> iced::Task<
 }
 
 fn update_entry_priority_changed(state: &mut State, id: String, priority: Priority) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: entry priority changed — id: {id}, priority: {priority:?}, plan: {}",
+    state.plan_name
+  );
   if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id) {
     entry.priority = priority;
     update_dirty(state);
@@ -951,6 +969,7 @@ fn update_entry_priority_changed(state: &mut State, id: String, priority: Priori
 }
 
 fn update_entry_removed(state: &mut State, id: String) -> iced::Task<Message> {
+  tracing::info!("skill_plan: skill removed — id: {id}, plan: {}", state.plan_name);
   state.entries.retain(|e| e.id != id);
   recompute(state);
   update_dirty(state);
@@ -958,6 +977,7 @@ fn update_entry_removed(state: &mut State, id: String) -> iced::Task<Message> {
 }
 
 fn update_export_clipboard(state: &mut State) -> iced::Task<Message> {
+  tracing::info!("skill_plan: export to clipboard — plan: {}", state.plan_name);
   state.export_dropdown_open = false;
   let lines: Vec<String> = state
     .entries
@@ -1007,6 +1027,7 @@ fn update_export_file(state: &mut State) -> iced::Task<Message> {
 }
 
 fn update_export_path_chosen(state: &State, path: std::path::PathBuf) -> iced::Task<Message> {
+  tracing::info!("skill_plan: export to file — plan: {}, path: {path:?}", state.plan_name);
   let lines: Vec<String> = state
     .entries
     .iter()
@@ -1029,6 +1050,7 @@ fn update_export_path_chosen(state: &State, path: std::path::PathBuf) -> iced::T
 }
 
 fn update_implant_set(state: &mut State, set: ImplantSet) -> iced::Task<Message> {
+  tracing::info!("skill_plan: implant set changed — {set:?}, plan: {}", state.plan_name);
   state.implant_set = set;
   state.implant_bonus = if set == ImplantSet::Current {
     ImplantBonus {
@@ -1060,6 +1082,7 @@ fn update_implant_suggestions(state: &mut State) -> iced::Task<Message> {
 }
 
 fn update_import_clipboard(state: &mut State) -> iced::Task<Message> {
+  tracing::info!("skill_plan: import from clipboard — plan: {}", state.plan_name);
   state.import_dropdown_open = false;
   let text = arboard::Clipboard::new()
     .and_then(|mut cb| cb.get_text())
@@ -1103,6 +1126,10 @@ fn update_import_file(state: &mut State) -> iced::Task<Message> {
 }
 
 fn update_import_path_chosen(state: &mut State, path: std::path::PathBuf) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: import from file — plan: {}, path: {path:?}",
+    state.plan_name
+  );
   let text = std::fs::read_to_string(&path).unwrap_or_default();
   let parsed = parse_import_text(&text);
   if !parsed.is_empty() {
@@ -1122,6 +1149,10 @@ fn update_import_path_chosen(state: &mut State, path: std::path::PathBuf) -> ice
 }
 
 fn update_module_selected(state: &mut State, type_id: i32) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: module selected — type_id: {type_id}, plan: {}",
+    state.plan_name
+  );
   let Some(module) = state.picker_modules.iter().find(|m| m.id == type_id) else {
     return iced::Task::none();
   };
@@ -1142,12 +1173,18 @@ fn update_name_changed(state: &mut State, name: String) -> iced::Task<Message> {
 }
 
 fn update_optimizer_completed(state: &mut State, result: Option<RemapResult>) -> iced::Task<Message> {
+  tracing::debug!("skill_plan: remap optimizer completed — found: {}", result.is_some());
   state.optimizer_running = false;
   state.optimizer_result = result;
   iced::Task::none()
 }
 
 fn update_optimizer_request(state: &mut State) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: remap optimizer requested — plan: {}, character_id: {}",
+    state.plan_name,
+    state.character_id
+  );
   state.show_remap = true;
   state.optimizer_running = true;
   let entries = state.entries.clone();
@@ -1302,6 +1339,7 @@ fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task
 }
 
 fn update_plan_loaded(state: &mut State, plan: pod_model::SkillPlan) -> iced::Task<Message> {
+  tracing::debug!("skill_plan: plan loaded — name: {}, id: {}", plan.name, plan.id);
   state.plan_name = plan.name.clone();
   state.plan_id = Some(plan.id.clone());
   state.entries = plan_entries_to_plan_entries(&plan);
@@ -1312,6 +1350,7 @@ fn update_plan_loaded(state: &mut State, plan: pod_model::SkillPlan) -> iced::Ta
 }
 
 fn update_plan_loaded_none(state: &mut State) -> iced::Task<Message> {
+  tracing::debug!("skill_plan: no saved plan found — starting with empty plan");
   state.plan_name = "Untitled plan".to_string();
   state.entries = Vec::new();
   state.saved_snapshot = plan_snapshot(&state.plan_name, &[]);
@@ -1462,8 +1501,17 @@ fn update_plan_ui_messages(state: &mut State, message: Message, services: &Servi
 
 fn update_save(state: &mut State, services: &Services) -> iced::Task<Message> {
   let Some(db) = services.db.clone() else {
+    tracing::warn!(
+      "skill_plan: save requested but no database available — plan: {}",
+      state.plan_name
+    );
     return iced::Task::none();
   };
+  tracing::info!(
+    "skill_plan: save requested — plan: {}, {} entries",
+    state.plan_name,
+    state.entries.len()
+  );
   let plan = state_to_skill_plan(state);
   if state.plan_id.is_none() {
     state.plan_id = Some(plan.id.clone());
@@ -1478,6 +1526,7 @@ fn update_save(state: &mut State, services: &Services) -> iced::Task<Message> {
 }
 
 fn update_save_completed(state: &mut State) -> iced::Task<Message> {
+  tracing::info!("skill_plan: save completed — plan: {}", state.plan_name);
   state.saved_snapshot = plan_snapshot(&state.plan_name, &state.entries);
   state.dirty = false;
   iced::Task::none()
@@ -1489,6 +1538,10 @@ fn update_ship_mastery_changed(state: &mut State, type_id: i32, level: u8) -> ic
 }
 
 fn update_ship_selected(state: &mut State, type_id: i32, mastery: u8) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: ship selected — type_id: {type_id}, mastery: {mastery}, plan: {}",
+    state.plan_name
+  );
   let type_id_to_name: HashMap<i32, String> = state
     .skill_groups
     .iter()
@@ -1552,6 +1605,10 @@ fn update_skill_groups_loaded(state: &mut State, groups: Vec<SkillGroupDef>) -> 
 }
 
 fn update_skill_picked(state: &mut State, skill_name: String, level: u8) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: skill added — {skill_name} level {level}, plan: {}",
+    state.plan_name
+  );
   let wishes = collect_wishes(&state.entries);
   let mut new_wishes = wishes.clone();
   if !new_wishes.iter().any(|(n, l)| *n == skill_name && *l == level) {

@@ -165,7 +165,7 @@ pub enum Message {
   ReauthorizeCharacter(i64),
   AssetValuesLoaded(Vec<(i64, f64)>),
   CharacterPicker(character_picker::Message),
-  ContractsLoaded(Vec<ContractEntry>),
+  ContractsLoaded(Result<Vec<ContractEntry>, String>),
   ContractsTab(contracts_tab::Message),
   CorpDataLoaded {
     divisions: Vec<(u8, f64)>,
@@ -443,8 +443,11 @@ fn update_all_corp_balances(state: &mut State, balances: Vec<(i64, f64)>) {
   state.all_corp_balances = balances;
 }
 
-fn update_contracts_loaded(state: &mut State, entries: Vec<ContractEntry>) {
-  state.contracts = entries;
+fn update_contracts_loaded(state: &mut State, result: Result<Vec<ContractEntry>, String>) {
+  match result {
+    Ok(entries) => state.contracts = entries,
+    Err(e) => eprintln!("wallet: failed to load contracts: {e}"),
+  }
 }
 
 fn update_corp_data(

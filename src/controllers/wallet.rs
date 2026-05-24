@@ -87,7 +87,7 @@ fn build_contract_entry(
     names
       .get(&counterparty_id)
       .cloned()
-      .unwrap_or_else(|| format!("#{counterparty_id}"))
+      .expect("counterparty name must be resolved by ESI")
   } else {
     String::new()
   };
@@ -341,7 +341,11 @@ async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec
   totals.into_iter().collect()
 }
 
-async fn fetch_contracts(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<ContractEntry> {
+async fn fetch_contracts(
+  characters: Vec<Character>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> Result<Vec<ContractEntry>, String> {
   let mut all: Vec<ContractEntry> = Vec::new();
   for character in &characters {
     let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
@@ -371,7 +375,7 @@ async fn fetch_contracts(characters: Vec<Character>, esi: pod_esi::Client, db: p
       let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
     }
     if let Ok(rows) = db.characters().contracts(*character.id()).await {
-      let names = resolve_entity_names(&rows, &esi).await;
+      let names = resolve_entity_names(&rows, &esi).await?;
       let locations = resolve_location_names(&rows, &esi, &db).await;
       for row in rows {
         all.push(build_contract_entry(row, &names, &locations));
@@ -379,7 +383,7 @@ async fn fetch_contracts(characters: Vec<Character>, esi: pod_esi::Client, db: p
     }
   }
   all.sort_by_key(|e| e.ts_secs);
-  all
+  Ok(all)
 }
 
 async fn fetch_corp_data(
@@ -618,7 +622,7 @@ fn map_corp_txn_entry(
   let item = type_names
     .get(&t.type_id)
     .cloned()
-    .unwrap_or_else(|| format!("Type #{}", t.type_id));
+    .expect("item type must exist in SDE");
   MarketEntry {
     id: format!("corp-{corp_id}-{division}-{}", t.transaction_id),
     who: corp_id,
@@ -644,7 +648,7 @@ fn map_txn_row(row: WalletTransaction, type_names: &HashMap<i32, String>) -> Mar
   let item = type_names
     .get(&row.type_id)
     .cloned()
-    .unwrap_or_else(|| format!("Type #{}", row.type_id));
+    .expect("item type must exist in SDE");
   MarketEntry {
     id: format!("{}-{}", row.character_id, row.transaction_id),
     who: row.character_id,
@@ -786,7 +790,10 @@ fn recompute_series(state: &mut State) {
   };
 }
 
-async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
+async fn resolve_entity_names(
+  rows: &[CharacterContract],
+  esi: &pod_esi::Client,
+) -> Result<HashMap<i64, String>, String> {
   let ids: Vec<i64> = rows
     .iter()
     .flat_map(|r| [r.acceptor_id, r.assignee_id])
@@ -795,16 +802,24 @@ async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client)
     .into_iter()
     .collect();
   if ids.is_empty() {
-    return HashMap::new();
+    return Ok(HashMap::new());
   }
-  esi
+  let resolved: HashMap<i64, String> = esi
     .universe()
     .names(&ids)
     .await
-    .unwrap_or_default()
+    .map_err(|e| format!("ESI name resolution failed: {e}"))?
     .into_iter()
     .map(|r| (r.id, r.name))
-    .collect()
+    .collect();
+  let still_missing: Vec<i64> = ids.into_iter().filter(|id| !resolved.contains_key(id)).collect();
+  if still_missing.is_empty() {
+    Ok(resolved)
+  } else {
+    Err(format!(
+      "could not resolve ESI names for contract counterparty IDs: {still_missing:?}"
+    ))
+  }
 }
 
 async fn resolve_location_names(
@@ -1093,28 +1108,34 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_type_number_when_name_absent() {
+    fn it_uses_type_name_when_present_in_map() {
+      let mut names = HashMap::new();
+      names.insert(34, "Tritanium".to_string());
       let row = make_txn(34, 1, 1.0, false);
 
-      let entry = map_txn_row(row, &HashMap::new());
+      let entry = map_txn_row(row, &names);
 
-      assert_eq!(entry.item, "Type #34");
+      assert_eq!(entry.item, "Tritanium");
     }
 
     #[test]
     fn it_sets_side_to_buy_when_is_buy_is_true() {
+      let mut names = HashMap::new();
+      names.insert(34, "Tritanium".to_string());
       let row = make_txn(34, 1, 1.0, true);
 
-      let entry = map_txn_row(row, &HashMap::new());
+      let entry = map_txn_row(row, &names);
 
       assert_eq!(entry.side, "buy");
     }
 
     #[test]
     fn it_sets_side_to_sell_when_is_buy_is_false() {
+      let mut names = HashMap::new();
+      names.insert(34, "Tritanium".to_string());
       let row = make_txn(34, 1, 1.0, false);
 
-      let entry = map_txn_row(row, &HashMap::new());
+      let entry = map_txn_row(row, &names);
 
       assert_eq!(entry.side, "sell");
     }

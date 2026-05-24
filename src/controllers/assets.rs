@@ -205,18 +205,19 @@ fn resolve_terminus_name(
   if loc_type == "station" && *loc_id < i32::MAX as i64 {
     station_map
       .get(&(*loc_id as i32))
-      .map(|s| s.name().clone())
-      .unwrap_or_else(|| format!("Station {}", loc_id))
+      .expect("station must exist in SDE")
+      .name()
+      .clone()
   } else if loc_type == "solar_system" && *loc_id < i32::MAX as i64 {
     system_name_map
       .get(&(*loc_id as i32))
       .cloned()
-      .unwrap_or_else(|| format!("System {}", loc_id))
+      .expect("solar system must exist in SDE")
   } else {
     structure_name_map
       .get(loc_id)
       .cloned()
-      .unwrap_or_else(|| format!("Location {}", loc_id))
+      .expect("structure name must be present after ESI resolution")
   }
 }
 
@@ -244,7 +245,7 @@ fn resolve_container_path(
       let loc_name = structure_name_map
         .get(&cursor_id)
         .cloned()
-        .unwrap_or_else(|| format!("Location {}", cursor_id));
+        .expect("structure name must be present after ESI resolution");
       let flag = humanize_flag(&last_flag);
       let ctype = type_name_map
         .get(&last_type_id)
@@ -296,9 +297,9 @@ async fn resolve_structure_names(
   characters: &[Character],
   esi: Option<&pod_esi::Client>,
   db: &pod_db::Repo,
-) -> HashMap<i64, (String, i64)> {
+) -> Result<HashMap<i64, (String, i64)>, String> {
   if locs.is_empty() {
-    return HashMap::new();
+    return Ok(HashMap::new());
   }
 
   let unique_struct_ids: Vec<i64> = unique_ids(locs.iter().map(|(id, _)| *id));
@@ -314,20 +315,31 @@ async fn resolve_structure_names(
     .collect();
 
   let missing: Vec<i64> = unique_struct_ids
+    .iter()
+    .filter(|id| !result.contains_key(*id))
+    .copied()
+    .collect();
+
+  if !missing.is_empty()
+    && let Some(esi) = esi
+  {
+    let newly_resolved = esi_resolve_missing_structures(&missing, locs, characters, esi, db, &mut result).await;
+    if !newly_resolved.is_empty() {
+      let _ = db.universe().structure_cache().upsert_many(&newly_resolved).await;
+    }
+  }
+
+  let still_missing: Vec<i64> = unique_struct_ids
     .into_iter()
     .filter(|id| !result.contains_key(id))
     .collect();
-  if missing.is_empty() || esi.is_none() {
-    return result;
+  if still_missing.is_empty() {
+    Ok(result)
+  } else {
+    Err(format!(
+      "could not resolve ESI names for structure IDs: {still_missing:?}"
+    ))
   }
-
-  let newly_resolved = esi_resolve_missing_structures(&missing, locs, characters, esi.unwrap(), db, &mut result).await;
-
-  if !newly_resolved.is_empty() {
-    let _ = db.universe().structure_cache().upsert_many(&newly_resolved).await;
-  }
-
-  result
 }
 
 /// Queries ESI for each missing structure, trying available characters in turn.
@@ -642,12 +654,12 @@ fn resolve_station_location(
   station_map: &HashMap<i32, Station>,
   system_name_map: &HashMap<i32, String>,
 ) -> (String, String) {
-  let station = station_map.get(&(location_id as i32));
-  let loc = station
-    .map(|s| s.name().clone())
-    .unwrap_or_else(|| format!("Station {}", location_id));
-  let sys = station
-    .and_then(|s| system_name_map.get(s.solar_system_id()))
+  let station = station_map
+    .get(&(location_id as i32))
+    .expect("station must exist in SDE");
+  let loc = station.name().clone();
+  let sys = system_name_map
+    .get(station.solar_system_id())
     .cloned()
     .unwrap_or_default();
   (loc, sys)
@@ -658,7 +670,7 @@ fn resolve_solar_system_location(location_id: i64, system_name_map: &HashMap<i32
   let sys = system_name_map
     .get(&(location_id as i32))
     .cloned()
-    .unwrap_or_else(|| format!("System {}", location_id));
+    .expect("solar system must exist in SDE");
   (sys.clone(), sys)
 }
 
@@ -671,7 +683,7 @@ fn resolve_structure_location(
   let (name, solar_sys_id) = structure_name_map
     .get(&location_id)
     .map(|(n, s)| (n.clone(), *s))
-    .unwrap_or_else(|| (format!("Location {}", location_id), 0));
+    .expect("structure name must be present after ESI resolution");
   let sys = if solar_sys_id > 0 {
     i32::try_from(solar_sys_id)
       .ok()
@@ -758,7 +770,7 @@ fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> Asset
     .clone()
     .filter(|_| row.is_active_ship)
     .or_else(|| maps.type_name_map.get(&row.type_id).cloned())
-    .unwrap_or_else(|| format!("Type {}", row.type_id));
+    .expect("item type must exist in SDE");
   let group_id = maps.type_group_map.get(&row.type_id).copied();
   let group_name = group_id
     .and_then(|g| maps.group_name_map.get(&g))
@@ -817,11 +829,11 @@ async fn build_asset_maps(
   space_sys_ids: Vec<i32>,
   item_index: HashMap<i64, (i64, String, String, i32)>,
   is_container_set: HashSet<i64>,
-) -> AssetMaps {
+) -> Result<AssetMaps, String> {
   let (
     (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map),
     (system_name_map, station_space_constellation_ids),
-    structure_name_map,
+    structure_name_map_result,
     price_cache,
   ) = tokio::join!(
     load_type_maps(db, type_ids),
@@ -829,6 +841,7 @@ async fn build_asset_maps(
     resolve_structure_names(&structure_locs, characters, esi, db),
     build_price_cache(db, type_ids),
   );
+  let structure_name_map = structure_name_map_result?;
   let (structure_system_name_map, structure_sys_constellation_ids) =
     load_structure_sys_maps(db, &structure_name_map).await;
   let structure_name_only: HashMap<i64, String> = structure_name_map
@@ -845,7 +858,7 @@ async fn build_asset_maps(
   let region_ids = unique_ids(constellation_region_id_map.values().copied().filter(|&id| id > 0));
   let region_name_map = load_region_name_map(db, &region_ids).await;
 
-  AssetMaps {
+  Ok(AssetMaps {
     cat_key_map,
     constellation_name_map,
     constellation_region_id_map,
@@ -864,7 +877,7 @@ async fn build_asset_maps(
     type_group_map,
     type_name_map,
     type_volume_map,
-  }
+  })
 }
 
 /// Loads all character and corporation assets from DB and returns combined records.
@@ -873,9 +886,9 @@ async fn load_all_assets_from_db(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
   esi: Option<pod_esi::Client>,
-) -> Vec<AssetRecord> {
+) -> Result<Vec<AssetRecord>, String> {
   if characters.is_empty() {
-    return Vec::new();
+    return Ok(Vec::new());
   }
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
   let chars_repo = db.characters();
@@ -886,7 +899,7 @@ async fn load_all_assets_from_db(
   let char_asset_rows = char_rows_result.unwrap_or_default();
 
   if char_asset_rows.is_empty() && corp_rows.is_empty() {
-    return Vec::new();
+    return Ok(Vec::new());
   }
 
   let mut rows: Vec<RawAssetRow> = char_asset_rows
@@ -932,14 +945,16 @@ async fn load_all_assets_from_db(
     item_index,
     is_container_set,
   )
-  .await;
-  rows
-    .into_iter()
-    .map(|a| {
-      let owner_id = a.character_id;
-      map_row_to_record(a, owner_id, &maps)
-    })
-    .collect()
+  .await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|a| {
+        let owner_id = a.character_id;
+        map_row_to_record(a, owner_id, &maps)
+      })
+      .collect(),
+  )
 }
 
 /// Loads corporation asset rows from DB for all corps linked to the given characters.
@@ -1457,14 +1472,14 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_for_unknown_space_system() {
+    fn it_resolves_a_different_space_system() {
       let row = space_row(30000999);
-      let maps = maps_with_system(30000142, "Jita");
+      let maps = maps_with_system(30000999, "Amarr");
 
       let (loc, sys) = resolve_location(&row, &maps);
 
-      assert_eq!(loc, "System 30000999");
-      assert_eq!(sys, "System 30000999");
+      assert_eq!(loc, "Amarr");
+      assert_eq!(sys, "Amarr");
     }
   }
 
@@ -1485,13 +1500,14 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_when_system_unknown() {
-      let sys_map: HashMap<i32, String> = HashMap::new();
+    fn it_resolves_a_different_solar_system() {
+      let mut sys_map: HashMap<i32, String> = HashMap::new();
+      sys_map.insert(30000999, "Amarr".to_string());
 
       let (loc, sys) = resolve_solar_system_location(30000999, &sys_map);
 
-      assert_eq!(loc, "System 30000999");
-      assert_eq!(sys, "System 30000999");
+      assert_eq!(loc, "Amarr");
+      assert_eq!(sys, "Amarr");
     }
   }
 
@@ -1514,14 +1530,16 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_for_unknown_structure() {
-      let name_map: HashMap<i64, (String, i64)> = HashMap::new();
-      let sys_map: HashMap<i32, String> = HashMap::new();
+    fn it_resolves_a_different_structure() {
+      let mut name_map: HashMap<i64, (String, i64)> = HashMap::new();
+      name_map.insert(1_000_000_000_099, ("Keepstar Beta".to_string(), 30000142));
+      let mut sys_map: HashMap<i32, String> = HashMap::new();
+      sys_map.insert(30000142, "Jita".to_string());
 
       let (name, sys) = resolve_structure_location(1_000_000_000_099, &name_map, &sys_map);
 
-      assert_eq!(name, "Location 1000000000099");
-      assert_eq!(sys, "");
+      assert_eq!(name, "Keepstar Beta");
+      assert_eq!(sys, "Jita");
     }
   }
 }

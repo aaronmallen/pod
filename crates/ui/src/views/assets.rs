@@ -283,7 +283,7 @@ pub struct AssetValuesData {
 /// Messages produced by the assets controller.
 #[derive(Clone, Debug)]
 pub enum Message {
-  AssetsLoaded(Vec<AssetRecord>),
+  AssetsLoaded(Result<Vec<AssetRecord>, String>),
   InventoryTab(inventory_tab::Message),
   ItemIconsLoaded(Vec<(i32, String, Vec<u8>)>),
   LoadMoreAssets,
@@ -720,7 +720,7 @@ fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
 
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
-    Message::AssetsLoaded(assets) => {
+    Message::AssetsLoaded(Ok(assets)) => {
       let known_keys: HashSet<String> = state
         .assets
         .iter()
@@ -756,6 +756,10 @@ fn apply_data_loaded(state: &mut State, message: Message) {
         }
       }
       state.assets = assets;
+      state.loading = false;
+    }
+    Message::AssetsLoaded(Err(e)) => {
+      eprintln!("assets: failed to load: {e}");
       state.loading = false;
     }
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),

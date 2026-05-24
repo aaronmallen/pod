@@ -183,11 +183,13 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
   let is_drag_end = matches!(&msg, assets::Message::PaneDragEnd);
   // When assets is not the active view, an AssetsLoaded from a background
   // refresh should update the cache rather than be discarded.
-  if let assets::Message::AssetsLoaded(ref records) = msg
+  if let assets::Message::AssetsLoaded(ref result) = msg
     && !matches!(state.active_view, ActiveView::Assets(_))
   {
     if let Some(cached) = state.cached_assets_state.as_mut() {
-      cached.assets = records.clone();
+      if let Ok(records) = result {
+        cached.assets = records.clone();
+      }
       cached.loading = false;
     }
     return iced::Task::none();
@@ -255,7 +257,7 @@ fn should_assets_refresh_values(msg: &assets::Message, s: &assets::State) -> boo
 
 fn collect_new_item_icons(msg: &assets::Message, s: &assets::State) -> Option<Vec<(i32, String)>> {
   match msg {
-    assets::Message::AssetsLoaded(records) => {
+    assets::Message::AssetsLoaded(Ok(records)) => {
       let items: Vec<(i32, String)> = records
         .iter()
         .map(|r| (r.type_id, r.icon_variant.clone()))

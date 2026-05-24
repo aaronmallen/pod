@@ -77,8 +77,8 @@ fn search_box<'a>(query: &'a str, help_visible: bool) -> Element<'a, Message> {
     query,
     Message::SearchChanged,
   )
-  .width(Length::Fixed(280.0))
-  .height(30.0)
+  .width(Length::Fill)
+  .height(36.0)
   .font_size(12.0)
   .icon_size(13.0)
   .horizontal_padding(8.0)
@@ -146,14 +146,17 @@ fn stat_label<'a>(label: &'static str, value: String) -> Element<'a, Message> {
 
 fn filter_bar<'a>(state: &'a State) -> Element<'a, Message> {
   container(
-    row([
+    column([
       search_box(&state.search_query, state.help_pop_over.visible),
-      Space::new().width(10.0).into(),
-      category_row(&state.category),
-      Space::new().width(Length::Fill).into(),
-      stats_pill(state),
+      row([
+        category_row(&state.category),
+        Space::new().width(Length::Fill).into(),
+        stats_pill(state),
+      ])
+      .align_y(iced::alignment::Vertical::Center)
+      .into(),
     ])
-    .align_y(iced::alignment::Vertical::Center),
+    .spacing(8.0),
   )
   .padding(Padding {
     top: 10.0,

@@ -971,9 +971,10 @@ impl<'a> Component<'a> {
           container(help_el)
             .height(Length::Fill)
             .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Right)
             .padding(Padding {
               top: spacing::layout::HEADER_HEIGHT + 100.0,
-              left: state.sidebar_width + 28.0,
+              right: 20.0,
               ..Padding::ZERO
             })
             .into(),

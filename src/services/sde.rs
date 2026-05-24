@@ -893,31 +893,56 @@ async fn seed_certificates(db: &pod_db::Repo, path: &Path) -> Result<(), String>
     .map_err(|e| e.to_string())
 }
 
+fn build_mastery_entries(outer: serde_yaml::Mapping) -> Vec<(i32, i32, Vec<i32>)> {
+  let mut entries: Vec<(i32, i32, Vec<i32>)> = Vec::new();
+  for (ship_key, tiers_val) in outer {
+    let Some(ship_id) = parse_yaml_i32(&ship_key) else {
+      continue;
+    };
+    let serde_yaml::Value::Mapping(tiers) = tiers_val else {
+      continue;
+    };
+    for (tier_key, certs_val) in tiers {
+      collect_mastery_tier(ship_id, tier_key, certs_val, &mut entries);
+    }
+  }
+  entries
+}
+
 fn collect_mastery_tier(
   ship_id: i32,
   tier_key: serde_yaml::Value,
   certs_val: serde_yaml::Value,
   out: &mut Vec<(i32, i32, Vec<i32>)>,
 ) {
-  let tier_idx = match &tier_key {
+  let cert_ids = parse_cert_ids(certs_val);
+  if cert_ids.is_empty() {
+    return;
+  }
+  if let Some(tier_idx) = parse_tier_index(&tier_key).filter(|&t| t < 5) {
+    out.push((ship_id, (tier_idx as i32) + 1, cert_ids));
+  }
+}
+
+fn parse_cert_ids(certs_val: serde_yaml::Value) -> Vec<i32> {
+  let serde_yaml::Value::Sequence(certs) = certs_val else {
+    return Vec::new();
+  };
+  certs.into_iter().filter_map(|v| parse_yaml_i32(&v)).collect()
+}
+
+fn parse_tier_index(v: &serde_yaml::Value) -> Option<u8> {
+  match v {
     serde_yaml::Value::Number(n) => n.as_u64().and_then(|n| u8::try_from(n).ok()),
     serde_yaml::Value::String(s) => s.parse().ok(),
     _ => None,
-  };
-  let serde_yaml::Value::Sequence(certs) = certs_val else {
-    return;
-  };
-  let cert_ids: Vec<i32> = certs
-    .into_iter()
-    .filter_map(|v| match v {
-      serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
-      _ => None,
-    })
-    .collect();
-  if let Some(idx) = tier_idx.filter(|&t| t < 5)
-    && !cert_ids.is_empty()
-  {
-    out.push((ship_id, (idx as i32) + 1, cert_ids));
+  }
+}
+
+fn parse_yaml_i32(v: &serde_yaml::Value) -> Option<i32> {
+  match v {
+    serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+    _ => None,
   }
 }
 
@@ -926,25 +951,10 @@ async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let raw_bytes = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
   let raw: serde_yaml::Value =
     serde_yaml::from_slice(&raw_bytes).map_err(|e| format!("parse {}: {}", path.display(), e))?;
-
   let serde_yaml::Value::Mapping(outer) = raw else {
     return Ok(());
   };
-
-  let mut mastery_entries: Vec<(i32, i32, Vec<i32>)> = Vec::new();
-  for (ship_key, tiers_val) in outer {
-    let ship_id = match &ship_key {
-      serde_yaml::Value::Number(n) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
-      _ => None,
-    };
-    let (Some(ship_id), serde_yaml::Value::Mapping(tiers)) = (ship_id, tiers_val) else {
-      continue;
-    };
-    for (tier_key, certs_val) in tiers {
-      collect_mastery_tier(ship_id, tier_key, certs_val, &mut mastery_entries);
-    }
-  }
-
+  let mastery_entries = build_mastery_entries(outer);
   if !mastery_entries.is_empty() {
     db.universe()
       .certificates()
@@ -958,6 +968,98 @@ async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod build_mastery_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_outer(ship_id: i64, tier: i64, certs: Vec<i64>) -> serde_yaml::Mapping {
+      let cert_seq =
+        serde_yaml::Value::Sequence(certs.into_iter().map(|c| serde_yaml::Value::Number(c.into())).collect());
+      let mut tier_map = serde_yaml::Mapping::new();
+      tier_map.insert(serde_yaml::Value::Number(tier.into()), cert_seq);
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::Number(ship_id.into()),
+        serde_yaml::Value::Mapping(tier_map),
+      );
+      outer
+    }
+
+    #[test]
+    fn it_returns_empty_for_empty_mapping() {
+      let result = build_mastery_entries(serde_yaml::Mapping::new());
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_extracts_ship_tier_and_cert_ids() {
+      let outer = make_outer(1234, 2, vec![100, 200]);
+
+      let result = build_mastery_entries(outer);
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0, 1234);
+      assert_eq!(result[0].1, 3);
+      assert_eq!(result[0].2, vec![100, 200]);
+    }
+
+    #[test]
+    fn it_skips_tier_index_5_and_above() {
+      let outer = make_outer(1234, 5, vec![100]);
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_entries_with_empty_cert_ids() {
+      let outer = make_outer(1234, 1, vec![]);
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_accepts_tier_index_4_storing_it_as_5() {
+      let outer = make_outer(1234, 4, vec![100]);
+
+      let result = build_mastery_entries(outer);
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].1, 5);
+    }
+
+    #[test]
+    fn it_skips_ships_with_non_mapping_tiers_value() {
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::Number(1234i64.into()),
+        serde_yaml::Value::String("not-a-mapping".to_string()),
+      );
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_non_numeric_ship_keys() {
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::String("not-a-number".to_string()),
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+      );
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+  }
 
   mod composite_version {
     use pretty_assertions::assert_eq;
@@ -977,6 +1079,96 @@ mod tests {
       let b = composite_version("20240102.1");
 
       assert_ne!(a, b);
+    }
+  }
+
+  mod parse_cert_ids {
+    use super::*;
+
+    #[test]
+    fn it_returns_empty_for_non_sequence_value() {
+      let result = parse_cert_ids(serde_yaml::Value::Null);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_extracts_cert_ids_from_sequence() {
+      let v = serde_yaml::Value::Sequence(vec![
+        serde_yaml::Value::Number(100i64.into()),
+        serde_yaml::Value::Number(200i64.into()),
+      ]);
+
+      assert_eq!(parse_cert_ids(v), vec![100, 200]);
+    }
+
+    #[test]
+    fn it_skips_non_number_entries() {
+      let v = serde_yaml::Value::Sequence(vec![
+        serde_yaml::Value::Number(100i64.into()),
+        serde_yaml::Value::String("ignored".to_string()),
+        serde_yaml::Value::Number(200i64.into()),
+      ]);
+
+      assert_eq!(parse_cert_ids(v), vec![100, 200]);
+    }
+  }
+
+  mod parse_tier_index {
+    use super::*;
+
+    #[test]
+    fn it_parses_numeric_tier_key() {
+      let v = serde_yaml::Value::Number(2i64.into());
+
+      assert_eq!(parse_tier_index(&v), Some(2));
+    }
+
+    #[test]
+    fn it_parses_string_tier_key() {
+      let v = serde_yaml::Value::String("3".to_string());
+
+      assert_eq!(parse_tier_index(&v), Some(3));
+    }
+
+    #[test]
+    fn it_returns_none_for_non_numeric_string() {
+      let v = serde_yaml::Value::String("bad".to_string());
+
+      assert_eq!(parse_tier_index(&v), None);
+    }
+
+    #[test]
+    fn it_returns_none_for_mapping_value() {
+      let v = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+
+      assert_eq!(parse_tier_index(&v), None);
+    }
+  }
+
+  mod parse_yaml_i32 {
+    use super::*;
+
+    #[test]
+    fn it_parses_valid_i32_from_number() {
+      let v = serde_yaml::Value::Number(42i64.into());
+
+      assert_eq!(parse_yaml_i32(&v), Some(42));
+    }
+
+    #[test]
+    fn it_returns_none_for_string_value() {
+      let v = serde_yaml::Value::String("42".to_string());
+
+      assert_eq!(parse_yaml_i32(&v), None);
+    }
+
+    #[test]
+    fn it_returns_none_for_value_exceeding_i32_max() {
+      let large: i64 = i64::from(i32::MAX) + 1;
+      let v = serde_yaml::Value::Number(large.into());
+
+      assert_eq!(parse_yaml_i32(&v), None);
     }
   }
 }

@@ -271,21 +271,28 @@ pub fn label_rows<'a>(messages: &'a [super::MailMessage], selected: &'a Folder) 
     .collect()
 }
 
+fn matches_folder_type(m: &super::MailMessage, folder: &Folder) -> bool {
+  match folder {
+    Folder::All | Folder::Inbox => m.folder == "inbox",
+    Folder::Archive => m.folder == "archive",
+    Folder::Drafts => m.folder == "drafts",
+    Folder::Label(l) => m.labels.contains(l),
+    Folder::Sent => m.folder == "sent",
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Starred => m.starred,
+    Folder::Trash => m.folder == "trash",
+  }
+}
+
 fn message_in_folder_count(m: &super::MailMessage, account_id: i64, folder: &Folder) -> bool {
-  if !matches!(folder, Folder::All) && m.character_id != account_id {
+  if !passes_account_scope(m, folder, account_id) {
     return false;
   }
-  match folder {
-    Folder::All => m.folder == "inbox",
-    Folder::Inbox => m.folder == "inbox",
-    Folder::Starred => m.starred,
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Sent => m.folder == "sent",
-    Folder::Drafts => m.folder == "drafts",
-    Folder::Archive => m.folder == "archive",
-    Folder::Trash => m.folder == "trash",
-    Folder::Label(l) => m.labels.contains(l),
-  }
+  matches_folder_type(m, folder)
+}
+
+fn passes_account_scope(m: &super::MailMessage, folder: &Folder, account_id: i64) -> bool {
+  matches!(folder, Folder::All) || m.character_id == account_id
 }
 
 pub fn folder_counts(messages: &[super::MailMessage], account_id: i64, folder: &Folder) -> (u32, u32) {

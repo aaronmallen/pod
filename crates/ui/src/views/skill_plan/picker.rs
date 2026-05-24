@@ -181,71 +181,43 @@ impl<'a> SkillPicker<'a> {
     if !self.ships_loaded {
       return loading_placeholder("Loading ships\u{2026}");
     }
-
     let lc = self.search_query.trim().to_lowercase();
     let searching = !lc.is_empty();
     let mut items: Vec<Element<'_, Message>> = vec![search_bar(self.search_query, "Search ships\u{2026}")];
-
-    let mut groups: Vec<(&str, Vec<&ItemTypeSummary>)> = Vec::new();
-    for ship in self.ships {
-      if searching && !ship.name.to_lowercase().contains(&lc) {
-        continue;
-      }
-      match groups.iter_mut().find(|(g, _)| *g == ship.group_name.as_str()) {
-        Some((_, ships)) => ships.push(ship),
-        None => groups.push((ship.group_name.as_str(), vec![ship])),
-      }
+    let groups = collect_item_groups(self.ships, &lc, searching);
+    for (group_name, ships) in &groups {
+      ship_section_items(
+        &mut items,
+        group_name,
+        ships,
+        searching,
+        self.expanded_groups,
+        self.ship_mastery_selection,
+      );
     }
-
-    for (group_name, ships) in groups {
-      let is_expanded = searching || self.expanded_groups.contains(group_name);
-      items.push(dyn_group_header(group_name, ships.len(), is_expanded));
-      if is_expanded {
-        for ship in ships {
-          let mastery = self.ship_mastery_selection.get(&ship.id).copied().unwrap_or(1);
-          items.push(ship_row(ship, mastery));
-        }
-      }
-    }
-
     items.push(Space::new().height(12.0).into());
-    let content = column(items).width(Length::Fill);
-    scrollable(content).height(Length::Fill).width(Length::Fill).into()
+    scrollable(column(items).width(Length::Fill))
+      .height(Length::Fill)
+      .width(Length::Fill)
+      .into()
   }
 
   fn modules_tab(self) -> Element<'a, Message> {
     if !self.modules_loaded {
       return loading_placeholder("Loading modules\u{2026}");
     }
-
     let lc = self.search_query.trim().to_lowercase();
     let searching = !lc.is_empty();
     let mut items: Vec<Element<'_, Message>> = vec![search_bar(self.search_query, "Search modules\u{2026}")];
-
-    let mut groups: Vec<(&str, Vec<&ItemTypeSummary>)> = Vec::new();
-    for module in self.modules {
-      if searching && !module.name.to_lowercase().contains(&lc) {
-        continue;
-      }
-      match groups.iter_mut().find(|(g, _)| *g == module.group_name.as_str()) {
-        Some((_, mods)) => mods.push(module),
-        None => groups.push((module.group_name.as_str(), vec![module])),
-      }
+    let groups = collect_item_groups(self.modules, &lc, searching);
+    for (group_name, mods) in &groups {
+      module_section_items(&mut items, group_name, mods, searching, self.expanded_groups);
     }
-
-    for (group_name, mods) in groups {
-      let is_expanded = searching || self.expanded_groups.contains(group_name);
-      items.push(dyn_group_header(group_name, mods.len(), is_expanded));
-      if is_expanded {
-        for module in mods {
-          items.push(module_row(module));
-        }
-      }
-    }
-
     items.push(Space::new().height(12.0).into());
-    let content = column(items).width(Length::Fill);
-    scrollable(content).height(Length::Fill).width(Length::Fill).into()
+    scrollable(column(items).width(Length::Fill))
+      .height(Length::Fill)
+      .width(Length::Fill)
+      .into()
   }
 
   fn certs_tab(self) -> Element<'a, Message> {
@@ -273,6 +245,24 @@ impl<'a> SkillPicker<'a> {
   }
 }
 
+fn collect_item_groups<'a>(
+  items: &'a [ItemTypeSummary],
+  lc: &str,
+  searching: bool,
+) -> Vec<(&'a str, Vec<&'a ItemTypeSummary>)> {
+  let mut groups: Vec<(&str, Vec<&ItemTypeSummary>)> = Vec::new();
+  for item in items {
+    if searching && !item.name.to_lowercase().contains(lc) {
+      continue;
+    }
+    match groups.iter_mut().find(|(g, _)| *g == item.group_name.as_str()) {
+      Some((_, members)) => members.push(item),
+      None => groups.push((item.group_name.as_str(), vec![item])),
+    }
+  }
+  groups
+}
+
 fn loading_placeholder<'a>(label: &'static str) -> Element<'a, Message> {
   container(
     text(label)
@@ -286,6 +276,40 @@ fn loading_placeholder<'a>(label: &'static str) -> Element<'a, Message> {
   .width(Length::Fill)
   .height(Length::Fill)
   .into()
+}
+
+fn module_section_items<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  group_name: &str,
+  mods: &[&'a ItemTypeSummary],
+  searching: bool,
+  expanded_groups: &HashSet<String>,
+) {
+  let is_expanded = searching || expanded_groups.contains(group_name);
+  items.push(dyn_group_header(group_name, mods.len(), is_expanded));
+  if is_expanded {
+    for module in mods {
+      items.push(module_row(module));
+    }
+  }
+}
+
+fn ship_section_items<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  group_name: &str,
+  ships: &[&'a ItemTypeSummary],
+  searching: bool,
+  expanded_groups: &HashSet<String>,
+  mastery_selection: &HashMap<i32, u8>,
+) {
+  let is_expanded = searching || expanded_groups.contains(group_name);
+  items.push(dyn_group_header(group_name, ships.len(), is_expanded));
+  if is_expanded {
+    for ship in ships {
+      let mastery = mastery_selection.get(&ship.id).copied().unwrap_or(1);
+      items.push(ship_row(ship, mastery));
+    }
+  }
 }
 
 fn search_bar<'a>(query: &'a str, placeholder: &'static str) -> Element<'a, Message> {

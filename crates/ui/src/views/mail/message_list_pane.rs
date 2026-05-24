@@ -25,19 +25,26 @@ pub enum Message {
 }
 
 fn message_passes_folder_filter(m: &MailMessage, folder: &Folder, account_id: i64) -> bool {
-  if !matches!(folder, Folder::All) && m.character_id != account_id {
+  if !passes_account_filter(m, folder, account_id) {
     return false;
   }
+  passes_folder_type(m, folder)
+}
+
+fn passes_account_filter(m: &MailMessage, folder: &Folder, account_id: i64) -> bool {
+  matches!(folder, Folder::All) || m.character_id == account_id
+}
+
+fn passes_folder_type(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All => m.folder == "inbox",
-    Folder::Inbox => m.folder == "inbox",
-    Folder::Starred => m.starred,
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Sent => m.folder == "sent",
-    Folder::Drafts => m.folder == "drafts",
+    Folder::All | Folder::Inbox => m.folder == "inbox",
     Folder::Archive => m.folder == "archive",
-    Folder::Trash => m.folder == "trash",
+    Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
+    Folder::Sent => m.folder == "sent",
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Starred => m.starred,
+    Folder::Trash => m.folder == "trash",
   }
 }
 

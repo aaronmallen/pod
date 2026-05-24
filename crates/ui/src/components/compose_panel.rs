@@ -201,15 +201,23 @@ impl Component {
     match msg {
       Message::CcToggle => self.cc_visible = !self.cc_visible,
       Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
-      Message::CcSearchResults(results) => {
-        self.cc_suggestion_cursor = None;
-        self.cc_suggestions = results;
-      }
+      Message::CcSearchResults(results) => self.apply_cc_search_results(results),
       Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
       Message::CcAdd => self.apply_cc_add(),
       Message::CcRemove(idx) if idx < self.cc.len() => {
         self.cc.remove(idx);
       }
+      msg => self.apply_send_message(msg),
+    }
+  }
+
+  fn apply_cc_search_results(&mut self, results: Vec<(i64, String)>) {
+    self.cc_suggestion_cursor = None;
+    self.cc_suggestions = results;
+  }
+
+  fn apply_send_message(&mut self, msg: Message) {
+    match msg {
       Message::SendPressed => {
         self.sending = true;
         self.error = None;
@@ -564,17 +572,20 @@ fn send_footer(panel: &Component) -> Element<'_, Message> {
 }
 
 fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
-  let label = if sending { "Sending…" } else { "Send" };
-  let btn = button(
-    text(label)
+  if can_send && !sending {
+    send_button_active()
+  } else {
+    send_button_disabled(sending)
+  }
+}
+
+fn send_button_active() -> Element<'static, Message> {
+  button(
+    text("Send")
       .font(font::body::MEDIUM)
       .size(13.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(if can_send && !sending {
-          color::surface::BASE
-        } else {
-          color::text::DIM
-        }),
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::surface::BASE),
       }),
   )
   .padding(Padding {
@@ -583,14 +594,11 @@ fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
     left: 16.0,
     right: 16.0,
   })
-  .style(move |_, status| button::Style {
-    background: Some(Background::Color(if can_send && !sending {
-      match status {
-        button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
-        _ => color::accent::PLASMA,
-      }
-    } else {
-      color::accent::PLASMA_MUTED
+  .on_press(Message::SendPressed)
+  .style(|_, status| button::Style {
+    background: Some(Background::Color(match status {
+      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
+      _ => color::accent::PLASMA,
     })),
     border: Border {
       radius: 6.0.into(),
@@ -598,12 +606,36 @@ fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
     },
     text_color: color::surface::BASE,
     ..button::Style::default()
-  });
-  if can_send && !sending {
-    btn.on_press(Message::SendPressed).into()
-  } else {
-    btn.into()
-  }
+  })
+  .into()
+}
+
+fn send_button_disabled(sending: bool) -> Element<'static, Message> {
+  let label = if sending { "Sending…" } else { "Send" };
+  button(
+    text(label)
+      .font(font::body::MEDIUM)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::DIM),
+      }),
+  )
+  .padding(Padding {
+    top: 7.0,
+    bottom: 7.0,
+    left: 16.0,
+    right: 16.0,
+  })
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(color::accent::PLASMA_MUTED)),
+    border: Border {
+      radius: 6.0.into(),
+      ..Border::default()
+    },
+    text_color: color::surface::BASE,
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn suggestion_row<'a>(

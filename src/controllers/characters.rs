@@ -168,6 +168,16 @@ pub fn wallet_refresh_task(state: &State, services: &Services) -> iced::Task<Mes
 /// Processes a characters message and returns a task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
+    Message::CharactersTab(msg) => update_characters_tab(state, msg, services),
+    Message::CorporationsTab(msg) => update_corporation(state, msg, services),
+    Message::Header(msg) => update_header(state, msg, services),
+    Message::SearchFilter(msg) => update_search_filter(state, msg),
+    msg => handle_global_event(state, msg, services),
+  }
+}
+
+fn handle_global_event(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     Message::AddCharacterError(e) | Message::AddCorporationError(e) => {
       state.add_status = Some(format!("Error: {e}"));
       iced::Task::none()
@@ -176,10 +186,8 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       state.all_tags = tags;
       iced::Task::none()
     }
-    Message::CharactersTab(msg) => update_characters_tab(state, msg, services),
     Message::ConfirmRemove => update_confirm_remove(state, services),
     Message::ConfirmRemoveCorporation => update_confirm_remove_corporation(state, services),
-    Message::CorporationsTab(msg) => update_corporation(state, msg, services),
     Message::DismissConfirmRemove => {
       state.confirm_remove = None;
       iced::Task::none()
@@ -188,10 +196,9 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       state.confirm_remove_corporation = None;
       iced::Task::none()
     }
-    Message::Header(msg) => update_header(state, msg, services),
-    Message::SearchFilter(msg) => update_search_filter(state, msg),
     Message::TagModal(msg) => handle_tag_modal(state, msg, services),
     Message::TagsApplied => iced::Task::none(),
+    _ => iced::Task::none(),
   }
 }
 
@@ -340,38 +347,44 @@ fn corp_context_menu_keyboard_subscription() -> Subscription<Message> {
 
 fn handle_tag_modal(state: &mut State, msg: tag_modal::Message, services: &Services) -> iced::Task<Message> {
   match msg {
+    tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
+    tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
+    tag_modal::Message::QueryChanged(q) => handle_tag_query_changed(state, q),
+    tag_modal::Message::Remove(tag_id) => handle_tag_remove(state, tag_id, services),
+    msg => handle_tag_state_mutation(state, msg),
+  }
+}
+
+fn handle_tag_query_changed(state: &mut State, q: String) -> iced::Task<Message> {
+  if let Some(m) = &mut state.tag_modal {
+    m.query = q;
+    m.highlighted = 0;
+  }
+  iced::Task::none()
+}
+
+fn handle_tag_state_mutation(state: &mut State, msg: tag_modal::Message) -> iced::Task<Message> {
+  match msg {
     tag_modal::Message::Close => {
       state.tag_modal = None;
       state.tag_corpus = Vec::new();
-      iced::Task::none()
-    }
-    tag_modal::Message::QueryChanged(q) => {
-      if let Some(m) = &mut state.tag_modal {
-        m.query = q;
-        m.highlighted = 0;
-      }
-      iced::Task::none()
     }
     tag_modal::Message::Highlighted(i) => {
       if let Some(m) = &mut state.tag_modal {
         m.highlighted = i;
       }
-      iced::Task::none()
+    }
+    tag_modal::Message::MoveDown => {
+      tag_modal_move_down(state);
     }
     tag_modal::Message::MoveUp => {
       if let Some(m) = &mut state.tag_modal {
         m.highlighted = m.highlighted.saturating_sub(1);
       }
-      iced::Task::none()
     }
-    tag_modal::Message::MoveDown => {
-      tag_modal_move_down(state);
-      iced::Task::none()
-    }
-    tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
-    tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
-    tag_modal::Message::Remove(tag_id) => handle_tag_remove(state, tag_id, services),
+    _ => {}
   }
+  iced::Task::none()
 }
 
 fn tag_modal_move_down(state: &mut State) {
@@ -1436,13 +1449,23 @@ fn update_corporation(state: &mut State, msg: corporations_tab::Message, service
     corporations_tab::Message::Card(corp_id, corporation_card::Message::TagsPressed(_)) => {
       handle_corp_tags_pressed(state, corp_id)
     }
+    corporations_tab::Message::CorporationsLoaded(corps) => handle_corporations_loaded(state, corps, services),
+    msg => handle_corporation_event(state, msg, services),
+  }
+}
+
+fn handle_corporation_event(
+  state: &mut State,
+  msg: corporations_tab::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     corporations_tab::Message::CorpPublicRefreshTick => corp_public_refresh_task(state, services),
     corporations_tab::Message::CorpPublicRefreshed(updated) => handle_corp_public_refreshed(state, updated),
     corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
     corporations_tab::Message::CorporationAdded(corp) => handle_corporation_added(state, corp),
     corporations_tab::Message::CorporationRemoved(id) => handle_corporation_removed(state, id),
     corporations_tab::Message::CorporationTagsLoaded(id, tags) => handle_corporation_tags_loaded(state, id, tags),
-    corporations_tab::Message::CorporationsLoaded(corps) => handle_corporations_loaded(state, corps, services),
     corporations_tab::Message::HqNamesLoaded(resolved) => handle_hq_names_loaded(state, resolved),
     corporations_tab::Message::RemoveCorporation(corp_id) => handle_remove_corporation(state, corp_id, services),
     msg => state.corporation_pane.update(msg).map(Message::CorporationsTab),
@@ -1640,55 +1663,59 @@ fn update_drag(state: &mut State, services: &Services) -> iced::Task<Message> {
   pane_task
 }
 
+fn handle_add_character(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(esi) = services.esi_client.clone() else {
+    state.add_status = Some("ESI client not available".to_string());
+    return iced::Task::none();
+  };
+  let (url, verifier, oauth_state) = esi
+    .auth()
+    .sign_in(pod_esi::scopes::Scopes::ALL, "http://127.0.0.1:47823/callback");
+  tracing::info!("auth: opening browser for OAuth (add character)");
+  if let Err(e) = open::that_detached(&url) {
+    tracing::warn!("auth: failed to open browser: {e}");
+  }
+  tracing::info!("auth: waiting for OAuth callback on port 47823");
+  state.add_status = Some("Waiting for browser login\u{2026}".to_string());
+  let db = services.db.clone();
+  let oauth_tx = services.oauth_callback_tx.clone();
+  iced::Task::perform(
+    async move { add_character(esi, oauth_tx, verifier, oauth_state, db).await },
+    |result| match result {
+      Ok(character) => Message::CharactersTab(characters_tab::Message::CharacterAdded(character)),
+      Err(e) => Message::AddCharacterError(e),
+    },
+  )
+}
+
+fn handle_add_corporation(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(esi) = services.esi_client.clone() else {
+    state.add_status = Some("ESI client not available".to_string());
+    return iced::Task::none();
+  };
+  let corp_scopes = services.config.features().required_scopes_for_corporation();
+  let (url, verifier, oauth_state) = esi.auth().sign_in(&corp_scopes, "http://127.0.0.1:47823/callback");
+  tracing::info!("auth: opening browser for OAuth (add corporation)");
+  if let Err(e) = open::that_detached(&url) {
+    tracing::warn!("auth: failed to open browser: {e}");
+  }
+  tracing::info!("auth: waiting for OAuth callback on port 47823");
+  state.add_status = Some("Waiting for browser login\u{2026}".to_string());
+  let db = services.db.clone();
+  let oauth_tx = services.oauth_callback_tx.clone();
+  iced::Task::perform(
+    async move { add_corporation(esi, oauth_tx, verifier, oauth_state, db).await },
+    |result| match result {
+      Ok(corp) => Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)),
+      Err(e) => Message::AddCorporationError(e),
+    },
+  )
+}
+
 fn update_header(state: &mut State, msg: header::Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    header::Message::AddCharacter => {
-      let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available".to_string());
-        return iced::Task::none();
-      };
-      let (url, verifier, oauth_state) = esi
-        .auth()
-        .sign_in(pod_esi::scopes::Scopes::ALL, "http://127.0.0.1:47823/callback");
-      tracing::info!("auth: opening browser for OAuth (add character)");
-      if let Err(e) = open::that_detached(&url) {
-        tracing::warn!("auth: failed to open browser: {e}");
-      }
-      tracing::info!("auth: waiting for OAuth callback on port 47823");
-      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
-      let db = services.db.clone();
-      let oauth_tx = services.oauth_callback_tx.clone();
-      iced::Task::perform(
-        async move { add_character(esi, oauth_tx, verifier, oauth_state, db).await },
-        |result| match result {
-          Ok(character) => Message::CharactersTab(characters_tab::Message::CharacterAdded(character)),
-          Err(e) => Message::AddCharacterError(e),
-        },
-      )
-    }
-    header::Message::AddCorporation => {
-      let Some(esi) = services.esi_client.clone() else {
-        state.add_status = Some("ESI client not available".to_string());
-        return iced::Task::none();
-      };
-      let corp_scopes = services.config.features().required_scopes_for_corporation();
-      let (url, verifier, oauth_state) = esi.auth().sign_in(&corp_scopes, "http://127.0.0.1:47823/callback");
-      tracing::info!("auth: opening browser for OAuth (add corporation)");
-      if let Err(e) = open::that_detached(&url) {
-        tracing::warn!("auth: failed to open browser: {e}");
-      }
-      tracing::info!("auth: waiting for OAuth callback on port 47823");
-      state.add_status = Some("Waiting for browser login\u{2026}".to_string());
-      let db = services.db.clone();
-      let oauth_tx = services.oauth_callback_tx.clone();
-      iced::Task::perform(
-        async move { add_corporation(esi, oauth_tx, verifier, oauth_state, db).await },
-        |result| match result {
-          Ok(corp) => Message::CorporationsTab(corporations_tab::Message::CorporationAdded(corp)),
-          Err(e) => Message::AddCorporationError(e),
-        },
-      )
-    }
+    header::Message::AddCharacter => handle_add_character(state, services),
+    header::Message::AddCorporation => handle_add_corporation(state, services),
     header::Message::TabSelected(id) => {
       state.active_tab = match id.as_str() {
         "corporations" => pod_ui::views::characters::Tab::Corporations,
@@ -2039,6 +2066,155 @@ mod tests {
 
       assert_eq!(corpus[0].0, "pvp");
       assert_eq!(corpus[1].0, "mining");
+    }
+  }
+
+  mod handle_add_character {
+    use super::*;
+
+    #[test]
+    fn it_sets_error_status_when_esi_unavailable() {
+      let mut state = make_state(vec![]);
+      let services = make_services();
+
+      let _ = handle_add_character(&mut state, &services);
+
+      assert_eq!(state.add_status, Some("ESI client not available".to_string()));
+    }
+  }
+
+  mod handle_add_corporation {
+    use super::*;
+
+    #[test]
+    fn it_sets_error_status_when_esi_unavailable() {
+      let mut state = make_state(vec![]);
+      let services = make_services();
+
+      let _ = handle_add_corporation(&mut state, &services);
+
+      assert_eq!(state.add_status, Some("ESI client not available".to_string()));
+    }
+  }
+
+  mod handle_tag_query_changed {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_modal() -> tag_modal::State {
+      tag_modal::State::new(1, "character", "Alpha", vec![])
+    }
+
+    #[test]
+    fn it_updates_query_and_resets_highlight() {
+      let mut state = make_state(vec![]);
+      let mut modal = make_modal();
+      modal.highlighted = 3;
+      state.tag_modal = Some(modal);
+
+      let _ = handle_tag_query_changed(&mut state, "pvp".to_string());
+
+      let m = state.tag_modal.as_ref().unwrap();
+      assert_eq!(m.query, "pvp");
+      assert_eq!(m.highlighted, 0);
+    }
+
+    #[test]
+    fn it_is_noop_when_no_modal_open() {
+      let mut state = make_state(vec![]);
+
+      let _ = handle_tag_query_changed(&mut state, "pvp".to_string());
+
+      assert!(state.tag_modal.is_none());
+    }
+  }
+
+  mod handle_tag_state_mutation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_modal() -> tag_modal::State {
+      tag_modal::State::new(1, "character", "Alpha", vec![])
+    }
+
+    #[test]
+    fn it_clears_modal_on_close() {
+      let mut state = make_state(vec![]);
+      state.tag_modal = Some(make_modal());
+      state.tag_corpus = vec![("pvp".to_string(), 1)];
+
+      let _ = handle_tag_state_mutation(&mut state, tag_modal::Message::Close);
+
+      assert!(state.tag_modal.is_none());
+      assert!(state.tag_corpus.is_empty());
+    }
+
+    #[test]
+    fn it_sets_highlighted_index() {
+      let mut state = make_state(vec![]);
+      state.tag_modal = Some(make_modal());
+
+      let _ = handle_tag_state_mutation(&mut state, tag_modal::Message::Highlighted(2));
+
+      assert_eq!(state.tag_modal.as_ref().unwrap().highlighted, 2);
+    }
+
+    #[test]
+    fn it_decrements_highlight_on_move_up() {
+      let mut state = make_state(vec![]);
+      let mut modal = make_modal();
+      modal.highlighted = 3;
+      state.tag_modal = Some(modal);
+
+      let _ = handle_tag_state_mutation(&mut state, tag_modal::Message::MoveUp);
+
+      assert_eq!(state.tag_modal.as_ref().unwrap().highlighted, 2);
+    }
+
+    #[test]
+    fn it_does_not_underflow_on_move_up_at_zero() {
+      let mut state = make_state(vec![]);
+      state.tag_modal = Some(make_modal());
+
+      let _ = handle_tag_state_mutation(&mut state, tag_modal::Message::MoveUp);
+
+      assert_eq!(state.tag_modal.as_ref().unwrap().highlighted, 0);
+    }
+  }
+
+  mod update_header {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sets_active_tab_to_corporations() {
+      let mut state = make_state(vec![]);
+      let services = make_services();
+
+      let _ = update_header(
+        &mut state,
+        header::Message::TabSelected("corporations".to_string()),
+        &services,
+      );
+
+      assert_eq!(state.active_tab, pod_ui::views::characters::Tab::Corporations);
+    }
+
+    #[test]
+    fn it_defaults_active_tab_to_characters_for_unknown_id() {
+      let mut state = make_state(vec![]);
+      let services = make_services();
+
+      let _ = update_header(
+        &mut state,
+        header::Message::TabSelected("unknown".to_string()),
+        &services,
+      );
+
+      assert_eq!(state.active_tab, pod_ui::views::characters::Tab::Characters);
     }
   }
 

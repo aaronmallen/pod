@@ -100,10 +100,14 @@ fn build_contract_entry(
   locations: &HashMap<i64, String>,
 ) -> ContractEntry {
   let ts = parse_iso_to_unix(&row.date_issued);
-  let counterparty_id = if row.acceptor_id != 0 {
-    row.acceptor_id
+  let counterparty_id = if row.issuer_id == row.character_id {
+    if row.acceptor_id != 0 {
+      row.acceptor_id
+    } else {
+      row.assignee_id
+    }
   } else {
-    row.assignee_id
+    row.issuer_id
   };
   let counterparty = if counterparty_id != 0 {
     names
@@ -988,6 +992,23 @@ mod tests {
       let entry = build_contract_entry(row, &names, &HashMap::new());
 
       assert_eq!(entry.counterparty, "Alice");
+    }
+
+    #[test]
+    fn it_uses_issuer_as_counterparty_when_issued_to_you() {
+      let row = CharacterContract {
+        character_id: 1,
+        issuer_id: 99,
+        acceptor_id: 1,
+        assignee_id: 1,
+        ..make_contract(1, 1, "incoming")
+      };
+      let mut names = HashMap::new();
+      names.insert(99_i64, "Eve".to_string());
+
+      let entry = build_contract_entry(row, &names, &HashMap::new());
+
+      assert_eq!(entry.counterparty, "Eve");
     }
 
     #[test]

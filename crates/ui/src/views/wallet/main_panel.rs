@@ -16,15 +16,15 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
   let tabs = vec![
     TabItem {
       label: "Market".to_string(),
-      count: Some(state.market.len()),
+      count: Some(state.filtered_market.len()),
     },
     TabItem {
       label: "Contracts".to_string(),
-      count: Some(state.contracts.len()),
+      count: Some(state.filtered_contracts.len()),
     },
     TabItem {
       label: "Journal".to_string(),
-      count: Some(state.journal.len()),
+      count: Some(state.filtered_journal.len()),
     },
   ];
   let active_index = match state.active_tab {

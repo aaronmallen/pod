@@ -1,7 +1,7 @@
 //! Timeframe picker button row (1W / 1M / 3M / 6M / 1Y).
 
 use iced::{
-  Background, Border, Color, Element, Padding, Theme,
+  Background, Border, Element, Padding, Theme,
   widget::{button, container, row, text},
 };
 
@@ -51,12 +51,10 @@ impl<'a> Component<'a> {
         .on_press(msg)
         .style(move |_, status| button::Style {
           background: if is_active {
-            Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+            Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
           } else {
             match status {
-              button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
-              }
+              button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
               _ => None,
             }
           },

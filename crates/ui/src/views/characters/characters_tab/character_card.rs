@@ -11,7 +11,7 @@ pub use character_portrait::Component as CharacterPortrait;
 pub use character_skill_training::Component as CharacterSkillTraining;
 pub use character_wallet::Component as CharacterWallet;
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   widget::{button, column, container, mouse_area, row, text},
 };
 use pod_model::Character;
@@ -246,7 +246,7 @@ fn tags_row<'a>(character: &'a Character) -> Element<'a, Message> {
     right: 4.0,
   })
   .style(|_, _| button::Style {
-    background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08))),
+    background: Some(Background::Color(color::state::TAG_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: radius::FULL.into(),

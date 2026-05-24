@@ -4,7 +4,7 @@
 //! row → members / tax stats.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{button, column, container, image, mouse_area, row, text},
 };
@@ -273,7 +273,7 @@ fn render_tags<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
     right: 4.0,
   })
   .style(|_, _| button::Style {
-    background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08))),
+    background: Some(Background::Color(color::state::TAG_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: radius::FULL.into(),

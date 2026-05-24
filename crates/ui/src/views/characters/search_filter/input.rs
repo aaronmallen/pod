@@ -46,7 +46,7 @@ impl<'a> Component<'a> {
         icon: color::text::SECONDARY,
         placeholder: color::text::TERTIARY,
         value: color::text::PRIMARY,
-        selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+        selection: color::state::SELECTION,
       })
       .padding(Padding::ZERO);
 

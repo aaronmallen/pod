@@ -1,7 +1,7 @@
 //! Constellation group header row in the sidebar tree.
 
 use iced::{
-  Color, Element, Length, Padding, Theme,
+  Element, Length, Padding, Theme,
   widget::{button, row, text},
 };
 
@@ -59,7 +59,7 @@ impl Component {
         .font(mono::REGULAR)
         .size(12.0)
         .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.50)),
+          color: Some(color::text::SECONDARY),
         })
         .width(Length::Fill)
         .into(),

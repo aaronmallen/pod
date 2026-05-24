@@ -22,6 +22,15 @@ pub mod body {
   };
 }
 
+/// Raw font bytes for registration with the iced runtime.
+pub mod bytes {
+  pub const BODY_MEDIUM: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Medium.ttf");
+  pub const BODY_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Regular.ttf");
+  pub const BODY_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-SemiBold.ttf");
+  pub const MONO_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono-Italic.ttf");
+  pub const MONO_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono.ttf");
+}
+
 /// JetBrains Mono — monospace typeface used for code, query syntax, and technical labels.
 pub mod mono {
   use iced::{Font, font};
@@ -46,11 +55,16 @@ pub mod mono {
   };
 }
 
-/// Raw font bytes for registration with the iced runtime.
-pub mod bytes {
-  pub const BODY_MEDIUM: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Medium.ttf");
-  pub const BODY_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-Regular.ttf");
-  pub const BODY_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/SpaceGrotesk-SemiBold.ttf");
-  pub const MONO_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono-Italic.ttf");
-  pub const MONO_REGULAR: &[u8] = include_bytes!("../../../../assets/fonts/JetBrainsMono.ttf");
+/// Font size scale tokens (in points).
+pub mod size {
+  /// Extra-small — 9 pt. Micro labels, badge counts.
+  pub const XS: f32 = 9.0;
+  /// Small — 11 pt. Secondary labels and tag text.
+  pub const SM: f32 = 11.0;
+  /// Medium — 13 pt. Default body text (iced default).
+  pub const MD: f32 = 13.0;
+  /// Large — 15 pt. Emphasis and stat values.
+  pub const LG: f32 = 15.0;
+  /// Extra-large — 17 pt. Headings and character names.
+  pub const XL: f32 = 17.0;
 }

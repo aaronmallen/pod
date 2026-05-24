@@ -1,7 +1,7 @@
 //! Alpha clone indicator badge.
 
 use iced::{
-  Background, Border, Color, Element, Padding,
+  Background, Border, Element, Padding,
   widget::{container, text},
 };
 
@@ -30,7 +30,7 @@ impl Component {
       right: 10.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+      background: Some(Background::Color(color::state::HOVER_OVERLAY)),
       border: Border {
         color: color::border::SUBTLE,
         radius: 4.0.into(),

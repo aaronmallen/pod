@@ -1,7 +1,7 @@
 //! Progress% / attributes / completes-at readout column.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{Space, column, container, row, text},
 };
@@ -77,9 +77,9 @@ impl Component {
 
 pub fn attr_chip<'a>(key: AttrKey, primary: bool) -> Element<'a, Message> {
   let bg = if primary {
-    Color::from_rgba(0.247, 0.722, 0.859, 0.12)
+    color::accent::PLASMA_HIGHLIGHT
   } else {
-    Color::from_rgba(0.957, 0.949, 0.925, 0.05)
+    color::state::HOVER_OVERLAY
   };
   let fg = if primary {
     color::accent::PLASMA
@@ -87,7 +87,7 @@ pub fn attr_chip<'a>(key: AttrKey, primary: bool) -> Element<'a, Message> {
     color::text::SECONDARY
   };
   let border_col = if primary {
-    Color::from_rgba(0.247, 0.722, 0.859, 0.35)
+    color::accent::PLASMA_BORDER
   } else {
     color::border::SUBTLE
   };

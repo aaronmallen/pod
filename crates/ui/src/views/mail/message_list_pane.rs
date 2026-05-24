@@ -78,7 +78,7 @@ fn list_search_bar<'a>(query: &'a str) -> Element<'a, Message> {
           icon: color::text::SECONDARY,
           placeholder: color::text::TERTIARY,
           value: color::text::PRIMARY,
-          selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+          selection: color::state::SELECTION,
         })
         .width(Length::Fill)
         .into(),

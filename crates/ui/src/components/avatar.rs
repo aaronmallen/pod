@@ -95,7 +95,7 @@ fn system_avatar<'a, MSG: 'a>(size: f32) -> Element<'a, MSG> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(move |_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06))),
+    background: Some(Background::Color(color::state::SUBTLE_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: (size * 0.12).into(),
@@ -119,7 +119,7 @@ fn gradient_avatar<'a, MSG: 'a>(name: &str, tone: u16, size: f32, radius: f32) -
       .font(font::body::MEDIUM)
       .size(size * 0.40)
       .style(|_| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.70)),
+        color: Some(color::text::MEDIUM),
       }),
   )
   .width(Length::Fixed(size))

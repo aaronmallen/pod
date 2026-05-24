@@ -1,26 +1,16 @@
-use iced::{Background, Border, Color, Element, Padding, widget::button};
+use iced::{Background, Border, Element, Padding, widget::button};
 
-use crate::style::{color, radius};
+use crate::style::{color, component, radius};
 
 pub struct Component;
 
 impl Component {
   pub fn ghost<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>) -> button::Button<'a, MSG> {
     button(content)
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 14.0,
-        right: 14.0,
-      })
+      .padding(component::button::PADDING_DEFAULT)
       .style(|_, status| button::Style {
         background: match status {
-          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(Color {
-            r: 0.957,
-            g: 0.949,
-            b: 0.925,
-            a: 0.04,
-          })),
+          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
           _ => None,
         },
         border: Border {
@@ -35,20 +25,10 @@ impl Component {
 
   pub fn primary<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>) -> button::Button<'a, MSG> {
     button(content)
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 14.0,
-        right: 14.0,
-      })
+      .padding(component::button::PADDING_DEFAULT)
       .style(|_, status| button::Style {
         background: Some(Background::Color(match status {
-          button::Status::Hovered | button::Status::Pressed => Color {
-            r: 0.247,
-            g: 0.722,
-            b: 0.859,
-            a: 0.85,
-          },
+          button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
           _ => color::accent::PLASMA,
         })),
         border: Border {
@@ -62,52 +42,27 @@ impl Component {
 
   pub fn danger<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>) -> button::Button<'a, MSG> {
     button(content)
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 14.0,
-        right: 14.0,
-      })
+      .padding(component::button::PADDING_DEFAULT)
       .style(|_, status| button::Style {
         background: Some(Background::Color(match status {
-          button::Status::Hovered | button::Status::Pressed => Color {
-            r: 0.878,
-            g: 0.459,
-            b: 0.349,
-            a: 0.85,
-          },
+          button::Status::Hovered | button::Status::Pressed => color::accent::DANGER_HOVER,
           _ => color::status::DANGER,
         })),
         border: Border {
           radius: radius::CHIP.into(),
           ..Border::default()
         },
-        text_color: Color {
-          r: 0.102,
-          g: 0.039,
-          b: 0.035,
-          a: 1.0,
-        },
+        text_color: color::state::DANGER_FILL,
         ..button::Style::default()
       })
   }
 
   pub fn danger_ghost<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>) -> button::Button<'a, MSG> {
     button(content)
-      .padding(Padding {
-        top: 7.0,
-        bottom: 7.0,
-        left: 10.0,
-        right: 10.0,
-      })
+      .padding(component::button::PADDING_GHOST)
       .style(|_, status| button::Style {
         background: match status {
-          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(Color {
-            r: 0.878,
-            g: 0.459,
-            b: 0.349,
-            a: 0.12,
-          })),
+          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::status::DANGER_SUBTLE)),
           _ => None,
         },
         border: Border {
@@ -122,18 +77,8 @@ impl Component {
   pub fn nav<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>, active: bool) -> button::Button<'a, MSG> {
     button(content).padding(Padding::new(10.0)).style(move |_, status| {
       let bg = match (active, status) {
-        (true, _) => Some(Color {
-          r: 0.957,
-          g: 0.949,
-          b: 0.925,
-          a: 0.10,
-        }),
-        (false, button::Status::Hovered) => Some(Color {
-          r: 0.957,
-          g: 0.949,
-          b: 0.925,
-          a: 0.05,
-        }),
+        (true, _) => Some(color::state::ACTIVE_OVERLAY),
+        (false, button::Status::Hovered) => Some(color::state::HOVER_OVERLAY),
         _ => None,
       };
       button::Style {
@@ -157,20 +102,10 @@ impl Component {
 
   pub fn row<'a, MSG: Clone + 'static>(content: impl Into<Element<'a, MSG>>) -> button::Button<'a, MSG> {
     button(content)
-      .padding(Padding {
-        top: 6.0,
-        bottom: 6.0,
-        left: 8.0,
-        right: 8.0,
-      })
+      .padding(component::button::PADDING_ROW)
       .style(|_, status| button::Style {
         background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-          Some(Background::Color(Color {
-            r: 0.957,
-            g: 0.949,
-            b: 0.925,
-            a: 0.05,
-          }))
+          Some(Background::Color(color::state::HOVER_OVERLAY))
         } else {
           None
         },

@@ -4,11 +4,13 @@ pub mod status;
 
 pub use footer::Component as Footer;
 use iced::{
-  Background, Border, Color, Element, Length,
+  Background, Border, Element, Length,
   widget::{column, container, mouse_area},
 };
 pub use logo::Component as Logo;
 pub use status::Component as Status;
+
+use crate::style::color;
 
 #[derive(Debug, PartialEq)]
 pub enum Phase {
@@ -145,7 +147,7 @@ impl<'a> Component<'a> {
       .center_x(Length::Fill)
       .center_y(Length::Fill)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x0E, 0x0F, 0x12))),
+        background: Some(Background::Color(color::surface::SUNKEN)),
         border: Border {
           radius: 14.0.into(),
           ..Border::default()

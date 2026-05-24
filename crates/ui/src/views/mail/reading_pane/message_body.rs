@@ -1,6 +1,6 @@
 //! Body paragraph rendering.
 
-use iced::{Color, Element, Theme, widget::text};
+use iced::{Element, Theme, widget::text};
 
 use super::{super::MailMessage, Message};
 use crate::style::{color, typography::body};
@@ -20,7 +20,7 @@ impl Component {
             .font(body::REGULAR)
             .size(15.0)
             .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.88)),
+              color: Some(color::text::PRIMARY),
             })
             .wrapping(iced::widget::text::Wrapping::Word)
             .into()

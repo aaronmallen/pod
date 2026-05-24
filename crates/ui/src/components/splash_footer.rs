@@ -53,7 +53,7 @@ impl<'a> Component<'a> {
       .width(Length::Fill)
       .height(1.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
+        background: Some(Background::Color(color::state::OVERLAY_MEDIUM)),
         ..container::Style::default()
       });
 

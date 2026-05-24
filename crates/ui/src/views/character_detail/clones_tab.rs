@@ -447,7 +447,7 @@ fn implant_name_el<'a>(implant: Option<&'a CharacterImplant>) -> Element<'a, Mes
       .font(mono::REGULAR)
       .size(10.0)
       .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.18)),
+        color: Some(color::text::GHOST),
       })
       .width(Length::Fill)
       .into()
@@ -478,7 +478,7 @@ fn implant_icon_filled<'a>(imp: &'a CharacterImplant, icons: &'a HashMap<i32, im
     .clip(true)
     .style(|_| container::Style {
       border: Border {
-        color: Color::from_rgba(0.247, 0.722, 0.859, 0.35),
+        color: color::accent::PLASMA_BORDER,
         radius: 4.0.into(),
         width: 1.0,
       },
@@ -490,9 +490,9 @@ fn implant_icon_filled<'a>(imp: &'a CharacterImplant, icons: &'a HashMap<i32, im
     .width(32.0)
     .height(32.0)
     .style(|_| container::Style {
-      background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08))),
+      background: Some(Background::Color(color::accent::PLASMA_SELECTED)),
       border: Border {
-        color: Color::from_rgba(0.247, 0.722, 0.859, 0.35),
+        color: color::accent::PLASMA_BORDER,
         radius: 4.0.into(),
         width: 1.0,
       },

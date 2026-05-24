@@ -19,6 +19,7 @@ pub enum Nav {
   Wallet,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum ActiveView {
   Assets(assets::State),
   CharacterDetail(character_detail::State),

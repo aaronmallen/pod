@@ -120,12 +120,7 @@ fn matrix_header_row(structures: &[String]) -> Element<'static, Message> {
 fn matrix_value_cell(v: f64, row_total: f64) -> Element<'static, Message> {
   let intensity = if row_total > 0.0 { (v / row_total) as f32 } else { 0.0 };
   let bg = if v > 0.0 {
-    Some(Background::Color(Color::from_rgba(
-      0.247,
-      0.722,
-      0.859,
-      0.04 + 0.16 * intensity,
-    )))
+    Some(Background::Color(color::plasma_heat(intensity)))
   } else {
     None
   };
@@ -615,7 +610,7 @@ fn top_item_icon(item: &TopItem, icons: &HashMap<(i32, String), image::Handle>) 
   } else {
     container(Space::new().width(24.0).height(24.0))
       .style(move |_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(col.r, col.g, col.b, 0.18))),
+        background: Some(Background::Color(color::with_alpha(col, 0.18))),
         border: Border {
           radius: 4.0.into(),
           ..Border::default()

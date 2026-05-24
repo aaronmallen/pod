@@ -1,7 +1,7 @@
 //! Reply/forward/star/archive/delete toolbar.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   alignment::Vertical,
   widget::{Space, button, column, container, row, text},
 };
@@ -46,9 +46,7 @@ fn mail_toolbar_btn<'a>(
     })
     .style(move |_, status| button::Style {
       background: match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
         _ => None,
       },
       border: Border {

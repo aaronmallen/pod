@@ -1,7 +1,7 @@
 //! Collapsible group header row component.
 
 use iced::{
-  Background, Color, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Vertical,
   widget::{Space, button, column, container, row, text},
 };
@@ -107,9 +107,7 @@ fn group_header_btn(
   .on_press(Message::GroupToggle(group_id))
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.03)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: iced::Border::default(),

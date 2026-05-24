@@ -1,7 +1,7 @@
 //! Single message preview row (avatar, subject, preview, time).
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   widget::{Space, button, column, container, image, mouse_area, row, text},
 };
 
@@ -76,7 +76,7 @@ fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
   let subject_color = if msg.unread {
     color::text::PRIMARY
   } else {
-    Color::from_rgba(0.957, 0.949, 0.925, 0.75)
+    color::text::STRONG
   };
   if prefix.is_empty() {
     text(&msg.subject)
@@ -128,7 +128,7 @@ fn meta_label_chip(l: &str) -> Element<'_, Message> {
     right: 6.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+    background: Some(Background::Color(color::state::HOVER_OVERLAY)),
     border: Border {
       color: color::border::SUBTLE,
       radius: 3.0.into(),
@@ -155,9 +155,9 @@ fn attachment_chip() -> Element<'static, Message> {
     right: 6.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08))),
+    background: Some(Background::Color(color::accent::PLASMA_SELECTED)),
     border: Border {
-      color: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+      color: color::state::SELECTION,
       radius: 3.0.into(),
       width: 1.0,
     },
@@ -175,7 +175,7 @@ fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
       color: Some(if unread {
         color::text::PRIMARY
       } else {
-        Color::from_rgba(0.957, 0.949, 0.925, 0.85)
+        color::text::SECONDARY
       }),
     })
     .width(Length::Fill);
@@ -246,12 +246,10 @@ impl<'a> Component<'a> {
       .on_press(Message::MessageSelected(id))
       .style(move |_, status| button::Style {
         background: if selected {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08)))
+          Some(Background::Color(color::accent::PLASMA_SELECTED))
         } else {
           match status {
-            button::Status::Hovered | button::Status::Pressed => {
-              Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.03)))
-            }
+            button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
             _ => None,
           }
         },

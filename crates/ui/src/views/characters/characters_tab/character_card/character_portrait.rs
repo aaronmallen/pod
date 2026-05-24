@@ -4,7 +4,7 @@ use iced::{
 };
 use pod_model::Character;
 
-use crate::style::{radius, spacing, typography};
+use crate::style::{color, radius, spacing, typography};
 
 pub struct Component<'a> {
   character: &'a Character,
@@ -62,7 +62,7 @@ fn status_pill<'a, MSG: 'a>(label: &'a str) -> Element<'a, MSG> {
       right: 6.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+      background: Some(Background::Color(color::state::OVERLAY_DARK)),
       border: Border {
         radius: radius::CHIP.into(),
         ..Border::default()
@@ -109,7 +109,7 @@ fn portrait_placeholder<'a, MSG: 'static>(character: &'a Character, hue: f32) ->
       .font(typography::body::MEDIUM)
       .size(56.0)
       .style(|_| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.055, 0.059, 0.071, 0.32)),
+        color: Some(color::with_alpha(color::surface::SUNKEN, 0.32)),
       })
       .into()])
     .align_x(iced::alignment::Horizontal::Center),

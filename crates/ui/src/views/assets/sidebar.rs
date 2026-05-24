@@ -36,7 +36,7 @@ fn all_assets_row_label(active: bool) -> Element<'static, Message> {
       color: Some(if active {
         color::text::PRIMARY
       } else {
-        iced::Color::from_rgba(0.957, 0.949, 0.925, 0.78)
+        color::text::STRONG
       }),
     })
     .width(Length::Fill)

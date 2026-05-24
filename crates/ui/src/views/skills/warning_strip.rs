@@ -1,7 +1,7 @@
 //! Low-queue warning banner.
 
 use iced::{
-  Background, Color, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Vertical,
   widget::{Space, button, column, container, row, text},
 };
@@ -25,8 +25,8 @@ impl Component {
       return None;
     }
 
-    let bg_color = Color::from_rgba(0.851, 0.698, 0.322, 0.06);
-    let border_color = Color::from_rgba(0.851, 0.698, 0.322, 0.20);
+    let bg_color = color::accent::GOLD_FAINT;
+    let border_color = color::accent::GOLD_MUTED;
 
     let row_items: Vec<Element<'_, Message>> = vec![
       text("⚠")
@@ -99,7 +99,7 @@ fn suggest_btn() -> Element<'static, Message> {
   .style(|_, _| button::Style {
     background: None,
     border: Border {
-      color: Color::from_rgba(0.851, 0.698, 0.322, 0.40),
+      color: color::accent::GOLD_DIM,
       radius: 6.0.into(),
       width: 1.0,
     },

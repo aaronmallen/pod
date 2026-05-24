@@ -165,10 +165,8 @@ impl Component {
       })
       .style(move |_, status| {
         let bg = match (is_open, status) {
-          (true, _) => Some(Color::from_rgba(0.957, 0.949, 0.925, 0.06)),
-          (false, button::Status::Hovered | button::Status::Pressed) => {
-            Some(Color::from_rgba(0.957, 0.949, 0.925, 0.04))
-          }
+          (true, _) => Some(color::state::SUBTLE_FILL),
+          (false, button::Status::Hovered | button::Status::Pressed) => Some(color::state::HOVER_OVERLAY),
           _ => None,
         };
         button::Style {
@@ -486,7 +484,7 @@ fn all_wallets_swatch() -> Element<'static, Message> {
   .width(Length::Fixed(30.0))
   .height(Length::Fixed(30.0))
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06))),
+    background: Some(Background::Color(color::state::SUBTLE_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: 6.0.into(),
@@ -502,8 +500,8 @@ fn all_wallets_swatch() -> Element<'static, Message> {
 fn picker_row_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
   move |_, status| {
     let bg = match (selected, status) {
-      (true, _) => Some(Color::from_rgba(0.247, 0.722, 0.859, 0.08)),
-      (false, button::Status::Hovered | button::Status::Pressed) => Some(Color::from_rgba(0.957, 0.949, 0.925, 0.04)),
+      (true, _) => Some(color::accent::PLASMA_SELECTED),
+      (false, button::Status::Hovered | button::Status::Pressed) => Some(color::state::HOVER_OVERLAY),
       _ => None,
     };
     button::Style {
@@ -561,7 +559,7 @@ fn initials_swatch<MSG: 'static>(name: &str, tone: u16, size: f32, radius: f32) 
       .font(font::body::MEDIUM)
       .size(size * 0.40)
       .style(|_| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.70)),
+        color: Some(color::text::MEDIUM),
       }),
   )
   .width(Length::Fixed(size))

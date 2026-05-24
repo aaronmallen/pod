@@ -157,13 +157,13 @@ fn section_label(title: impl ToString) -> Element<'static, Message> {
 fn code_chip(label: &str, plasma: bool) -> Element<'static, Message> {
   let (bg, bd, fg) = if plasma {
     (
-      iced::Color::from_rgba(0.247, 0.722, 0.859, 0.10),
-      iced::Color::from_rgba(0.247, 0.722, 0.859, 0.25),
+      color::accent::PLASMA_SUBTLE,
+      color::accent::PLASMA_MUTED,
       color::accent::PLASMA,
     )
   } else {
     (
-      iced::Color::from_rgba(0.957, 0.949, 0.925, 0.04),
+      color::state::HOVER_OVERLAY,
       color::border::SUBTLE,
       color::text::SECONDARY,
     )

@@ -191,7 +191,7 @@ fn input_pill<'a>(state: &'a State) -> Element<'a, Message> {
       icon: color::text::SECONDARY,
       placeholder: color::text::TERTIARY,
       value: color::text::PRIMARY,
-      selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+      selection: color::state::SELECTION,
     })
     .padding(Padding::ZERO);
 
@@ -351,7 +351,7 @@ fn render_item<'a>(i: usize, item: Item, is_highlighted: bool) -> Element<'a, Me
       let active = is_highlighted || matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
         background: if active {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.08)))
+          Some(Background::Color(color::accent::PLASMA_SELECTED))
         } else {
           None
         },
@@ -500,9 +500,9 @@ fn render_tag_chip<'a>(tag_id: i32, name: &str) -> Element<'a, Message> {
   .on_press(Message::Remove(tag_id))
   .style(|_, status| button::Style {
     background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-      Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.15)))
+      Some(Background::Color(color::status::DANGER_SUBTLE))
     } else {
-      Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.08)))
+      Some(Background::Color(color::state::TAG_FILL))
     },
     border: Border {
       color: color::border::SUBTLE,

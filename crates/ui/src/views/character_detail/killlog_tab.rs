@@ -251,7 +251,7 @@ fn filter_button<'a>(opt: &KilllogFilter, label: &'static str, filter: &'a Killl
   })
   .style(move |_, _| button::Style {
     background: if is_active {
-      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+      Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
     } else {
       None
     },
@@ -431,7 +431,7 @@ fn ship_icon_el<'a>(
       .width(32.0)
       .height(32.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+        background: Some(Background::Color(color::state::HOVER_OVERLAY)),
         border: Border {
           color: color::border::SUBTLE,
           radius: 4.0.into(),
@@ -476,7 +476,7 @@ fn final_blow_badge<'a>() -> Element<'a, Message> {
     right: 5.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.275, 0.788, 0.431, 0.12))),
+    background: Some(Background::Color(color::status::VICTORY_SUBTLE)),
     border: Border {
       color: color::status::ONLINE,
       radius: 3.0.into(),

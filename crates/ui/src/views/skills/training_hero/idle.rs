@@ -1,7 +1,7 @@
 //! Empty queue idle state component.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Space, column, container, row, text},
 };
@@ -53,9 +53,9 @@ fn icon() -> Element<'static, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.10))),
+    background: Some(Background::Color(color::status::DANGER_FAINT)),
     border: Border {
-      color: Color::from_rgba(0.878, 0.459, 0.349, 0.35),
+      color: color::status::DANGER_MUTED,
       radius: 24.0.into(),
       width: 1.0,
     },

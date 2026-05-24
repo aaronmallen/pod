@@ -76,7 +76,7 @@ fn division_strip(state: &State) -> Element<'_, Message> {
       .on_press(Message::DivisionSelected(div))
       .style(move |_, _| button::Style {
         background: if is_active {
-          Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.10)))
+          Some(Background::Color(color::accent::PLASMA_SUBTLE))
         } else {
           None
         },

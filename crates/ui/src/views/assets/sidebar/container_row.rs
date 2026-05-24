@@ -1,7 +1,7 @@
 //! Container row in the sidebar tree — indented beneath a location node.
 
 use iced::{
-  Color, Element, Length, Padding, Theme,
+  Element, Length, Padding, Theme,
   widget::{button, row, text},
 };
 
@@ -65,7 +65,7 @@ impl<'a> Component<'a> {
           color: Some(if active {
             color::text::PRIMARY
           } else {
-            Color::from_rgba(0.957, 0.949, 0.925, 0.65)
+            color::text::MEDIUM
           }),
         })
         .width(Length::Fill)

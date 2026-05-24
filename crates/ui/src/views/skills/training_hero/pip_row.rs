@@ -55,10 +55,7 @@ pub fn pip_ladder<'a>(current: u8, target: u8) -> Element<'a, Message> {
       } else if i == target {
         (color::accent::PLASMA, color::accent::PLASMA)
       } else if i < target {
-        (
-          Color::from_rgba(0.247, 0.722, 0.859, 0.25),
-          Color::from_rgba(0.247, 0.722, 0.859, 0.5),
-        )
+        (color::accent::PLASMA_MUTED, color::accent::PLASMA_HALF)
       } else {
         (Color::TRANSPARENT, color::border::SUBTLE)
       };

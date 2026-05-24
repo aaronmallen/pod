@@ -44,12 +44,7 @@ fn status_badge<'a, MSG: 'a>(label: &'a str) -> Element<'a, MSG> {
       right: 6.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(Color {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 0.4,
-      })),
+      background: Some(Background::Color(color::state::OVERLAY_DARK)),
       border: Border {
         radius: radius::CHIP.into(),
         ..Border::default()
@@ -75,12 +70,7 @@ fn tag_badge<'a, MSG: 'a>(label: &'a str) -> Element<'a, MSG> {
     right: 8.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color {
-      r: 0.5,
-      g: 0.5,
-      b: 0.5,
-      a: 0.08,
-    })),
+    background: Some(Background::Color(color::state::TAG_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: radius::FULL.into(),
@@ -199,9 +189,9 @@ impl<'a> GlyphBadge<'a> {
       color::status::DANGER
     };
     let bg_color = if self.is_in {
-      Color::from_rgba(0.357, 0.725, 0.494, 0.12)
+      color::status::ONLINE_SUBTLE
     } else {
-      Color::from_rgba(0.878, 0.459, 0.349, 0.12)
+      color::status::DANGER_SUBTLE
     };
     let glyph = self.glyph.to_string();
     container(

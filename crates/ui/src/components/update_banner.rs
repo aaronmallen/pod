@@ -1,7 +1,7 @@
 //! Dismissible top banner that surfaces in-app update state to the user.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   widget::{Space, button, container, row, text},
 };
 
@@ -116,7 +116,7 @@ impl Component {
       .width(Length::Fill)
       .height(1.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.25))),
+        background: Some(Background::Color(color::accent::PLASMA_MUTED)),
         ..container::Style::default()
       });
 
@@ -130,7 +130,7 @@ impl Component {
         right: 16.0,
       })
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.10))),
+        background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
         ..container::Style::default()
       });
 
@@ -158,12 +158,7 @@ fn action_button<'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
   .on_press(msg)
   .style(|_, status| button::Style {
     background: Some(Background::Color(match status {
-      button::Status::Hovered | button::Status::Pressed => Color {
-        r: 0.247,
-        g: 0.722,
-        b: 0.859,
-        a: 0.85,
-      },
+      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
       _ => color::accent::PLASMA,
     })),
     border: Border {

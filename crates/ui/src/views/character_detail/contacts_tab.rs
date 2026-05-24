@@ -128,7 +128,7 @@ fn filter_button<'a>(opt: &ContactFilter, label: &'static str, filter: &'a Conta
   })
   .style(move |_, _| button::Style {
     background: if is_active {
-      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+      Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
     } else {
       None
     },
@@ -238,7 +238,7 @@ fn watchlist_badge<'a>() -> Element<'a, Message> {
     right: 7.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.10))),
+    background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
     border: Border {
       color: color::accent::PLASMA,
       radius: 999.0.into(),
@@ -341,11 +341,11 @@ fn contact_standing_color(v: f64) -> Color {
   if v >= 5.0 {
     color::status::ONLINE
   } else if v > 0.0 {
-    Color::from_rgba(0.357, 0.725, 0.494, 0.65)
+    color::status::ONLINE_STRONG
   } else if v == 0.0 {
     color::text::SECONDARY
   } else if v > -5.0 {
-    Color::from_rgba(0.878, 0.459, 0.349, 0.65)
+    color::status::DANGER_STRONG
   } else {
     color::status::DANGER
   }

@@ -1,9 +1,9 @@
 use iced::{
-  Background, Border, Color, Element, Padding,
+  Background, Border, Element, Padding,
   widget::{container, text},
 };
 
-use crate::style::{radius, typography};
+use crate::style::{color, radius, typography};
 
 pub enum Status {
   Docked,
@@ -51,7 +51,7 @@ impl Component {
           right: 6.0,
         })
         .style(|_| container::Style {
-          background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+          background: Some(Background::Color(color::state::OVERLAY_DARK)),
           border: Border {
             radius: radius::CHIP.into(),
             ..Border::default()

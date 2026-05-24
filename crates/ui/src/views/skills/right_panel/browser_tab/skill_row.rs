@@ -1,7 +1,7 @@
 //! Individual skill row with pips component.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{Space, column, container, row, text},
 };
@@ -117,9 +117,9 @@ fn prereq_chips(prereqs: &[(String, u8)]) -> Element<'static, Message> {
         right: 6.0,
       })
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.851, 0.698, 0.322, 0.10))),
+        background: Some(Background::Color(color::accent::GOLD_SUBTLE)),
         border: Border {
-          color: Color::from_rgba(0.851, 0.698, 0.322, 0.25),
+          color: color::accent::GOLD_MUTED,
           radius: 3.0.into(),
           width: 1.0,
         },
@@ -153,7 +153,7 @@ fn queue_badge(char_level: u8, queue_delta: u8) -> Element<'static, Message> {
       .style(|_| container::Style {
         background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
         border: Border {
-          color: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+          color: color::state::SELECTION,
           radius: 3.0.into(),
           width: 1.0,
         },

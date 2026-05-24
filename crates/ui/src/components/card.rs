@@ -1,4 +1,4 @@
-use iced::{Background, Border, Color, Element, Length, Padding, Shadow, Vector, widget::container};
+use iced::{Background, Border, Element, Length, Padding, Shadow, Vector, widget::container};
 
 use crate::style::{color, radius};
 
@@ -61,7 +61,7 @@ impl<'a, MSG: 'a> Component<'a, MSG> {
         },
         shadow: Shadow {
           blur_radius: 64.0,
-          color: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+          color: color::state::OVERLAY_DARKER,
           offset: Vector::new(0.0, 24.0),
         },
         ..container::Style::default()

@@ -8,7 +8,7 @@ use crate::{
     Card, PanelHeader,
     character_picker::{self, CharacterEntry, Component as CharacterPicker, PickerSelection},
   },
-  style::{color, typography as font},
+  style::{color, component, typography as font},
 };
 
 /// A resolved or pending compose recipient.
@@ -105,7 +105,17 @@ impl Component {
 
   /// Render the compose panel at the appropriate size.
   pub fn render(&self) -> Element<'_, Message> {
-    let (panel_width, panel_height): (f32, f32) = if self.expanded { (820.0, 640.0) } else { (540.0, 480.0) };
+    let (panel_width, panel_height): (f32, f32) = if self.expanded {
+      (
+        component::compose_panel::EXPANDED_WIDTH,
+        component::compose_panel::EXPANDED_HEIGHT,
+      )
+    } else {
+      (
+        component::compose_panel::COLLAPSED_WIDTH,
+        component::compose_panel::COLLAPSED_HEIGHT,
+      )
+    };
 
     let expand_sym: &'static str = if self.expanded { "⤡" } else { "⤢" };
 
@@ -382,7 +392,7 @@ fn to_field(panel: &Component) -> Element<'_, Message> {
     icon: color::text::SECONDARY,
     placeholder: color::text::TERTIARY,
     value: color::text::PRIMARY,
-    selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+    selection: color::state::SELECTION,
   });
 
   let mut row_children: Vec<Element<'_, Message>> = to_chips;
@@ -444,7 +454,7 @@ fn cc_field(panel: &Component) -> Element<'_, Message> {
     icon: color::text::SECONDARY,
     placeholder: color::text::TERTIARY,
     value: color::text::PRIMARY,
-    selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+    selection: color::state::SELECTION,
   });
 
   let mut row_children: Vec<Element<'_, Message>> = cc_chips;
@@ -470,7 +480,7 @@ fn subject_field(subject: &str) -> Element<'_, Message> {
       icon: color::text::SECONDARY,
       placeholder: color::text::TERTIARY,
       value: color::text::PRIMARY,
-      selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+      selection: color::state::SELECTION,
     });
   compose_field_row("Subject", input.into())
 }
@@ -487,8 +497,8 @@ fn body_area(body: &text_editor::Content) -> Element<'_, Message> {
         background: Background::Color(Color::TRANSPARENT),
         border: Border::default(),
         placeholder: color::text::TERTIARY,
-        value: Color::from_rgba(0.957, 0.949, 0.925, 0.92),
-        selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+        value: color::text::PRIMARY,
+        selection: color::state::SELECTION,
       }),
   )
   .width(Length::Fill)
@@ -563,7 +573,7 @@ fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
         color: Some(if can_send && !sending {
           color::surface::BASE
         } else {
-          Color::from_rgba(0.957, 0.949, 0.925, 0.40)
+          color::text::DIM
         }),
       }),
   )
@@ -576,11 +586,11 @@ fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
   .style(move |_, status| button::Style {
     background: Some(Background::Color(if can_send && !sending {
       match status {
-        button::Status::Hovered | button::Status::Pressed => Color::from_rgba(0.247, 0.722, 0.859, 0.85),
+        button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
         _ => color::accent::PLASMA,
       }
     } else {
-      Color::from_rgba(0.247, 0.722, 0.859, 0.25)
+      color::accent::PLASMA_MUTED
     })),
     border: Border {
       radius: 6.0.into(),
@@ -624,12 +634,10 @@ fn suggestion_row<'a>(
   .on_press(make_msg(id, msg_name))
   .style(move |_, status| button::Style {
     background: if selected {
-      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
+      Some(Background::Color(color::accent::PLASMA_ACTIVE))
     } else {
       match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06)))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
         _ => None,
       }
     },
@@ -785,7 +793,7 @@ fn recipient_chip(name: &str, remove_msg: Message) -> Element<'_, Message> {
     right: 6.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06))),
+    background: Some(Background::Color(color::state::SUBTLE_FILL)),
     border: Border {
       color: color::border::SUBTLE,
       radius: 999.0.into(),
@@ -840,9 +848,7 @@ fn icon_btn(label: &'static str, msg: Message) -> Element<'static, Message> {
   .on_press(msg)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: Border {

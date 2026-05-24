@@ -165,7 +165,7 @@ fn filter_button<'a>(
   })
   .style(move |_, _| button::Style {
     background: if is_active {
-      Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
+      Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
     } else {
       None
     },
@@ -281,7 +281,7 @@ fn notif_icon_box(category: &str) -> Element<'_, Message> {
     .align_x(iced::alignment::Horizontal::Center)
     .align_y(iced::alignment::Vertical::Center)
     .style(move |_| container::Style {
-      background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04))),
+      background: Some(Background::Color(color::state::HOVER_OVERLAY)),
       border: Border {
         color: cat_color,
         radius: 6.0.into(),
@@ -384,7 +384,7 @@ fn notif_row_unread<'a>(notif: &'a CharacterNotification, is_last: bool) -> Elem
   .width(Length::Fill)
   .padding(0)
   .style(move |_, _| button::Style {
-    background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.04))),
+    background: Some(Background::Color(color::accent::PLASMA_SELECTED)),
     border: Border {
       color: if is_last {
         Color::TRANSPARENT
@@ -481,12 +481,7 @@ fn category_color(category: &str) -> Color {
     "corp" | "alliance" | "fw" => color::status::CAUTION,
     "structure" | "mission" | "industry" | "standing" => color::accent::PLASMA,
     "market" | "insurance" | "reward" => color::status::ONLINE,
-    "contract" | "clone" | "contact" => Color {
-      r: 0.376,
-      g: 0.647,
-      b: 0.902,
-      a: 1.0,
-    },
+    "contract" | "clone" | "contact" => color::accent::COBALT,
     _ => color::text::SECONDARY,
   }
 }

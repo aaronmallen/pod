@@ -1,7 +1,7 @@
 //! From/to/subject/time/labels header block.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   widget::{Space, column, container, image, row, text},
 };
 
@@ -55,7 +55,7 @@ fn sender_meta_col<'a>(msg: &'a MailMessage, to_name: &'a str) -> Element<'a, Me
         .font(mono::REGULAR)
         .size(10.0)
         .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.75)),
+          color: Some(color::text::STRONG),
         })
         .into(),
       sender_system_suffix(msg.from_system),
@@ -146,7 +146,7 @@ fn label_chip(l: &str) -> Element<'_, Message> {
     right: 8.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+    background: Some(Background::Color(color::state::HOVER_OVERLAY)),
     border: Border {
       color: color::border::SUBTLE,
       radius: 3.0.into(),
@@ -173,9 +173,9 @@ fn priority_chip() -> Element<'static, Message> {
     right: 8.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.10))),
+    background: Some(Background::Color(color::status::DANGER_FAINT)),
     border: Border {
-      color: Color::from_rgba(0.878, 0.459, 0.349, 0.30),
+      color: color::status::DANGER_BORDER,
       radius: 3.0.into(),
       width: 1.0,
     },

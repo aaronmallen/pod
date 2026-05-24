@@ -4,7 +4,7 @@ pub mod attr_row;
 
 pub use attr_row::Component as AttrRow;
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   widget::{Space, column, container, row, text},
 };
 
@@ -78,7 +78,7 @@ fn bar_items<'a>(
     let accent = if is_primary {
       color::accent::PLASMA
     } else if is_secondary {
-      Color::from_rgba(0.247, 0.722, 0.859, 0.7)
+      color::accent::PLASMA_HOVER
     } else {
       color::text::PRIMARY
     };
@@ -216,13 +216,13 @@ fn rate_cell<'a>(
     })
     .style(move |_| container::Style {
       background: Some(Background::Color(if is_active {
-        Color::from_rgba(0.247, 0.722, 0.859, 0.08)
+        color::accent::PLASMA_SELECTED
       } else {
         color::surface::RAISED
       })),
       border: Border {
         color: if is_active {
-          Color::from_rgba(0.247, 0.722, 0.859, 0.30)
+          color::state::SELECTION
         } else {
           color::border::SUBTLE
         },
@@ -318,7 +318,7 @@ fn remap_card(bonus_text: String, detail_text: String) -> Element<'static, Messa
     .style(|_| container::Style {
       background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
       border: Border {
-        color: Color::from_rgba(0.247, 0.722, 0.859, 0.25),
+        color: color::accent::PLASMA_MUTED,
         radius: 8.0.into(),
         width: 1.0,
       },

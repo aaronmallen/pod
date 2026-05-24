@@ -102,7 +102,7 @@ fn badge(entry_count: usize) -> Element<'static, Message> {
   .style(|_| container::Style {
     background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
     border: Border {
-      color: Color::from_rgba(0.247, 0.722, 0.859, 0.25),
+      color: color::accent::PLASMA_MUTED,
       radius: 6.0.into(),
       width: 1.0,
     },
@@ -233,9 +233,7 @@ fn confirm_delete_btn(plan_id: String) -> Element<'static, Message> {
   .on_press(Message::DeleteConfirmed(plan_id))
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.12)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::status::DANGER_SUBTLE)),
       _ => None,
     },
     border: Border {

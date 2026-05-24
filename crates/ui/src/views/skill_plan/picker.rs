@@ -417,9 +417,7 @@ fn group_btn(name: &str, caret: &str, count_label: String) -> button::Button<'st
   .on_press(Message::PickerGroupToggled(name.to_string()))
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.03)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: iced::Border::default(),
@@ -481,7 +479,7 @@ fn skill_pip_row(skill: &SkillDef, planned_level: u8) -> iced::widget::Row<'stat
           .style(|_, status| button::Style {
             background: match status {
               button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15)))
+                Some(Background::Color(color::accent::PLASMA_ACTIVE))
               }
               _ => None,
             },
@@ -504,10 +502,7 @@ fn skill_pip_colors(trained: bool, planned: bool) -> (Color, Color) {
   if trained {
     (color::text::PRIMARY, color::text::PRIMARY)
   } else if planned {
-    (
-      Color::from_rgba(0.247, 0.722, 0.859, 0.25),
-      Color::from_rgba(0.247, 0.722, 0.859, 0.60),
-    )
+    (color::accent::PLASMA_MUTED, color::accent::PLASMA_HALF)
   } else {
     (Color::TRANSPARENT, color::border::SUBTLE)
   }
@@ -586,9 +581,7 @@ fn module_row<'a>(module: &'a ItemTypeSummary) -> Element<'a, Message> {
     .on_press(Message::ModuleSelected(type_id, mod_name))
     .style(|_, status| button::Style {
       background: match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
         _ => None,
       },
       border: Border::default(),
@@ -655,9 +648,7 @@ fn item_add_btn(on_press: Message) -> button::Button<'static, Message> {
   .on_press(on_press)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.12)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::accent::PLASMA_HIGHLIGHT)),
       _ => Some(Background::Color(Color::TRANSPARENT)),
     },
     border: Border {
@@ -716,9 +707,9 @@ fn level_chip(label: &'static str, is_active: bool, on_press: Message) -> Elemen
   .on_press(on_press)
   .style(move |_, status| button::Style {
     background: match (is_active, status) {
-      (true, _) => Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.15))),
+      (true, _) => Some(Background::Color(color::accent::PLASMA_ACTIVE)),
       (false, button::Status::Hovered | button::Status::Pressed) => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
+        Some(Background::Color(color::state::HOVER_OVERLAY))
       }
       _ => None,
     },

@@ -5,7 +5,7 @@ pub mod timeframe_picker;
 
 pub use composition_chip::Component as CompositionChip;
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   widget::{Space, column, container, row, text},
 };
 pub use timeframe_picker::Component as TimeframePicker;
@@ -60,10 +60,7 @@ fn hero_lhs(current: f64, change: f64, change_pct: f64, is_up: bool) -> Element<
     right: 10.0,
   })
   .style(move |_| container::Style {
-    background: Some(Background::Color(Color {
-      a: 0.10,
-      ..change_color
-    })),
+    background: Some(Background::Color(color::with_alpha(change_color, 0.10))),
     border: Border {
       radius: 4.0.into(),
       ..Border::default()
@@ -151,12 +148,7 @@ impl<'a> Component<'a> {
     let comp_chips: Element<'_, Message> = row([
       CompositionChip::new("Liquid", state.total_liquid(), color::accent::PLASMA).render(),
       Space::new().width(10.0).into(),
-      CompositionChip::new(
-        "Assets",
-        state.total_assets(),
-        Color::from_rgba(0.957, 0.949, 0.925, 0.55),
-      )
-      .render(),
+      CompositionChip::new("Assets", state.total_assets(), color::text::SECONDARY).render(),
       Space::new().width(10.0).into(),
       CompositionChip::new("Escrow", state.total_escrow(), color::status::CAUTION).render(),
     ])

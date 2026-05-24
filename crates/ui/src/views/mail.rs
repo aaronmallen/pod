@@ -447,9 +447,7 @@ fn context_menu_btn(label: &str, msg: Message) -> Element<'_, Message> {
   .on_press(msg)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(iced::Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: iced::Border {
@@ -482,9 +480,7 @@ fn context_menu_danger_btn(label: &str, msg: Message) -> Element<'_, Message> {
   .on_press(msg)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(iced::Color::from_rgba(0.878, 0.459, 0.349, 0.08)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::status::DANGER_FAINT)),
       _ => None,
     },
     border: iced::Border {
@@ -639,9 +635,7 @@ fn mail_header_compose_btn() -> Element<'static, Message> {
   .on_press(Message::ComposePressed)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(iced::Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: Border {

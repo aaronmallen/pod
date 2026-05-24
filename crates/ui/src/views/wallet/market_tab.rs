@@ -1,7 +1,7 @@
 //! Market transaction table for the wallet main panel.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   alignment::Horizontal,
   widget::{Space, column, container, image, row, text},
 };
@@ -45,9 +45,9 @@ fn side_badge(is_sell: bool) -> Element<'static, Message> {
   })
   .style(move |_| container::Style {
     background: Some(Background::Color(if is_sell {
-      Color::from_rgba(0.357, 0.725, 0.494, 0.12)
+      color::status::ONLINE_SUBTLE
     } else {
-      Color::from_rgba(0.878, 0.459, 0.349, 0.12)
+      color::status::DANGER_SUBTLE
     })),
     border: Border {
       radius: radius::SUBTLE.into(),
@@ -74,7 +74,7 @@ fn qty_badge(qty: u64) -> Element<'static, Message> {
     right: 6.0,
   })
   .style(|_| container::Style {
-    background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.07))),
+    background: Some(Background::Color(color::state::SUBTLE_FILL)),
     border: Border {
       radius: radius::CHIP.into(),
       ..Border::default()
@@ -96,7 +96,7 @@ fn type_icon_cell(handle: Option<image::Handle>) -> Element<'static, Message> {
       .width(size)
       .height(size)
       .style(|_| container::Style {
-        background: Some(iced::Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+        background: Some(iced::Background::Color(color::state::HOVER_OVERLAY)),
         border: Border {
           radius: 4.0.into(),
           ..Border::default()

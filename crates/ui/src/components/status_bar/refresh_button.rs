@@ -1,5 +1,5 @@
 use iced::{
-  Color, Element, Length, Padding,
+  Element, Length, Padding,
   widget::{button, container, row, text},
 };
 
@@ -27,7 +27,7 @@ pub fn view(is_syncing: bool) -> Element<'static, super::Message> {
   .height(Length::Fill)
   .style(move |_, status| button::Style {
     text_color: if is_syncing {
-      Color::from_rgba(0.957, 0.949, 0.925, 0.25)
+      color::text::TERTIARY
     } else {
       match status {
         button::Status::Hovered => color::text::PRIMARY,

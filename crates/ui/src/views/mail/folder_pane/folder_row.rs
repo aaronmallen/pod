@@ -47,7 +47,7 @@ fn folder_row_content(
         color: Some(if is_active {
           color::text::PRIMARY
         } else {
-          Color::from_rgba(0.957, 0.949, 0.925, 0.75)
+          color::text::STRONG
         }),
       })
       .width(Length::Fill)
@@ -112,9 +112,7 @@ impl Component {
             Some(Background::Color(color::accent::PLASMA_SUBTLE))
           } else {
             match status {
-              button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
-              }
+              button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
               _ => None,
             }
           },
@@ -150,7 +148,7 @@ impl Component {
             color: Some(if active {
               color::text::PRIMARY
             } else {
-              Color::from_rgba(0.957, 0.949, 0.925, 0.85)
+              color::text::SECONDARY
             }),
           })
           .width(Length::Fill)
@@ -173,15 +171,13 @@ impl Component {
         Some(Background::Color(color::accent::PLASMA_SUBTLE))
       } else {
         match status {
-          button::Status::Hovered | button::Status::Pressed => {
-            Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.06)))
-          }
-          _ => Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.03))),
+          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
+          _ => Some(Background::Color(color::state::HOVER_OVERLAY)),
         }
       },
       border: Border {
         color: if active {
-          Color::from_rgba(0.247, 0.722, 0.859, 0.35)
+          color::accent::PLASMA_BORDER
         } else {
           color::border::SUBTLE
         },
@@ -223,7 +219,7 @@ impl<'a> LabelRow<'a> {
           color: Some(if is_active {
             color::text::PRIMARY
           } else {
-            Color::from_rgba(0.957, 0.949, 0.925, 0.75)
+            color::text::STRONG
           }),
         })
         .width(Length::Fill),
@@ -241,9 +237,7 @@ impl<'a> LabelRow<'a> {
         Some(Background::Color(color::accent::PLASMA_SUBTLE))
       } else {
         match status {
-          button::Status::Hovered | button::Status::Pressed => {
-            Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
-          }
+          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
           _ => None,
         }
       },

@@ -1,5 +1,5 @@
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   widget::{container, row, text},
 };
 
@@ -135,7 +135,7 @@ fn synced_label(secs_since_sync: u64) -> Element<'static, super::Message> {
       .font(typography::mono::REGULAR)
       .size(10.0)
       .style(|_| text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.45)),
+        color: Some(color::text::DIM),
       })
       .into(),
   ])

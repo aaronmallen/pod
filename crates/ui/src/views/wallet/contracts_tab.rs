@@ -113,7 +113,7 @@ fn portrait_chip<'a>(name: &str, tone: u16, handle: Option<&'a image::Handle>) -
       .font(mono::REGULAR)
       .size(9.0)
       .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.70)),
+        color: Some(color::text::MEDIUM),
       }),
   )
   .width(18.0)
@@ -247,7 +247,7 @@ fn counterparty_cell(cp: &str) -> Element<'_, Message> {
       .font(body::REGULAR)
       .size(12.0)
       .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(Color::from_rgba(0.957, 0.949, 0.925, 0.78)),
+        color: Some(color::text::STRONG),
       }),
   )
   .width(COL_COUNTERPARTY)

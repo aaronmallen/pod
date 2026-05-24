@@ -12,9 +12,7 @@ pub fn list_item_active(is_active: bool, status: button::Status) -> button::Styl
       Some(Background::Color(color::accent::PLASMA_SUBTLE))
     } else {
       match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
         _ => None,
       }
     },

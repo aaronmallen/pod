@@ -7,7 +7,7 @@ use iced::{
   widget::{Space, button, column, container, row, scrollable, text, text_input},
 };
 
-use crate::style::{color, radius, spacing};
+use crate::style::{color, component, radius, spacing};
 
 /// A single toggleable feature flag.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -262,19 +262,9 @@ fn feature_esi_chip() -> Element<'static, Message> {
       right: 6.0,
     })
     .style(|_| container::Style {
-      background: Some(Background::Color(Color {
-        r: color::accent::PLASMA.r,
-        g: color::accent::PLASMA.g,
-        b: color::accent::PLASMA.b,
-        a: 0.06,
-      })),
+      background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
       border: Border {
-        color: Color {
-          r: color::accent::PLASMA.r,
-          g: color::accent::PLASMA.g,
-          b: color::accent::PLASMA.b,
-          a: 0.30,
-        },
+        color: color::state::SELECTION,
         radius: radius::CHIP.into(),
         width: 1.0,
       },
@@ -555,23 +545,13 @@ fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
 
 fn toggle_thumb(on: bool) -> container::Container<'static, Message> {
   let thumb_color = if on {
-    Color {
-      r: 0.039,
-      g: 0.106,
-      b: 0.133,
-      a: 1.0,
-    }
+    color::state::TOGGLE_THUMB
   } else {
-    Color {
-      r: color::text::PRIMARY.r,
-      g: color::text::PRIMARY.g,
-      b: color::text::PRIMARY.b,
-      a: 0.65,
-    }
+    color::text::MEDIUM
   };
   container(Space::new())
-    .width(14.0)
-    .height(14.0)
+    .width(component::toggle::THUMB_SIZE)
+    .height(component::toggle::THUMB_SIZE)
     .style(move |_| container::Style {
       background: Some(Background::Color(thumb_color)),
       border: Border {
@@ -586,19 +566,18 @@ fn toggle_track(on: bool) -> container::Container<'static, Message> {
   let bg_color = if on {
     color::accent::PLASMA
   } else {
-    Color {
-      r: color::text::PRIMARY.r,
-      g: color::text::PRIMARY.g,
-      b: color::text::PRIMARY.b,
-      a: 0.08,
-    }
+    color::state::PRESSED_OVERLAY
   };
   let border_color = if on {
     color::accent::PLASMA
   } else {
     color::border::DEFAULT
   };
-  let thumb_offset = if on { 17.0_f32 } else { 2.0_f32 };
+  let thumb_offset = if on {
+    component::toggle::THUMB_ON_OFFSET
+  } else {
+    component::toggle::THUMB_OFF_OFFSET
+  };
   let thumb = toggle_thumb(on);
   container(
     container(thumb)
@@ -610,8 +589,8 @@ fn toggle_track(on: bool) -> container::Container<'static, Message> {
       })
       .align_y(Vertical::Center),
   )
-  .width(38.0)
-  .height(22.0)
+  .width(component::toggle::TRACK_WIDTH)
+  .height(component::toggle::TRACK_HEIGHT)
   .style(move |_| container::Style {
     background: Some(Background::Color(bg_color)),
     border: Border {

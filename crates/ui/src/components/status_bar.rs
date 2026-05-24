@@ -7,7 +7,7 @@ pub mod sync_indicator;
 pub mod sync_state;
 
 use iced::{
-  Background, Color, Element, Length,
+  Background, Element, Length,
   widget::{column, container, row, stack},
 };
 pub use sync_state::SyncState;
@@ -51,7 +51,7 @@ impl Component {
       .width(Length::Fill)
       .height(1.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+        background: Some(Background::Color(color::state::OVERLAY_DARK)),
         ..container::Style::default()
       });
 
@@ -94,7 +94,7 @@ fn plasma_fill<'a>(is_syncing: bool, progress: f32) -> Element<'a, Message> {
       .width(Length::Fill)
       .height(Length::Fill)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.18))),
+        background: Some(Background::Color(color::accent::PLASMA_BANNER)),
         ..container::Style::default()
       })
       .into()
@@ -104,7 +104,7 @@ fn plasma_fill<'a>(is_syncing: bool, progress: f32) -> Element<'a, Message> {
         .width(Length::FillPortion(pct))
         .height(Length::Fill)
         .style(|_| container::Style {
-          background: Some(Background::Color(Color::from_rgba(0.247, 0.722, 0.859, 0.18))),
+          background: Some(Background::Color(color::accent::PLASMA_BANNER)),
           ..container::Style::default()
         })
         .into(),

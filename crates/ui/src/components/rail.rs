@@ -1,7 +1,7 @@
 //! Left navigation rail — pure layout component.
 
 use iced::{
-  Background, Color, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Horizontal,
   widget::{Space, column, container, row, svg},
 };
@@ -95,7 +95,7 @@ impl<'a, MSG: Clone + 'a> Component<'a, MSG> {
       .width(1.0)
       .height(Length::Fill)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+        background: Some(Background::Color(color::state::OVERLAY_DARK)),
         ..container::Style::default()
       });
 

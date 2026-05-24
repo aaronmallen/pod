@@ -22,48 +22,13 @@ use crate::{
 
 /// Group palette — cycled in order for the time-by-group bar chart.
 const GROUP_PALETTE: [Color; 7] = [
-  Color {
-    r: 0.247,
-    g: 0.722,
-    b: 0.859,
-    a: 1.0,
-  },
-  Color {
-    r: 0.851,
-    g: 0.698,
-    b: 0.322,
-    a: 1.0,
-  },
-  Color {
-    r: 0.843,
-    g: 0.459,
-    b: 0.349,
-    a: 1.0,
-  },
-  Color {
-    r: 0.498,
-    g: 0.710,
-    b: 0.353,
-    a: 1.0,
-  },
-  Color {
-    r: 0.655,
-    g: 0.498,
-    b: 0.847,
-    a: 1.0,
-  },
-  Color {
-    r: 0.353,
-    g: 0.722,
-    b: 0.627,
-    a: 1.0,
-  },
-  Color {
-    r: 0.847,
-    g: 0.400,
-    b: 0.431,
-    a: 1.0,
-  },
+  color::accent::PLASMA,
+  color::accent::GOLD,
+  color::chart::P3,
+  color::chart::P4,
+  color::chart::P5,
+  color::chart::P6,
+  color::chart::P7,
 ];
 
 /// Format seconds as "14d 3h 22m" (always shows at least minutes).
@@ -514,12 +479,7 @@ fn implant_btn_bg(active: bool) -> Color {
 
 fn implant_btn_hover_bg(status: button::Status) -> Color {
   match status {
-    button::Status::Hovered => Color::from_rgba(
-      color::accent::PLASMA.r,
-      color::accent::PLASMA.g,
-      color::accent::PLASMA.b,
-      0.05,
-    ),
+    button::Status::Hovered => color::with_alpha(color::accent::PLASMA, 0.05),
     _ => Color::TRANSPARENT,
   }
 }
@@ -735,18 +695,8 @@ fn savings_callout(result: &RemapResult, effective: &EffectiveAttrs) -> Element<
 fn savings_callout_style(result: &RemapResult) -> (Color, Color, Color, String) {
   if result.is_current {
     (
-      Color::from_rgba(
-        color::text::SUCCESS.r,
-        color::text::SUCCESS.g,
-        color::text::SUCCESS.b,
-        0.08,
-      ),
-      Color::from_rgba(
-        color::text::SUCCESS.r,
-        color::text::SUCCESS.g,
-        color::text::SUCCESS.b,
-        0.30,
-      ),
+      color::with_alpha(color::text::SUCCESS, 0.08),
+      color::with_alpha(color::text::SUCCESS, 0.30),
       color::text::SUCCESS,
       "Already optimal".to_string(),
     )
@@ -883,12 +833,7 @@ fn implant_saving_badge_style(is_first: bool) -> (Color, Color, Color) {
   let badge_bg = if is_first {
     color::accent::PLASMA_SUBTLE
   } else {
-    Color::from_rgba(
-      color::text::SECONDARY.r,
-      color::text::SECONDARY.g,
-      color::text::SECONDARY.b,
-      0.08,
-    )
+    color::with_alpha(color::text::SECONDARY, 0.08)
   };
   let badge_border = if is_first {
     color::accent::PLASMA_MUTED

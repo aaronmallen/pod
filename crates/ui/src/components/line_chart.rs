@@ -3,7 +3,7 @@ use iced::{
   widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text, fill, gradient},
 };
 
-use crate::style::typography;
+use crate::style::{color, typography};
 
 pub struct Component {
   pub data: Vec<f64>,
@@ -88,7 +88,7 @@ impl<M> canvas::Program<M> for Component {
 
 impl Component {
   fn draw_grid(&self, frame: &mut Frame, w: f32, chart_h: f32, min_v: f64, max_v: f64, y_at: &impl Fn(f64) -> f32) {
-    let grid_color = Color::from_rgba(0.957, 0.949, 0.925, 0.06);
+    let grid_color = color::state::SUBTLE_FILL;
     for i in 0..=4 {
       let t = i as f32 / 4.0;
       let gy = self.pad_top + t * chart_h;
@@ -103,7 +103,7 @@ impl Component {
         frame.fill_text(Text {
           content: label,
           position: Point::new(w - self.pad_right - 4.0, y_at(grid_v) - 3.0),
-          color: Color::from_rgba(0.957, 0.949, 0.925, 0.35),
+          color: color::text::TERTIARY,
           size: Pixels(9.0),
           font: typography::mono::REGULAR,
           align_x: iced::alignment::Horizontal::Right.into(),
@@ -154,24 +154,8 @@ impl Component {
     let fill_path = self.build_fill_path(bottom_y, x_at, y_at);
     let c = self.line_color;
     let fill_gradient = gradient::Linear::new(Point::new(0.0, self.pad_top), Point::new(0.0, bottom_y))
-      .add_stop(
-        0.0,
-        Color {
-          r: c.r,
-          g: c.g,
-          b: c.b,
-          a: 0.22,
-        },
-      )
-      .add_stop(
-        1.0,
-        Color {
-          r: c.r,
-          g: c.g,
-          b: c.b,
-          a: 0.0,
-        },
-      );
+      .add_stop(0.0, color::with_alpha(c, 0.22))
+      .add_stop(1.0, color::with_alpha(c, 0.0));
     frame.fill(
       &fill_path,
       fill::Fill {
@@ -213,7 +197,7 @@ impl Component {
       frame.fill_text(Text {
         content: label.clone(),
         position: Point::new(x_at(idx), h - 4.0),
-        color: Color::from_rgba(0.957, 0.949, 0.925, 0.45),
+        color: color::text::DIM,
         size: Pixels(9.0),
         font: typography::mono::REGULAR,
         align_x: align_x.into(),

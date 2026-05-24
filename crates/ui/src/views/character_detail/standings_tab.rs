@@ -244,11 +244,11 @@ fn standing_color(v: f64) -> Color {
   if v >= 5.0 {
     color::status::ONLINE
   } else if v > 0.0 {
-    Color::from_rgba(0.357, 0.725, 0.494, 0.65)
+    color::status::ONLINE_STRONG
   } else if v >= -0.01 {
     color::text::SECONDARY
   } else if v > -5.0 {
-    Color::from_rgba(0.878, 0.459, 0.349, 0.65)
+    color::status::DANGER_STRONG
   } else {
     color::status::DANGER
   }
@@ -289,7 +289,7 @@ fn standing_bar<'a>(value: f64) -> Element<'a, Message> {
     .width(220.0)
     .height(6.0)
     .style(|_: &Theme| container::Style {
-      background: Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05))),
+      background: Some(Background::Color(color::state::HOVER_OVERLAY)),
       border: Border {
         radius: 3.0.into(),
         ..Border::default()

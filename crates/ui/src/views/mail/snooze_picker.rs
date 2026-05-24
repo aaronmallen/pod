@@ -1,7 +1,7 @@
 //! Snooze dropdown overlay with time presets.
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   alignment::Vertical,
   widget::{button, column, container, row, text},
 };
@@ -53,9 +53,7 @@ fn snooze_preset_rows() -> Vec<Element<'static, Message>> {
       .on_press(Message::SnoozeSet(label_str))
       .style(|_, status| button::Style {
         background: match status {
-          button::Status::Hovered | button::Status::Pressed => {
-            Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-          }
+          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
           _ => None,
         },
         border: Border {
@@ -89,9 +87,7 @@ fn snooze_unsnooze_btn() -> Element<'static, Message> {
   .on_press(Message::SnoozeSet(String::new()))
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.08)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::status::DANGER_FAINT)),
       _ => None,
     },
     border: Border {

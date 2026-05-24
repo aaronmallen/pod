@@ -18,7 +18,7 @@ fn active_style(active: bool, status: button::Status) -> button::Style {
     } else {
       match status {
         button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
+          Some(Background::Color(color::state::HOVER_OVERLAY))
         }
         _ => None,
       }
@@ -42,7 +42,7 @@ fn row_inner<'a>(label: &'a str, mono_label: Option<&'a str>, active: bool) -> E
         color: Some(if active {
           color::text::PRIMARY
         } else {
-          Color::from_rgba(0.957, 0.949, 0.925, 0.78)
+          color::text::STRONG
         }),
       })
       .width(Length::Fill)
@@ -81,7 +81,7 @@ fn char_row_inner<'a>(
         color: Some(if active {
           color::text::PRIMARY
         } else {
-          Color::from_rgba(0.957, 0.949, 0.925, 0.78)
+          color::text::STRONG
         }),
       })
       .width(Length::Fill)

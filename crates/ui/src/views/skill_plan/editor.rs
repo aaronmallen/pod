@@ -489,9 +489,7 @@ fn priority_dot_btn(priority: Priority, entry_id: String) -> Element<'static, Me
     .on_press(Message::EntryPriorityChanged(entry_id, next_priority))
     .style(|_, status| button::Style {
       background: match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
         _ => None,
       },
       border: Border {
@@ -505,24 +503,9 @@ fn priority_dot_btn(priority: Priority, entry_id: String) -> Element<'static, Me
 
 fn priority_dot_color(priority: Priority) -> Color {
   match priority {
-    Priority::Low => Color {
-      r: 0.498,
-      g: 0.710,
-      b: 0.353,
-      a: 1.0,
-    },
-    Priority::Normal => Color {
-      r: 0.957,
-      g: 0.949,
-      b: 0.925,
-      a: 0.35,
-    },
-    Priority::High => Color {
-      r: 0.843,
-      g: 0.459,
-      b: 0.349,
-      a: 1.0,
-    },
+    Priority::Low => color::chart::P4,
+    Priority::Normal => color::text::TERTIARY,
+    Priority::High => color::chart::P3,
   }
 }
 
@@ -536,9 +519,9 @@ fn priority_next(priority: Priority) -> Priority {
 
 fn attr_chip_small(key: AttrKey, primary: bool) -> Element<'static, Message> {
   let bg = if primary {
-    Color::from_rgba(0.247, 0.722, 0.859, 0.12)
+    color::accent::PLASMA_HIGHLIGHT
   } else {
-    Color::from_rgba(0.957, 0.949, 0.925, 0.05)
+    color::state::HOVER_OVERLAY
   };
   let fg = if primary {
     color::accent::PLASMA
@@ -546,7 +529,7 @@ fn attr_chip_small(key: AttrKey, primary: bool) -> Element<'static, Message> {
     color::text::SECONDARY
   };
   let border_col = if primary {
-    Color::from_rgba(0.247, 0.722, 0.859, 0.35)
+    color::accent::PLASMA_BORDER
   } else {
     color::border::SUBTLE
   };
@@ -625,9 +608,7 @@ where
   .on_press(on_press())
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: Border {
@@ -716,9 +697,7 @@ fn header_close_btn() -> button::Button<'static, Message> {
   .on_press(Message::CloseRequested)
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.05)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
       _ => None,
     },
     border: Border {
@@ -761,12 +740,7 @@ fn header_dirty_dot(dirty: bool) -> Element<'static, Message> {
       .width(6.0)
       .height(6.0)
       .style(|_| container::Style {
-        background: Some(Background::Color(Color {
-          r: 0.851,
-          g: 0.698,
-          b: 0.322,
-          a: 1.0,
-        })),
+        background: Some(Background::Color(color::accent::GOLD)),
         border: Border {
           radius: 3.0.into(),
           ..Border::default()
@@ -856,12 +830,7 @@ fn dropdown_menu_btn(label: &'static str, on_press: Message) -> button::Button<'
     .on_press(on_press)
     .style(|_, status| button::Style {
       background: match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(Color {
-          r: 0.957,
-          g: 0.949,
-          b: 0.925,
-          a: 0.06,
-        })),
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
         _ => None,
       },
       border: Border::default(),
@@ -955,8 +924,8 @@ fn entry_name_row(entry: &ComputedEntry) -> iced::widget::Row<'static, Message> 
     name_items.push(Space::new().width(spacing::SPACE_2).into());
     name_items.push(badge_chip(
       "prereq",
-      Color::from_rgba(0.357, 0.725, 0.494, 0.15),
-      Color::from_rgba(0.357, 0.725, 0.494, 0.35),
+      color::status::ONLINE_SUBTLE,
+      color::status::ONLINE_MUTED,
       color::text::SUCCESS,
     ));
   }
@@ -965,7 +934,7 @@ fn entry_name_row(entry: &ComputedEntry) -> iced::widget::Row<'static, Message> 
     name_items.push(Space::new().width(spacing::SPACE_2).into());
     name_items.push(badge_chip(
       "already trained",
-      Color::from_rgba(0.957, 0.949, 0.925, 0.05),
+      color::state::HOVER_OVERLAY,
       color::border::SUBTLE,
       color::text::TERTIARY,
     ));
@@ -1065,9 +1034,7 @@ fn entry_remove_btn(id: String) -> button::Button<'static, Message> {
   .on_press(Message::EntryRemoved(id))
   .style(|_, status| button::Style {
     background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(Color::from_rgba(0.878, 0.459, 0.349, 0.12)))
-      }
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::status::DANGER_SUBTLE)),
       _ => None,
     },
     border: Border {
@@ -1118,7 +1085,7 @@ fn entry_index_col(index: usize) -> iced::widget::Container<'static, Message> {
 
 fn entry_row_bg(is_dragging: bool) -> Option<Background> {
   if is_dragging {
-    Some(Background::Color(Color::from_rgba(0.957, 0.949, 0.925, 0.04)))
+    Some(Background::Color(color::state::HOVER_OVERLAY))
   } else {
     None
   }

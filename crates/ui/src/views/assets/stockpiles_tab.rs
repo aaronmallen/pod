@@ -330,12 +330,7 @@ fn card_header(pile: &StockpileWithStatus) -> Element<'_, Message> {
 
 fn card_border_color(pile: &StockpileWithStatus) -> Color {
   if pile.ready {
-    Color {
-      r: 0.357,
-      g: 0.725,
-      b: 0.494,
-      a: 0.35,
-    }
+    color::status::ONLINE_MUTED
   } else {
     color::border::DEFAULT
   }
@@ -393,7 +388,7 @@ fn text_field_style() -> impl Fn(&iced::Theme, iced::widget::text_input::Status)
     icon: color::text::SECONDARY,
     placeholder: color::text::TERTIARY,
     value: color::text::PRIMARY,
-    selection: Color::from_rgba(0.247, 0.722, 0.859, 0.30),
+    selection: color::state::SELECTION,
   }
 }
 

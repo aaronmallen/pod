@@ -23,7 +23,12 @@ impl<'a> Component<'a> {
   pub fn render<MSG: 'static>(self) -> Element<'a, MSG> {
     let queue = self.character.training_queue();
     let is_paused = !queue.is_empty() && queue.iter().all(|e| e.start_date.is_none());
-    let content = if self.character.active_training().is_some() {
+    let has_named_active = self
+      .character
+      .active_training()
+      .and_then(|s| s.skill_name.as_ref())
+      .is_some();
+    let content = if has_named_active {
       active_training(self.character)
     } else if is_paused {
       paused_training()

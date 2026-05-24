@@ -324,20 +324,19 @@ fn build_queue_from_character(c: &Character) -> Vec<QueueItem> {
 
   c.training_queue()
     .iter()
-    .map(|entry| {
-      let progress = queue_entry_progress(entry, now);
+    .filter_map(|entry| {
       let skill_name = entry
         .skill_name
         .clone()
-        .or_else(|| skill_names.get(&entry.skill_id).cloned())
-        .expect("skill must exist in SDE");
-      QueueItem {
+        .or_else(|| skill_names.get(&entry.skill_id).cloned())?;
+      let progress = queue_entry_progress(entry, now);
+      Some(QueueItem {
         id: format!("real-{}-{}", entry.skill_id, entry.to_level),
         skill_name,
         from_level: entry.from_level as u8,
         to_level: entry.to_level as u8,
         progress,
-      }
+      })
     })
     .collect()
 }

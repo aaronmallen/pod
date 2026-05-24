@@ -51,21 +51,6 @@ pub fn update(state: &mut State, msg: Message, _services: &Services) -> iced::Ta
   }
 }
 
-fn toggle_feature(state: &mut State, feature: &Feature) {
-  match feature {
-    Feature::AssetTracking => state.asset_tracking = !state.asset_tracking,
-    Feature::CloneMonitoring => state.clone_monitoring = !state.clone_monitoring,
-    Feature::CombatLog => state.combat_log = !state.combat_log,
-    Feature::Contacts => state.contacts = !state.contacts,
-    Feature::EveNotifications => state.eve_notifications = !state.eve_notifications,
-    Feature::LocationTracking => state.location_tracking = !state.location_tracking,
-    Feature::Mail => state.mail = !state.mail,
-    Feature::SkillMonitoring => state.skill_monitoring = !state.skill_monitoring,
-    Feature::Standings => state.standings = !state.standings,
-    Feature::Wallet => state.wallet = !state.wallet,
-  }
-}
-
 /// Builds a new [`crate::config::Settings`] from the current state,
 /// persists it to disk, and returns it so the caller can update
 /// `app.config`.
@@ -86,4 +71,26 @@ pub fn updated_config(state: &State, current: &crate::config::Settings) -> crate
   config.set_features(features);
   crate::config::save(&config);
   config
+}
+
+fn toggle_feature(state: &mut State, feature: &Feature) {
+  match feature {
+    Feature::AssetTracking => state.asset_tracking = !state.asset_tracking,
+    Feature::CloneMonitoring => state.clone_monitoring = !state.clone_monitoring,
+    Feature::CombatLog => state.combat_log = !state.combat_log,
+    Feature::Contacts => state.contacts = !state.contacts,
+    Feature::EveNotifications => state.eve_notifications = !state.eve_notifications,
+    feature => toggle_feature_b(state, feature),
+  }
+}
+
+fn toggle_feature_b(state: &mut State, feature: &Feature) {
+  match feature {
+    Feature::LocationTracking => state.location_tracking = !state.location_tracking,
+    Feature::Mail => state.mail = !state.mail,
+    Feature::SkillMonitoring => state.skill_monitoring = !state.skill_monitoring,
+    Feature::Standings => state.standings = !state.standings,
+    Feature::Wallet => state.wallet = !state.wallet,
+    _ => {}
+  }
 }

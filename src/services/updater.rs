@@ -48,63 +48,14 @@ pub const fn check_interval() -> std::time::Duration {
   CHECK_INTERVAL
 }
 
-/// Spawns a background update check against the release manifest.
-pub fn check() -> Task<Message> {
-  Task::perform(
-    async {
-      tokio::task::spawn_blocking(|| {
-        let updater = build_updater().map_err(|e| e.to_string())?;
-        updater
-          .check()
-          .map(|opt| opt.map(|u| u.version))
-          .map_err(|e| e.to_string())
-      })
-      .await
-      .unwrap_or_else(|e| Err(format!("task join error: {e}")))
-    },
-    |result| match result {
-      Ok(Some(version)) => {
-        info!(%version, "update available");
-        Message::CheckComplete(Some(version))
-      }
-      Ok(None) => {
-        info!("app is up to date");
-        Message::CheckComplete(None)
-      }
-      Err(e) => {
-        warn!(error = %e, "update check failed");
-        Message::CheckFailed
-      }
-    },
-  )
-}
-
 /// Downloads and silently installs the available update in a background thread.
 pub fn apply() -> Task<Message> {
-  Task::perform(
-    async {
-      tokio::task::spawn_blocking(|| {
-        let updater = build_updater().map_err(|e| e.to_string())?;
-        let update = updater
-          .check()
-          .map_err(|e| e.to_string())?
-          .ok_or_else(|| "no update available".to_string())?;
-        update.download_and_install().map_err(|e| e.to_string())
-      })
-      .await
-      .unwrap_or_else(|e| Err(format!("task join error: {e}")))
-    },
-    |result| match result {
-      Ok(()) => {
-        info!("update applied successfully");
-        Message::ApplyComplete
-      }
-      Err(e) => {
-        warn!(error = %e, "update apply failed");
-        Message::ApplyFailed(e)
-      }
-    },
-  )
+  Task::perform(apply_inner(), handle_apply_result)
+}
+
+/// Spawns a background update check against the release manifest.
+pub fn check() -> Task<Message> {
+  Task::perform(check_inner(), handle_check_result)
 }
 
 /// Relaunches the current executable then terminates the current process.
@@ -113,6 +64,61 @@ pub fn restart() {
     let _ = std::process::Command::new(exe).spawn();
   }
   std::process::exit(0);
+}
+
+async fn apply_inner() -> Result<(), String> {
+  tokio::task::spawn_blocking(|| {
+    let updater = build_updater().map_err(|e| e.to_string())?;
+    let update = updater
+      .check()
+      .map_err(|e| e.to_string())?
+      .ok_or_else(|| "no update available".to_string())?;
+    update.download_and_install().map_err(|e| e.to_string())
+  })
+  .await
+  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+}
+
+async fn check_inner() -> Result<Option<String>, String> {
+  tokio::task::spawn_blocking(|| {
+    let updater = build_updater().map_err(|e| e.to_string())?;
+    updater
+      .check()
+      .map(|opt| opt.map(|u| u.version))
+      .map_err(|e| e.to_string())
+  })
+  .await
+  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+}
+
+fn handle_apply_result(result: Result<(), String>) -> Message {
+  match result {
+    Ok(()) => {
+      info!("update applied successfully");
+      Message::ApplyComplete
+    }
+    Err(e) => {
+      warn!(error = %e, "update apply failed");
+      Message::ApplyFailed(e)
+    }
+  }
+}
+
+fn handle_check_result(result: Result<Option<String>, String>) -> Message {
+  match result {
+    Ok(Some(version)) => {
+      info!(%version, "update available");
+      Message::CheckComplete(Some(version))
+    }
+    Ok(None) => {
+      info!("app is up to date");
+      Message::CheckComplete(None)
+    }
+    Err(e) => {
+      warn!(error = %e, "update check failed");
+      Message::CheckFailed
+    }
+  }
 }
 
 fn build_updater() -> Result<cargo_packager_updater::Updater, cargo_packager_updater::Error> {

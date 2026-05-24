@@ -210,39 +210,72 @@ fn dispatch_loaded(state: &mut State, message: Message, services: &Services) -> 
       insert_image_handles(&mut state.implant_icons, icons);
       iced::Task::none()
     }
-    Message::ContactsLoaded(Ok((contacts, labels))) => {
-      state.contact_labels = labels;
-      state.contacts = LoadState::Loaded(contacts);
-      recompute_contact_filter(state);
-      iced::Task::none()
-    }
-    Message::ContactsLoaded(Err(e)) => {
-      state.contacts = LoadState::Error(e);
-      iced::Task::none()
-    }
     Message::KilllogLoaded(result) => handle_killlog_loaded(state, result, services),
     Message::ShipIconsLoaded(icons) => {
       insert_image_handles(&mut state.ship_icons, icons);
       iced::Task::none()
     }
-    Message::NotificationsLoaded(Ok(notifications)) => {
+    msg => dispatch_loaded_results(state, msg),
+  }
+}
+
+fn dispatch_loaded_results(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::ContactsLoaded(result) => handle_contacts_loaded(state, result),
+    Message::NotificationsLoaded(result) => handle_notifications_loaded(state, result),
+    Message::StandingsLoaded(result) => handle_standings_loaded(state, result),
+    _ => iced::Task::none(),
+  }
+}
+
+fn handle_contacts_loaded(
+  state: &mut State,
+  result: Result<(Vec<pod_model::CharacterContact>, Vec<pod_model::CharacterContactLabel>), String>,
+) -> iced::Task<Message> {
+  match result {
+    Ok((contacts, labels)) => {
+      state.contact_labels = labels;
+      state.contacts = LoadState::Loaded(contacts);
+      recompute_contact_filter(state);
+      iced::Task::none()
+    }
+    Err(e) => {
+      state.contacts = LoadState::Error(e);
+      iced::Task::none()
+    }
+  }
+}
+
+fn handle_notifications_loaded(
+  state: &mut State,
+  result: Result<Vec<pod_model::CharacterNotification>, String>,
+) -> iced::Task<Message> {
+  match result {
+    Ok(notifications) => {
       state.notifications = LoadState::Loaded(notifications);
       recompute_notifications_filter(state);
       iced::Task::none()
     }
-    Message::NotificationsLoaded(Err(e)) => {
+    Err(e) => {
       state.notifications = LoadState::Error(e);
       iced::Task::none()
     }
-    Message::StandingsLoaded(Ok(standings)) => {
+  }
+}
+
+fn handle_standings_loaded(
+  state: &mut State,
+  result: Result<Vec<pod_model::CharacterStanding>, String>,
+) -> iced::Task<Message> {
+  match result {
+    Ok(standings) => {
       state.standings = LoadState::Loaded(standings);
       iced::Task::none()
     }
-    Message::StandingsLoaded(Err(e)) => {
+    Err(e) => {
       state.standings = LoadState::Error(e);
       iced::Task::none()
     }
-    _ => iced::Task::none(),
   }
 }
 
@@ -757,6 +790,17 @@ async fn resolve_killlog_entity_names(entity_ids: &[i64], esi: &pod_esi::Client)
     .collect()
 }
 
+fn extract_final_blow(attackers: &[serde_json::Value], char_id: i64) -> bool {
+  attackers.iter().any(|a| {
+    a.get("final_blow").and_then(|v| v.as_bool()).unwrap_or(false)
+      && a.get("character_id").and_then(|v| v.as_i64()).unwrap_or(0) == char_id
+  })
+}
+
+fn get_json_i64(value: &serde_json::Value, key: &str) -> i64 {
+  value.get(key).and_then(|v| v.as_i64()).unwrap_or(0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_kill_entry(
   detail: pod_esi::models::killmail::Killmail,
@@ -767,24 +811,12 @@ fn build_kill_entry(
   entity_name_map: &HashMap<i64, String>,
   zkill_value_map: &HashMap<i64, f64>,
 ) -> pod_model::CharacterKillEntry {
-  let victim_char_id = detail.victim.get("character_id").and_then(|v| v.as_i64()).unwrap_or(0);
+  let victim_char_id = get_json_i64(&detail.victim, "character_id");
   let is_kill = victim_char_id != char_id;
-  let ship_type_id = detail
-    .victim
-    .get("ship_type_id")
-    .and_then(|v| v.as_i64())
-    .map(|id| id as i32)
-    .unwrap_or(0);
+  let ship_type_id = get_json_i64(&detail.victim, "ship_type_id") as i32;
   let attacker_count = detail.attackers.len() as u32;
-  let final_blow = detail.attackers.iter().any(|a| {
-    a.get("final_blow").and_then(|v| v.as_bool()).unwrap_or(false)
-      && a.get("character_id").and_then(|v| v.as_i64()).unwrap_or(0) == char_id
-  });
-  let victim_corp_id = detail
-    .victim
-    .get("corporation_id")
-    .and_then(|v| v.as_i64())
-    .unwrap_or(0);
+  let final_blow = extract_final_blow(&detail.attackers, char_id);
+  let victim_corp_id = get_json_i64(&detail.victim, "corporation_id");
   let victim_name = entity_name_map.get(&victim_char_id).cloned().unwrap_or_default();
   let victim_corp = entity_name_map.get(&victim_corp_id).cloned().unwrap_or_default();
   let total_value = zkill_value_map.get(&detail.killmail_id).copied().unwrap_or(0.0);
@@ -878,6 +910,13 @@ fn notification_category_label_a(cat: &pod_model::NotificationCategory) -> Optio
     NotificationCategory::Combat => Some("combat"),
     NotificationCategory::Contact => Some("contact"),
     NotificationCategory::Contract => Some("contract"),
+    cat => notification_category_label_a_ext(cat),
+  }
+}
+
+fn notification_category_label_a_ext(cat: &pod_model::NotificationCategory) -> Option<&'static str> {
+  use pod_model::NotificationCategory;
+  match cat {
     NotificationCategory::Corp => Some("corp"),
     NotificationCategory::Fw => Some("fw"),
     NotificationCategory::Incursion => Some("incursion"),

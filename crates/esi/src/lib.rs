@@ -225,6 +225,7 @@ impl ClientBuilder {
     self.validate().map_err(|e| Error::Internal(e.to_string()))?;
     let inner = reqwest::Client::builder()
       .user_agent(concat!("pod/", env!("CARGO_PKG_VERSION")))
+      .timeout(std::time::Duration::from_secs(30))
       .build()
       .map_err(Error::Http)?;
     let cache = match self.cache {

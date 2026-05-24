@@ -44,82 +44,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     Message::FolderPane(folder_pane::Message::FolderSelected(folder)) => update_folder_selected(state, folder),
     Message::MessageList(msg) => update_message_list(state, msg, services),
     Message::ReadingPane(msg) => update_reading_pane(state, msg, services),
-    Message::ComposePressed | Message::Compose(_) => update_compose_event(state, message, services),
-    Message::MailDeleted => update_mail_deleted(state),
-    Message::MailBodyLoaded(msg_id, paragraphs) => update_mail_body_loaded(state, msg_id, paragraphs),
-    Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
-    Message::PaneDrag(x) => update_pane_drag(state, x),
-    Message::PaneDragEnd => update_pane_drag_end(state),
-    Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
-    Message::ReauthorizeCharacter(_) => iced::Task::none(),
-  }
-}
-
-fn update_compose_event(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
-  match message {
-    Message::ComposePressed => update_compose_open(state),
-    Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
-    _ => unreachable!(),
-  }
-}
-
-fn update_message_list(state: &mut State, msg: message_list_pane::Message, services: &Services) -> iced::Task<Message> {
-  match msg {
-    message_list_pane::Message::CursorMoved(x, y) => {
-      state.cursor_pos = (x, y);
-      iced::Task::none()
-    }
-    message_list_pane::Message::MessageRightClicked(id) => update_message_right_clicked(state, id),
-    message_list_pane::Message::ContextMenuClose => {
-      state.context_menu = None;
-      iced::Task::none()
-    }
-    message_list_pane::Message::MessageSelected(id) => update_message_selected(state, id, services),
-    message_list_pane::Message::SearchChanged(q) => {
-      state.search_query = q;
-      iced::Task::none()
-    }
-  }
-}
-
-fn update_reading_pane(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
-  match msg {
-    reading_pane::Message::ReplyPressed | reading_pane::Message::ReplyAllPressed => update_reply(state),
-    reading_pane::Message::ForwardPressed => update_forward(state),
-    reading_pane::Message::StarToggle => update_star_toggle(state),
-    reading_pane::Message::ArchivePressed => update_archive(state),
-    reading_pane::Message::DeletePressed => update_delete(state, services),
-    reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
-    reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
-    reading_pane::Message::SnoozeFailed(_) => iced::Task::none(),
-    reading_pane::Message::SnoozeSet(label) => update_snooze_set(state, label, services),
-    reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
-  }
-}
-
-async fn get_or_create_snoozed_label(
-  esi: &pod_esi::Client,
-  grant: &pod_esi::models::auth::Grant,
-  add_label: bool,
-) -> Result<Option<i64>, String> {
-  let char_client = esi.character(grant);
-  let all_labels = char_client
-    .mail_labels()
-    .await
-    .map_err(|e| format!("Failed to fetch labels: {e}"))?;
-  match find_snoozed_label_id(&all_labels) {
-    Some(id) => Ok(Some(id)),
-    None if !add_label => Ok(None),
-    None => {
-      let id = char_client
-        .create_mail_label(NewMailLabel {
-          color: Some("#ffaa00".into()),
-          name: "Snoozed".into(),
-        })
-        .await
-        .map_err(|e| format!("Failed to create Snoozed label: {e}"))?;
-      Ok(Some(id))
-    }
+    msg => update_non_ui(state, msg, services),
   }
 }
 
@@ -426,6 +351,38 @@ async fn fetch_mail_body(
   }
 }
 
+async fn fetch_character_mail(
+  character: &Character,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+  snoozed_lookup: &std::collections::HashMap<(i64, i64), String>,
+) -> Result<Vec<MailMessage>, String> {
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    return Ok(Vec::new());
+  };
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  let esi_headers = char_client.mail().await.unwrap_or_default();
+  let recipient_map = build_recipient_map(&esi_headers);
+  let name_ids = collect_name_ids(&esi_headers, &recipient_map, *character.id());
+  let mut name_map = resolve_mail_name_map(&name_ids, esi).await?;
+  if !esi_headers.is_empty() {
+    let db_rows = build_db_mail_rows(&esi_headers, &recipient_map, &name_map, *character.id());
+    // best-effort cache write
+    let _ = db.characters().upsert_mail_headers(*character.id(), &db_rows).await;
+  }
+  let Ok(rows) = db.characters().mail_headers(*character.id()).await else {
+    return Ok(Vec::new());
+  };
+  supplement_name_map(&rows, &mut name_map, *character.id(), esi).await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| build_mail_message(row, &name_map, character.name(), snoozed_lookup))
+      .collect(),
+  )
+}
+
 async fn fetch_mail_headers(
   characters: Vec<Character>,
   esi: pod_esi::Client,
@@ -438,37 +395,8 @@ async fn fetch_mail_headers(
     .map(|r| ((r.character_id, r.mail_id), r.snooze_until))
     .collect();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    let esi_headers = char_client.mail().await.unwrap_or_default();
-    let recipient_map = build_recipient_map(&esi_headers);
-    let name_ids = collect_name_ids(&esi_headers, &recipient_map, *character.id());
-    let mut name_map: std::collections::HashMap<i64, String> = if !name_ids.is_empty() {
-      esi
-        .universe()
-        .names(&name_ids)
-        .await
-        .map_err(|e| format!("ESI name resolution failed: {e}"))?
-        .into_iter()
-        .map(|n| (n.id, n.name))
-        .collect()
-    } else {
-      std::collections::HashMap::new()
-    };
-    if !esi_headers.is_empty() {
-      let db_rows = build_db_mail_rows(&esi_headers, &recipient_map, &name_map, *character.id());
-      // best-effort cache write
-      let _ = db.characters().upsert_mail_headers(*character.id(), &db_rows).await;
-    }
-    if let Ok(rows) = db.characters().mail_headers(*character.id()).await {
-      supplement_name_map(&rows, &mut name_map, *character.id(), &esi).await?;
-      for row in rows {
-        all.push(build_mail_message(row, &name_map, character.name(), &snoozed_lookup));
-      }
-    }
+    let mut messages = fetch_character_mail(character, &esi, &db, &snoozed_lookup).await?;
+    all.append(&mut messages);
   }
   Ok(all)
 }
@@ -488,6 +416,32 @@ fn format_timestamp_label(ts: &str) -> String {
     ts[11..16].to_string()
   } else {
     ts.to_string()
+  }
+}
+
+async fn get_or_create_snoozed_label(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+  add_label: bool,
+) -> Result<Option<i64>, String> {
+  let char_client = esi.character(grant);
+  let all_labels = char_client
+    .mail_labels()
+    .await
+    .map_err(|e| format!("Failed to fetch labels: {e}"))?;
+  match find_snoozed_label_id(&all_labels) {
+    Some(id) => Ok(Some(id)),
+    None if !add_label => Ok(None),
+    None => {
+      let id = char_client
+        .create_mail_label(NewMailLabel {
+          color: Some("#ffaa00".into()),
+          name: "Snoozed".into(),
+        })
+        .await
+        .map_err(|e| format!("Failed to create Snoozed label: {e}"))?;
+      Ok(Some(id))
+    }
   }
 }
 
@@ -585,6 +539,21 @@ async fn resolve_all_recipients(
     resolved.extend(named);
   }
   Ok(resolved)
+}
+
+async fn resolve_mail_name_map(
+  name_ids: &[i64],
+  esi: &pod_esi::Client,
+) -> Result<std::collections::HashMap<i64, String>, String> {
+  if name_ids.is_empty() {
+    return Ok(std::collections::HashMap::new());
+  }
+  esi
+    .universe()
+    .names(name_ids)
+    .await
+    .map_err(|e| format!("ESI name resolution failed: {e}"))
+    .map(|ns| ns.into_iter().map(|n| (n.id, n.name)).collect())
 }
 
 async fn resolve_named_recipients(names: &[&str], esi: &pod_esi::Client) -> Result<Vec<MailRecipient>, String> {
@@ -958,6 +927,25 @@ fn update_mail_headers_loaded(state: &mut State, result: Result<Vec<MailMessage>
   iced::Task::none()
 }
 
+fn update_message_list(state: &mut State, msg: message_list_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    message_list_pane::Message::ContextMenuClose => {
+      state.context_menu = None;
+      iced::Task::none()
+    }
+    message_list_pane::Message::CursorMoved(x, y) => {
+      state.cursor_pos = (x, y);
+      iced::Task::none()
+    }
+    message_list_pane::Message::MessageRightClicked(id) => update_message_right_clicked(state, id),
+    message_list_pane::Message::MessageSelected(id) => update_message_selected(state, id, services),
+    message_list_pane::Message::SearchChanged(q) => {
+      state.search_query = q;
+      iced::Task::none()
+    }
+  }
+}
+
 fn update_message_right_clicked(state: &mut State, id: String) -> iced::Task<Message> {
   state.context_menu = Some((id.clone(), state.cursor_pos.0, state.cursor_pos.1));
   state.selected_message_id = Some(id);
@@ -983,6 +971,26 @@ fn update_message_selected(state: &mut State, id: String, services: &Services) -
     }
   }
   iced::Task::none()
+}
+
+fn update_non_ui(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::ComposePressed => update_compose_open(state),
+    Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
+    Message::MailBodyLoaded(msg_id, paragraphs) => update_mail_body_loaded(state, msg_id, paragraphs),
+    Message::MailDeleted => update_mail_deleted(state),
+    msg => update_pane_and_headers(state, msg),
+  }
+}
+
+fn update_pane_and_headers(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
+    Message::PaneDrag(x) => update_pane_drag(state, x),
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
+    _ => iced::Task::none(),
+  }
 }
 
 fn update_pane_drag(state: &mut State, x: f32) -> iced::Task<Message> {
@@ -1014,6 +1022,17 @@ fn update_pane_drag_start(state: &mut State, pane: DraggingPane) -> iced::Task<M
   iced::Task::none()
 }
 
+fn update_reading_pane(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::ArchivePressed => update_archive(state),
+    reading_pane::Message::ForwardPressed => update_forward(state),
+    reading_pane::Message::ReplyAllPressed => update_reply(state),
+    reading_pane::Message::ReplyPressed => update_reply(state),
+    reading_pane::Message::StarToggle => update_star_toggle(state),
+    msg => update_snooze_message(state, msg, services),
+  }
+}
+
 fn update_reply(state: &mut State) -> iced::Task<Message> {
   state.context_menu = None;
   let Some(msg) = state
@@ -1039,6 +1058,17 @@ fn update_reply(state: &mut State) -> iced::Task<Message> {
   state.compose.from_picker.selected = PickerSelection::Character(msg.character_id);
   state.snooze_popover_open = false;
   iced::Task::none()
+}
+
+fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
+    reading_pane::Message::DeletePressed => update_delete(state, services),
+    reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
+    reading_pane::Message::SnoozeSet(label) => update_snooze_set(state, label, services),
+    reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
+    _ => iced::Task::none(),
+  }
 }
 
 fn update_snooze_set(state: &mut State, label: String, services: &Services) -> iced::Task<Message> {

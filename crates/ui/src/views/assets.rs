@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 pub use header::Component as Header;
 use iced::{
-  Element, Event, Length, Padding, Subscription, mouse,
-  widget::{Space, column, container, image, mouse_area},
+  Background, Element, Event, Length, Padding, Subscription, mouse,
+  widget::{Space, column, container, image, mouse_area, stack},
 };
 pub use main_panel::Component as MainPanel;
 use pod_model::{Character, Corporation, missing_scopes};
@@ -378,23 +378,7 @@ impl State {
 
     self.assets.iter().filter(move |a| {
       let owner_id = corp_id.or(char_id);
-      if let Some(id) = owner_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      if cat_key != "all" && a.category_key != cat_key {
-        return false;
-      }
-      if let Some(ref filter) = loc
-        && !asset_matches_loc_filter(a, filter)
-      {
-        return false;
-      }
-      if !query.matches(a) {
-        return false;
-      }
-      true
+      asset_filter_predicate(a, owner_id, cat_key, loc.as_deref(), &query)
     })
   }
 
@@ -403,32 +387,7 @@ impl State {
     let col = self.sort_col.clone();
     let asc = self.sort_asc;
     v.sort_by(|a, b| {
-      let cmp = match col {
-        SortCol::Name => a.type_name.cmp(&b.type_name),
-        SortCol::Category => a.category_key.cmp(&b.category_key),
-        SortCol::Qty => a.quantity.cmp(&b.quantity),
-        SortCol::UnitValue => 0_f64.partial_cmp(&0_f64).unwrap_or(std::cmp::Ordering::Equal),
-        SortCol::TotalValue => asset_value(a)
-          .partial_cmp(&asset_value(b))
-          .unwrap_or(std::cmp::Ordering::Equal),
-        SortCol::Volume => asset_volume(a)
-          .partial_cmp(&asset_volume(b))
-          .unwrap_or(std::cmp::Ordering::Equal),
-        SortCol::Location => {
-          let a_loc = if a.container_path.is_empty() {
-            &a.location_name
-          } else {
-            &a.container_path
-          };
-          let b_loc = if b.container_path.is_empty() {
-            &b.location_name
-          } else {
-            &b.container_path
-          };
-          a_loc.cmp(b_loc)
-        }
-        SortCol::Owner => a.character_id.cmp(&b.character_id),
-      };
+      let cmp = sort_cmp(&col, a, b);
       if asc { cmp } else { cmp.reverse() }
     });
     v
@@ -529,6 +488,29 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
     .collect()
 }
 
+fn asset_filter_predicate(
+  a: &AssetRecord,
+  owner_id: Option<i64>,
+  cat_key: &str,
+  loc: Option<&str>,
+  query: &AssetFilterQuery,
+) -> bool {
+  if let Some(id) = owner_id
+    && a.character_id != id
+  {
+    return false;
+  }
+  if cat_key != "all" && a.category_key != cat_key {
+    return false;
+  }
+  if let Some(filter) = loc
+    && !asset_matches_loc_filter(a, filter)
+  {
+    return false;
+  }
+  query.matches(a)
+}
+
 fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
   if let Some(sys) = filter.strip_prefix("system:") {
     a.system_name == sys
@@ -545,48 +527,91 @@ fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
   }
 }
 
+fn sort_cmp(col: &SortCol, a: &AssetRecord, b: &AssetRecord) -> std::cmp::Ordering {
+  match col {
+    SortCol::Name => a.type_name.cmp(&b.type_name),
+    SortCol::Category => a.category_key.cmp(&b.category_key),
+    SortCol::Qty => a.quantity.cmp(&b.quantity),
+    SortCol::UnitValue => std::cmp::Ordering::Equal,
+    SortCol::TotalValue => asset_value(a)
+      .partial_cmp(&asset_value(b))
+      .unwrap_or(std::cmp::Ordering::Equal),
+    SortCol::Volume => asset_volume(a)
+      .partial_cmp(&asset_volume(b))
+      .unwrap_or(std::cmp::Ordering::Equal),
+    SortCol::Location => sort_cmp_location(a, b),
+    SortCol::Owner => a.character_id.cmp(&b.character_id),
+  }
+}
+
+fn sort_cmp_location(a: &AssetRecord, b: &AssetRecord) -> std::cmp::Ordering {
+  let a_loc = if a.container_path.is_empty() {
+    &a.location_name
+  } else {
+    &a.container_path
+  };
+  let b_loc = if b.container_path.is_empty() {
+    &b.location_name
+  } else {
+    &b.container_path
+  };
+  a_loc.cmp(b_loc)
+}
+
+fn update_category_changed(state: &mut State, cat: Category) {
+  state.category = cat;
+  state.visible_count = 100;
+}
+
+fn update_help_pop_over_inner(state: &mut State, inner: inventory_tab::help_pop_over::Message) {
+  if let inventory_tab::help_pop_over::Message::QueryInserted(ref q) = inner {
+    let sep = if state.search_query.is_empty() { "" } else { " " };
+    state.search_query = format!("{}{sep}{q}", state.search_query);
+    state.visible_count = 100;
+  }
+  let _ = state.help_pop_over.update(inner);
+}
+
+fn update_help_toggle(state: &mut State) {
+  let inner = if state.help_pop_over.visible {
+    inventory_tab::help_pop_over::Message::Close
+  } else {
+    inventory_tab::help_pop_over::Message::Open
+  };
+  let _ = state.help_pop_over.update(inner);
+}
+
+fn update_scroll_update(state: &mut State, y: f32) {
+  if y > 0.85 {
+    let total = state.visible_assets().count();
+    if state.visible_count < total {
+      state.visible_count += 50;
+    }
+  }
+}
+
+fn update_search_changed(state: &mut State, q: String) {
+  state.search_query = q;
+  state.visible_count = 100;
+}
+
+fn update_sort_changed(state: &mut State, col: SortCol) {
+  if state.sort_col == col {
+    state.sort_asc = !state.sort_asc;
+  } else {
+    state.sort_col = col;
+    state.sort_asc = matches!(state.sort_col, SortCol::Name | SortCol::Category | SortCol::Location);
+  }
+}
+
 fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
   match msg {
-    inventory_tab::Message::CategoryChanged(cat) => {
-      state.category = cat;
-      state.visible_count = 100;
-    }
-    inventory_tab::Message::HelpPopOver(inner) => {
-      if let inventory_tab::help_pop_over::Message::QueryInserted(ref q) = inner {
-        let sep = if state.search_query.is_empty() { "" } else { " " };
-        state.search_query = format!("{}{sep}{q}", state.search_query);
-        state.visible_count = 100;
-      }
-      let _ = state.help_pop_over.update(inner);
-    }
-    inventory_tab::Message::HelpToggle => {
-      let inner = if state.help_pop_over.visible {
-        inventory_tab::help_pop_over::Message::Close
-      } else {
-        inventory_tab::help_pop_over::Message::Open
-      };
-      let _ = state.help_pop_over.update(inner);
-    }
-    inventory_tab::Message::ScrollUpdate(y) => {
-      if y > 0.85 {
-        let total = state.visible_assets().count();
-        if state.visible_count < total {
-          state.visible_count += 50;
-        }
-      }
-    }
-    inventory_tab::Message::SearchChanged(q) => {
-      state.search_query = q;
-      state.visible_count = 100;
-    }
-    inventory_tab::Message::SortChanged(col) => {
-      if state.sort_col == col {
-        state.sort_asc = !state.sort_asc;
-      } else {
-        state.sort_col = col;
-        state.sort_asc = matches!(state.sort_col, SortCol::Name | SortCol::Category | SortCol::Location);
-      }
-    }
+    inventory_tab::Message::CategoryChanged(cat) => update_category_changed(state, cat),
+    inventory_tab::Message::HelpPopOver(inner) => update_help_pop_over_inner(state, inner),
+    inventory_tab::Message::HelpToggle => update_help_toggle(state),
+    inventory_tab::Message::ScrollUpdate(y) => update_scroll_update(state, y),
+    inventory_tab::Message::SearchChanged(q) => update_search_changed(state, q),
+    inventory_tab::Message::SortChanged(col) => update_sort_changed(state, col),
     inventory_tab::Message::ToggleContainer(id) => {
       if !state.expanded_containers.remove(&id) {
         state.expanded_containers.insert(id);
@@ -690,76 +715,19 @@ fn update_edit_stockpile(state: &mut State, id: i64) {
   }
 }
 
-fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Task<Message> {
-  if let character_picker::Message::Select(_) = &msg {
-    state.visible_count = 100;
-    state.selected_loc = None;
+fn apply_assets_loaded(state: &mut State, assets: Vec<AssetRecord>) {
+  let known_keys = collect_known_loc_keys(&state.assets);
+  for a in &assets {
+    maybe_collapse_region(state, a, &known_keys);
+    maybe_collapse_constellation(state, a, &known_keys);
   }
-  state.picker.update(msg);
-  iced::Task::none()
-}
-
-fn load_item_icons(state: &mut State, icons: Vec<(i32, String, Vec<u8>)>) {
-  for (type_id, variant, bytes) in icons {
-    state
-      .item_icons
-      .insert((type_id, variant), image::Handle::from_bytes(bytes));
-  }
-}
-
-fn update_nav_history(state: &mut State, history: Vec<(chrono::NaiveDate, f64)>) {
-  state.nav_series = history.iter().map(|(_, v)| *v).collect();
-  state.nav_history = history;
-}
-
-fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
-  match msg {
-    tracker_tab::Message::TrackerRangeChanged(r) => {
-      state.tracker_range = r;
-    }
-  }
+  state.assets = assets;
+  state.loading = false;
 }
 
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
-    Message::AssetsLoaded(Ok(assets)) => {
-      let known_keys: HashSet<String> = state
-        .assets
-        .iter()
-        .flat_map(|a| {
-          [
-            if a.region_name.is_empty() {
-              None
-            } else {
-              Some(format!("region:{}", a.region_name))
-            },
-            if a.constellation_name.is_empty() {
-              None
-            } else {
-              Some(format!("constellation:{}", a.constellation_name))
-            },
-          ]
-          .into_iter()
-          .flatten()
-        })
-        .collect();
-      for a in &assets {
-        if !a.region_name.is_empty() {
-          let key = format!("region:{}", a.region_name);
-          if !known_keys.contains(&key) {
-            state.collapsed_sidebar_groups.insert(key);
-          }
-        }
-        if !a.constellation_name.is_empty() {
-          let key = format!("constellation:{}", a.constellation_name);
-          if !known_keys.contains(&key) {
-            state.collapsed_sidebar_groups.insert(key);
-          }
-        }
-      }
-      state.assets = assets;
-      state.loading = false;
-    }
+    Message::AssetsLoaded(Ok(assets)) => apply_assets_loaded(state, assets),
     Message::AssetsLoaded(Err(e)) => {
       eprintln!("assets: failed to load: {e}");
       state.loading = false;
@@ -777,6 +745,82 @@ fn apply_data_loaded(state: &mut State, message: Message) {
   }
 }
 
+fn collect_known_loc_keys(assets: &[AssetRecord]) -> HashSet<String> {
+  assets
+    .iter()
+    .flat_map(|a| {
+      [
+        if a.region_name.is_empty() {
+          None
+        } else {
+          Some(format!("region:{}", a.region_name))
+        },
+        if a.constellation_name.is_empty() {
+          None
+        } else {
+          Some(format!("constellation:{}", a.constellation_name))
+        },
+      ]
+      .into_iter()
+      .flatten()
+    })
+    .collect()
+}
+
+fn load_item_icons(state: &mut State, icons: Vec<(i32, String, Vec<u8>)>) {
+  for (type_id, variant, bytes) in icons {
+    state
+      .item_icons
+      .insert((type_id, variant), image::Handle::from_bytes(bytes));
+  }
+}
+
+fn maybe_collapse_constellation(state: &mut State, a: &AssetRecord, known_keys: &HashSet<String>) {
+  if !a.constellation_name.is_empty() {
+    let key = format!("constellation:{}", a.constellation_name);
+    if !known_keys.contains(&key) {
+      state.collapsed_sidebar_groups.insert(key);
+    }
+  }
+}
+
+fn maybe_collapse_region(state: &mut State, a: &AssetRecord, known_keys: &HashSet<String>) {
+  if !a.region_name.is_empty() {
+    let key = format!("region:{}", a.region_name);
+    if !known_keys.contains(&key) {
+      state.collapsed_sidebar_groups.insert(key);
+    }
+  }
+}
+
+fn update_assets_secondary(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::LoadMoreAssets => update_load_more_assets(state),
+    Message::LocationSelected(loc) => update_location_selected(state, loc),
+    Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
+    Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
+    Message::TabSelected(tab) => update_tab_selected(state, tab),
+    Message::ToggleSidebarGroup(key) => update_toggle_sidebar_group(state, key),
+    Message::TrackerTab(msg) => update_tracker_tab(state, msg),
+    Message::ValuesTab(_) => {}
+    msg => apply_data_loaded(state, msg),
+  }
+  iced::Task::none()
+}
+
+fn update_load_more_assets(state: &mut State) {
+  state.visible_count += 50;
+}
+
+fn update_location_selected(state: &mut State, loc: Option<String>) {
+  state.selected_loc = loc;
+}
+
+fn update_nav_history(state: &mut State, history: Vec<(chrono::NaiveDate, f64)>) {
+  state.nav_series = history.iter().map(|(_, v)| *v).collect();
+  state.nav_history = history;
+}
+
 fn update_pane_drag(state: &mut State, x: f32) {
   if state.last_drag_x > 0.0 {
     let delta = x - state.last_drag_x;
@@ -785,41 +829,65 @@ fn update_pane_drag(state: &mut State, x: f32) {
   state.last_drag_x = x;
 }
 
+fn update_pane_drag_end(state: &mut State) {
+  state.dragging_pane = false;
+  state.last_drag_x = 0.0;
+}
+
+fn update_pane_drag_start(state: &mut State) {
+  state.dragging_pane = true;
+  state.last_drag_x = 0.0;
+}
+
+fn update_picker(state: &mut State, msg: character_picker::Message) -> iced::Task<Message> {
+  if let character_picker::Message::Select(_) = &msg {
+    state.visible_count = 100;
+    state.selected_loc = None;
+  }
+  state.picker.update(msg);
+  iced::Task::none()
+}
+
+fn update_tab_selected(state: &mut State, tab: Tab) {
+  state.active_tab = tab;
+}
+
+fn update_toggle_sidebar_group(state: &mut State, key: String) {
+  if !state.collapsed_sidebar_groups.remove(&key) {
+    state.collapsed_sidebar_groups.insert(key);
+  }
+}
+
+fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
+  match msg {
+    tracker_tab::Message::TrackerRangeChanged(r) => {
+      state.tracker_range = r;
+    }
+  }
+}
+
 /// Processes an assets message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::PaneDrag(x) => update_pane_drag(state, x),
+    Message::InventoryTab(msg) => {
+      update_inventory_tab(state, msg);
+      iced::Task::none()
+    }
+    Message::PaneDrag(x) => {
+      update_pane_drag(state, x);
+      iced::Task::none()
+    }
     Message::PaneDragEnd => {
-      state.dragging_pane = false;
-      state.last_drag_x = 0.0;
+      update_pane_drag_end(state);
+      iced::Task::none()
     }
     Message::PaneDragStart => {
-      state.dragging_pane = true;
-      state.last_drag_x = 0.0;
+      update_pane_drag_start(state);
+      iced::Task::none()
     }
-    Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
-    Message::InventoryTab(msg) => update_inventory_tab(state, msg),
-    Message::LoadMoreAssets => {
-      state.visible_count += 50;
-    }
-    Message::LocationSelected(loc) => {
-      state.selected_loc = loc;
-    }
-    Message::Picker(msg) => return update_picker(state, msg),
-    Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
-    Message::TabSelected(tab) => {
-      state.active_tab = tab;
-    }
-    Message::ToggleSidebarGroup(key) => {
-      if !state.collapsed_sidebar_groups.remove(&key) {
-        state.collapsed_sidebar_groups.insert(key);
-      }
-    }
-    Message::TrackerTab(msg) => update_tracker_tab(state, msg),
-    Message::ValuesTab(_msg) => {}
-    msg => apply_data_loaded(state, msg),
+    Message::Picker(msg) => update_picker(state, msg),
+    msg => update_assets_secondary(state, msg),
   }
-  iced::Task::none()
 }
 
 pub fn asset_value(a: &AssetRecord) -> f64 {
@@ -908,6 +976,86 @@ pub fn struct_glyph(kind: &str) -> &'static str {
   }
 }
 
+fn render_base<'a>(state: &'a State) -> Element<'a, Message> {
+  let header_el = Header::new(state).render();
+  let main_el = MainPanel::new(state).render();
+  container(column([header_el, main_el]))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn render_drag_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  if !state.dragging_pane {
+    return None;
+  }
+  Some(
+    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+      .on_move(|pt| Message::PaneDrag(pt.x))
+      .on_release(Message::PaneDragEnd)
+      .interaction(iced::mouse::Interaction::ResizingHorizontally)
+      .into(),
+  )
+}
+
+fn render_help_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  if !state.help_pop_over.visible || state.active_tab != Tab::Inventory {
+    return None;
+  }
+  let help_el = inventory_tab::help_pop_over::Component::new()
+    .render()
+    .map(|m| Message::InventoryTab(inventory_tab::Message::HelpPopOver(m)));
+  Some(
+    container(help_el)
+      .height(Length::Fill)
+      .width(Length::Fill)
+      .align_x(iced::alignment::Horizontal::Right)
+      .padding(Padding {
+        top: spacing::layout::HEADER_HEIGHT + 100.0,
+        right: 20.0,
+        ..Padding::ZERO
+      })
+      .into(),
+  )
+}
+
+fn render_picker_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  if !state.picker.is_open {
+    return None;
+  }
+  let dropdown = state.picker.dropdown().map(Message::Picker);
+  Some(
+    container(dropdown)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(iced::alignment::Horizontal::Left)
+      .padding(Padding {
+        top: spacing::layout::HEADER_HEIGHT + 8.0,
+        left: spacing::SPACE_8,
+        ..Padding::ZERO
+      })
+      .into(),
+  )
+}
+
+fn render_scope_missing<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  if let Some(char_id) = state.selected_character()
+    && let Some(character) = state.characters.iter().find(|c| *c.id() == char_id)
+  {
+    let granted = character.granted_scopes_list();
+    if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
+      return Some(ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
+        scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+      }));
+    }
+  }
+  None
+}
+
 /// Builder for the assets view.
 pub struct Component<'a> {
   state: &'a State,
@@ -923,92 +1071,19 @@ impl<'a> Component<'a> {
 
   /// Renders the full assets window into an iced element.
   pub fn render(self) -> Element<'a, Message> {
-    use iced::{Background, widget::stack};
-
     let state = self.state;
-
-    if let Some(char_id) = state.selected_character()
-      && let Some(character) = state.characters.iter().find(|c| *c.id() == char_id)
-    {
-      let granted = character.granted_scopes_list();
-      if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
-        return ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
-          scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-        });
-      }
+    if let Some(el) = render_scope_missing(state) {
+      return el;
     }
-
-    let header_el = Header::new(state).render();
-    let main_el = MainPanel::new(state).render();
-
-    let base: Element<'_, Message> = container(column([header_el, main_el]))
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        ..container::Style::default()
-      })
-      .into();
-
-    let drag_overlay: Option<Element<'_, Message>> = if state.dragging_pane {
-      Some(
-        mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-          .on_move(|pt| Message::PaneDrag(pt.x))
-          .on_release(Message::PaneDragEnd)
-          .interaction(iced::mouse::Interaction::ResizingHorizontally)
-          .into(),
-      )
-    } else {
-      None
-    };
-
-    let help_overlay: Option<Element<'_, Message>> =
-      if state.help_pop_over.visible && state.active_tab == Tab::Inventory {
-        let help_el = inventory_tab::help_pop_over::Component::new()
-          .render()
-          .map(|m| Message::InventoryTab(inventory_tab::Message::HelpPopOver(m)));
-        Some(
-          container(help_el)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .align_x(iced::alignment::Horizontal::Right)
-            .padding(Padding {
-              top: spacing::layout::HEADER_HEIGHT + 100.0,
-              right: 20.0,
-              ..Padding::ZERO
-            })
-            .into(),
-        )
-      } else {
-        None
-      };
-
-    let picker_overlay: Option<Element<'_, Message>> = if state.picker.is_open {
-      let dropdown = state.picker.dropdown().map(Message::Picker);
-      Some(
-        container(dropdown)
-          .width(Length::Fill)
-          .height(Length::Fill)
-          .align_x(iced::alignment::Horizontal::Left)
-          .padding(Padding {
-            top: spacing::layout::HEADER_HEIGHT + 8.0,
-            left: spacing::SPACE_8,
-            ..Padding::ZERO
-          })
-          .into(),
-      )
-    } else {
-      None
-    };
-
+    let base = render_base(state);
     let mut layers: Vec<Element<'_, Message>> = vec![base];
-    if let Some(d) = drag_overlay {
+    if let Some(d) = render_drag_overlay(state) {
       layers.push(d);
     }
-    if let Some(h) = help_overlay {
+    if let Some(h) = render_help_overlay(state) {
       layers.push(h);
     }
-    if let Some(p) = picker_overlay {
+    if let Some(p) = render_picker_overlay(state) {
       layers.push(p);
     }
     if layers.len() == 1 {

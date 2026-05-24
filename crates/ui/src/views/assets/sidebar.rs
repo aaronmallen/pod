@@ -109,6 +109,37 @@ fn collect_containers<'a>(
     })
 }
 
+fn push_constellation_rows<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  source: &'a [super::AssetRecord],
+  constellations: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+  char_id: Option<i64>,
+  selected_loc: Option<&str>,
+  collapsed_groups: &std::collections::HashSet<String>,
+  query: &AssetFilterQuery,
+) {
+  for (constellation_name, systems) in constellations {
+    let constellation_key = format!("constellation:{}", constellation_name);
+    let constellation_collapsed = collapsed_groups.contains(&constellation_key);
+    let constellation_count = count_filtered(source, char_id, query, |a| a.constellation_name == *constellation_name);
+    items.push(
+      ConstellationRow::new(
+        *constellation_name,
+        constellation_key,
+        constellation_collapsed,
+        constellation_count,
+      )
+      .render(),
+    );
+    if constellation_collapsed {
+      continue;
+    }
+    for sys_name in systems {
+      push_system_rows(items, source, sys_name, char_id, selected_loc);
+    }
+  }
+}
+
 fn push_location_rows<'a>(
   items: &mut Vec<Element<'a, Message>>,
   source: &'a [super::AssetRecord],
@@ -205,18 +236,14 @@ fn push_region_tree<'a>(
   collapsed_groups: &std::collections::HashSet<String>,
   query: &AssetFilterQuery,
 ) {
-  // Group: region → constellation → systems (only assets with a region name)
   let mut tree: BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
   for a in source {
-    if a.region_name.is_empty() {
+    if a.region_name.is_empty() || a.system_name.is_empty() {
       continue;
     }
     if let Some(id) = char_id
       && a.character_id != id
     {
-      continue;
-    }
-    if a.system_name.is_empty() {
       continue;
     }
     tree
@@ -230,37 +257,20 @@ fn push_region_tree<'a>(
   for (region_name, constellations) in &tree {
     let region_key = format!("region:{}", region_name);
     let region_collapsed = collapsed_groups.contains(&region_key);
-
     let region_count = count_filtered(source, char_id, query, |a| a.region_name == *region_name);
     items.push(RegionRow::new(*region_name, region_key, region_collapsed, region_count).render());
-
     if region_collapsed {
       continue;
     }
-
-    for (constellation_name, systems) in constellations {
-      let constellation_key = format!("constellation:{}", constellation_name);
-      let constellation_collapsed = collapsed_groups.contains(&constellation_key);
-
-      let constellation_count = count_filtered(source, char_id, query, |a| a.constellation_name == *constellation_name);
-      items.push(
-        ConstellationRow::new(
-          *constellation_name,
-          constellation_key,
-          constellation_collapsed,
-          constellation_count,
-        )
-        .render(),
-      );
-
-      if constellation_collapsed {
-        continue;
-      }
-
-      for sys_name in systems {
-        push_system_rows(items, source, sys_name, char_id, selected_loc);
-      }
-    }
+    push_constellation_rows(
+      items,
+      source,
+      constellations,
+      char_id,
+      selected_loc,
+      collapsed_groups,
+      query,
+    );
   }
 }
 

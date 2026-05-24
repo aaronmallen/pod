@@ -7,7 +7,7 @@ use std::{
 
 use iced::{Task, futures::SinkExt as _};
 use pod_esi::Client;
-use pod_model::{Character, CharacterAsset, CharacterAttributes, CorporationAsset, NeuralAttributes};
+use pod_model::{AssetSyncState, Character, CharacterAsset, CharacterAttributes, CorporationAsset, NeuralAttributes};
 use tracing::Instrument as _;
 
 use crate::services::{character as character_service, corporation as corporation_service};
@@ -376,6 +376,77 @@ async fn sync_active_ship(
   let _ = db.characters().upsert_assets(char_id, &[synthetic]).await;
 }
 
+fn sync_state_is_fresh(state: &AssetSyncState, now: i64) -> bool {
+  state.cache_expires_at.is_some_and(|expires_at| expires_at > now)
+}
+
+fn esi_to_corp_assets(corp_id: i64, raw: Vec<pod_esi::models::character::Asset>) -> Vec<CorporationAsset> {
+  raw
+    .into_iter()
+    .map(|a| CorporationAsset {
+      corporation_id: corp_id,
+      is_blueprint_copy: a.is_blueprint_copy,
+      is_singleton: a.is_singleton,
+      item_id: a.item_id,
+      location_flag: a.location_flag,
+      location_id: a.location_id,
+      location_type: a.location_type,
+      quantity: a.quantity,
+      type_id: a.type_id,
+    })
+    .collect()
+}
+
+fn keep_ids_from(assets: &[CorporationAsset]) -> Vec<i64> {
+  assets.iter().map(|a| a.item_id).collect()
+}
+
+async fn persist_corp_sync_results(
+  db: &pod_db::Repo,
+  corp_id: i64,
+  assets: &[CorporationAsset],
+  keep_ids: &[i64],
+  now: i64,
+) {
+  if let Err(e) = db.assets().upsert_corporation_assets(corp_id, assets).await {
+    tracing::warn!("sync: failed to persist assets for corp {corp_id}: {e}");
+  }
+  if let Err(e) = db.assets().delete_stale_corporation_assets(corp_id, keep_ids).await {
+    tracing::warn!("sync: failed to delete stale assets for corp {corp_id}: {e}");
+  }
+  if let Err(e) = db
+    .assets()
+    .upsert_asset_sync_state("corporation", corp_id, Some(now), Some(now + 3600))
+    .await
+  {
+    tracing::warn!("sync: failed to update asset sync state for corp {corp_id}: {e}");
+  }
+}
+
+async fn sync_one_corp_assets(corp: pod_model::Corporation, now: i64, esi: &Client, db: &pod_db::Repo) {
+  let corp_id = *corp.id();
+  if let Ok(Some(state)) = db.assets().get_asset_sync_state("corporation", corp_id).await
+    && sync_state_is_fresh(&state, now)
+  {
+    return;
+  }
+  let Some(token) = corporation_service::ensure_valid_token(&corp, esi, db).await else {
+    tracing::warn!("background sync: skipping corp {corp_id} — token refresh failed");
+    return;
+  };
+  let grant = corporation_service::refresh_grant(&corp, &token);
+  let raw = match esi.corporation(corp_id).auth(&grant).assets().await {
+    Ok(r) => r,
+    Err(e) => {
+      tracing::warn!("background sync: failed to fetch assets for corp {corp_id}: {e}");
+      return;
+    }
+  };
+  let assets = esi_to_corp_assets(corp_id, raw);
+  let keep_ids = keep_ids_from(&assets);
+  persist_corp_sync_results(db, corp_id, &assets, &keep_ids, now).await;
+}
+
 async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo) {
   let all_corps = match db.corporations().all().await {
     Ok(corps) => corps,
@@ -384,69 +455,10 @@ async fn sync_corp_assets(character: &Character, esi: &Client, db: &pod_db::Repo
       return;
     }
   };
-
   let now = chrono::Utc::now().timestamp();
-
-  for corp in all_corps
-    .into_iter()
-    .filter(|c| *c.auth_character_id() == *character.id())
-  {
-    let corp_id = *corp.id();
-
-    if let Ok(Some(state)) = db.assets().get_asset_sync_state("corporation", corp_id).await
-      && let Some(expires_at) = state.cache_expires_at
-      && expires_at > now
-    {
-      continue;
-    }
-
-    let token = match corporation_service::ensure_valid_token(&corp, esi, db).await {
-      Some(t) => t,
-      None => {
-        tracing::warn!("background sync: skipping corp {corp_id} — token refresh failed");
-        continue;
-      }
-    };
-
-    let grant = corporation_service::refresh_grant(&corp, &token);
-
-    let raw = match esi.corporation(corp_id).auth(&grant).assets().await {
-      Ok(r) => r,
-      Err(e) => {
-        tracing::warn!("background sync: failed to fetch assets for corp {corp_id}: {e}");
-        continue;
-      }
-    };
-
-    let assets: Vec<CorporationAsset> = raw
-      .into_iter()
-      .map(|a| CorporationAsset {
-        corporation_id: corp_id,
-        is_blueprint_copy: a.is_blueprint_copy,
-        is_singleton: a.is_singleton,
-        item_id: a.item_id,
-        location_flag: a.location_flag,
-        location_id: a.location_id,
-        location_type: a.location_type,
-        quantity: a.quantity,
-        type_id: a.type_id,
-      })
-      .collect();
-
-    let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-    if let Err(e) = db.assets().upsert_corporation_assets(corp_id, &assets).await {
-      tracing::warn!("sync: failed to persist assets for corp {corp_id}: {e}");
-    }
-    if let Err(e) = db.assets().delete_stale_corporation_assets(corp_id, &keep_ids).await {
-      tracing::warn!("sync: failed to delete stale assets for corp {corp_id}: {e}");
-    }
-    if let Err(e) = db
-      .assets()
-      .upsert_asset_sync_state("corporation", corp_id, Some(now), Some(now + 3600))
-      .await
-    {
-      tracing::warn!("sync: failed to update asset sync state for corp {corp_id}: {e}");
-    }
+  let char_id = *character.id();
+  for corp in all_corps.into_iter().filter(|c| *c.auth_character_id() == char_id) {
+    sync_one_corp_assets(corp, now, esi, db).await;
   }
 }
 
@@ -627,4 +639,125 @@ async fn sync_clones_to_db(
 
 async fn step(tx: &mut Tx, label: String) {
   let _ = tx.send(Message::StepChanged(label)).await;
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod esi_to_corp_assets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_esi_asset(item_id: i64, type_id: i32, location_id: i64) -> pod_esi::models::character::Asset {
+      pod_esi::models::character::Asset {
+        is_blueprint_copy: None,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_string(),
+        location_id,
+        location_type: "station".to_string(),
+        quantity: 1,
+        type_id,
+      }
+    }
+
+    #[test]
+    fn it_maps_esi_fields_to_corp_asset() {
+      let raw = vec![make_esi_asset(101, 42, 60_000_001)];
+
+      let result = esi_to_corp_assets(999, raw);
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].corporation_id, 999);
+      assert_eq!(result[0].item_id, 101);
+      assert_eq!(result[0].type_id, 42);
+      assert_eq!(result[0].location_id, 60_000_001);
+    }
+
+    #[test]
+    fn it_returns_empty_for_no_raw_assets() {
+      let result = esi_to_corp_assets(1, vec![]);
+
+      assert!(result.is_empty());
+    }
+  }
+
+  mod keep_ids_from {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_corp_asset(item_id: i64) -> CorporationAsset {
+      CorporationAsset {
+        corporation_id: 1,
+        is_blueprint_copy: None,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_string(),
+        location_id: 60_000_001,
+        location_type: "station".to_string(),
+        quantity: 1,
+        type_id: 42,
+      }
+    }
+
+    #[test]
+    fn it_collects_all_item_ids() {
+      let assets = vec![make_corp_asset(10), make_corp_asset(20), make_corp_asset(30)];
+
+      let ids = keep_ids_from(&assets);
+
+      assert_eq!(ids, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn it_returns_empty_for_no_assets() {
+      let ids = keep_ids_from(&[]);
+
+      assert_eq!(ids, Vec::<i64>::new());
+    }
+  }
+
+  mod sync_state_is_fresh {
+    use super::*;
+
+    fn make_state(cache_expires_at: Option<i64>) -> AssetSyncState {
+      AssetSyncState {
+        cache_expires_at,
+        last_synced_at: None,
+        owner_id: 1,
+        owner_type: "corporation".to_string(),
+      }
+    }
+
+    #[test]
+    fn it_returns_true_when_expiry_is_in_the_future() {
+      let state = make_state(Some(1_000_000));
+
+      assert!(sync_state_is_fresh(&state, 999_999));
+    }
+
+    #[test]
+    fn it_returns_false_when_expiry_is_in_the_past() {
+      let state = make_state(Some(1_000_000));
+
+      assert!(!sync_state_is_fresh(&state, 1_000_001));
+    }
+
+    #[test]
+    fn it_returns_false_when_expiry_is_equal_to_now() {
+      let state = make_state(Some(1_000_000));
+
+      assert!(!sync_state_is_fresh(&state, 1_000_000));
+    }
+
+    #[test]
+    fn it_returns_false_when_no_expiry_set() {
+      let state = make_state(None);
+
+      assert!(!sync_state_is_fresh(&state, 999_999));
+    }
+  }
 }

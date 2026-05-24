@@ -912,8 +912,6 @@ mod tests {
   }
 
   mod apply_assets_loaded_to_cache {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn make_empty_assets_state() -> assets::State {

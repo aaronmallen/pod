@@ -40,7 +40,8 @@ async fn do_seed(
   let tmp = std::env::temp_dir().join("pod_sde");
   let (extract_dir, build_version) = download_and_extract(tx, &tmp).await?;
 
-  if build_version.as_deref() == read_stored_sde_version().as_deref() && build_version.is_some() {
+  let composite = build_version.as_deref().map(composite_version);
+  if composite.is_some() && composite.as_deref() == read_stored_sde_version().as_deref() {
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     return Ok(db);
   }
@@ -53,8 +54,8 @@ async fn do_seed(
   db.enable_foreign_keys().await.map_err(|e| e.to_string())?;
   seed_result?;
 
-  if let Some(build) = build_version {
-    write_stored_sde_version(&build);
+  if let Some(v) = composite {
+    write_stored_sde_version(&v);
   }
 
   let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -237,6 +238,10 @@ async fn read_sde_build_version(root: &Path) -> Option<String> {
     serde_yaml::Value::Number(n) => n.to_string(),
     other => serde_yaml::to_string(other).ok()?.trim().to_string(),
   })
+}
+
+fn composite_version(sde_build: &str) -> String {
+  format!("{}+pod-{}", sde_build, env!("CARGO_PKG_VERSION"))
 }
 
 fn sde_version_path() -> Option<PathBuf> {
@@ -948,4 +953,30 @@ async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
       .map_err(|e| e.to_string())?;
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod composite_version {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_embeds_the_sde_build_and_pod_version() {
+      let result = composite_version("20240101.1");
+
+      assert_eq!(result, format!("20240101.1+pod-{}", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn it_differs_when_sde_build_differs() {
+      let a = composite_version("20240101.1");
+      let b = composite_version("20240102.1");
+
+      assert_ne!(a, b);
+    }
+  }
 }

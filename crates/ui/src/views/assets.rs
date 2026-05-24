@@ -314,6 +314,7 @@ pub struct State {
   pub corporations: Vec<Corporation>,
   pub dragging_pane: bool,
   pub expanded_containers: HashSet<i64>,
+  pub help_pop_over: inventory_tab::help_pop_over::State,
   pub item_icons: HashMap<(i32, String), image::Handle>,
   pub last_drag_x: f32,
   pub loading: bool,
@@ -469,6 +470,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_w
     corporations,
     dragging_pane: false,
     expanded_containers: HashSet::new(),
+    help_pop_over: inventory_tab::help_pop_over::State::default(),
     item_icons: HashMap::new(),
     last_drag_x: 0.0,
     loading: true,
@@ -552,6 +554,22 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
     inventory_tab::Message::CategoryChanged(cat) => {
       state.category = cat;
       state.visible_count = 100;
+    }
+    inventory_tab::Message::HelpPopOver(inner) => {
+      if let inventory_tab::help_pop_over::Message::QueryInserted(ref q) = inner {
+        let sep = if state.search_query.is_empty() { "" } else { " " };
+        state.search_query = format!("{}{sep}{q}", state.search_query);
+        state.visible_count = 100;
+      }
+      let _ = state.help_pop_over.update(inner);
+    }
+    inventory_tab::Message::HelpToggle => {
+      let inner = if state.help_pop_over.visible {
+        inventory_tab::help_pop_over::Message::Close
+      } else {
+        inventory_tab::help_pop_over::Message::Open
+      };
+      let _ = state.help_pop_over.update(inner);
     }
     inventory_tab::Message::ScrollUpdate(y) => {
       if y > 0.85 {
@@ -944,6 +962,26 @@ impl<'a> Component<'a> {
       None
     };
 
+    let help_overlay: Option<Element<'_, Message>> =
+      if state.help_pop_over.visible && state.active_tab == Tab::Inventory {
+        let help_el = inventory_tab::help_pop_over::Component::new()
+          .render()
+          .map(|m| Message::InventoryTab(inventory_tab::Message::HelpPopOver(m)));
+        Some(
+          container(help_el)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .padding(Padding {
+              top: spacing::layout::HEADER_HEIGHT + 100.0,
+              left: state.sidebar_width + 28.0,
+              ..Padding::ZERO
+            })
+            .into(),
+        )
+      } else {
+        None
+      };
+
     let picker_overlay: Option<Element<'_, Message>> = if state.picker.is_open {
       let dropdown = state.picker.dropdown().map(Message::Picker);
       Some(
@@ -962,11 +1000,20 @@ impl<'a> Component<'a> {
       None
     };
 
-    match (drag_overlay, picker_overlay) {
-      (None, None) => base,
-      (None, Some(p)) => stack([base, p]).into(),
-      (Some(d), None) => stack([base, d]).into(),
-      (Some(d), Some(p)) => stack([base, d, p]).into(),
+    let mut layers: Vec<Element<'_, Message>> = vec![base];
+    if let Some(d) = drag_overlay {
+      layers.push(d);
+    }
+    if let Some(h) = help_overlay {
+      layers.push(h);
+    }
+    if let Some(p) = picker_overlay {
+      layers.push(p);
+    }
+    if layers.len() == 1 {
+      layers.into_iter().next().unwrap()
+    } else {
+      stack(layers).into()
     }
   }
 }

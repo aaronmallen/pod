@@ -1,5 +1,7 @@
 //! Sortable asset inventory table with search and category filter.
 
+pub mod help_pop_over;
+
 use std::collections::{HashMap, HashSet};
 
 use iced::{
@@ -9,7 +11,7 @@ use iced::{
 
 use super::{AssetRecord, Category, SortCol, State, asset_value, asset_volume, fmt_qty, fmt_vol};
 use crate::{
-  components::{PillFilter, SearchBox},
+  components::{self, PillFilter, SearchBox},
   format,
   style::{
     color,
@@ -21,6 +23,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum Message {
   CategoryChanged(Category),
+  HelpPopOver(help_pop_over::Message),
+  HelpToggle,
   ScrollUpdate(f32),
   SearchChanged(String),
   SortChanged(SortCol),
@@ -44,14 +48,42 @@ fn empty_state(msg: &str) -> Element<'_, Message> {
   .into()
 }
 
-fn search_box<'a>(query: &'a str) -> Element<'a, Message> {
-  SearchBox::new("Filter by name, group, location…", query, Message::SearchChanged)
-    .width(Length::Fixed(280.0))
-    .height(30.0)
-    .font_size(12.0)
-    .icon_size(13.0)
-    .horizontal_padding(8.0)
-    .render()
+fn help_button(open: bool) -> Element<'static, Message> {
+  let icon_color = if open {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  };
+  components::Button::ghost(
+    container(
+      components::Icon::help()
+        .size(13.0)
+        .color(icon_color)
+        .render::<Message>(),
+    )
+    .center_x(Length::Fill)
+    .center_y(Length::Fill),
+  )
+  .width(26.0)
+  .height(24.0)
+  .padding(0)
+  .on_press(Message::HelpToggle)
+  .into()
+}
+
+fn search_box<'a>(query: &'a str, help_visible: bool) -> Element<'a, Message> {
+  SearchBox::new(
+    "Filter assets…  try name:Rifter or category:ship",
+    query,
+    Message::SearchChanged,
+  )
+  .width(Length::Fixed(280.0))
+  .height(30.0)
+  .font_size(12.0)
+  .icon_size(13.0)
+  .horizontal_padding(8.0)
+  .right_element(help_button(help_visible))
+  .render()
 }
 
 fn category_row<'a>(active_cat: &'a Category) -> Element<'a, Message> {
@@ -115,7 +147,7 @@ fn stat_label<'a>(label: &'static str, value: String) -> Element<'a, Message> {
 fn filter_bar<'a>(state: &'a State) -> Element<'a, Message> {
   container(
     row([
-      search_box(&state.search_query),
+      search_box(&state.search_query, state.help_pop_over.visible),
       Space::new().width(10.0).into(),
       category_row(&state.category),
       Space::new().width(Length::Fill).into(),

@@ -141,7 +141,7 @@ mod tests {
     db
   }
 
-  async fn insert_character(db: &DatabaseConnection, id: i64) {
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
     use sea_orm::ActiveValue::Set;
     crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
       access_token: Set(String::new()),
@@ -155,7 +155,7 @@ mod tests {
       location_docked: Set(None),
       location_name: Set(None),
       memory: Set(None),
-      name: Set(format!("Character {id}")),
+      name: Set(name.to_string()),
       perception: Set(None),
       portrait_tone: Set(0),
       refresh_token: Set(String::new()),
@@ -235,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn returns_tags_after_set_entity_tags() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let tag = repo.find_or_create("pvp").await.unwrap();
@@ -253,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn replaces_previous_tags_atomically() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let pvp = repo.find_or_create("pvp").await.unwrap();
@@ -270,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn set_empty_removes_all_tags() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let pvp = repo.find_or_create("pvp").await.unwrap();
@@ -284,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_affect_tags_for_different_entity_type() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let pvp = repo.find_or_create("pvp").await.unwrap();
@@ -302,7 +302,7 @@ mod tests {
     #[tokio::test]
     async fn delegates_to_set_entity_tags_with_character_type() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let pvp = repo.find_or_create("pvp").await.unwrap();

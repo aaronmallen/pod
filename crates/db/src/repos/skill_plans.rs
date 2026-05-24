@@ -117,7 +117,7 @@ mod tests {
     db
   }
 
-  async fn insert_character(db: &DatabaseConnection, id: i64) {
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
     use sea_orm::ActiveValue::Set;
     crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
       access_token: Set(String::new()),
@@ -131,7 +131,7 @@ mod tests {
       location_docked: Set(None),
       location_name: Set(None),
       memory: Set(None),
-      name: Set(format!("Character {id}")),
+      name: Set(name.to_string()),
       perception: Set(None),
       portrait_tone: Set(0),
       refresh_token: Set(String::new()),
@@ -176,7 +176,7 @@ mod tests {
     #[tokio::test]
     async fn returns_empty_when_no_plans_exist() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
       let result = repo.all_for_character(1).await.unwrap();
       assert!(result.is_empty());
@@ -185,8 +185,8 @@ mod tests {
     #[tokio::test]
     async fn returns_plans_for_the_given_character_only() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       let repo = Repo::new(&db);
 
       let plan1 = make_plan("plan-1", 1, vec![]);
@@ -214,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn returns_plan_with_entries_loaded() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let entry = make_entry("plan-1", "entry-1", 1, "Spaceship Command");
@@ -234,7 +234,7 @@ mod tests {
     #[tokio::test]
     async fn stores_entries_in_position_order() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let plan = make_plan("plan-1", 1, vec![]);
@@ -257,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn replaces_all_previous_entries() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let old_entry = make_entry("plan-1", "old-entry", 1, "Old Skill");
@@ -275,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn clears_all_entries_when_given_empty_slice() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let entry = make_entry("plan-1", "e-1", 1, "Spaceship Command");
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn update_changes_plan_name() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let plan = make_plan("plan-1", 1, vec![]);
@@ -316,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_plan() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let plan = make_plan("plan-1", 1, vec![]);

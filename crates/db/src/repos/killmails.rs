@@ -93,7 +93,7 @@ mod tests {
     db
   }
 
-  async fn insert_character(db: &DatabaseConnection, id: i64) {
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
     use sea_orm::ActiveValue::Set;
     crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
       access_token: Set(String::new()),
@@ -107,7 +107,7 @@ mod tests {
       location_docked: Set(None),
       location_name: Set(None),
       memory: Set(None),
-      name: Set(format!("Character {id}")),
+      name: Set(name.to_string()),
       perception: Set(None),
       portrait_tone: Set(0),
       refresh_token: Set(String::new()),
@@ -148,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn returns_empty_when_no_killmails() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let result = repo.find_for_character(1).await.unwrap();
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn returns_killmails_after_upsert() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let kill = make_kill(1, 9001, true);
@@ -173,8 +173,8 @@ mod tests {
     #[tokio::test]
     async fn does_not_return_killmails_for_other_characters() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       let repo = Repo::new(&db);
 
       let kill = make_kill(1, 9001, true);
@@ -191,7 +191,7 @@ mod tests {
     #[tokio::test]
     async fn upserts_multiple_killmails() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let k1 = make_kill(1, 9001, true);
@@ -205,7 +205,7 @@ mod tests {
     #[tokio::test]
     async fn updates_existing_killmail_on_conflict() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let mut kill = make_kill(1, 9001, true);

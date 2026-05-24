@@ -280,7 +280,7 @@ mod tests {
     .unwrap();
   }
 
-  async fn insert_character(db: &DatabaseConnection, id: i64) {
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
     use sea_orm::ActiveValue::Set;
     crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
       access_token: Set(String::new()),
@@ -294,7 +294,7 @@ mod tests {
       location_docked: Set(None),
       location_name: Set(None),
       memory: Set(None),
-      name: Set(format!("Character {id}")),
+      name: Set(name.to_string()),
       perception: Set(None),
       portrait_tone: Set(0),
       refresh_token: Set(String::new()),
@@ -468,8 +468,8 @@ mod tests {
     async fn sums_asset_quantities_without_filter() {
       let db = setup_db().await;
       insert_item_type(&db, 34, "Tritanium").await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
       insert_asset(&db, 2, 34, 60004588, 200).await;
 
@@ -483,7 +483,7 @@ mod tests {
     async fn filters_by_location_id_when_set() {
       let db = setup_db().await;
       insert_item_type(&db, 34, "Tritanium").await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
       insert_asset(&db, 1, 34, 60004588, 200).await;
 
@@ -500,8 +500,8 @@ mod tests {
     async fn filters_by_character_id_when_set() {
       let db = setup_db().await;
       insert_item_type(&db, 34, "Tritanium").await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       insert_asset(&db, 1, 34, 60003760, 300).await;
       insert_asset(&db, 2, 34, 60003760, 200).await;
 
@@ -518,8 +518,8 @@ mod tests {
     async fn filters_by_both_location_and_character_when_both_set() {
       let db = setup_db().await;
       insert_item_type(&db, 34, "Tritanium").await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       insert_asset(&db, 1, 34, 60003760, 100).await;
       insert_asset(&db, 1, 34, 60004588, 50).await;
       insert_asset(&db, 2, 34, 60003760, 200).await;

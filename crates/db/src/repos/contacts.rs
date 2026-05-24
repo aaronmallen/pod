@@ -113,7 +113,7 @@ mod tests {
     db
   }
 
-  async fn insert_character(db: &DatabaseConnection, id: i64) {
+  async fn insert_character(db: &DatabaseConnection, id: i64, name: &str) {
     use sea_orm::ActiveValue::Set;
     crate::entities::character::Entity::insert(crate::entities::character::ActiveModel {
       access_token: Set(String::new()),
@@ -127,7 +127,7 @@ mod tests {
       location_docked: Set(None),
       location_name: Set(None),
       memory: Set(None),
-      name: Set(format!("Character {id}")),
+      name: Set(name.to_string()),
       perception: Set(None),
       portrait_tone: Set(0),
       refresh_token: Set(String::new()),
@@ -169,7 +169,7 @@ mod tests {
     #[tokio::test]
     async fn returns_empty_when_no_contacts() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let result = repo.find_for_character(1).await.unwrap();
@@ -179,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn returns_contacts_after_upsert() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let contact = make_contact(1, 100, "Bob");
@@ -194,8 +194,8 @@ mod tests {
     #[tokio::test]
     async fn does_not_return_contacts_for_other_characters() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
-      insert_character(&db, 2).await;
+      insert_character(&db, 1, "Alice").await;
+      insert_character(&db, 2, "Bob").await;
       let repo = Repo::new(&db);
 
       let contact = make_contact(1, 100, "Bob");
@@ -212,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn returns_empty_when_no_labels() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let result = repo.find_labels_for_character(1).await.unwrap();
@@ -222,7 +222,7 @@ mod tests {
     #[tokio::test]
     async fn returns_labels_after_upsert() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let label = make_label(1, 42, "Alliance Pilots");
@@ -241,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn upserts_contacts_and_labels_together() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let contact = make_contact(1, 200, "Alice");
@@ -257,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn updates_existing_contact_on_conflict() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let mut contact = make_contact(1, 300, "Charlie");
@@ -277,7 +277,7 @@ mod tests {
     #[tokio::test]
     async fn updates_existing_label_on_conflict() {
       let db = setup_db().await;
-      insert_character(&db, 1).await;
+      insert_character(&db, 1, "Alice").await;
       let repo = Repo::new(&db);
 
       let label = make_label(1, 99, "Old Name");

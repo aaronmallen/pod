@@ -91,7 +91,7 @@ pub enum Message {
   FolderPane(folder_pane::Message),
   MailBodyLoaded(String, Vec<String>),
   MailDeleted,
-  MailHeadersLoaded(Vec<MailMessage>),
+  MailHeadersLoaded(Result<Vec<MailMessage>, String>),
   MessageList(message_list_pane::Message),
   PaneDrag(f32),
   PaneDragEnd,

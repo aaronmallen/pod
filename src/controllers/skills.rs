@@ -330,7 +330,7 @@ fn build_queue_from_character(c: &Character) -> Vec<QueueItem> {
         .skill_name
         .clone()
         .or_else(|| skill_names.get(&entry.skill_id).cloned())
-        .unwrap_or_else(|| format!("Unknown Skill {}", entry.skill_id));
+        .expect("skill must exist in SDE");
       QueueItem {
         id: format!("real-{}-{}", entry.skill_id, entry.to_level),
         skill_name,

@@ -201,7 +201,12 @@ fn build_db_mail_rows(
           .map(|ids| {
             ids
               .iter()
-              .filter_map(|id| name_map.get(id).cloned().or_else(|| Some(format!("#{id}"))))
+              .map(|id| {
+                name_map
+                  .get(id)
+                  .cloned()
+                  .expect("recipient name must be resolved by ESI")
+              })
               .collect::<Vec<_>>()
               .join(", ")
           })
@@ -266,8 +271,8 @@ fn build_mail_message(
   } else {
     row
       .from_id
-      .and_then(|id| name_map.get(&id).cloned())
-      .unwrap_or_else(|| row.from_id.map(|id| format!("#{id}")).unwrap_or_default())
+      .map(|id| name_map.get(&id).cloned().expect("sender name must be resolved by ESI"))
+      .unwrap_or_default()
   };
   let snoozed = snoozed_lookup.get(&(row.character_id, row.mail_id)).cloned();
   MailMessage {
@@ -421,7 +426,11 @@ async fn fetch_mail_body(
   }
 }
 
-async fn fetch_mail_headers(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MailMessage> {
+async fn fetch_mail_headers(
+  characters: Vec<Character>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> Result<Vec<MailMessage>, String> {
   let mut all: Vec<MailMessage> = Vec::new();
   let snoozed_rows = db.characters().all_snoozed_mails().await.unwrap_or_default();
   let snoozed_lookup: std::collections::HashMap<(i64, i64), String> = snoozed_rows
@@ -442,8 +451,10 @@ async fn fetch_mail_headers(characters: Vec<Character>, esi: pod_esi::Client, db
         .universe()
         .names(&name_ids)
         .await
-        .map(|ns| ns.into_iter().map(|n| (n.id, n.name)).collect())
-        .unwrap_or_default()
+        .map_err(|e| format!("ESI name resolution failed: {e}"))?
+        .into_iter()
+        .map(|n| (n.id, n.name))
+        .collect()
     } else {
       std::collections::HashMap::new()
     };
@@ -453,13 +464,13 @@ async fn fetch_mail_headers(characters: Vec<Character>, esi: pod_esi::Client, db
       let _ = db.characters().upsert_mail_headers(*character.id(), &db_rows).await;
     }
     if let Ok(rows) = db.characters().mail_headers(*character.id()).await {
-      supplement_name_map(&rows, &mut name_map, *character.id(), &esi).await;
+      supplement_name_map(&rows, &mut name_map, *character.id(), &esi).await?;
       for row in rows {
         all.push(build_mail_message(row, &name_map, character.name(), &snoozed_lookup));
       }
     }
   }
-  all
+  Ok(all)
 }
 
 fn find_snoozed_label_id(all_labels: &pod_esi::models::character::MailLabels) -> Option<i64> {
@@ -740,7 +751,7 @@ async fn supplement_name_map(
   name_map: &mut std::collections::HashMap<i64, String>,
   character_id: i64,
   esi: &pod_esi::Client,
-) {
+) -> Result<(), String> {
   let extra_ids: Vec<i64> = rows
     .iter()
     .filter_map(|r| r.from_id)
@@ -748,12 +759,22 @@ async fn supplement_name_map(
     .collect::<std::collections::HashSet<_>>()
     .into_iter()
     .collect();
-  if !extra_ids.is_empty()
-    && let Ok(ns) = esi.universe().names(&extra_ids).await
-  {
-    for n in ns {
-      name_map.insert(n.id, n.name);
-    }
+  if extra_ids.is_empty() {
+    return Ok(());
+  }
+  let ns = esi
+    .universe()
+    .names(&extra_ids)
+    .await
+    .map_err(|e| format!("ESI name resolution failed: {e}"))?;
+  for n in ns {
+    name_map.insert(n.id, n.name);
+  }
+  let still_missing: Vec<i64> = extra_ids.into_iter().filter(|id| !name_map.contains_key(id)).collect();
+  if still_missing.is_empty() {
+    Ok(())
+  } else {
+    Err(format!("could not resolve ESI names for mail IDs: {still_missing:?}"))
   }
 }
 
@@ -915,7 +936,14 @@ fn update_mail_deleted(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
-fn update_mail_headers_loaded(state: &mut State, messages: Vec<MailMessage>) -> iced::Task<Message> {
+fn update_mail_headers_loaded(state: &mut State, result: Result<Vec<MailMessage>, String>) -> iced::Task<Message> {
+  let messages = match result {
+    Ok(m) => m,
+    Err(e) => {
+      eprintln!("mail: failed to load headers: {e}");
+      return iced::Task::none();
+    }
+  };
   let mut unread_by_char: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
   for m in &messages {
     if m.unread && m.folder != "sent" {

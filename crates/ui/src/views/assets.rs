@@ -32,30 +32,34 @@ use crate::{
 /// A single resolved asset record loaded from the database.
 #[derive(Clone, Debug)]
 pub struct AssetRecord {
-  pub item_id: i64,
-  pub character_id: i64,
-  pub type_id: i32,
-  pub type_name: String,
-  pub group_name: String,
   pub category_key: String,
-  pub unit_price: f64,
-  pub volume: f64,
-  pub quantity: i64,
-  pub location_id: i64,
-  pub location_name: String,
-  pub system_name: String,
-  pub is_singleton: bool,
+  pub character_id: i64,
+  /// item_id of the direct parent container, or 0 when not in a container.
+  pub container_id: i64,
   /// Non-empty when this item is inside a container. Formatted as
   /// `"<station> · <hangar_flag> · <container type name>"`.
   pub container_path: String,
-  /// item_id of the direct parent container, or 0 when not in a container.
-  pub container_id: i64,
+  pub constellation_id: i32,
+  pub constellation_name: String,
   /// Nesting depth: 0 = top-level, 1 = inside one container, etc.
   pub depth: usize,
+  pub group_name: String,
   /// `"icon"`, `"bpc"`, or `"bpo"` — determines which cached image to display.
   pub icon_variant: String,
   /// True if at least one other asset is located inside this item.
   pub is_container: bool,
+  pub is_singleton: bool,
+  pub item_id: i64,
+  pub location_id: i64,
+  pub location_name: String,
+  pub quantity: i64,
+  pub region_id: i32,
+  pub region_name: String,
+  pub system_name: String,
+  pub type_id: i32,
+  pub type_name: String,
+  pub unit_price: f64,
+  pub volume: f64,
 }
 
 /// Item category display filter.
@@ -290,6 +294,7 @@ pub enum Message {
   StockpilesLoaded(Vec<StockpileWithStatus>),
   StockpilesTab(stockpiles_tab::Message),
   TabSelected(Tab),
+  ToggleSidebarGroup(String),
   TrackerTab(tracker_tab::Message),
   ValuesLoaded(AssetValuesData),
   ValuesTab(values_tab::Message),
@@ -302,6 +307,7 @@ pub struct State {
   pub assets: Vec<AssetRecord>,
   pub category: Category,
   pub characters: Vec<Character>,
+  pub collapsed_sidebar_groups: HashSet<String>,
   pub corporations: Vec<Corporation>,
   pub expanded_containers: HashSet<i64>,
   pub item_icons: HashMap<(i32, String), image::Handle>,
@@ -453,6 +459,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>) -> State 
     assets: Vec::new(),
     category: Category::All,
     characters,
+    collapsed_sidebar_groups: HashSet::new(),
     corporations,
     expanded_containers: HashSet::new(),
     item_icons: HashMap::new(),
@@ -515,12 +522,16 @@ fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
     a.location_name == loc_name
   } else if let Some(cid_str) = filter.strip_prefix("container:") {
     cid_str.parse::<i64>().map_or(true, |cid| a.container_id == cid)
+  } else if let Some(region) = filter.strip_prefix("region:") {
+    a.region_name == region
+  } else if let Some(constellation) = filter.strip_prefix("constellation:") {
+    a.constellation_name == constellation
   } else {
     true
   }
 }
 
-fn asset_matches_query(a: &AssetRecord, q: &str) -> bool {
+pub(super) fn asset_matches_query(a: &AssetRecord, q: &str) -> bool {
   let name_lc = a.type_name.to_lowercase();
   let grp_lc = a.group_name.to_lowercase();
   let loc_lc = a.location_name.to_lowercase();
@@ -689,6 +700,40 @@ fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
     Message::AssetsLoaded(assets) => {
+      let known_keys: HashSet<String> = state
+        .assets
+        .iter()
+        .flat_map(|a| {
+          [
+            if a.region_name.is_empty() {
+              None
+            } else {
+              Some(format!("region:{}", a.region_name))
+            },
+            if a.constellation_name.is_empty() {
+              None
+            } else {
+              Some(format!("constellation:{}", a.constellation_name))
+            },
+          ]
+          .into_iter()
+          .flatten()
+        })
+        .collect();
+      for a in &assets {
+        if !a.region_name.is_empty() {
+          let key = format!("region:{}", a.region_name);
+          if !known_keys.contains(&key) {
+            state.collapsed_sidebar_groups.insert(key);
+          }
+        }
+        if !a.constellation_name.is_empty() {
+          let key = format!("constellation:{}", a.constellation_name);
+          if !known_keys.contains(&key) {
+            state.collapsed_sidebar_groups.insert(key);
+          }
+        }
+      }
       state.assets = assets;
       state.loading = false;
     }
@@ -720,6 +765,11 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
     Message::TabSelected(tab) => {
       state.active_tab = tab;
+    }
+    Message::ToggleSidebarGroup(key) => {
+      if !state.collapsed_sidebar_groups.remove(&key) {
+        state.collapsed_sidebar_groups.insert(key);
+      }
     }
     Message::TrackerTab(msg) => update_tracker_tab(state, msg),
     Message::ValuesTab(_msg) => {}

@@ -1,20 +1,24 @@
-//! Location tree sidebar — scrollable container with system/location rows.
+//! Location tree sidebar — scrollable container with the 5-level region/constellation/system/location/container tree.
 
+pub mod constellation_row;
 pub mod container_row;
 pub mod location_row;
+pub mod region_row;
 pub mod system_row;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub use constellation_row::Component as ConstellationRow;
 pub use container_row::Component as ContainerRow;
 use iced::{
   Background, Border, Element, Length, Padding, Theme,
   widget::{button, column, container, row, scrollable, text},
 };
 pub use location_row::Component as LocationRow;
+pub use region_row::Component as RegionRow;
 pub use system_row::Component as SystemRow;
 
-use super::{Message, State, asset_value};
+use super::{Message, State, asset_matches_query, asset_value};
 use crate::{
   components::section_label,
   style::{
@@ -180,15 +184,7 @@ fn is_structure_loc_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool 
   {
     return false;
   }
-  a.system_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
-}
-
-fn collect_systems(source: &[super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&str> {
-  source
-    .iter()
-    .filter(|a| is_system_asset(a, char_id))
-    .map(|a| a.system_name.as_str())
-    .collect()
+  a.system_name.is_empty() && a.region_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
 }
 
 fn collect_structure_locs(source: &[super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&str> {
@@ -199,6 +195,102 @@ fn collect_structure_locs(source: &[super::AssetRecord], char_id: Option<i64>) -
     .collect()
 }
 
+/// Builds the nested region → constellation → system tree section.
+fn push_region_tree<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  source: &'a [super::AssetRecord],
+  char_id: Option<i64>,
+  selected_loc: Option<&str>,
+  collapsed_groups: &std::collections::HashSet<String>,
+  search_query: &str,
+) {
+  // Group: region → constellation → systems (only assets with a region name)
+  let mut tree: BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
+  for a in source {
+    if a.region_name.is_empty() {
+      continue;
+    }
+    if let Some(id) = char_id
+      && a.character_id != id
+    {
+      continue;
+    }
+    if a.system_name.is_empty() {
+      continue;
+    }
+    tree
+      .entry(a.region_name.as_str())
+      .or_default()
+      .entry(a.constellation_name.as_str())
+      .or_default()
+      .insert(a.system_name.as_str());
+  }
+
+  for (region_name, constellations) in &tree {
+    let region_key = format!("region:{}", region_name);
+    let region_collapsed = collapsed_groups.contains(&region_key);
+
+    let region_count = count_filtered(source, char_id, search_query, |a| a.region_name == *region_name);
+    items.push(RegionRow::new(*region_name, region_key, region_collapsed, region_count).render());
+
+    if region_collapsed {
+      continue;
+    }
+
+    for (constellation_name, systems) in constellations {
+      let constellation_key = format!("constellation:{}", constellation_name);
+      let constellation_collapsed = collapsed_groups.contains(&constellation_key);
+
+      let constellation_count = count_filtered(source, char_id, search_query, |a| {
+        a.constellation_name == *constellation_name
+      });
+      items.push(
+        ConstellationRow::new(
+          *constellation_name,
+          constellation_key,
+          constellation_collapsed,
+          constellation_count,
+        )
+        .render(),
+      );
+
+      if constellation_collapsed {
+        continue;
+      }
+
+      for sys_name in systems {
+        push_system_rows(items, source, sys_name, char_id, selected_loc);
+      }
+    }
+  }
+}
+
+fn count_filtered(
+  source: &[super::AssetRecord],
+  char_id: Option<i64>,
+  search_query: &str,
+  group_filter: impl Fn(&super::AssetRecord) -> bool,
+) -> u64 {
+  source
+    .iter()
+    .filter(|a| {
+      if let Some(id) = char_id
+        && a.character_id != id
+      {
+        return false;
+      }
+      if !group_filter(a) {
+        return false;
+      }
+      if !search_query.is_empty() && !asset_matches_query(a, search_query) {
+        return false;
+      }
+      true
+    })
+    .map(|a| a.quantity as u64)
+    .sum()
+}
+
 fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let mut items: Vec<Element<'_, Message>> = Vec::new();
   items.push(locations_label());
@@ -207,13 +299,37 @@ fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let source: &[super::AssetRecord] = &state.assets;
   let owner_id = state.selected_corporation().or_else(|| state.selected_character());
   let selected_loc = state.selected_loc.as_deref();
+  let search_query = state.search_query.to_lowercase();
 
-  for sys_name in &collect_systems(source, owner_id) {
-    push_system_rows(&mut items, source, sys_name, owner_id, selected_loc);
-  }
+  push_region_tree(
+    &mut items,
+    source,
+    owner_id,
+    selected_loc,
+    &state.collapsed_sidebar_groups,
+    &search_query,
+  );
 
   for loc_name in &collect_structure_locs(source, owner_id) {
     push_location_rows(&mut items, source, loc_name, owner_id, selected_loc);
+  }
+
+  // Assets with a system but no region (no constellation/region data yet)
+  let ungrouped_systems: BTreeSet<&str> = source
+    .iter()
+    .filter(|a| {
+      if let Some(id) = owner_id
+        && a.character_id != id
+      {
+        return false;
+      }
+      is_system_asset(a, owner_id) && a.region_name.is_empty()
+    })
+    .map(|a| a.system_name.as_str())
+    .collect();
+
+  for sys_name in &ungrouped_systems {
+    push_system_rows(&mut items, source, sys_name, owner_id, selected_loc);
   }
 
   items

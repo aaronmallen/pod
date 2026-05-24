@@ -42,7 +42,7 @@ struct App {
   plan_window_size: Size,
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
   step_label: String,
-  update_dismissed: bool,
+  update_dismissed_for: Option<String>,
   update_state: services::updater::UpdateState,
   window_id: Option<window::Id>,
   window_position: Option<Point>,
@@ -106,7 +106,7 @@ impl Default for App {
       phase: AppPhase::Splash(splash_ctrl::State::default()),
       plan_windows: HashMap::new(),
       step_label: "Opening database\u{2026}".to_string(),
-      update_dismissed: false,
+      update_dismissed_for: None,
       update_state: services::updater::UpdateState::default(),
       window_id: None,
       window_position: None,
@@ -580,14 +580,16 @@ fn handle_banner_message(app: &mut App, msg: update_banner::Message) -> Task<Mes
   match msg {
     update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
     update_banner::Message::DismissPressed => {
-      app.update_dismissed = true;
+      if let services::updater::UpdateState::UpdateAvailable(v) = &app.update_state {
+        app.update_dismissed_for = Some(v.clone());
+      }
       Task::none()
     }
     update_banner::Message::RestartPressed => {
       Task::done(Message::Updater(services::updater::Message::RestartRequested))
     }
     update_banner::Message::RetryPressed => {
-      app.update_dismissed = false;
+      app.update_dismissed_for = None;
       Task::done(Message::Updater(services::updater::Message::CheckRequested))
     }
   }
@@ -609,6 +611,9 @@ fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Tas
       services::updater::apply().map(Message::Updater)
     }
     UpdMsg::CheckComplete(Some(version)) => {
+      if app.update_dismissed_for.as_deref() != Some(version.as_str()) {
+        app.update_dismissed_for = None;
+      }
       app.update_state = services::updater::UpdateState::UpdateAvailable(version);
       Task::none()
     }
@@ -792,7 +797,7 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
         .window_size(app.window_size.width, app.window_size.height)
         .render()
         .map(|m| Message::Main(Box::new(m)));
-      match banner_state(&app.update_state, app.update_dismissed) {
+      match banner_state(&app.update_state, &app.update_dismissed_for) {
         Some(state) => iced::widget::column([
           update_banner::Component::new(state).render().map(Message::UpdateBanner),
           content,
@@ -804,11 +809,14 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
   }
 }
 
-fn banner_state(state: &services::updater::UpdateState, dismissed: bool) -> Option<update_banner::BannerState> {
+fn banner_state(
+  state: &services::updater::UpdateState,
+  update_dismissed_for: &Option<String>,
+) -> Option<update_banner::BannerState> {
   use services::updater::UpdateState;
   match state {
     UpdateState::Idle => None,
-    UpdateState::UpdateAvailable(_) | UpdateState::Error(_) if dismissed => None,
+    UpdateState::UpdateAvailable(v) if update_dismissed_for.as_deref() == Some(v.as_str()) => None,
     UpdateState::UpdateAvailable(v) => Some(update_banner::BannerState::UpdateAvailable(v.clone())),
     UpdateState::Downloading => Some(update_banner::BannerState::Downloading),
     UpdateState::ReadyToRestart => Some(update_banner::BannerState::ReadyToRestart),

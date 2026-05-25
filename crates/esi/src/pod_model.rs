@@ -14,6 +14,18 @@ use crate::models::{
   },
 };
 
+fn parse_dogma_attribute(v: serde_json::Value) -> Option<DogmaAttributeEntry> {
+  let attribute_id = v.get("attribute_id")?.as_i64()? as i32;
+  let value = v.get("value")?.as_f64()?;
+  Some(DogmaAttributeEntry::new(attribute_id, value))
+}
+
+fn parse_dogma_effect(v: serde_json::Value) -> Option<DogmaEffectEntry> {
+  let effect_id = v.get("effect_id")?.as_i64()? as i32;
+  let is_default = v.get("is_default")?.as_bool()?;
+  Some(DogmaEffectEntry::new(effect_id, is_default))
+}
+
 impl From<EsiBloodline> for Bloodline {
   fn from(esi: EsiBloodline) -> Self {
     let mut m = Self::new(esi.bloodline_id, esi.name);
@@ -80,21 +92,13 @@ impl From<EsiTypeInfo> for ItemType {
       .dogma_attributes
       .unwrap_or_default()
       .into_iter()
-      .filter_map(|v| {
-        let attribute_id = v.get("attribute_id")?.as_i64()? as i32;
-        let value = v.get("value")?.as_f64()?;
-        Some(DogmaAttributeEntry::new(attribute_id, value))
-      })
+      .filter_map(parse_dogma_attribute)
       .collect();
     let dogma_effects: Vec<DogmaEffectEntry> = esi
       .dogma_effects
       .unwrap_or_default()
       .into_iter()
-      .filter_map(|v| {
-        let effect_id = v.get("effect_id")?.as_i64()? as i32;
-        let is_default = v.get("is_default")?.as_bool()?;
-        Some(DogmaEffectEntry::new(effect_id, is_default))
-      })
+      .filter_map(parse_dogma_effect)
       .collect();
     let mut m = Self::new(esi.type_id, esi.name);
     m.set_capacity(esi.capacity)

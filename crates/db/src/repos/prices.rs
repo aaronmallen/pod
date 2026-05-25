@@ -16,6 +16,30 @@ use crate::{
   },
 };
 
+fn build_qty_map(assets: &[crate::entities::character_asset::Model]) -> HashMap<i32, i64> {
+  let mut map: HashMap<i32, i64> = HashMap::new();
+  for asset in assets {
+    *map.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
+  }
+  map
+}
+
+fn collect_latest_intraday(rows: Vec<crate::entities::type_price::Model>) -> HashMap<i32, f64> {
+  let mut map: HashMap<i32, f64> = HashMap::new();
+  for p in rows {
+    map.entry(p.type_id).or_insert(p.price);
+  }
+  map
+}
+
+fn pick_best_price(price: f64, adjusted_price: Option<f64>) -> f64 {
+  if price > 0.0 {
+    price
+  } else {
+    adjusted_price.filter(|&ap| ap > 0.0).unwrap_or(0.0)
+  }
+}
+
 fn accumulate_nav_by_date(
   histories: &[crate::entities::type_price_history::Model],
   qty_map: &HashMap<i32, i64>,
@@ -116,13 +140,9 @@ impl<'a> Repo<'a> {
 
     let mut result: HashMap<i32, f64> = HashMap::new();
     for row in intraday {
-      result.entry(row.type_id).or_insert_with(|| {
-        if row.price > 0.0 {
-          row.price
-        } else {
-          row.adjusted_price.filter(|&ap| ap > 0.0).unwrap_or(0.0)
-        }
-      });
+      result
+        .entry(row.type_id)
+        .or_insert_with(|| pick_best_price(row.price, row.adjusted_price));
     }
 
     let missing: Vec<i32> = type_ids.iter().copied().filter(|id| !result.contains_key(id)).collect();
@@ -259,10 +279,7 @@ impl<'a> Repo<'a> {
       return Ok(Vec::new());
     }
 
-    let mut qty_map: HashMap<i32, i64> = HashMap::new();
-    for asset in &assets {
-      *qty_map.entry(asset.type_id).or_insert(0) += asset.quantity as i64;
-    }
+    let qty_map = build_qty_map(&assets);
     let tracked: Vec<i32> = qty_map.keys().copied().collect();
 
     let cutoff_str = (Utc::now().date_naive() - Duration::days(days as i64))
@@ -284,11 +301,7 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
 
-    let mut latest_prices: HashMap<i32, f64> = HashMap::new();
-    for p in intraday {
-      latest_prices.entry(p.type_id).or_insert(p.price);
-    }
-
+    let latest_prices = collect_latest_intraday(intraday);
     let today_nav = compute_today_nav(&latest_prices, &qty_map);
 
     if today_nav > 0.0 {

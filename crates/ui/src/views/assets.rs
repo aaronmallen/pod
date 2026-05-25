@@ -98,18 +98,21 @@ const CATEGORY_TABLE: &[(&str, &str)] = &[
 
 impl Category {
   fn index(&self) -> usize {
-    match self {
-      Self::All => 0,
-      Self::Ship => 1,
-      Self::Module => 2,
-      Self::Drone => 3,
-      Self::Charge => 4,
-      Self::Implant => 5,
-      Self::Blueprint => 6,
-      Self::Material => 7,
-      Self::Book => 8,
-      Self::Commodity => 9,
-    }
+    [
+      Self::All,
+      Self::Ship,
+      Self::Module,
+      Self::Drone,
+      Self::Charge,
+      Self::Implant,
+      Self::Blueprint,
+      Self::Material,
+      Self::Book,
+      Self::Commodity,
+    ]
+    .iter()
+    .position(|c| c == self)
+    .unwrap_or(0)
   }
 
   pub fn key(&self) -> &'static str {

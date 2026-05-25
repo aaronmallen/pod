@@ -1,12 +1,15 @@
 //! Tags settings panel: tag management with drag/drop, colors, and sorting.
 
+mod tag_color_swatch;
 pub mod tag_empty_state;
 pub mod tag_list_row;
 pub mod tag_panel_header;
+
 use iced::{
   Element, Length, Padding,
   widget::{Space, column, container, mouse_area, row, scrollable},
 };
+pub use tag_color_swatch::TagColorSwatch;
 pub use tag_empty_state::Component as TagEmptyState;
 pub use tag_list_row::TagListRow;
 
@@ -120,6 +123,7 @@ pub enum TagSortMode {
   Name,
 }
 
+  let preview = TagColorSwatch::new(name, color_hex).render();
 fn render_tags_panel(state: &State) -> Element<'_, Message> {
   let header = tag_panel_header::TagPanelHeader::new(state).render();
   let border = container(Space::new().width(Length::Fill).height(1.0))
@@ -158,11 +162,13 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
   match state.sort_mode {
     TagSortMode::Manual => {}
     TagSortMode::Name => filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b)),
-    TagSortMode::Color => filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| match (a_color, b_color) {
-      (Some(_), None) => std::cmp::Ordering::Less,
-      (None, Some(_)) => std::cmp::Ordering::Greater,
-      (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
-      (None, None) => a_name.cmp(b_name),
+    TagSortMode::Color => filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| {
+      match (a_color, b_color) {
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
+        (None, None) => a_name.cmp(b_name),
+      }
     }),
   }
 

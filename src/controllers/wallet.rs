@@ -58,6 +58,12 @@ pub fn update(
 }
 
 fn log_wallet_message(message: &Message) {
+  log_data_loaded_message(message);
+  log_ui_navigation_message(message);
+  log_filter_change_message(message);
+}
+
+fn log_data_loaded_message(message: &Message) {
   match message {
     Message::JournalLoaded(entries) => {
       tracing::debug!("wallet: {} journal entries loaded", entries.len())
@@ -87,10 +93,20 @@ fn log_wallet_message(message: &Message) {
       journal.len(),
       market.len()
     ),
+    _ => {}
+  }
+}
+
+fn log_ui_navigation_message(message: &Message) {
+  match message {
     Message::TabSelected(t) => tracing::info!("wallet: tab selected — {t:?}"),
-    Message::TimeframeChanged(tf) => {
-      tracing::info!("wallet: timeframe changed — {tf:?}")
-    }
+    Message::TimeframeChanged(tf) => tracing::info!("wallet: timeframe changed — {tf:?}"),
+    _ => {}
+  }
+}
+
+fn log_filter_change_message(message: &Message) {
+  match message {
     Message::JournalTab(pod_ui::views::wallet::journal_tab::Message::SignFilterChanged(sign)) => {
       tracing::info!("wallet: sign filter changed — {sign:?}");
     }

@@ -33,7 +33,9 @@ impl RemapCard {
           last.get(..10).unwrap_or(last.as_str()),
           cd.get(..10).unwrap_or(cd.as_str())
         ),
-        (Some(last), None) => format!("Last remap {}", last.get(..10).unwrap_or(last.as_str())),
+        (Some(last), None) => {
+          format!("Last remap {}", last.get(..10).unwrap_or(last.as_str()))
+        }
         _ => "No remap history".to_string(),
       };
       (bonus_str, detail_str)

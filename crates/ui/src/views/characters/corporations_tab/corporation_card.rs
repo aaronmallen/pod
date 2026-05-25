@@ -198,45 +198,51 @@ fn render_identity<'a>(corporation: &'a Corporation) -> Element<'a, Message> {
     .into()
 }
 
+fn logo_image_box<'a>(h: &'a image::Handle) -> Element<'a, Message> {
+  container(image(h).width(72.0).height(72.0))
+    .width(72.0)
+    .height(72.0)
+    .style(|_| container::Style {
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: radius::PANEL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn logo_placeholder<'a>(corp: &'a Corporation) -> Element<'a, Message> {
+  let initial = corp.ticker().chars().next().map(|c| c.to_string()).unwrap_or_default();
+  container(
+    text(initial)
+      .size(24.0)
+      .font(typography::mono::MEDIUM)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .width(72.0)
+  .height(72.0)
+  .center_x(72.0)
+  .center_y(72.0)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: radius::PANEL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
 fn render_logo<'a>(corp: &'a Corporation, handle: Option<&'a image::Handle>) -> Element<'a, Message> {
   match handle {
-    Some(h) => container(image(h).width(72.0).height(72.0))
-      .width(72.0)
-      .height(72.0)
-      .style(|_| container::Style {
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: radius::PANEL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    None => {
-      let initial = corp.ticker().chars().next().map(|c| c.to_string()).unwrap_or_default();
-      container(
-        text(initial)
-          .size(24.0)
-          .font(typography::mono::MEDIUM)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .width(72.0)
-      .height(72.0)
-      .center_x(72.0)
-      .center_y(72.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: radius::PANEL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
-    }
+    Some(h) => logo_image_box(h),
+    None => logo_placeholder(corp),
   }
 }
 
@@ -358,17 +364,8 @@ fn tag_chip<'a, MSG: 'a>(name: &'a str, color_hex: Option<&'a str>) -> Element<'
   .into()
 }
 
-fn render_ticker_plate<'a>(corp: &'a Corporation, icon_handle: Option<&'a image::Handle>) -> Element<'a, Message> {
-  let logo = render_logo(corp, icon_handle);
-
-  let ticker_el = text(corp.ticker())
-    .font(typography::mono::MEDIUM)
-    .size(34.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::accent::PLASMA),
-    });
-
-  let alliance_el: Element<'a, Message> = match corp.alliance_name() {
+fn alliance_label<'a>(corp: &'a Corporation) -> Element<'a, Message> {
+  match corp.alliance_name() {
     Some(a) => text(format!("‹ {} ›", a))
       .font(typography::mono::REGULAR)
       .size(10.0)
@@ -383,9 +380,20 @@ fn render_ticker_plate<'a>(corp: &'a Corporation, icon_handle: Option<&'a image:
         color: Some(color::text::TERTIARY),
       })
       .into(),
-  };
+  }
+}
 
-  let ticker_col = column([ticker_el.into(), alliance_el]).spacing(8.0);
+fn render_ticker_plate<'a>(corp: &'a Corporation, icon_handle: Option<&'a image::Handle>) -> Element<'a, Message> {
+  let logo = render_logo(corp, icon_handle);
+
+  let ticker_el = text(corp.ticker())
+    .font(typography::mono::MEDIUM)
+    .size(34.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::accent::PLASMA),
+    });
+
+  let ticker_col = column([ticker_el.into(), alliance_label(corp)]).spacing(8.0);
 
   container(
     row([logo, container(ticker_col).center_y(Length::Fill).into()])

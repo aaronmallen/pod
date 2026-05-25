@@ -198,6 +198,22 @@ impl<'a> Component<'a> {
   }
 }
 
+fn map_corporation_confirm_msg(msg: corporation_confirm_dialog::Message) -> Message {
+  match msg {
+    corporation_confirm_dialog::Message::Confirmed => Message::ConfirmRemoveCorporation,
+    corporation_confirm_dialog::Message::Dismissed => Message::DismissConfirmRemoveCorporation,
+  }
+}
+
+fn lookup_corporation_name(state: &State, corporation_id: i64) -> String {
+  state
+    .all_corporations
+    .iter()
+    .find(|c| *c.id() == corporation_id)
+    .map(|c| c.name().clone())
+    .unwrap_or_default()
+}
+
 fn push_confirm_remove_corporation_overlay<'a>(
   state: &'a State,
   window_width: f32,
@@ -208,24 +224,31 @@ fn push_confirm_remove_corporation_overlay<'a>(
     return;
   };
 
-  let corporation_name = state
-    .all_corporations
-    .iter()
-    .find(|c| *c.id() == corporation_id)
-    .map(|c| c.name().clone())
-    .unwrap_or_default();
-
+  let corporation_name = lookup_corporation_name(state, corporation_id);
   let backdrop = components::Backdrop::new(Message::DismissConfirmRemoveCorporation).render();
   let dialog = CorporationConfirmDialog::new(corporation_name)
     .window_size(window_width, window_height)
     .render()
-    .map(|msg| match msg {
-      corporation_confirm_dialog::Message::Confirmed => Message::ConfirmRemoveCorporation,
-      corporation_confirm_dialog::Message::Dismissed => Message::DismissConfirmRemoveCorporation,
-    });
+    .map(map_corporation_confirm_msg);
 
   layers.push(backdrop);
   layers.push(dialog);
+}
+
+fn map_confirm_remove_msg(msg: confirm_dialog::Message) -> Message {
+  match msg {
+    confirm_dialog::Message::Confirmed => Message::ConfirmRemove,
+    confirm_dialog::Message::Dismissed => Message::DismissConfirmRemove,
+  }
+}
+
+fn lookup_character_name(state: &State, character_id: i64) -> String {
+  state
+    .all_characters
+    .iter()
+    .find(|c| *c.id() == character_id)
+    .map(|c| c.name().clone())
+    .unwrap_or_default()
 }
 
 fn push_confirm_remove_overlay<'a>(
@@ -238,21 +261,12 @@ fn push_confirm_remove_overlay<'a>(
     return;
   };
 
-  let character_name = state
-    .all_characters
-    .iter()
-    .find(|c| *c.id() == character_id)
-    .map(|c| c.name().clone())
-    .unwrap_or_default();
-
+  let character_name = lookup_character_name(state, character_id);
   let backdrop = components::Backdrop::new(Message::DismissConfirmRemove).render();
   let dialog = ConfirmDialog::new(character_name)
     .window_size(window_width, window_height)
     .render()
-    .map(|msg| match msg {
-      confirm_dialog::Message::Confirmed => Message::ConfirmRemove,
-      confirm_dialog::Message::Dismissed => Message::DismissConfirmRemove,
-    });
+    .map(map_confirm_remove_msg);
 
   layers.push(backdrop);
   layers.push(dialog);

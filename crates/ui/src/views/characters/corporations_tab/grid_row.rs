@@ -8,6 +8,27 @@ use pod_model::{Character, Corporation};
 use super::{CorporationCard, Message};
 use crate::style::spacing;
 
+fn corp_cell<'a>(
+  corp: &'a Corporation,
+  icon_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  characters: &'a [Character],
+) -> Element<'a, Message> {
+  let id = *corp.id();
+  let ceo_id = *corp.ceo_character_id();
+  let ceo_name = characters.iter().find(|c| *c.id() == ceo_id).map(|c| c.name().clone());
+  CorporationCard::new(corp)
+    .icon_handle(icon_handles.get(&id))
+    .ceo_name(ceo_name)
+    .render()
+    .map(move |msg| Message::Card(id, msg))
+}
+
+fn pad_cells_to_cols<'a>(cells: &mut Vec<Element<'a, Message>>, cols: usize) {
+  while cells.len() < cols {
+    cells.push(iced::widget::Space::new().width(Length::Fill).into());
+  }
+}
+
 /// Builds a list of grid row elements from a flat corporation slice.
 pub(super) fn build_corp_grid_rows<'a>(
   corporations: Vec<&'a Corporation>,
@@ -20,22 +41,9 @@ pub(super) fn build_corp_grid_rows<'a>(
   for chunk in corporations.chunks(cols) {
     let mut cells: Vec<Element<'a, Message>> = chunk
       .iter()
-      .map(|corp| {
-        let id = *corp.id();
-        let ceo_id = *corp.ceo_character_id();
-        let ceo_name = characters.iter().find(|c| *c.id() == ceo_id).map(|c| c.name().clone());
-        CorporationCard::new(corp)
-          .icon_handle(icon_handles.get(&id))
-          .ceo_name(ceo_name)
-          .render()
-          .map(move |msg| Message::Card(id, msg))
-      })
+      .map(|corp| corp_cell(corp, icon_handles, characters))
       .collect();
-
-    while cells.len() < cols {
-      cells.push(iced::widget::Space::new().width(Length::Fill).into());
-    }
-
+    pad_cells_to_cols(&mut cells, cols);
     grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
   }
 

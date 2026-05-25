@@ -76,17 +76,15 @@ impl<'a> CharacterCell<'a> {
     let id = *self.character.id();
     let slot = self.slot;
     let is_dragging = self.dragging_id.is_some();
+    let is_hover_target = is_hover_target(is_dragging, self.drag_hover, self.dragging_id, slot, id);
     character_card::Component::new(self.character)
       .portrait_handle(self.portrait_handles.get(&id))
       .feat_skill_monitoring(self.feat_skill_monitoring)
       .feat_wallet(self.feat_wallet)
       .is_dragging(self.dragging_id == Some(id))
-      .is_hover_target(is_dragging && self.drag_hover == Some(slot) && self.dragging_id != Some(id))
+      .is_hover_target(is_hover_target)
       .render()
-      .map(move |msg| match msg {
-        character_card::Message::CardEntered(_) => Message::SlotEntered(slot),
-        other => Message::Card(id, other),
-      })
+      .map(move |msg| map_card_msg(msg, slot, id))
   }
 }
 
@@ -141,6 +139,17 @@ impl EmptySlot {
   }
 }
 
+fn map_card_msg(msg: character_card::Message, slot: i32, id: i64) -> Message {
+  match msg {
+    character_card::Message::CardEntered(_) => Message::SlotEntered(slot),
+    other => Message::Card(id, other),
+  }
+}
+
+fn is_hover_target(is_dragging: bool, drag_hover: Option<i32>, dragging_id: Option<i64>, slot: i32, id: i64) -> bool {
+  is_dragging && drag_hover == Some(slot) && dragging_id != Some(id)
+}
+
 /// Returns the number of grid columns for the given window width.
 pub(super) fn grid_cols(window_width: f32) -> usize {
   if window_width >= 1000.0 {
@@ -150,6 +159,36 @@ pub(super) fn grid_cols(window_width: f32) -> usize {
   } else {
     1
   }
+}
+
+fn build_slot_map<'a>(characters: &[&'a Character]) -> HashMap<i32, &'a Character> {
+  characters.iter().map(|c| (*c.sort_order(), *c)).collect()
+}
+
+fn build_fixed_grid_rows<'a>(
+  characters: Vec<&'a Character>,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i32>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Vec<Element<'a, Message>> {
+  let max_slot = characters.iter().map(|c| *c.sort_order()).max().unwrap_or(0);
+  let row_count = (max_slot / 3 + 2) as usize;
+  let slot_map = build_slot_map(&characters);
+  (0..row_count)
+    .map(|row_idx| {
+      build_grid_row(
+        row_idx,
+        &slot_map,
+        portrait_handles,
+        dragging_id,
+        drag_hover,
+        feat_skill_monitoring,
+        feat_wallet,
+      )
+    })
+    .collect()
 }
 
 pub(super) fn build_grid_rows<'a>(
@@ -172,24 +211,14 @@ pub(super) fn build_grid_rows<'a>(
       feat_wallet,
     );
   }
-
-  let max_slot = characters.iter().map(|c| *c.sort_order()).max().unwrap_or(0);
-  let row_count = (max_slot / 3 + 2) as usize;
-  let slot_map: HashMap<i32, &Character> = characters.iter().map(|c| (*c.sort_order(), *c)).collect();
-
-  (0..row_count)
-    .map(|row_idx| {
-      build_grid_row(
-        row_idx,
-        &slot_map,
-        portrait_handles,
-        dragging_id,
-        drag_hover,
-        feat_skill_monitoring,
-        feat_wallet,
-      )
-    })
-    .collect()
+  build_fixed_grid_rows(
+    characters,
+    portrait_handles,
+    dragging_id,
+    drag_hover,
+    feat_skill_monitoring,
+    feat_wallet,
+  )
 }
 
 fn build_grid_row<'a>(

@@ -62,70 +62,13 @@ impl<'a> Component<'a> {
   }
 
   pub fn render(self) -> Element<'a, Message> {
-    let close_btn = components::Button::close(text("\u{00D7}").font(typography::body::MEDIUM).size(16.0).style(|_| {
-      iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }
-    }))
-    .width(18.0)
-    .height(18.0)
-    .on_press(Message::Close);
-
+    let close_btn = close_button();
     let header = components::PanelHeader::new("QUERY SYNTAX").action(close_btn).render();
+    let example_rows = build_example_rows();
+    let keys_row = build_keys_row();
+    let tag_chips = build_tag_chips(self.all_tags);
 
-    let example_rows: Vec<Element<'a, Message>> = HELP_EXAMPLES
-      .iter()
-      .map(|&(q, note)| {
-        components::Button::row(
-          row([
-            code_chip(q, true),
-            text(note)
-              .font(typography::body::REGULAR)
-              .size(12.0)
-              .style(|_| iced::widget::text::Style {
-                color: Some(color::text::SECONDARY),
-              })
-              .into(),
-          ])
-          .spacing(12.0)
-          .align_y(iced::alignment::Vertical::Center),
-        )
-        .width(iced::Length::Fill)
-        .on_press(Message::QueryInserted(q.to_string()))
-        .into()
-      })
-      .collect();
-
-    let keys_row: Vec<Element<'a, Message>> = AVAILABLE_KEYS
-      .iter()
-      .map(|&k| code_chip(&format!("{k}:"), false))
-      .collect();
-
-    let tag_chips: Vec<Element<'a, Message>> = self
-      .all_tags
-      .iter()
-      .map(|(_, name, _)| {
-        let q = format!("tag:{name}");
-        let q2 = q.clone();
-        components::Button::close(code_chip(&q, false))
-          .on_press(Message::QueryInserted(q2))
-          .into()
-      })
-      .collect();
-
-    let all_tags = self.all_tags;
-    let mut body_items: Vec<Element<'a, Message>> = Vec::new();
-    body_items.push(section_label("EXAMPLES"));
-    body_items.extend(example_rows);
-    body_items.push(components::Separator::horizontal().render());
-    body_items.push(section_label("AVAILABLE KEYS"));
-    body_items.push(row(keys_row).spacing(4.0).wrap().into());
-    if !all_tags.is_empty() {
-      body_items.push(components::Separator::horizontal().render());
-      body_items.push(section_label(format!("YOUR TAGS ({})", all_tags.len())));
-      body_items.push(row(tag_chips).spacing(4.0).wrap().into());
-    }
-
+    let body_items = build_body_items(example_rows, keys_row, tag_chips, self.all_tags);
     let body = scrollable(
       container(column(body_items).spacing(8.0).width(iced::Length::Fill)).padding(Padding {
         top: 10.0,
@@ -142,6 +85,81 @@ impl<'a> Component<'a> {
       .width(Length::Fixed(360.0))
       .render()
   }
+}
+
+fn close_button() -> Element<'static, Message> {
+  components::Button::close(text("\u{00D7}").font(typography::body::MEDIUM).size(16.0).style(|_| {
+    iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    }
+  }))
+  .width(18.0)
+  .height(18.0)
+  .on_press(Message::Close)
+  .into()
+}
+
+fn example_row(q: &'static str, note: &'static str) -> Element<'static, Message> {
+  components::Button::row(
+    row([
+      code_chip(q, true),
+      text(note)
+        .font(typography::body::REGULAR)
+        .size(12.0)
+        .style(|_| iced::widget::text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+    ])
+    .spacing(12.0)
+    .align_y(iced::alignment::Vertical::Center),
+  )
+  .width(iced::Length::Fill)
+  .on_press(Message::QueryInserted(q.to_string()))
+  .into()
+}
+
+fn build_example_rows() -> Vec<Element<'static, Message>> {
+  HELP_EXAMPLES.iter().map(|&(q, note)| example_row(q, note)).collect()
+}
+
+fn build_keys_row() -> Vec<Element<'static, Message>> {
+  AVAILABLE_KEYS
+    .iter()
+    .map(|&k| code_chip(&format!("{k}:"), false))
+    .collect()
+}
+
+fn tag_chip_button(name: &str) -> Element<'static, Message> {
+  let q = format!("tag:{name}");
+  let q2 = q.clone();
+  components::Button::close(code_chip(&q, false))
+    .on_press(Message::QueryInserted(q2))
+    .into()
+}
+
+fn build_tag_chips(all_tags: &[(i32, String, Option<String>)]) -> Vec<Element<'static, Message>> {
+  all_tags.iter().map(|(_, name, _)| tag_chip_button(name)).collect()
+}
+
+fn build_body_items<'a>(
+  example_rows: Vec<Element<'a, Message>>,
+  keys_row: Vec<Element<'a, Message>>,
+  tag_chips: Vec<Element<'a, Message>>,
+  all_tags: &'a [(i32, String, Option<String>)],
+) -> Vec<Element<'a, Message>> {
+  let mut body_items: Vec<Element<'a, Message>> = Vec::new();
+  body_items.push(section_label("EXAMPLES"));
+  body_items.extend(example_rows);
+  body_items.push(components::Separator::horizontal().render());
+  body_items.push(section_label("AVAILABLE KEYS"));
+  body_items.push(row(keys_row).spacing(4.0).wrap().into());
+  if !all_tags.is_empty() {
+    body_items.push(components::Separator::horizontal().render());
+    body_items.push(section_label(format!("YOUR TAGS ({})", all_tags.len())));
+    body_items.push(row(tag_chips).spacing(4.0).wrap().into());
+  }
+  body_items
 }
 
 fn section_label(title: impl ToString) -> Element<'static, Message> {

@@ -37,7 +37,7 @@ impl State {
       }
       Message::HelpPopOver(inner) => update_help_popover(self, inner),
       Message::HelpToggle => update_help_toggle(self),
-      Message::FocusInput => iced::widget::operation::focus(self.input_id.clone()).map(|_: ()| Message::FocusInput),
+      Message::FocusInput => focus_input(self),
     }
   }
 }
@@ -46,6 +46,10 @@ impl Default for State {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn focus_input(state: &State) -> Task<Message> {
+  iced::widget::operation::focus(state.input_id.clone()).map(|_: ()| Message::FocusInput)
 }
 
 fn update_help_popover(state: &mut State, inner: help_pop_over::Message) -> Task<Message> {

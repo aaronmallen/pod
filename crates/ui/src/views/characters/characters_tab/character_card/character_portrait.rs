@@ -129,36 +129,25 @@ fn portrait_placeholder<'a, MSG: 'static>(character: &'a Character, hue: f32) ->
   .into()
 }
 
+fn first_char_upper(word: &str) -> String {
+  word
+    .chars()
+    .next()
+    .map(|c| c.to_uppercase().to_string())
+    .unwrap_or_default()
+}
+
 fn character_initials(name: &str) -> String {
   let words: Vec<&str> = name.split_whitespace().collect();
   match words.as_slice() {
     [] => String::new(),
-    [only] => only
-      .chars()
-      .next()
-      .map(|c| c.to_uppercase().to_string())
-      .unwrap_or_default(),
-    [first, .., last] => {
-      let f = first
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
-      let l = last
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
-      format!("{f}{l}")
-    }
+    [only] => first_char_upper(only),
+    [first, .., last] => format!("{}{}", first_char_upper(first), first_char_upper(last)),
   }
 }
 
-fn hsl_to_color(h: f32, s: f32, l: f32) -> Color {
-  let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-  let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-  let m = l - c / 2.0;
-  let (r, g, b) = if h < 60.0 {
+fn hsl_sector_rgb(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+  if h < 60.0 {
     (c, x, 0.0)
   } else if h < 120.0 {
     (x, c, 0.0)
@@ -166,8 +155,17 @@ fn hsl_to_color(h: f32, s: f32, l: f32) -> Color {
     (0.0, c, x)
   } else if h < 240.0 {
     (0.0, x, c)
-  } else if h < 300.0 {
+  } else {
     (x, 0.0, c)
+  }
+}
+
+fn hsl_to_color(h: f32, s: f32, l: f32) -> Color {
+  let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+  let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+  let m = l - c / 2.0;
+  let (r, g, b) = if h < 300.0 {
+    hsl_sector_rgb(h, c, x)
   } else {
     (c, 0.0, x)
   };

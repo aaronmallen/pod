@@ -29,6 +29,26 @@ impl<'a> Component<'a> {
   }
 }
 
+fn filter_btn_style(is_active: bool) -> button::Style {
+  button::Style {
+    background: if is_active {
+      Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
+    } else {
+      None
+    },
+    border: Border {
+      radius: 4.0.into(),
+      ..Border::default()
+    },
+    text_color: if is_active {
+      color::accent::PLASMA
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  }
+}
+
 fn filter_button<'a>(opt: &KilllogFilter, label: &'static str, filter: &'a KilllogFilter) -> Element<'a, Message> {
   let is_active = filter == opt;
   let opt_clone = opt.clone();
@@ -50,23 +70,7 @@ fn filter_button<'a>(opt: &KilllogFilter, label: &'static str, filter: &'a Killl
     left: 12.0,
     right: 12.0,
   })
-  .style(move |_, _| button::Style {
-    background: if is_active {
-      Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
-    } else {
-      None
-    },
-    border: Border {
-      radius: 4.0.into(),
-      ..Border::default()
-    },
-    text_color: if is_active {
-      color::accent::PLASMA
-    } else {
-      color::text::SECONDARY
-    },
-    ..button::Style::default()
-  })
+  .style(move |_, _| filter_btn_style(is_active))
   .on_press(Message::KilllogFilterChanged(opt_clone))
   .into()
 }

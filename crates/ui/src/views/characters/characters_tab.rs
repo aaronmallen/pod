@@ -153,6 +153,32 @@ impl Default for State {
   }
 }
 
+fn find_ghost_char<'a>(characters: &[&'a Character], dragging_id: Option<i64>) -> Option<&'a Character> {
+  dragging_id.and_then(|id| characters.iter().find(|c| *c.id() == id).copied())
+}
+
+fn build_layers<'a>(
+  grid: Element<'a, Message>,
+  context_menu: Option<&'a context_menu::State>,
+  ghost_char: Option<&'a Character>,
+  ghost_handle: Option<&'a iced::widget::image::Handle>,
+  cursor: Point,
+  window_width: f32,
+) -> Vec<Element<'a, Message>> {
+  let mut layers: Vec<Element<'a, Message>> = vec![grid];
+  if let Some(ctx) = context_menu {
+    layers.push(ContextMenu::new(ctx).render().map(Message::ContextMenu));
+  }
+  if let Some(ghost_c) = ghost_char {
+    layers.push(GhostOverlay::new(ghost_c, ghost_handle, cursor, window_width).render());
+  }
+  layers
+}
+
+fn layers_into_element<'a>(mut layers: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  layers.remove(0)
+}
+
 fn context_menu_edit_tags_task(id: i64) -> Task<Message> {
   Task::done(Message::Card(id, character_card::Message::TagsPressed(id)))
 }
@@ -283,24 +309,15 @@ impl<'a> Component<'a> {
 
     // Extract ghost character data before consuming self in render_grid().
     // Both references carry lifetime 'a so they outlive the move.
-    let ghost_char: Option<&'a Character> =
-      dragging_id.and_then(|id| self.characters.iter().find(|c| *c.id() == id).copied());
+    let ghost_char: Option<&'a Character> = find_ghost_char(&self.characters, dragging_id);
     let ghost_handle: Option<&'a iced::widget::image::Handle> =
       dragging_id.and_then(|id| self.state.portrait_handles.get(&id));
 
     let grid = self.render_grid(feat_skill_monitoring, feat_wallet);
-    let mut layers: Vec<Element<'a, Message>> = vec![grid];
-
-    if let Some(ctx) = context_menu {
-      layers.push(ContextMenu::new(ctx).render().map(Message::ContextMenu));
-    }
-
-    if let Some(ghost_c) = ghost_char {
-      layers.push(GhostOverlay::new(ghost_c, ghost_handle, cursor, window_width).render());
-    }
+    let layers = build_layers(grid, context_menu, ghost_char, ghost_handle, cursor, window_width);
 
     if layers.len() == 1 {
-      layers.remove(0)
+      layers_into_element(layers)
     } else {
       stack(layers).into()
     }

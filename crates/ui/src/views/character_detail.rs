@@ -289,13 +289,18 @@ fn all_tab_entries(state: &State) -> [TabEntry; 5] {
   ]
 }
 
-fn detail_tab_strip(state: &State) -> Element<'_, Message> {
-  let all_tabs = all_tab_entries(state);
-  let visible_tabs: Vec<_> = all_tabs.iter().filter(|(_, _, _, _, enabled)| *enabled).collect();
-  let active_index = visible_tabs
+fn visible_tab_entries(all_tabs: &[TabEntry]) -> Vec<&TabEntry> {
+  all_tabs.iter().filter(|(_, _, _, _, enabled)| *enabled).collect()
+}
+
+fn tab_active_index(visible_tabs: &[&TabEntry], active_tab: Tab) -> usize {
+  visible_tabs
     .iter()
-    .position(|(tab, _, _, _, _)| *tab == state.active_tab)
-    .unwrap_or(0);
+    .position(|(tab, _, _, _, _)| *tab == active_tab)
+    .unwrap_or(0)
+}
+
+fn tab_items_and_ordering(visible_tabs: &[&TabEntry]) -> (Vec<crate::components::tab_strip::TabItem>, Vec<Tab>) {
   let items = visible_tabs
     .iter()
     .map(|(_, label, count, _, _)| crate::components::tab_strip::TabItem {
@@ -303,7 +308,15 @@ fn detail_tab_strip(state: &State) -> Element<'_, Message> {
       count: *count,
     })
     .collect();
-  let tab_ordering: Vec<Tab> = visible_tabs.iter().map(|(tab, _, _, _, _)| *tab).collect();
+  let tab_ordering = visible_tabs.iter().map(|(tab, _, _, _, _)| *tab).collect();
+  (items, tab_ordering)
+}
+
+fn detail_tab_strip(state: &State) -> Element<'_, Message> {
+  let all_tabs = all_tab_entries(state);
+  let visible_tabs = visible_tab_entries(&all_tabs);
+  let active_index = tab_active_index(&visible_tabs, state.active_tab);
+  let (items, tab_ordering) = tab_items_and_ordering(&visible_tabs);
   TabStrip::new(items)
     .active(active_index)
     .render(move |i| Message::TabChanged(tab_ordering[i]))
@@ -315,15 +328,22 @@ fn scope_gate<'a>(char_id: i64, feature: &'static str) -> Element<'a, Message> {
   })
 }
 
+fn tab_content_activity<'a>(state: &'a State, granted: &[&str], char_id: i64) -> Element<'a, Message> {
+  match state.active_tab {
+    Tab::Killlog => tab_killlog(state, granted, char_id),
+    Tab::Notifications => tab_notifications(state, granted, char_id),
+    Tab::Standings => tab_standings(state, granted, char_id),
+    _ => tab_clones(state, granted, char_id),
+  }
+}
+
 fn tab_content(state: &State) -> Element<'_, Message> {
   let granted = state.character.granted_scopes_list();
   let char_id = state.character_id;
   match state.active_tab {
     Tab::Clones => tab_clones(state, &granted, char_id),
     Tab::Contacts => tab_contacts(state, &granted, char_id),
-    Tab::Killlog => tab_killlog(state, &granted, char_id),
-    Tab::Notifications => tab_notifications(state, &granted, char_id),
-    Tab::Standings => tab_standings(state, &granted, char_id),
+    _ => tab_content_activity(state, &granted, char_id),
   }
 }
 

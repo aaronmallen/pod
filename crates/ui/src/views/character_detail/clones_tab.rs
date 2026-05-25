@@ -120,25 +120,25 @@ fn jump_clone_grid<'a>(
   build_grid_rows(cards)
 }
 
+fn cell_or_space<'a>(slot: Option<Element<'a, Message>>) -> Element<'a, Message> {
+  match slot {
+    Some(el) => container(el).width(Length::Fill).into(),
+    None => Space::new().width(Length::Fill).into(),
+  }
+}
+
 fn build_grid_rows<'a>(cards: Vec<Element<'a, Message>>) -> Element<'a, Message> {
   let mut grid_rows: Vec<Element<'_, Message>> = Vec::new();
   let mut iter = cards.into_iter();
   loop {
-    let a = iter.next();
-    if a.is_none() {
+    let Some(a) = iter.next() else {
       break;
-    }
-    let b = iter.next();
-    let c_el = iter.next();
-    let mut row_els: Vec<Element<'_, Message>> = vec![container(a.unwrap()).width(Length::Fill).into()];
-    row_els.push(match b {
-      Some(el) => container(el).width(Length::Fill).into(),
-      None => Space::new().width(Length::Fill).into(),
-    });
-    row_els.push(match c_el {
-      Some(el) => container(el).width(Length::Fill).into(),
-      None => Space::new().width(Length::Fill).into(),
-    });
+    };
+    let row_els = vec![
+      container(a).width(Length::Fill).into(),
+      cell_or_space(iter.next()),
+      cell_or_space(iter.next()),
+    ];
     grid_rows.push(row(row_els).spacing(12.0).into());
   }
   column(grid_rows).spacing(12.0).into()
@@ -164,20 +164,28 @@ fn jump_readiness_label(last_jump_iso: &str) -> String {
   }
 }
 
+fn parse_date_parts(date_str: &str) -> Vec<u32> {
+  date_str.split('-').filter_map(|p| p.parse().ok()).collect()
+}
+
+fn parse_time_parts(time_str: &str) -> Vec<u32> {
+  time_str
+    .split('+')
+    .next()
+    .unwrap_or("")
+    .split(':')
+    .filter_map(|p| p.parse().ok())
+    .collect()
+}
+
 fn parse_iso8601(s: &str) -> Result<i64, ()> {
   let s = s.trim_end_matches('Z').trim_end_matches('+').trim();
   let parts: Vec<&str> = s.splitn(2, 'T').collect();
   if parts.len() != 2 {
     return Err(());
   }
-  let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
-  let time_parts: Vec<u32> = parts[1]
-    .split('+')
-    .next()
-    .unwrap_or("")
-    .split(':')
-    .filter_map(|p| p.parse().ok())
-    .collect();
+  let date_parts = parse_date_parts(parts[0]);
+  let time_parts = parse_time_parts(parts[1]);
   if date_parts.len() < 3 || time_parts.len() < 3 {
     return Err(());
   }

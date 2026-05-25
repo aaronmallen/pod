@@ -75,50 +75,66 @@ impl Component {
     let char_count_str = count_label(self.is_filtered && chars_active, self.char_visible, self.char_total);
     let corp_count_str = count_label(self.is_filtered && corps_active, self.corp_visible, self.corp_total);
 
-    let action_btn: Element<'static, Message> = if corps_active {
-      AddCorporationButton::new().render().map(|_| Message::AddCorporation)
-    } else {
-      AddCharacterButton::new().render().map(|_| Message::AddCharacter)
-    };
-
-    let tabs_row = row([
-      Tab::new(
-        "Characters",
-        &char_count_str,
-        chars_active,
-        Message::TabSelected("characters".to_string()),
-      )
-      .render(),
-      Tab::new(
-        "Corporations",
-        &corp_count_str,
-        corps_active,
-        Message::TabSelected("corporations".to_string()),
-      )
-      .render(),
-      iced::widget::Space::new().width(Length::Fill).into(),
-      container(action_btn).center_y(spacing::layout::HEADER_HEIGHT).into(),
-    ])
-    .spacing(spacing::SPACE_7)
-    .padding(Padding {
-      top: 0.0,
-      bottom: 0.0,
-      left: spacing::SPACE_8,
-      right: spacing::SPACE_8,
-    });
-
+    let action_btn = action_button(corps_active);
+    let tabs_row = build_tabs_row(chars_active, corps_active, &char_count_str, &corp_count_str, action_btn);
     let header = container(tabs_row)
       .width(Length::Fill)
       .height(spacing::layout::HEADER_HEIGHT);
-    let border_line = container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      });
+    let border_line = bottom_border_line();
     column([header.into(), border_line.into()]).width(Length::Fill).into()
   }
+}
+
+fn action_button(corps_active: bool) -> Element<'static, Message> {
+  if corps_active {
+    AddCorporationButton::new().render().map(|_| Message::AddCorporation)
+  } else {
+    AddCharacterButton::new().render().map(|_| Message::AddCharacter)
+  }
+}
+
+fn build_tabs_row(
+  chars_active: bool,
+  corps_active: bool,
+  char_count_str: &str,
+  corp_count_str: &str,
+  action_btn: Element<'static, Message>,
+) -> iced::widget::Row<'static, Message> {
+  row([
+    Tab::new(
+      "Characters",
+      char_count_str,
+      chars_active,
+      Message::TabSelected("characters".to_string()),
+    )
+    .render(),
+    Tab::new(
+      "Corporations",
+      corp_count_str,
+      corps_active,
+      Message::TabSelected("corporations".to_string()),
+    )
+    .render(),
+    iced::widget::Space::new().width(Length::Fill).into(),
+    container(action_btn).center_y(spacing::layout::HEADER_HEIGHT).into(),
+  ])
+  .spacing(spacing::SPACE_7)
+  .padding(Padding {
+    top: 0.0,
+    bottom: 0.0,
+    left: spacing::SPACE_8,
+    right: spacing::SPACE_8,
+  })
+}
+
+fn bottom_border_line() -> container::Container<'static, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
 }
 
 fn count_label(filtered: bool, visible: usize, total: usize) -> String {

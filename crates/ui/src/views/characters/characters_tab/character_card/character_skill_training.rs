@@ -22,19 +22,9 @@ impl<'a> Component<'a> {
 
   pub fn render<MSG: 'static>(self) -> Element<'a, MSG> {
     let queue = self.character.training_queue();
-    let is_paused = !queue.is_empty() && queue.iter().all(|e| e.start_date.is_none());
-    let has_named_active = self
-      .character
-      .active_training()
-      .and_then(|s| s.skill_name.as_ref())
-      .is_some();
-    let content = if has_named_active {
-      active_training(self.character)
-    } else if is_paused {
-      paused_training()
-    } else {
-      idle_training()
-    };
+    let is_paused = queue_is_paused(queue);
+    let has_named_active = has_active_named_skill(self.character);
+    let content = training_content(self.character, has_named_active, is_paused);
 
     container(content)
       .padding(Padding {
@@ -46,6 +36,31 @@ impl<'a> Component<'a> {
       .width(iced::Length::Fill)
       .height(iced::Length::Fill)
       .into()
+  }
+}
+
+fn queue_is_paused(queue: &[pod_model::TrainingQueueEntry]) -> bool {
+  !queue.is_empty() && queue.iter().all(|e| e.start_date.is_none())
+}
+
+fn has_active_named_skill(character: &Character) -> bool {
+  character
+    .active_training()
+    .and_then(|s| s.skill_name.as_ref())
+    .is_some()
+}
+
+fn training_content<'a, MSG: 'static>(
+  character: &'a Character,
+  has_named_active: bool,
+  is_paused: bool,
+) -> Element<'a, MSG> {
+  if has_named_active {
+    active_training(character)
+  } else if is_paused {
+    paused_training()
+  } else {
+    idle_training()
   }
 }
 

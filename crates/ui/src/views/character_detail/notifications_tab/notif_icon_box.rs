@@ -42,15 +42,25 @@ impl Component {
   }
 }
 
-pub(super) fn category_color(category: &str) -> Color {
+fn category_color_combat_corp(category: &str) -> Option<Color> {
   match category {
-    "war" | "incursion" | "combat" => color::status::DANGER,
-    "corp" | "alliance" | "fw" => color::status::CAUTION,
+    "war" | "incursion" | "combat" => Some(color::status::DANGER),
+    "corp" | "alliance" | "fw" => Some(color::status::CAUTION),
+    _ => None,
+  }
+}
+
+fn category_color_other(category: &str) -> Color {
+  match category {
     "structure" | "mission" | "industry" | "standing" => color::accent::PLASMA,
     "market" | "insurance" | "reward" => color::status::ONLINE,
     "contract" | "clone" | "contact" => color::accent::COBALT,
     _ => color::text::SECONDARY,
   }
+}
+
+pub(super) fn category_color(category: &str) -> Color {
+  category_color_combat_corp(category).unwrap_or_else(|| category_color_other(category))
 }
 
 fn category_icon(category: &str) -> Icon {

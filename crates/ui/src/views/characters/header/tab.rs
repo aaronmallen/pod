@@ -39,6 +39,28 @@ impl Component {
   }
 }
 
+fn count_text_color(is_active: bool) -> iced::Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    color::text::TERTIARY
+  }
+}
+
+fn tab_button_style(is_active: bool, status: button::Status) -> button::Style {
+  let text_color = match (is_active, status) {
+    (true, _) | (_, button::Status::Hovered | button::Status::Pressed) => color::text::PRIMARY,
+    _ => color::text::SECONDARY,
+  };
+  button::Style {
+    text_color,
+    background: None,
+    border: Border::default(),
+    shadow: Shadow::default(),
+    snap: false,
+  }
+}
+
 fn tab_button(
   label: &str,
   count: &str,
@@ -47,6 +69,7 @@ fn tab_button(
 ) -> button::Button<'static, super::Message> {
   let label_owned = label.to_string();
   let count_owned = count.to_string();
+  let count_color = count_text_color(is_active);
 
   let content = row([
     text(label_owned).font(typography::body::MEDIUM).size(20.0).into(),
@@ -54,11 +77,7 @@ fn tab_button(
       .font(typography::mono::MEDIUM)
       .size(11.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::TERTIARY
-        }),
+        color: Some(count_color),
       })
       .into(),
   ])
@@ -75,16 +94,7 @@ fn tab_button(
       left: 2.0,
       right: 2.0,
     })
-    .style(move |_, status| button::Style {
-      text_color: match (is_active, status) {
-        (true, _) | (_, button::Status::Hovered | button::Status::Pressed) => color::text::PRIMARY,
-        _ => color::text::SECONDARY,
-      },
-      background: None,
-      border: Border::default(),
-      shadow: Shadow::default(),
-      snap: false,
-    })
+    .style(move |_, status| tab_button_style(is_active, status))
     .on_press(on_press)
 }
 

@@ -511,23 +511,28 @@ fn handle_characters_navigation(
   }
 }
 
-fn apply_characters_state_updates(state: &mut State, msg: &characters::Message) {
-  match msg {
-    characters::Message::CharactersTab(characters::characters_tab::Message::CharacterAdded(c)) => {
-      apply_character_added(state, c);
-    }
-    characters::Message::ConfirmRemove => apply_confirm_remove(state),
-    characters::Message::CharactersTab(characters::characters_tab::Message::LocationsRefreshed(updates)) => {
+fn apply_characters_tab_update(state: &mut State, tab_msg: &characters::characters_tab::Message) {
+  match tab_msg {
+    characters::characters_tab::Message::CharacterAdded(c) => apply_character_added(state, c),
+    characters::characters_tab::Message::LocationsRefreshed(updates) => {
       update_sync_state(state, !updates.is_empty());
     }
-    characters::Message::CharactersTab(characters::characters_tab::Message::SkillQueuesRefreshed(updates)) => {
+    characters::characters_tab::Message::SkillQueuesRefreshed(updates) => {
       apply_skill_queues_refreshed(state, updates);
     }
-    characters::Message::ConfirmRemoveCorporation => apply_confirm_remove_corporation(state),
-    characters::Message::CorporationsTab(tab_msg) => apply_corporations_tab_update(state, tab_msg),
-    characters::Message::CharactersTab(characters::characters_tab::Message::WalletsRefreshed(updates)) => {
+    characters::characters_tab::Message::WalletsRefreshed(updates) => {
       update_sync_state(state, !updates.is_empty());
     }
+    _ => {}
+  }
+}
+
+fn apply_characters_state_updates(state: &mut State, msg: &characters::Message) {
+  match msg {
+    characters::Message::CharactersTab(tab_msg) => apply_characters_tab_update(state, tab_msg),
+    characters::Message::ConfirmRemove => apply_confirm_remove(state),
+    characters::Message::ConfirmRemoveCorporation => apply_confirm_remove_corporation(state),
+    characters::Message::CorporationsTab(tab_msg) => apply_corporations_tab_update(state, tab_msg),
     _ => {}
   }
 }
@@ -626,51 +631,49 @@ fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> ic
   task
 }
 
-fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
-  tracing::info!("main: navigated to {nav:?}");
-  state.active_nav = nav;
+fn navigate_to_assets(state: &mut State, services: &Services) -> iced::Task<Message> {
+  if let Some(cached) = state.cached_assets_state.take() {
+    let refresh = assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services);
+    state.active_view = ActiveView::Assets(cached);
+    return refresh.map(Message::Assets);
+  }
+  let (s, task) = assets_ctrl::new(
+    state.characters.clone(),
+    state.corporations.clone(),
+    services,
+    state.assets_sidebar_width,
+  );
+  state.active_view = ActiveView::Assets(s);
+  task.map(Message::Assets)
+}
+
+fn navigate_to_mail(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let (s, task) = mail_ctrl::new(
+    state.characters.clone(),
+    services,
+    state.mail_folder_pane_width,
+    state.mail_message_list_width,
+  );
+  swap_active_view(state, ActiveView::Mail(s));
+  let pending = std::mem::take(&mut state.pending_snooze_expired);
+  if pending.is_empty() {
+    return task.map(Message::Mail);
+  }
+  let flush = Message::Mail(mail::Message::ReadingPane(
+    pod_ui::views::mail::reading_pane::Message::SnoozedExpired(pending),
+  ));
+  iced::Task::batch([task.map(Message::Mail), iced::Task::done(flush)])
+}
+
+fn navigate_to_characters(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let (chars_state, init_task) = characters_ctrl::new(state.characters.clone(), services);
+  swap_active_view(state, ActiveView::Characters(chars_state));
+  let tags_task = characters_ctrl::reload_all_tags_task(services).map(Message::Characters);
+  iced::Task::batch([init_task.map(Message::Characters), tags_task])
+}
+
+fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
   match nav {
-    Nav::Assets => {
-      if let Some(cached) = state.cached_assets_state.take() {
-        // Restore cached state instantly and refresh in background.
-        let refresh = assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services);
-        state.active_view = ActiveView::Assets(cached);
-        return refresh.map(Message::Assets);
-      }
-      let (s, task) = assets_ctrl::new(
-        state.characters.clone(),
-        state.corporations.clone(),
-        services,
-        state.assets_sidebar_width,
-      );
-      state.active_view = ActiveView::Assets(s);
-      task.map(Message::Assets)
-    }
-    Nav::Characters => {
-      let (chars_state, init_task) = characters_ctrl::new(state.characters.clone(), services);
-      swap_active_view(state, ActiveView::Characters(chars_state));
-      let tags_task = characters_ctrl::reload_all_tags_task(services).map(Message::Characters);
-      iced::Task::batch([init_task.map(Message::Characters), tags_task])
-    }
-    Nav::Mail => {
-      let (s, task) = mail_ctrl::new(
-        state.characters.clone(),
-        services,
-        state.mail_folder_pane_width,
-        state.mail_message_list_width,
-      );
-      swap_active_view(state, ActiveView::Mail(s));
-      // Flush any snooze expirations that fired while mail was inactive.
-      let pending = std::mem::take(&mut state.pending_snooze_expired);
-      if pending.is_empty() {
-        task.map(Message::Mail)
-      } else {
-        let flush = Message::Mail(mail::Message::ReadingPane(
-          pod_ui::views::mail::reading_pane::Message::SnoozedExpired(pending),
-        ));
-        iced::Task::batch([task.map(Message::Mail), iced::Task::done(flush)])
-      }
-    }
     Nav::Settings => {
       let (s, task) = settings_ctrl::new(services.config.features());
       swap_active_view(state, ActiveView::Settings(s));
@@ -691,6 +694,18 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
       swap_active_view(state, ActiveView::Wallet(s));
       task.map(Message::Wallet)
     }
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
+  tracing::info!("main: navigated to {nav:?}");
+  state.active_nav = nav;
+  match nav {
+    Nav::Assets => navigate_to_assets(state, services),
+    Nav::Characters => navigate_to_characters(state, services),
+    Nav::Mail => navigate_to_mail(state, services),
+    nav => navigate_to_simple_view(state, nav, services),
   }
 }
 
@@ -739,6 +754,21 @@ fn update_settings(
   apply_settings_save(state, settings_task, updated_cfg, services)
 }
 
+fn active_nav_was_hidden(state: &State) -> bool {
+  matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
+    || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
+    || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
+    || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet
+}
+
+fn apply_settings_features(state: &mut State, cfg: &crate::config::Settings) {
+  let features = cfg.features();
+  state.feat_asset_tracking = *features.asset_tracking();
+  state.feat_mail = *features.mail();
+  state.feat_skill_monitoring = *features.skill_monitoring();
+  state.feat_wallet = *features.wallet();
+}
+
 fn apply_settings_save(
   state: &mut State,
   settings_task: iced::Task<Message>,
@@ -748,19 +778,9 @@ fn apply_settings_save(
   let Some(cfg) = updated_cfg else {
     return (settings_task, None);
   };
-  let features = cfg.features();
-  state.feat_asset_tracking = *features.asset_tracking();
-  state.feat_mail = *features.mail();
-  state.feat_skill_monitoring = *features.skill_monitoring();
-  state.feat_wallet = *features.wallet();
-
-  let hidden_nav = matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
-    || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
-    || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
-    || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet;
-
+  apply_settings_features(state, &cfg);
   let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
-  if hidden_nav {
+  if active_nav_was_hidden(state) {
     state.active_nav = Nav::Characters;
     let (chars_state, chars_task) = characters_ctrl::new(state.characters.clone(), services);
     state.active_view = ActiveView::Characters(chars_state);

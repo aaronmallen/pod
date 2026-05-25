@@ -108,25 +108,15 @@ impl State {
         self.context_menu = None;
         Task::none()
       }
-      context_menu::Message::EditTags => {
-        let id = self.context_menu.as_ref().map(|s| s.character_id);
-        self.context_menu = None;
-        if let Some(id) = id {
-          Task::done(Message::Card(id, character_card::Message::TagsPressed(id)))
-        } else {
-          Task::none()
-        }
-      }
-      context_menu::Message::RemoveRequested => {
-        let id = self.context_menu.as_ref().map(|s| s.character_id);
-        self.context_menu = None;
-        if let Some(id) = id {
-          Task::done(Message::RemoveCharacter(id))
-        } else {
-          Task::none()
-        }
-      }
+      context_menu::Message::EditTags => self.context_menu_action(context_menu_edit_tags_task),
+      context_menu::Message::RemoveRequested => self.context_menu_action(remove_character_task),
     }
+  }
+
+  fn context_menu_action(&mut self, make_task: fn(i64) -> Task<Message>) -> Task<Message> {
+    let id = self.context_menu.as_ref().map(|s| s.character_id);
+    self.context_menu = None;
+    id.map(make_task).unwrap_or_else(Task::none)
   }
 
   fn update_drag_moved(&mut self, pt: Point, pane_height: f32) -> Task<Message> {
@@ -161,6 +151,14 @@ impl Default for State {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn context_menu_edit_tags_task(id: i64) -> Task<Message> {
+  Task::done(Message::Card(id, character_card::Message::TagsPressed(id)))
+}
+
+fn remove_character_task(id: i64) -> Task<Message> {
+  Task::done(Message::RemoveCharacter(id))
 }
 
 fn update_cursor_moved(state: &mut State, pt: Point) -> Task<Message> {

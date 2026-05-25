@@ -414,6 +414,42 @@ pub fn plan_time_with_attrs(weights: &[PairWeight], attrs: &EffectiveAttrs) -> f
   total
 }
 
+fn try_candidate(
+  per: i32,
+  mem: i32,
+  wil: i32,
+  intl: i32,
+  base_total: i32,
+  implant: &ImplantBonus,
+  weights: &[PairWeight],
+  current_time: f64,
+  best: &mut RemapResult,
+) {
+  const ATTR_MIN: i32 = 17;
+  const ATTR_MAX: i32 = 27;
+  let cha = base_total - per - mem - wil - intl;
+  if !(ATTR_MIN..=ATTR_MAX).contains(&cha) {
+    return;
+  }
+  let base = BaseAttrs {
+    perception: per,
+    memory: mem,
+    willpower: wil,
+    intelligence: intl,
+    charisma: cha,
+  };
+  let eff = effective_attrs(&base, implant);
+  let t = plan_time_with_attrs(weights, &eff);
+  if t < best.total_sec {
+    *best = RemapResult {
+      base,
+      total_sec: t,
+      current_sec: current_time,
+      is_current: false,
+    };
+  }
+}
+
 /// Brute-force the optimal base attribute distribution. Tests all valid
 /// combinations in [17, 27] that sum to `base_total`. Always includes
 /// `current_base` as a candidate so the result is never worse than the
@@ -442,32 +478,21 @@ pub fn optimize_remap(
 
   const ATTR_MIN: i32 = 17;
   const ATTR_MAX: i32 = 27;
-
   for per in ATTR_MIN..=ATTR_MAX {
     for mem in ATTR_MIN..=ATTR_MAX {
       for wil in ATTR_MIN..=ATTR_MAX {
         for intl in ATTR_MIN..=ATTR_MAX {
-          let cha = base_total - per - mem - wil - intl;
-          if !(ATTR_MIN..=ATTR_MAX).contains(&cha) {
-            continue;
-          }
-          let base = BaseAttrs {
-            perception: per,
-            memory: mem,
-            willpower: wil,
-            intelligence: intl,
-            charisma: cha,
-          };
-          let eff = effective_attrs(&base, implant);
-          let t = plan_time_with_attrs(&weights, &eff);
-          if t < best.total_sec {
-            best = RemapResult {
-              base,
-              total_sec: t,
-              current_sec: current_time,
-              is_current: false,
-            };
-          }
+          try_candidate(
+            per,
+            mem,
+            wil,
+            intl,
+            base_total,
+            implant,
+            &weights,
+            current_time,
+            &mut best,
+          );
         }
       }
     }

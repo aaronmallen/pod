@@ -293,19 +293,24 @@ fn card_right_label(clone: &CharacterClone, is_active: bool) -> String {
   }
 }
 
-fn clone_card_header<'a>(clone: &'a CharacterClone, is_active: bool) -> Element<'a, Message> {
-  let display_name = if is_active {
+fn clone_display_name(clone: &CharacterClone, is_active: bool) -> String {
+  if is_active {
     clone.station_name.clone()
   } else {
     clone.name.clone().unwrap_or_else(|| clone.station_name.clone())
-  };
-  let right_label = card_right_label(clone, is_active);
-  let right_color = if is_active {
+  }
+}
+
+fn clone_right_color(is_active: bool) -> Color {
+  if is_active {
     color::accent::PLASMA
   } else {
     color::text::SECONDARY
-  };
-  let name_el = text(display_name)
+  }
+}
+
+fn clone_header_left_col<'a>(clone: &'a CharacterClone, is_active: bool) -> Element<'a, Message> {
+  let name_el = text(clone_display_name(clone, is_active))
     .font(body::MEDIUM)
     .size(14.0)
     .style(|_: &Theme| iced::widget::text::Style {
@@ -317,8 +322,13 @@ fn clone_card_header<'a>(clone: &'a CharacterClone, is_active: bool) -> Element<
     .style(|_: &Theme| iced::widget::text::Style {
       color: Some(color::text::SECONDARY),
     });
-  let left_col = column([name_el.into(), Space::new().height(2.0).into(), location_el.into()]).into();
-  let right_el = text(right_label)
+  column([name_el.into(), Space::new().height(2.0).into(), location_el.into()]).into()
+}
+
+fn clone_card_header<'a>(clone: &'a CharacterClone, is_active: bool) -> Element<'a, Message> {
+  let right_color = clone_right_color(is_active);
+  let left_col = clone_header_left_col(clone, is_active);
+  let right_el = text(card_right_label(clone, is_active))
     .font(mono::REGULAR)
     .size(9.0)
     .style(move |_: &Theme| iced::widget::text::Style {

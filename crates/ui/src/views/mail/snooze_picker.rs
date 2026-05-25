@@ -109,13 +109,21 @@ pub fn preset_to_iso(label: &str) -> Option<String> {
   let now = Utc::now();
   let today = now.date_naive();
   let target = match label {
-    "Later today" => today.and_hms_opt(18, 0, 0)?.and_utc(),
-    "Tomorrow" => today.succ_opt()?.and_hms_opt(9, 0, 0)?.and_utc(),
+    "Later today" => preset_later_today_target(today)?,
+    "Tomorrow" => preset_tomorrow_target(today)?,
     "After downtime" => preset_after_downtime_target(today, &now)?,
     "Next week" => preset_next_week_target(today)?,
     _ => return None,
   };
   Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+fn preset_later_today_target(today: NaiveDate) -> Option<DateTime<Utc>> {
+  Some(today.and_hms_opt(18, 0, 0)?.and_utc())
+}
+
+fn preset_tomorrow_target(today: NaiveDate) -> Option<DateTime<Utc>> {
+  Some(today.succ_opt()?.and_hms_opt(9, 0, 0)?.and_utc())
 }
 
 fn preset_after_downtime_target(today: chrono::NaiveDate, now: &DateTime<Utc>) -> Option<DateTime<Utc>> {
@@ -710,11 +718,10 @@ fn calendar_eve_badge() -> Element<'static, Message> {
   .into()
 }
 
-fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
+fn calendar_header(state: &CalendarState) -> Element<'_, Message> {
   let month_name = MONTH_NAMES[state.view_month as usize];
   let view_year = state.view_year;
-
-  let header = container(
+  container(
     row([
       calendar_nav_button("◀", Message::SnoozeCalendarPrevMonth),
       Space::new().width(Length::Fill).into(),
@@ -738,8 +745,11 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     left: 10.0,
     right: 10.0,
   })
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
+fn calendar_grid_section(state: &CalendarState) -> Element<'_, Message> {
   let weekday_row = row(
     WEEKDAY_LABELS
       .iter()
@@ -765,7 +775,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     .map(|week_cells| row(week_cells).spacing(2.0).into())
     .collect();
 
-  let grid_section = container(
+  container(
     column([weekday_row.into()])
       .extend(day_grid)
       .spacing(2.0)
@@ -782,9 +792,12 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     left: 10.0,
     right: 10.0,
   })
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
-  let time_row = container(
+fn calendar_time_section(state: &CalendarState) -> Element<'_, Message> {
+  container(
     row([
       text("TIME")
         .font(mono::REGULAR)
@@ -827,16 +840,22 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     },
     ..container::Style::default()
   })
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
-  let chips_row = row([
+fn calendar_chips_row() -> Element<'static, Message> {
+  row([
     quick_chip("Morning", "09:00", Message::SnoozeCalendarChipMorning),
     quick_chip("Downtime", "11:00", Message::SnoozeCalendarChipDowntime),
     quick_chip("Evening", "19:00", Message::SnoozeCalendarChipEvening),
   ])
-  .spacing(6.0);
+  .spacing(6.0)
+  .into()
+}
 
-  let footer = container(
+fn calendar_footer(state: &CalendarState) -> Element<'_, Message> {
+  container(
     row([
       text(state.display_label())
         .font(mono::REGULAR)
@@ -866,14 +885,17 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
       ..Border::default()
     },
     ..container::Style::default()
-  });
+  })
+  .into()
+}
 
+fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
   crate::components::Card::new(
     column([
       container(thin_rule()).width(Length::Fill).into(),
-      header.into(),
+      calendar_header(state),
       container(thin_rule()).width(Length::Fill).into(),
-      container(grid_section)
+      container(calendar_grid_section(state))
         .padding(Padding {
           top: 8.0,
           bottom: 4.0,
@@ -882,7 +904,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
         })
         .into(),
       container(
-        container(time_row)
+        container(calendar_time_section(state))
           .padding(Padding {
             top: 0.0,
             bottom: 0.0,
@@ -893,7 +915,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
       )
       .into(),
       container(
-        container(chips_row)
+        container(calendar_chips_row())
           .padding(Padding {
             top: 8.0,
             bottom: 8.0,
@@ -903,7 +925,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
           .width(Length::Fill),
       )
       .into(),
-      footer.into(),
+      calendar_footer(state),
     ])
     .width(Length::Fixed(304.0)),
   )

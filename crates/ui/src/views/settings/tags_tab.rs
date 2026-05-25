@@ -1,11 +1,14 @@
 //! Tags settings panel: tag management with drag/drop, colors, and sorting.
 
+pub mod tag_empty_state;
+
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   border::Radius,
   widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input},
 };
+pub use tag_empty_state::Component as TagEmptyState;
 
 use crate::{
   components::ColorPicker,
@@ -430,22 +433,7 @@ fn sort_mode_button(label: &'static str, is_active: bool, msg: Message) -> Eleme
 
 fn tag_list_body(state: &State) -> Element<'_, Message> {
   if state.tags.is_empty() {
-    return scrollable(
-      container(
-        text("No tags yet. Create one above.")
-          .font(typography::body::REGULAR)
-          .size(13.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .width(Length::Fill)
-      .padding(Padding::new(80.0))
-      .align_x(Horizontal::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return TagEmptyState::new().render();
   }
 
   let search = state.search.trim().to_lowercase();
@@ -469,22 +457,7 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
   }
 
   if filtered.is_empty() {
-    return scrollable(
-      container(
-        text(format!("No tags match \"{}\".", state.search))
-          .font(typography::body::REGULAR)
-          .size(13.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .width(Length::Fill)
-      .padding(Padding::new(80.0))
-      .align_x(Horizontal::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return TagEmptyState::new().query(&state.search).render();
   }
 
   let mut items: Vec<Element<'_, Message>> = Vec::new();

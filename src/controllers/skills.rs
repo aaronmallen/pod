@@ -364,35 +364,59 @@ fn build_char_skill_map(characters: &[Character], char_id: i64) -> HashMap<Strin
     .unwrap_or_default()
 }
 
+fn build_skill_name_map(c: &Character) -> HashMap<i32, String> {
+  c.skills()
+    .iter()
+    .filter_map(|s| s.skill_name.as_ref().map(|n| (s.skill_id, n.clone())))
+    .collect()
+}
+
+fn entry_to_queue_item(entry: &TrainingQueueEntry, skill_names: &HashMap<i32, String>, now: i64) -> Option<QueueItem> {
+  let skill_name = entry
+    .skill_name
+    .clone()
+    .or_else(|| skill_names.get(&entry.skill_id).cloned())?;
+  let progress = queue_entry_progress(entry, now);
+  Some(QueueItem {
+    id: format!("real-{}-{}", entry.skill_id, entry.to_level),
+    skill_name,
+    from_level: entry.from_level as u8,
+    to_level: entry.to_level as u8,
+    progress,
+  })
+}
+
 fn build_queue_from_character(c: &Character) -> Vec<QueueItem> {
   let now = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .unwrap_or_default()
     .as_secs() as i64;
-
-  let skill_names: HashMap<i32, String> = c
-    .skills()
-    .iter()
-    .filter_map(|s| s.skill_name.as_ref().map(|n| (s.skill_id, n.clone())))
-    .collect();
-
+  let skill_names = build_skill_name_map(c);
   c.training_queue()
     .iter()
-    .filter_map(|entry| {
-      let skill_name = entry
-        .skill_name
-        .clone()
-        .or_else(|| skill_names.get(&entry.skill_id).cloned())?;
-      let progress = queue_entry_progress(entry, now);
-      Some(QueueItem {
-        id: format!("real-{}-{}", entry.skill_id, entry.to_level),
-        skill_name,
-        from_level: entry.from_level as u8,
-        to_level: entry.to_level as u8,
-        progress,
-      })
-    })
+    .filter_map(|entry| entry_to_queue_item(entry, &skill_names, now))
     .collect()
+}
+
+fn queue_entry_progress_sp(
+  level_start: i64,
+  level_end: i64,
+  run_start_sp: i64,
+  run_start: i64,
+  run_end: i64,
+  now: i64,
+) -> f32 {
+  let level_range = (level_end - level_start) as f64;
+  if level_range <= 0.0 {
+    return 1.0;
+  }
+  let run_duration = (run_end - run_start) as f64;
+  if run_duration <= 0.0 {
+    return 1.0;
+  }
+  let sp_rate = (level_end - run_start_sp) as f64 / run_duration;
+  let current_sp = run_start_sp as f64 + (now - run_start).max(0) as f64 * sp_rate;
+  ((current_sp - level_start as f64) / level_range).clamp(0.0, 1.0) as f32
 }
 
 fn queue_entry_progress(entry: &TrainingQueueEntry, now: i64) -> f32 {
@@ -403,18 +427,7 @@ fn queue_entry_progress(entry: &TrainingQueueEntry, now: i64) -> f32 {
     entry.start_date,
     entry.finish_date,
   ) {
-    let level_range = (level_end - level_start) as f64;
-    if level_range <= 0.0 {
-      return 1.0;
-    }
-    let run_duration = (run_end - run_start) as f64;
-    let sp_rate = if run_duration > 0.0 {
-      (level_end - run_start_sp) as f64 / run_duration
-    } else {
-      return 1.0;
-    };
-    let current_sp = run_start_sp as f64 + (now - run_start).max(0) as f64 * sp_rate;
-    return ((current_sp - level_start as f64) / level_range).clamp(0.0, 1.0) as f32;
+    return queue_entry_progress_sp(level_start, level_end, run_start_sp, run_start, run_end, now);
   }
   if let (Some(start), Some(end)) = (entry.start_date, entry.finish_date)
     && end > start

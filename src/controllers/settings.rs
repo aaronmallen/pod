@@ -258,23 +258,26 @@ fn dispatch_set_color(id: i32, color: Option<String>, services: &Services) -> ic
   )
 }
 
-fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+fn update_tags_color_state(state: &mut State, msg: tags_tab::Message) -> iced::Task<Message> {
   match msg {
-    tags_tab::Message::ColorClose => {
-      state.tags.color_open = None;
-      iced::Task::none()
-    }
+    tags_tab::Message::ColorClose => state.tags.color_open = None,
     tags_tab::Message::ColorOpen(id) => {
       state.tags.color_open = Some(id);
       state.tags.editing = None;
-      iced::Task::none()
     }
+    _ => {}
+  }
+  iced::Task::none()
+}
+
+fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::ColorSet(result) => {
       apply_color_set(state, result);
       iced::Task::none()
     }
     tags_tab::Message::SetColor(id, color) => dispatch_set_color(id, color, services),
-    _ => iced::Task::none(),
+    msg => update_tags_color_state(state, msg),
   }
 }
 
@@ -327,17 +330,21 @@ fn dispatch_delete(id: i32, services: &Services) -> iced::Task<Message> {
   )
 }
 
+fn clear_deleted_tag_ui(state: &mut State, id: i32) {
+  if state.tags.editing == Some(id) {
+    state.tags.editing = None;
+    state.tags.draft.clear();
+  }
+  if state.tags.color_open == Some(id) {
+    state.tags.color_open = None;
+  }
+}
+
 fn apply_tag_deleted(state: &mut State, result: Result<i32, String>) {
   match result {
     Ok(id) => {
       state.tags.tags.retain(|(tid, _, _)| *tid != id);
-      if state.tags.editing == Some(id) {
-        state.tags.editing = None;
-        state.tags.draft.clear();
-      }
-      if state.tags.color_open == Some(id) {
-        state.tags.color_open = None;
-      }
+      clear_deleted_tag_ui(state, id);
     }
     Err(e) => tracing::error!("settings: tag delete failed — {e}"),
   }
@@ -362,6 +369,12 @@ fn update_tags_drag(state: &mut State, msg: tags_tab::Message, services: &Servic
   }
 }
 
+fn apply_drag_slot_entered(state: &mut State, id: i32) {
+  if state.tags.dragging.is_some() {
+    state.tags.drag_over = Some(id);
+  }
+}
+
 fn apply_drag_state(state: &mut State, msg: &tags_tab::Message) {
   match msg {
     tags_tab::Message::DragEnd => {
@@ -374,32 +387,35 @@ fn apply_drag_state(state: &mut State, msg: &tags_tab::Message) {
       state.tags.color_open = None;
       state.tags.editing = None;
     }
-    tags_tab::Message::SlotEntered(id) => {
-      if state.tags.dragging.is_some() {
-        state.tags.drag_over = Some(*id);
-      }
-    }
+    tags_tab::Message::SlotEntered(id) => apply_drag_slot_entered(state, *id),
     _ => {}
   }
+}
+
+fn tag_drop_positions(tags: &[(i32, String, Option<String>)], drag_id: i32, target: i32) -> Option<(usize, usize)> {
+  let from = tags.iter().position(|(id, _, _)| *id == drag_id)?;
+  let to = tags.iter().position(|(id, _, _)| *id == target)?;
+  Some((from, to))
+}
+
+fn reorder_tags(tags: &mut Vec<(i32, String, Option<String>)>, from: usize, to: usize) {
+  let item = tags.remove(from);
+  let insert_at = if from < to { to - 1 } else { to };
+  tags.insert(insert_at.min(tags.len()), item);
 }
 
 fn apply_tag_drop(state: &mut State, services: &Services) -> iced::Task<Message> {
   let Some(drag_id) = state.tags.dragging.take() else {
     return iced::Task::none();
   };
-  let target_id = state.tags.drag_over.take();
-  let Some(target) = target_id else {
+  let Some(target) = state.tags.drag_over.take() else {
     return iced::Task::none();
   };
   if drag_id == target {
     return iced::Task::none();
   }
-  let from = state.tags.tags.iter().position(|(id, _, _)| *id == drag_id);
-  let to = state.tags.tags.iter().position(|(id, _, _)| *id == target);
-  if let (Some(from), Some(to)) = (from, to) {
-    let item = state.tags.tags.remove(from);
-    let insert_at = if from < to { to - 1 } else { to };
-    state.tags.tags.insert(insert_at.min(state.tags.tags.len()), item);
+  if let Some((from, to)) = tag_drop_positions(&state.tags.tags, drag_id, target) {
+    reorder_tags(&mut state.tags.tags, from, to);
     return reorder_task(&state.tags, services);
   }
   iced::Task::none()
@@ -429,22 +445,23 @@ fn apply_tag_renamed(state: &mut State, result: Result<(i32, String, Option<Stri
   }
 }
 
+fn update_tags_edit_state(state: &mut State, msg: tags_tab::Message) -> iced::Task<Message> {
+  match msg {
+    tags_tab::Message::DraftChanged(s) => state.tags.draft = s,
+    tags_tab::Message::EditStart(id) => apply_edit_start(state, id),
+    _ => {}
+  }
+  iced::Task::none()
+}
+
 fn update_tags_edit(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    tags_tab::Message::DraftChanged(s) => {
-      state.tags.draft = s;
-      iced::Task::none()
-    }
-    tags_tab::Message::EditStart(id) => {
-      apply_edit_start(state, id);
-      iced::Task::none()
-    }
     tags_tab::Message::Rename => submit_tag_rename(state, services),
     tags_tab::Message::Renamed(result) => {
       apply_tag_renamed(state, result);
       iced::Task::none()
     }
-    _ => iced::Task::none(),
+    msg => update_tags_edit_state(state, msg),
   }
 }
 
@@ -473,13 +490,19 @@ fn submit_tag_rename(state: &mut State, services: &Services) -> iced::Task<Messa
   )
 }
 
+fn update_tags_misc_str_state(state: &mut State, msg: &tags_tab::Message) {
+  match msg {
+    tags_tab::Message::NewNameChanged(s) => state.tags.new_name = s.clone(),
+    tags_tab::Message::SearchChanged(s) => state.tags.search = s.clone(),
+    _ => {}
+  }
+}
+
 fn update_tags_misc_state(state: &mut State, msg: &tags_tab::Message) {
   match msg {
     tags_tab::Message::Loaded(tags) => state.tags.tags = tags.clone(),
-    tags_tab::Message::NewNameChanged(s) => state.tags.new_name = s.clone(),
-    tags_tab::Message::SearchChanged(s) => state.tags.search = s.clone(),
     tags_tab::Message::SortModeChanged(mode) => state.tags.sort_mode = mode.clone(),
-    _ => {}
+    msg => update_tags_misc_str_state(state, msg),
   }
 }
 

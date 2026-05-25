@@ -617,17 +617,20 @@ fn build_is_container_set(item_index: &HashMap<i64, (i64, String, String, i32)>)
   set
 }
 
+fn structure_solar_sys_id(sys_id: i64) -> Option<i32> {
+  if sys_id > 0 { i32::try_from(sys_id).ok() } else { None }
+}
+
 /// Resolves solar-system name and constellation-id maps for structure-referenced systems.
 async fn load_structure_sys_maps(
   db: &pod_db::Repo,
   structure_name_map: &HashMap<i64, (String, i64)>,
 ) -> (HashMap<i32, String>, HashMap<i32, i32>) {
-  let solar_sys_ids: Vec<i32> =
-    unique_ids(structure_name_map.values().filter_map(
-      |(_, sys_id)| {
-        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
-      },
-    ));
+  let solar_sys_ids: Vec<i32> = unique_ids(
+    structure_name_map
+      .values()
+      .filter_map(|(_, sys_id)| structure_solar_sys_id(*sys_id)),
+  );
   if solar_sys_ids.is_empty() {
     return (HashMap::new(), HashMap::new());
   }
@@ -1103,18 +1106,22 @@ async fn load_all_assets_from_db(
   Ok(rows_to_records(rows, &maps))
 }
 
+fn linked_corp_ids(characters: &[Character], corporations: &[Corporation]) -> Vec<i64> {
+  let char_id_set: HashSet<i64> = characters.iter().map(|c| *c.id()).collect();
+  corporations
+    .iter()
+    .filter(|c| char_id_set.contains(c.auth_character_id()))
+    .map(|c| *c.id())
+    .collect()
+}
+
 /// Loads corporation asset rows from DB for all corps linked to the given characters.
 async fn load_corp_asset_rows(
   db: &pod_db::Repo,
   characters: &[Character],
   corporations: &[Corporation],
 ) -> Vec<RawAssetRow> {
-  let char_id_set: HashSet<i64> = characters.iter().map(|c| *c.id()).collect();
-  let corp_ids: Vec<i64> = corporations
-    .iter()
-    .filter(|c| char_id_set.contains(c.auth_character_id()))
-    .map(|c| *c.id())
-    .collect();
+  let corp_ids = linked_corp_ids(characters, corporations);
   if corp_ids.is_empty() {
     return Vec::new();
   }
@@ -1314,6 +1321,24 @@ fn matrix_to_cell(
   }
 }
 
+fn cells_sort_key(a: &CharacterStructureCell, b: &CharacterStructureCell) -> std::cmp::Ordering {
+  a.character_id
+    .cmp(&b.character_id)
+    .then_with(|| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn matrix_to_cells(
+  matrix: HashMap<(i64, String), (String, String, f64)>,
+  char_name_map: &HashMap<i64, String>,
+) -> Vec<CharacterStructureCell> {
+  matrix
+    .into_iter()
+    .map(|((char_id, struct_id), (_sid, struct_name, value))| {
+      matrix_to_cell(char_id, struct_id, struct_name, value, char_name_map)
+    })
+    .collect()
+}
+
 /// Builds the per-character, per-structure value matrix for the Values tab.
 fn build_char_structure_cells(
   valued: &[(&AssetRecord, f64)],
@@ -1327,17 +1352,8 @@ fn build_char_structure_cells(
       .or_insert_with(|| (struct_name.clone(), struct_name, 0.0));
     entry.2 += value;
   }
-  let mut cells: Vec<CharacterStructureCell> = matrix
-    .into_iter()
-    .map(|((char_id, struct_id), (_sid, struct_name, value))| {
-      matrix_to_cell(char_id, struct_id, struct_name, value, char_name_map)
-    })
-    .collect();
-  cells.sort_by(|a, b| {
-    a.character_id
-      .cmp(&b.character_id)
-      .then_with(|| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal))
-  });
+  let mut cells = matrix_to_cells(matrix, char_name_map);
+  cells.sort_by(cells_sort_key);
   cells
 }
 

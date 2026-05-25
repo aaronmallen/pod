@@ -88,29 +88,9 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
 
-    let mut bonus = NeuralAttributes::default();
-    for implant in implants {
-      let Ok(map) = serde_json::from_str::<serde_json::Value>(&implant.attribute_bonus) else {
-        continue;
-      };
-      let Some(obj) = map.as_object() else {
-        continue;
-      };
-      for (attr, val) in obj {
-        let amount = match val.as_i64() {
-          Some(v) => v as i32,
-          None => continue,
-        };
-        match attr.as_str() {
-          "charisma" => bonus.charisma += amount,
-          "intelligence" => bonus.intelligence += amount,
-          "memory" => bonus.memory += amount,
-          "perception" => bonus.perception += amount,
-          "willpower" => bonus.willpower += amount,
-          _ => {}
-        }
-      }
-    }
+    let bonus = implants.into_iter().fold(NeuralAttributes::default(), |acc, implant| {
+      apply_implant_bonus(acc, &implant.attribute_bonus)
+    });
 
     Ok(Some(bonus))
   }
@@ -253,6 +233,29 @@ impl<'a> Repo<'a> {
     }
     Ok(())
   }
+}
+
+fn apply_implant_bonus(mut bonus: NeuralAttributes, attribute_bonus: &str) -> NeuralAttributes {
+  let Ok(map) = serde_json::from_str::<serde_json::Value>(attribute_bonus) else {
+    return bonus;
+  };
+  let Some(obj) = map.as_object() else {
+    return bonus;
+  };
+  for (attr, val) in obj {
+    let Some(amount) = val.as_i64().map(|v| v as i32) else {
+      continue;
+    };
+    match attr.as_str() {
+      "charisma" => bonus.charisma += amount,
+      "intelligence" => bonus.intelligence += amount,
+      "memory" => bonus.memory += amount,
+      "perception" => bonus.perception += amount,
+      "willpower" => bonus.willpower += amount,
+      _ => {}
+    }
+  }
+  bonus
 }
 
 #[cfg(test)]

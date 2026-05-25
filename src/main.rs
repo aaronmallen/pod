@@ -268,15 +268,21 @@ fn update_about_window(app: &mut App, msg: about_window::Message) -> Task<Messag
 
 fn update(app: &mut App, message: Message) -> Task<Message> {
   match message {
-    Message::AboutWindow(msg) => update_about_window(app, msg),
-    Message::BackgroundSync(msg) => update_background_sync(app, msg),
-    Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::Main(msg) => update_main(app, *msg),
-    Message::Menu(msg) => update_menu(app, msg),
+    Message::Bootstrap(msg) => update_splash(app, SplashMessage::Bootstrap(msg)),
     Message::OAuthCallback(code, state) => {
       let _ = app.oauth_callback_tx.send((code, state));
       Task::none()
     }
+    msg => update_other(app, msg),
+  }
+}
+
+fn update_other(app: &mut App, message: Message) -> Task<Message> {
+  match message {
+    Message::AboutWindow(msg) => update_about_window(app, msg),
+    Message::BackgroundSync(msg) => update_background_sync(app, msg),
+    Message::Menu(msg) => update_menu(app, msg),
     msg => update_secondary(app, msg),
   }
 }
@@ -284,14 +290,34 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 fn update_secondary(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::SkillPlan(id, msg) => update_skill_plan(app, id, msg),
+    msg @ (Message::Splash(_) | Message::Tick) => route_splash_msg(app, msg),
+    msg @ (Message::UpdateBanner(_) | Message::Updater(_)) => route_updater_msg(app, msg),
+    msg => dispatch_window_or_ignore(app, msg),
+  }
+}
+
+fn route_splash_msg(app: &mut App, message: Message) -> Task<Message> {
+  match message {
     Message::Splash(msg) => update_splash(app, SplashMessage::Splash(msg)),
     Message::Tick => update_splash(app, SplashMessage::Tick),
+    _ => Task::none(),
+  }
+}
+
+fn route_updater_msg(app: &mut App, message: Message) -> Task<Message> {
+  match message {
     Message::UpdateBanner(msg) => update_updater(app, UpdaterMessage::Banner(msg)),
     Message::Updater(msg) => update_updater(app, UpdaterMessage::Updater(msg)),
-    msg @ (Message::WindowCloseRequested(_)
+    _ => unreachable!(),
+  }
+}
+
+fn dispatch_window_or_ignore(app: &mut App, msg: Message) -> Task<Message> {
+  match msg {
+    Message::WindowCloseRequested(_)
     | Message::WindowMoved(..)
     | Message::WindowOpened(_)
-    | Message::WindowResized(..)) => dispatch_window_event(app, msg),
+    | Message::WindowResized(..) => dispatch_window_event(app, msg),
     _ => Task::none(),
   }
 }
@@ -499,6 +525,30 @@ fn collect_transition_tasks(
   Task::batch(tasks)
 }
 
+fn resolve_window_dimensions(
+  saved: &Option<services::window_state::WindowGeometry>,
+  position_valid: bool,
+) -> (f32, f32) {
+  match (saved, position_valid) {
+    (Some(g), true) => (g.width, g.height),
+    _ => (layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
+  }
+}
+
+fn resolve_window_position(
+  saved: &Option<services::window_state::WindowGeometry>,
+  position_valid: bool,
+) -> window::Position {
+  if position_valid {
+    saved
+      .as_ref()
+      .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
+      .unwrap_or(window::Position::Default)
+  } else {
+    window::Position::Default
+  }
+}
+
 fn compute_transition_geometry(
   saved: &Option<services::window_state::WindowGeometry>,
 ) -> (f32, f32, bool, window::Position) {
@@ -510,19 +560,26 @@ fn compute_transition_geometry(
       "discarding saved window position: out of valid range, using defaults"
     );
   }
-  let (target_width, target_height) = match (saved, position_valid) {
-    (Some(g), true) => (g.width, g.height),
-    _ => (layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
-  };
-  let position = if position_valid {
-    saved
-      .as_ref()
-      .map(|g| window::Position::Specific(Point::new(g.x, g.y)))
-      .unwrap_or(window::Position::Default)
-  } else {
-    window::Position::Default
-  };
+  let (target_width, target_height) = resolve_window_dimensions(saved, position_valid);
+  let position = resolve_window_position(saved, position_valid);
   (target_width, target_height, position_valid, position)
+}
+
+fn init_main_ctrl(
+  app: &App,
+  services: &Services,
+  saved: &Option<services::window_state::WindowGeometry>,
+) -> (main_ctrl::State, Task<main_ctrl::Message>) {
+  let g = saved.as_ref();
+  main_ctrl::new(
+    app.characters.clone(),
+    services,
+    g.and_then(|g| g.skills_left_pane_width),
+    g.and_then(|g| g.mail_folder_pane_width),
+    g.and_then(|g| g.mail_message_list_width),
+    g.and_then(|g| g.wallet_right_rail_width),
+    g.and_then(|g| g.assets_sidebar_width),
+  )
 }
 
 fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
@@ -535,15 +592,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
   };
   let saved = services::window_state::load();
   let (target_width, target_height, position_valid, position) = compute_transition_geometry(&saved);
-  let (main_state, init_task) = main_ctrl::new(
-    app.characters.clone(),
-    &services,
-    saved.as_ref().and_then(|g| g.skills_left_pane_width),
-    saved.as_ref().and_then(|g| g.mail_folder_pane_width),
-    saved.as_ref().and_then(|g| g.mail_message_list_width),
-    saved.as_ref().and_then(|g| g.wallet_right_rail_width),
-    saved.as_ref().and_then(|g| g.assets_sidebar_width),
-  );
+  let (main_state, init_task) = init_main_ctrl(app, &services, &saved);
   tracing::info!("splash complete, opening main window");
   app.phase = AppPhase::Main(main_state);
   app.window_size = Size::new(target_width, target_height);
@@ -858,6 +907,22 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
   }
 }
 
+fn banner_for_update_available(v: &str, dismissed: &Option<String>) -> Option<update_banner::BannerState> {
+  if dismissed.as_deref() == Some(v) {
+    None
+  } else {
+    Some(update_banner::BannerState::UpdateAvailable(v.to_owned()))
+  }
+}
+
+fn progress_banner(state: &services::updater::UpdateState) -> update_banner::BannerState {
+  use services::updater::UpdateState;
+  match state {
+    UpdateState::Downloading => update_banner::BannerState::Downloading,
+    _ => update_banner::BannerState::ReadyToRestart,
+  }
+}
+
 fn banner_state(
   state: &services::updater::UpdateState,
   update_dismissed_for: &Option<String>,
@@ -865,10 +930,8 @@ fn banner_state(
   use services::updater::UpdateState;
   match state {
     UpdateState::Idle => None,
-    UpdateState::UpdateAvailable(v) if update_dismissed_for.as_deref() == Some(v.as_str()) => None,
-    UpdateState::UpdateAvailable(v) => Some(update_banner::BannerState::UpdateAvailable(v.clone())),
-    UpdateState::Downloading => Some(update_banner::BannerState::Downloading),
-    UpdateState::ReadyToRestart => Some(update_banner::BannerState::ReadyToRestart),
+    UpdateState::UpdateAvailable(v) => banner_for_update_available(v, update_dismissed_for),
+    UpdateState::Downloading | UpdateState::ReadyToRestart => Some(progress_banner(state)),
     UpdateState::Error(e) => Some(update_banner::BannerState::Error(e.clone())),
   }
 }

@@ -38,16 +38,28 @@ fn is_inbox_message(m: &MailMessage) -> bool {
   m.folder == "inbox" && m.snoozed.is_none()
 }
 
+fn folder_field_name(folder: &Folder) -> &'static str {
+  match folder {
+    Folder::Archive => "archive",
+    Folder::Drafts => "drafts",
+    Folder::Sent => "sent",
+    _ => "trash",
+  }
+}
+
+fn passes_special_folder(m: &MailMessage, folder: &Folder) -> bool {
+  match folder {
+    Folder::Snoozed => m.snoozed.is_some(),
+    _ => m.starred,
+  }
+}
+
 fn passes_folder_type(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
     Folder::All | Folder::Inbox => is_inbox_message(m),
-    Folder::Archive => m.folder == "archive",
-    Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
-    Folder::Sent => m.folder == "sent",
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Starred => m.starred,
-    Folder::Trash => m.folder == "trash",
+    Folder::Snoozed | Folder::Starred => passes_special_folder(m, folder),
+    _ => m.folder == folder_field_name(folder),
   }
 }
 

@@ -54,6 +54,18 @@ pub enum Message {
   StarToggle,
 }
 
+fn resolve_to_name<'a>(msg: &'a super::MailMessage, state: &'a State) -> &'a str {
+  if msg.folder == "sent" && !msg.recipients_display.is_empty() {
+    return &msg.recipients_display;
+  }
+  state
+    .accounts
+    .iter()
+    .find(|a| a.id == msg.character_id)
+    .map(|a| a.name.as_str())
+    .unwrap_or("me")
+}
+
 /// Builder for the reading pane.
 pub struct Component<'a> {
   state: &'a State,
@@ -78,16 +90,7 @@ impl<'a> Component<'a> {
     match msg {
       None => empty_state::Component::new().render(),
       Some(msg) => {
-        let to_name: &str = if msg.folder == "sent" && !msg.recipients_display.is_empty() {
-          &msg.recipients_display
-        } else {
-          state
-            .accounts
-            .iter()
-            .find(|a| a.id == msg.character_id)
-            .map(|a| a.name.as_str())
-            .unwrap_or("me")
-        };
+        let to_name = resolve_to_name(msg, state);
         reading_content::Component::new(msg, to_name, state.snooze_popover_open, state).render()
       }
     }

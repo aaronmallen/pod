@@ -404,6 +404,29 @@ fn calendar_nav_button(label: &'static str, msg: Message) -> Element<'static, Me
   .into()
 }
 
+fn day_cell_text_color(selected: bool, in_month: bool, is_today: bool) -> Color {
+  if selected {
+    Color::WHITE
+  } else if in_month && is_today {
+    color::accent::PLASMA
+  } else if in_month {
+    color::text::PRIMARY
+  } else {
+    color::text::TERTIARY
+  }
+}
+
+fn day_cell_background(selected: bool, status: button::Status) -> Option<Background> {
+  if selected {
+    Some(Background::Color(color::accent::PLASMA))
+  } else {
+    match status {
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+      _ => None,
+    }
+  }
+}
+
 fn calendar_day_cell(
   day: u32,
   month: u32,
@@ -413,17 +436,7 @@ fn calendar_day_cell(
   is_today: bool,
 ) -> Element<'static, Message> {
   let label = format!("{day:2}");
-  let text_col = if selected {
-    Color::WHITE
-  } else if in_month {
-    if is_today {
-      color::accent::PLASMA
-    } else {
-      color::text::PRIMARY
-    }
-  } else {
-    color::text::TERTIARY
-  };
+  let text_col = day_cell_text_color(selected, in_month, is_today);
   button(
     container(
       text(label)
@@ -441,14 +454,7 @@ fn calendar_day_cell(
   .padding(0)
   .on_press(Message::SnoozeCalendarSelectDay(year, month, day))
   .style(move |_, status| button::Style {
-    background: if selected {
-      Some(Background::Color(color::accent::PLASMA))
-    } else {
-      match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-        _ => None,
-      }
-    },
+    background: day_cell_background(selected, status),
     border: Border {
       radius: 4.0.into(),
       ..Border::default()

@@ -58,6 +58,35 @@ fn folder_row_content(
   .align_y(iced::alignment::Vertical::Center)
 }
 
+fn all_inboxes_background(active: bool, status: button::Status) -> Option<Background> {
+  if active {
+    Some(Background::Color(color::accent::PLASMA_SUBTLE))
+  } else {
+    match status {
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
+      _ => Some(Background::Color(color::state::HOVER_OVERLAY)),
+    }
+  }
+}
+
+fn all_inboxes_button_style(active: bool, status: button::Status) -> button::Style {
+  let border_color = if active {
+    color::accent::PLASMA_BORDER
+  } else {
+    color::border::SUBTLE
+  };
+  button::Style {
+    background: all_inboxes_background(active, status),
+    border: Border {
+      color: border_color,
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  }
+}
+
 /// Builder for an individual folder row button.
 pub struct Component {
   count: u32,
@@ -131,25 +160,24 @@ impl Component {
   fn render_all_inboxes(self) -> Element<'static, Message> {
     let active = self.is_active;
     let total_unread = self.total_unread;
+    let icon_color = if active {
+      color::accent::PLASMA
+    } else {
+      color::text::SECONDARY
+    };
+    let label_color = if active {
+      color::text::PRIMARY
+    } else {
+      color::text::SECONDARY
+    };
     button(
       row([
-        Icon::inbox_all()
-          .size(16.0)
-          .color(if active {
-            color::accent::PLASMA
-          } else {
-            color::text::SECONDARY
-          })
-          .render::<Message>(),
+        Icon::inbox_all().size(16.0).color(icon_color).render::<Message>(),
         text("All Inboxes")
           .font(body::MEDIUM)
           .size(13.0)
           .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(if active {
-              color::text::PRIMARY
-            } else {
-              color::text::SECONDARY
-            }),
+            color: Some(label_color),
           })
           .width(Length::Fill)
           .into(),
@@ -166,27 +194,7 @@ impl Component {
     })
     .width(Length::Fill)
     .on_press(Message::FolderSelected(Folder::All))
-    .style(move |_, status| button::Style {
-      background: if active {
-        Some(Background::Color(color::accent::PLASMA_SUBTLE))
-      } else {
-        match status {
-          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
-          _ => Some(Background::Color(color::state::HOVER_OVERLAY)),
-        }
-      },
-      border: Border {
-        color: if active {
-          color::accent::PLASMA_BORDER
-        } else {
-          color::border::SUBTLE
-        },
-        radius: 6.0.into(),
-        width: 1.0,
-      },
-      text_color: color::text::PRIMARY,
-      ..button::Style::default()
-    })
+    .style(move |_, status| all_inboxes_button_style(active, status))
     .into()
   }
 }
@@ -275,16 +283,28 @@ fn is_inbox_message(m: &super::MailMessage) -> bool {
   m.folder == "inbox" && m.snoozed.is_none()
 }
 
+fn folder_field_name(folder: &Folder) -> &'static str {
+  match folder {
+    Folder::Archive => "archive",
+    Folder::Drafts => "drafts",
+    Folder::Sent => "sent",
+    _ => "trash",
+  }
+}
+
+fn matches_special_folder(m: &super::MailMessage, folder: &Folder) -> bool {
+  match folder {
+    Folder::Snoozed => m.snoozed.is_some(),
+    _ => m.starred,
+  }
+}
+
 fn matches_folder_type(m: &super::MailMessage, folder: &Folder) -> bool {
   match folder {
     Folder::All | Folder::Inbox => is_inbox_message(m),
-    Folder::Archive => m.folder == "archive",
-    Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
-    Folder::Sent => m.folder == "sent",
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Starred => m.starred,
-    Folder::Trash => m.folder == "trash",
+    Folder::Snoozed | Folder::Starred => matches_special_folder(m, folder),
+    _ => m.folder == folder_field_name(folder),
   }
 }
 

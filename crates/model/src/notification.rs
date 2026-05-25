@@ -195,12 +195,14 @@ fn categorize_industry_notif(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Classifies incursion and invasion notifications.
 fn categorize_incursion_notif(notif_type: &str) -> Option<NotificationCategory> {
-  if notif_type.starts_with("Incursion")
-    || notif_type.starts_with("Invasion")
-    || notif_type.starts_with("DistrictAttacked")
-    || notif_type.starts_with("DustApp")
-    || notif_type.starts_with("ContractRegionChanged")
-  {
+  const PREFIXES: &[&str] = &[
+    "ContractRegionChanged",
+    "DistrictAttacked",
+    "DustApp",
+    "Incursion",
+    "Invasion",
+  ];
+  if PREFIXES.iter().any(|p| notif_type.starts_with(p)) {
     Some(NotificationCategory::Incursion)
   } else {
     None
@@ -219,13 +221,15 @@ fn categorize_contact_notif(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Classifies market, billing, and transaction notifications.
 fn categorize_market_notif(notif_type: &str) -> Option<NotificationCategory> {
-  if notif_type.starts_with("Bill")
-    || notif_type.starts_with("Customs")
-    || notif_type.starts_with("Raffle")
-    || notif_type.starts_with("Reimbursement")
-    || notif_type.starts_with("Transaction")
-    || notif_type.starts_with("StructurePaint")
-  {
+  const PREFIXES: &[&str] = &[
+    "Bill",
+    "Customs",
+    "Raffle",
+    "Reimbursement",
+    "StructurePaint",
+    "Transaction",
+  ];
+  if PREFIXES.iter().any(|p| notif_type.starts_with(p)) {
     Some(NotificationCategory::Market)
   } else {
     None

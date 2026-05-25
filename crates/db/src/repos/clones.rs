@@ -186,63 +186,94 @@ impl<'a> Repo<'a> {
   #[tracing::instrument(level = "trace", skip(self, clones))]
   pub async fn upsert_startup_clones(&self, clones: &[(StartupClone, Vec<StartupImplant>)]) -> Result<(), Error> {
     for (clone, implants) in clones {
-      let active = CloneActive {
-        character_id: ActiveValue::Set(clone.character_id),
-        id: ActiveValue::Set(clone.id),
-        installed_at: ActiveValue::Set(clone.installed_at.clone()),
-        is_active: ActiveValue::Set(clone.is_active),
-        location_id: ActiveValue::Set(clone.location_id),
-        name: ActiveValue::Set(clone.name.clone()),
-        region_name: ActiveValue::Set(String::new()),
-        station_name: ActiveValue::Set(String::new()),
-        synced_at: ActiveValue::Set(clone.synced_at.clone()),
-        system_id: ActiveValue::Set(0),
-      };
-      CloneEntity::insert(active)
-        .on_conflict(
-          OnConflict::column(CloneColumn::Id)
-            .update_columns([
-              CloneColumn::CharacterId,
-              CloneColumn::InstalledAt,
-              CloneColumn::IsActive,
-              CloneColumn::LocationId,
-              CloneColumn::Name,
-              CloneColumn::SyncedAt,
-            ])
-            .to_owned(),
-        )
-        .exec(self.db)
-        .await?;
-
-      ImplantEntity::delete_many()
-        .filter(ImplantColumn::CloneId.eq(clone.id))
-        .exec(self.db)
-        .await?;
-
-      for implant in implants {
-        let active = ImplantActive {
-          attribute_bonus: ActiveValue::Set(implant.attribute_bonus.clone()),
-          clone_id: ActiveValue::Set(implant.clone_id),
-          id: ActiveValue::NotSet,
-          name: ActiveValue::Set(implant.name.clone()),
-          slot: ActiveValue::Set(implant.slot),
-          type_id: ActiveValue::Set(implant.type_id),
-        };
-        ImplantEntity::insert(active).exec(self.db).await?;
-      }
+      self.upsert_one_startup_clone(clone, implants).await?;
     }
+    Ok(())
+  }
+
+  async fn upsert_one_startup_clone(&self, clone: &StartupClone, implants: &[StartupImplant]) -> Result<(), Error> {
+    let active = CloneActive {
+      character_id: ActiveValue::Set(clone.character_id),
+      id: ActiveValue::Set(clone.id),
+      installed_at: ActiveValue::Set(clone.installed_at.clone()),
+      is_active: ActiveValue::Set(clone.is_active),
+      location_id: ActiveValue::Set(clone.location_id),
+      name: ActiveValue::Set(clone.name.clone()),
+      region_name: ActiveValue::Set(String::new()),
+      station_name: ActiveValue::Set(String::new()),
+      synced_at: ActiveValue::Set(clone.synced_at.clone()),
+      system_id: ActiveValue::Set(0),
+    };
+    CloneEntity::insert(active)
+      .on_conflict(
+        OnConflict::column(CloneColumn::Id)
+          .update_columns([
+            CloneColumn::CharacterId,
+            CloneColumn::InstalledAt,
+            CloneColumn::IsActive,
+            CloneColumn::LocationId,
+            CloneColumn::Name,
+            CloneColumn::SyncedAt,
+          ])
+          .to_owned(),
+      )
+      .exec(self.db)
+      .await?;
+    ImplantEntity::delete_many()
+      .filter(ImplantColumn::CloneId.eq(clone.id))
+      .exec(self.db)
+      .await?;
+    for implant in implants {
+      self.insert_startup_implant(implant).await?;
+    }
+    Ok(())
+  }
+
+  async fn insert_startup_implant(&self, implant: &StartupImplant) -> Result<(), Error> {
+    let active = ImplantActive {
+      attribute_bonus: ActiveValue::Set(implant.attribute_bonus.clone()),
+      clone_id: ActiveValue::Set(implant.clone_id),
+      id: ActiveValue::NotSet,
+      name: ActiveValue::Set(implant.name.clone()),
+      slot: ActiveValue::Set(implant.slot),
+      type_id: ActiveValue::Set(implant.type_id),
+    };
+    ImplantEntity::insert(active).exec(self.db).await?;
     Ok(())
   }
 }
 
 fn apply_attr_amount(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
-  match attr {
-    "charisma" => bonus.charisma += amount,
-    "intelligence" => bonus.intelligence += amount,
-    "memory" => bonus.memory += amount,
-    "perception" => bonus.perception += amount,
-    "willpower" => bonus.willpower += amount,
-    _ => {}
+  apply_charisma(bonus, attr, amount);
+  apply_intelligence(bonus, attr, amount);
+  apply_memory(bonus, attr, amount);
+  apply_perception(bonus, attr, amount);
+  apply_willpower(bonus, attr, amount);
+}
+
+fn apply_charisma(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  if attr == "charisma" {
+    bonus.charisma += amount;
+  }
+}
+fn apply_intelligence(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  if attr == "intelligence" {
+    bonus.intelligence += amount;
+  }
+}
+fn apply_memory(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  if attr == "memory" {
+    bonus.memory += amount;
+  }
+}
+fn apply_perception(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  if attr == "perception" {
+    bonus.perception += amount;
+  }
+}
+fn apply_willpower(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  if attr == "willpower" {
+    bonus.willpower += amount;
   }
 }
 

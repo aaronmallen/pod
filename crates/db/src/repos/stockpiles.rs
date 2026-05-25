@@ -211,6 +211,13 @@ impl<'a> Repo<'a> {
     if pile.items.is_empty() {
       return Ok(Vec::new());
     }
+    self.fill_status_for_pile(pile).await
+  }
+
+  async fn fill_status_for_pile(
+    &self,
+    pile: crate::entities::stockpile::ModelEx,
+  ) -> Result<Vec<StockpileItemStatus>, Error> {
     let type_ids: Vec<i32> = pile.items.iter().map(|i| i.type_id).collect();
     let assets = self
       .load_assets_for_pile(pile.location_id, pile.character_id, &type_ids)

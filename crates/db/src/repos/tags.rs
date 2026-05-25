@@ -30,14 +30,7 @@ impl<'a> Repo<'a> {
   /// Creates a new tag with the given name, appended at the end of the sort order.
   #[tracing::instrument(level = "trace", skip(self))]
   pub async fn create(&self, name: &str) -> Result<Tag, Error> {
-    let next_sort_order = TagEntity::find()
-      .all(self.db)
-      .await?
-      .into_iter()
-      .map(|t| t.sort_order)
-      .max()
-      .map(|m| m + 1)
-      .unwrap_or(0);
+    let next_sort_order = self.next_tag_sort_order().await?;
     let active = TagActive {
       color: ActiveValue::NotSet,
       id: ActiveValue::NotSet,
@@ -51,6 +44,18 @@ impl<'a> Repo<'a> {
         .await?
         .expect("tag must exist after insert"),
     )
+  }
+
+  async fn next_tag_sort_order(&self) -> Result<i32, Error> {
+    let max = TagEntity::find()
+      .all(self.db)
+      .await?
+      .into_iter()
+      .map(|t| t.sort_order)
+      .max()
+      .map(|m| m + 1)
+      .unwrap_or(0);
+    Ok(max)
   }
 
   /// Deletes a tag and its entity-tag assignments.
@@ -122,23 +127,9 @@ impl<'a> Repo<'a> {
     let ordered_ids = ordered_ids.to_vec();
     self
       .db
-      .transaction::<_, (), sea_orm::DbErr>(|txn| {
-        Box::pin(async move {
-          for (i, id) in ordered_ids.iter().enumerate() {
-            TagEntity::update_many()
-              .col_expr(TagColumn::SortOrder, Expr::value(i as i32))
-              .filter(TagColumn::Id.eq(*id))
-              .exec(txn)
-              .await?;
-          }
-          Ok(())
-        })
-      })
+      .transaction::<_, (), sea_orm::DbErr>(|txn| Box::pin(apply_sort_orders(txn, ordered_ids)))
       .await
-      .map_err(|e| match e {
-        sea_orm::TransactionError::Transaction(db_err) => Error::Database(db_err),
-        sea_orm::TransactionError::Connection(db_err) => Error::Database(db_err),
-      })
+      .map_err(map_txn_err)
   }
 
   /// Replaces all tag assignments for a character atomically.
@@ -216,6 +207,17 @@ impl<'a> Repo<'a> {
         .await?,
     )
   }
+}
+
+async fn apply_sort_orders(txn: &DatabaseTransaction, ordered_ids: Vec<i32>) -> Result<(), sea_orm::DbErr> {
+  for (i, id) in ordered_ids.iter().enumerate() {
+    TagEntity::update_many()
+      .col_expr(TagColumn::SortOrder, Expr::value(i as i32))
+      .filter(TagColumn::Id.eq(*id))
+      .exec(txn)
+      .await?;
+  }
+  Ok(())
 }
 
 async fn replace_entity_tags(

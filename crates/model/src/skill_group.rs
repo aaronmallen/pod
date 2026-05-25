@@ -20,55 +20,38 @@ impl AttrKey {
   ];
 
   pub fn value(self) -> u32 {
-    match self {
-      AttrKey::Perception => 27,
-      AttrKey::Willpower => 24,
-      AttrKey::Intelligence => 21,
-      AttrKey::Memory => 19,
-      AttrKey::Charisma => 17,
-    }
+    self.attr_tuple().1
   }
 
   pub fn implant(self) -> i32 {
-    match self {
-      AttrKey::Perception => 5,
-      AttrKey::Willpower => 5,
-      AttrKey::Intelligence => 4,
-      AttrKey::Memory => 4,
-      AttrKey::Charisma => 3,
-    }
+    self.attr_tuple().2
   }
 
   pub fn short(self) -> &'static str {
-    match self {
-      AttrKey::Perception => "Per",
-      AttrKey::Willpower => "Wil",
-      AttrKey::Intelligence => "Int",
-      AttrKey::Memory => "Mem",
-      AttrKey::Charisma => "Cha",
-    }
+    self.attr_tuple().3
   }
 
   pub fn label(self) -> &'static str {
+    self.attr_tuple().4
+  }
+
+  fn attr_tuple(self) -> (u8, u32, i32, &'static str, &'static str) {
     match self {
-      AttrKey::Perception => "Perception",
-      AttrKey::Willpower => "Willpower",
-      AttrKey::Intelligence => "Intelligence",
-      AttrKey::Memory => "Memory",
-      AttrKey::Charisma => "Charisma",
+      AttrKey::Perception => (167, 27, 5, "Per", "Perception"),
+      AttrKey::Willpower => (168, 24, 5, "Wil", "Willpower"),
+      AttrKey::Intelligence => (165, 21, 4, "Int", "Intelligence"),
+      AttrKey::Memory => (166, 19, 4, "Mem", "Memory"),
+      AttrKey::Charisma => (164, 17, 3, "Cha", "Charisma"),
     }
   }
 
   /// Convert from EVE dogma attribute value (164–168) to `AttrKey`.
   pub fn from_eve_id(id: u8) -> Self {
-    match id {
-      164 => AttrKey::Charisma,
-      165 => AttrKey::Intelligence,
-      166 => AttrKey::Memory,
-      167 => AttrKey::Perception,
-      168 => AttrKey::Willpower,
-      _ => AttrKey::Perception,
-    }
+    AttrKey::ALL
+      .iter()
+      .find(|k| k.attr_tuple().0 == id)
+      .copied()
+      .unwrap_or(AttrKey::Perception)
   }
 }
 

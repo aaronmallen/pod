@@ -72,6 +72,24 @@ fn assemble_nav_result(mut nav_by_date: HashMap<NaiveDate, f64>, today_nav: f64)
   result
 }
 
+fn group_prices_by_type(rows: &[crate::entities::type_price::Model]) -> HashMap<i32, Vec<f64>> {
+  let mut by_type: HashMap<i32, Vec<f64>> = HashMap::new();
+  for row in rows {
+    by_type.entry(row.type_id).or_default().push(row.price);
+  }
+  by_type
+}
+
+fn compute_ohlc(samples: &[f64]) -> (f64, f64, f64, f64, f64, i32) {
+  let open = *samples.first().unwrap_or(&0.0);
+  let close = *samples.last().unwrap_or(&0.0);
+  let high = samples.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+  let low = samples.iter().cloned().fold(f64::INFINITY, f64::min);
+  let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+  let sample_count = samples.len() as i32;
+  (open, high, low, close, avg, sample_count)
+}
+
 /// Repository for type price intraday observations and daily OHLC aggregation.
 pub struct Repo<'a> {
   db: &'a DatabaseConnection,
@@ -213,66 +231,74 @@ impl<'a> Repo<'a> {
   pub async fn aggregate_and_prune(&self, date: NaiveDate) -> Result<(), Error> {
     let date_str = date.format("%Y-%m-%d").to_string();
     let next_str = (date + Duration::days(1)).format("%Y-%m-%d").to_string();
-
-    let rows = PriceEntity::find()
-      .filter(PriceColumn::FetchedAt.gte(&date_str))
-      .filter(PriceColumn::FetchedAt.lt(&next_str))
-      .order_by(PriceColumn::FetchedAt, Order::Asc)
-      .all(self.db)
-      .await?;
-
+    let rows = self.fetch_intraday_for_range(&date_str, &next_str).await?;
     if rows.is_empty() {
       return Ok(());
     }
+    let by_type = group_prices_by_type(&rows);
+    self.upsert_ohlc_records(by_type, &date_str).await?;
+    self.prune_intraday_range(&date_str, &next_str).await?;
+    Ok(())
+  }
 
-    let mut by_type: HashMap<i32, Vec<f64>> = HashMap::new();
-    for row in &rows {
-      by_type.entry(row.type_id).or_default().push(row.price);
-    }
+  async fn fetch_intraday_for_range(
+    &self,
+    date_str: &str,
+    next_str: &str,
+  ) -> Result<Vec<crate::entities::type_price::Model>, Error> {
+    PriceEntity::find()
+      .filter(PriceColumn::FetchedAt.gte(date_str))
+      .filter(PriceColumn::FetchedAt.lt(next_str))
+      .order_by(PriceColumn::FetchedAt, Order::Asc)
+      .all(self.db)
+      .await
+      .map_err(Error::from)
+  }
 
+  async fn upsert_ohlc_records(&self, by_type: HashMap<i32, Vec<f64>>, date_str: &str) -> Result<(), Error> {
     for (tid, samples) in by_type {
-      let open = *samples.first().unwrap_or(&0.0);
-      let close = *samples.last().unwrap_or(&0.0);
-      let high = samples.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-      let low = samples.iter().cloned().fold(f64::INFINITY, f64::min);
-      let avg = samples.iter().sum::<f64>() / samples.len() as f64;
-      let sample_count = samples.len() as i32;
-
-      let active = HistoryActive {
-        id: ActiveValue::NotSet,
-        type_id: ActiveValue::Set(tid),
-        date: ActiveValue::Set(date_str.clone()),
-        open: ActiveValue::Set(open),
-        high: ActiveValue::Set(high),
-        low: ActiveValue::Set(low),
-        close: ActiveValue::Set(close),
-        avg: ActiveValue::Set(avg),
-        sample_count: ActiveValue::Set(sample_count),
-      };
-
-      HistoryEntity::insert(active)
-        .on_conflict(
-          OnConflict::columns([HistoryColumn::TypeId, HistoryColumn::Date])
-            .update_columns([
-              HistoryColumn::Open,
-              HistoryColumn::High,
-              HistoryColumn::Low,
-              HistoryColumn::Close,
-              HistoryColumn::Avg,
-              HistoryColumn::SampleCount,
-            ])
-            .to_owned(),
-        )
-        .exec(self.db)
-        .await?;
+      self.upsert_one_ohlc(tid, &samples, date_str).await?;
     }
+    Ok(())
+  }
 
-    PriceEntity::delete_many()
-      .filter(PriceColumn::FetchedAt.gte(&date_str))
-      .filter(PriceColumn::FetchedAt.lt(&next_str))
+  async fn upsert_one_ohlc(&self, tid: i32, samples: &[f64], date_str: &str) -> Result<(), Error> {
+    let ohlc = compute_ohlc(samples);
+    let active = HistoryActive {
+      id: ActiveValue::NotSet,
+      type_id: ActiveValue::Set(tid),
+      date: ActiveValue::Set(date_str.to_string()),
+      open: ActiveValue::Set(ohlc.0),
+      high: ActiveValue::Set(ohlc.1),
+      low: ActiveValue::Set(ohlc.2),
+      close: ActiveValue::Set(ohlc.3),
+      avg: ActiveValue::Set(ohlc.4),
+      sample_count: ActiveValue::Set(ohlc.5),
+    };
+    HistoryEntity::insert(active)
+      .on_conflict(
+        OnConflict::columns([HistoryColumn::TypeId, HistoryColumn::Date])
+          .update_columns([
+            HistoryColumn::Open,
+            HistoryColumn::High,
+            HistoryColumn::Low,
+            HistoryColumn::Close,
+            HistoryColumn::Avg,
+            HistoryColumn::SampleCount,
+          ])
+          .to_owned(),
+      )
       .exec(self.db)
       .await?;
+    Ok(())
+  }
 
+  async fn prune_intraday_range(&self, date_str: &str, next_str: &str) -> Result<(), Error> {
+    PriceEntity::delete_many()
+      .filter(PriceColumn::FetchedAt.gte(date_str))
+      .filter(PriceColumn::FetchedAt.lt(next_str))
+      .exec(self.db)
+      .await?;
     Ok(())
   }
 

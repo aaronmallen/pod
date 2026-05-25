@@ -302,21 +302,27 @@ impl Model {
     let end_time = skill.training_end_time?;
     let start_time = skill.training_start_time?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
-
-    if let (Some(level_start), Some(level_end), Some(run_start_sp)) = (
-      skill.training_level_start_sp,
-      skill.training_level_end_sp,
-      skill.training_start_sp,
-    ) {
-      return sp_based_percent(level_start, level_end, run_start_sp, start_time, end_time, now);
-    }
-
-    let total_duration = (end_time - start_time) as f64;
-    if total_duration <= 0.0 {
-      return Some(1.0);
-    }
-    Some(((now - start_time) as f64 / total_duration).clamp(0.0, 1.0))
+    skill_training_percent(skill, start_time, end_time, now)
   }
+}
+
+fn skill_training_percent(skill: &CharacterSkill, start_time: i64, end_time: i64, now: i64) -> Option<f64> {
+  if let (Some(level_start), Some(level_end), Some(run_start_sp)) = (
+    skill.training_level_start_sp,
+    skill.training_level_end_sp,
+    skill.training_start_sp,
+  ) {
+    return sp_based_percent(level_start, level_end, run_start_sp, start_time, end_time, now);
+  }
+  time_based_percent(start_time, end_time, now)
+}
+
+fn time_based_percent(start_time: i64, end_time: i64, now: i64) -> Option<f64> {
+  let total_duration = (end_time - start_time) as f64;
+  if total_duration <= 0.0 {
+    return Some(1.0);
+  }
+  Some(((now - start_time) as f64 / total_duration).clamp(0.0, 1.0))
 }
 
 fn sp_based_percent(

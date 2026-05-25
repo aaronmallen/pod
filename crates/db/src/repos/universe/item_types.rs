@@ -74,6 +74,29 @@ async fn resolve_skill_names(db: &DatabaseConnection, type_ids: &[i32]) -> HashM
     .collect()
 }
 
+fn build_skill_prereqs(attrs: &[dogma_attribute::Entry], prereq_names: &HashMap<i32, String>) -> Vec<(String, u8)> {
+  skill_reqs_from_attrs(attrs)
+    .into_iter()
+    .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
+    .collect()
+}
+
+fn push_skill_into_group(
+  groups: &mut Vec<pod_model::SkillGroupDef>,
+  skill: pod_model::SkillDef,
+  group_id_str: String,
+  group_name: String,
+) {
+  match groups.iter_mut().find(|g| g.id == group_id_str) {
+    Some(group) => group.skills.push(skill),
+    None => groups.push(pod_model::SkillGroupDef {
+      id: group_id_str,
+      name: group_name,
+      skills: vec![skill],
+    }),
+  }
+}
+
 fn add_skill_to_groups(
   groups: &mut Vec<pod_model::SkillGroupDef>,
   item: ItemTypeModelEx,
@@ -83,10 +106,9 @@ fn add_skill_to_groups(
   let rank = find_attr_u8(attrs, 275, 1);
   let primary_id = find_attr_u8(attrs, 180, 167);
   let secondary_id = find_attr_u8(attrs, 181, 168);
-  let prereqs = skill_reqs_from_attrs(attrs)
-    .into_iter()
-    .filter_map(|(tid, lvl)| prereq_names.get(&tid).map(|n| (n.clone(), lvl)))
-    .collect();
+  let prereqs = build_skill_prereqs(attrs, prereq_names);
+  let group_id_str = item.item_group_id.to_string();
+  let group_name = group_name_from_ex(&item);
   let skill = pod_model::SkillDef {
     type_id: item.id,
     name: item.name,
@@ -97,21 +119,40 @@ fn add_skill_to_groups(
     secondary: pod_model::AttrKey::from_eve_id(secondary_id),
     prereqs,
   };
-  let group_id_str = item.item_group_id.to_string();
-  let group_name = item
-    .item_group
-    .as_ref()
-    .map(|g| g.name.as_str())
-    .unwrap_or_default()
-    .to_owned();
-  match groups.iter_mut().find(|g| g.id == group_id_str) {
-    Some(group) => group.skills.push(skill),
-    None => groups.push(pod_model::SkillGroupDef {
-      id: group_id_str,
-      name: group_name,
-      skills: vec![skill],
-    }),
+  push_skill_into_group(groups, skill, group_id_str, group_name);
+}
+
+fn validate_and_convert(records: &[ItemType]) -> Result<Vec<ActiveModel>, crate::Error> {
+  let mut active = Vec::with_capacity(records.len());
+  for record in records {
+    record.validate()?;
+    active.push(ActiveModel::from(record.clone()));
   }
+  Ok(active)
+}
+
+fn item_ids(items: &[ItemTypeModelEx]) -> Vec<i32> {
+  items.iter().map(|t| t.id).collect()
+}
+
+fn build_skill_raw(items: &[ItemTypeModelEx]) -> Vec<(&ItemTypeModelEx, Vec<(i32, u8)>)> {
+  items
+    .iter()
+    .map(|item| (item, skill_reqs_from_attrs(&item.dogma_attributes.0)))
+    .collect()
+}
+
+fn collect_prereq_ids(items: &[ItemTypeModelEx]) -> Vec<i32> {
+  items
+    .iter()
+    .flat_map(|item| {
+      skill_reqs_from_attrs(&item.dogma_attributes.0)
+        .into_iter()
+        .map(|(tid, _)| tid)
+    })
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect()
 }
 
 fn collect_raw_skill_ids(raw: &[(&ItemTypeModelEx, Vec<(i32, u8)>)]) -> Vec<i32> {
@@ -153,15 +194,19 @@ fn build_ship_summary(
   }
 }
 
+const NEURAL_ATTR_NAMES: &[(i32, &str)] = &[
+  (175, "charisma"),
+  (176, "intelligence"),
+  (177, "memory"),
+  (178, "perception"),
+  (179, "willpower"),
+];
+
 fn attr_to_neural_name(id: i32) -> Option<&'static str> {
-  match id {
-    175 => Some("charisma"),
-    176 => Some("intelligence"),
-    177 => Some("memory"),
-    178 => Some("perception"),
-    179 => Some("willpower"),
-    _ => None,
-  }
+  NEURAL_ATTR_NAMES
+    .iter()
+    .find(|(attr_id, _)| *attr_id == id)
+    .map(|(_, name)| *name)
 }
 
 fn build_module_summary(item: &ItemTypeModelEx, reqs: Vec<(i32, u8)>, names: &HashMap<i32, String>) -> ItemTypeSummary {
@@ -256,17 +301,11 @@ impl<'a> Repo<'a> {
   #[tracing::instrument(level = "trace", skip(self))]
   pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
     let items = self.fetch_ship_items(search).await?;
-    let type_ids: Vec<i32> = items.iter().map(|t| t.id).collect();
+    let type_ids = item_ids(&items);
     let mastery_map = self.fetch_mastery_map(type_ids).await?;
-
-    let raw: Vec<_> = items
-      .iter()
-      .map(|item| (item, skill_reqs_from_attrs(&item.dogma_attributes.0)))
-      .collect();
-
+    let raw = build_skill_raw(&items);
     let all_skill_ids = collect_raw_skill_ids(&raw);
     let names = resolve_skill_names(self.db, &all_skill_ids).await;
-
     Ok(
       raw
         .into_iter()
@@ -275,10 +314,7 @@ impl<'a> Repo<'a> {
     )
   }
 
-  /// Returns published modules whose name matches the given search string (case-insensitive).
-  /// Only modules that have at least one skill requirement are returned.
-  #[tracing::instrument(level = "trace", skip(self))]
-  pub async fn find_modules(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
+  async fn fetch_module_items(&self, search: &str) -> Result<Vec<crate::entities::item_type::ModelEx>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(7))
       .all(self.db)
@@ -286,7 +322,6 @@ impl<'a> Repo<'a> {
       .into_iter()
       .map(|g| g.id)
       .collect();
-
     let mut items = Entity::load()
       .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
@@ -296,6 +331,14 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
     items.sort_by(sort_cmp_group_name);
+    Ok(items)
+  }
+
+  /// Returns published modules whose name matches the given search string (case-insensitive).
+  /// Only modules that have at least one skill requirement are returned.
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn find_modules(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
+    let items = self.fetch_module_items(search).await?;
 
     let raw: Vec<_> = items
       .iter()
@@ -316,9 +359,7 @@ impl<'a> Repo<'a> {
     )
   }
 
-  /// Returns all published skills (EVE category 16) grouped by item group.
-  #[tracing::instrument(level = "trace", skip(self))]
-  pub async fn find_skill_groups(&self) -> Result<Vec<pod_model::SkillGroupDef>, Error> {
+  async fn fetch_skill_items(&self) -> Result<Vec<crate::entities::item_type::ModelEx>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(16))
       .all(self.db)
@@ -326,7 +367,6 @@ impl<'a> Repo<'a> {
       .into_iter()
       .map(|g| g.id)
       .collect();
-
     let mut items = Entity::load()
       .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
@@ -335,24 +375,19 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
     items.sort_by(sort_cmp_group_name);
+    Ok(items)
+  }
 
-    let all_prereq_ids: Vec<i32> = items
-      .iter()
-      .flat_map(|item| {
-        skill_reqs_from_attrs(&item.dogma_attributes.0)
-          .into_iter()
-          .map(|(tid, _)| tid)
-      })
-      .collect::<std::collections::HashSet<_>>()
-      .into_iter()
-      .collect();
+  /// Returns all published skills (EVE category 16) grouped by item group.
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn find_skill_groups(&self) -> Result<Vec<pod_model::SkillGroupDef>, Error> {
+    let items = self.fetch_skill_items().await?;
+    let all_prereq_ids = collect_prereq_ids(&items);
     let prereq_names = resolve_skill_names(self.db, &all_prereq_ids).await;
-
     let mut groups: Vec<pod_model::SkillGroupDef> = Vec::new();
     for item in items {
       add_skill_to_groups(&mut groups, item, &prereq_names);
     }
-
     Ok(groups)
   }
 
@@ -456,11 +491,11 @@ impl<'a> Repo<'a> {
     if records.is_empty() {
       return Ok(());
     }
-    let mut active = Vec::with_capacity(records.len());
-    for record in records {
-      record.validate()?;
-      active.push(ActiveModel::from(record.clone()));
-    }
+    let active = validate_and_convert(records)?;
+    self.insert_in_chunks(&active).await
+  }
+
+  async fn insert_in_chunks(&self, active: &[ActiveModel]) -> Result<(), Error> {
     for chunk in active.chunks(200) {
       Entity::insert_many(chunk.to_vec())
         .on_conflict(

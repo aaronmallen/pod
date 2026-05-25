@@ -11,13 +11,11 @@ use super::{
 };
 use crate::components::{TabStrip, tab_strip::TabItem};
 
-fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
-  let inv_count = state.visible_assets().count();
-  let abyssals_count = state.abyssals.abyssals.len();
-  let tabs = vec![
+fn tab_items(state: &State) -> Vec<TabItem> {
+  vec![
     TabItem {
       label: "Inventory".to_string(),
-      count: Some(inv_count),
+      count: Some(state.visible_assets().count()),
     },
     TabItem {
       label: "Stockpiles".to_string(),
@@ -33,25 +31,36 @@ fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
     },
     TabItem {
       label: "Abyssals".to_string(),
-      count: Some(abyssals_count),
+      count: Some(state.abyssals.abyssals.len()),
     },
-  ];
-  let active_index = match state.active_tab {
+  ]
+}
+
+fn tab_active_index(tab: &Tab) -> usize {
+  match tab {
     Tab::Inventory => 0,
     Tab::Stockpiles => 1,
     Tab::Values => 2,
     Tab::Tracker => 3,
     Tab::Abyssals => 4,
-  };
-  TabStrip::new(tabs).active(active_index).render(|i| {
-    Message::TabSelected(match i {
-      0 => Tab::Inventory,
-      1 => Tab::Stockpiles,
-      2 => Tab::Values,
-      3 => Tab::Tracker,
-      _ => Tab::Abyssals,
-    })
-  })
+  }
+}
+
+fn tab_from_index(i: usize) -> Tab {
+  match i {
+    0 => Tab::Inventory,
+    1 => Tab::Stockpiles,
+    2 => Tab::Values,
+    3 => Tab::Tracker,
+    _ => Tab::Abyssals,
+  }
+}
+
+fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
+  let active = tab_active_index(&state.active_tab);
+  TabStrip::new(tab_items(state))
+    .active(active)
+    .render(|i| Message::TabSelected(tab_from_index(i)))
 }
 
 fn pane_drag_handle() -> Element<'static, Message> {

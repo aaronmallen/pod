@@ -36,7 +36,7 @@ impl<'a> Component<'a> {
 
   /// Renders the positioned ghost overlay into an element.
   pub fn render(self) -> Element<'a, Message> {
-    use crate::views::characters::characters_tab::grid_cols;
+    use super::grid_row::grid_cols;
 
     let cols = grid_cols(self.window_width);
     let effective_width = self.window_width.min(spacing::layout::GRID_MAX_WIDTH);

@@ -123,7 +123,6 @@ pub enum TagSortMode {
   Name,
 }
 
-  let preview = TagColorSwatch::new(name, color_hex).render();
 fn render_tags_panel(state: &State) -> Element<'_, Message> {
   let header = tag_panel_header::TagPanelHeader::new(state).render();
   let border = container(Space::new().width(Length::Fill).height(1.0))
@@ -162,13 +161,11 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
   match state.sort_mode {
     TagSortMode::Manual => {}
     TagSortMode::Name => filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b)),
-    TagSortMode::Color => filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| {
-      match (a_color, b_color) {
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
-        (None, None) => a_name.cmp(b_name),
-      }
+    TagSortMode::Color => filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| match (a_color, b_color) {
+      (Some(_), None) => std::cmp::Ordering::Less,
+      (None, Some(_)) => std::cmp::Ordering::Greater,
+      (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
+      (None, None) => a_name.cmp(b_name),
     }),
   }
 

@@ -121,55 +121,12 @@ impl Component {
 
   /// Render the compose panel at the appropriate size.
   pub fn render(&self) -> Element<'_, Message> {
-    let (panel_width, panel_height): (f32, f32) = if self.expanded {
-      (
-        component::compose_panel::EXPANDED_WIDTH,
-        component::compose_panel::EXPANDED_HEIGHT,
-      )
-    } else {
-      (
-        component::compose_panel::COLLAPSED_WIDTH,
-        component::compose_panel::COLLAPSED_HEIGHT,
-      )
-    };
-
-    let expand_sym: &'static str = if self.expanded { "⤡" } else { "⤢" };
-
-    let header = panel_header(expand_sym);
-
-    let mut panel_rows: Vec<Element<'_, Message>> = vec![header, to_field(self)];
-    if self.cc_visible {
-      panel_rows.push(cc_field(self));
-    }
-    panel_rows.push(subject_field(&self.subject));
-    panel_rows.push(body_area(&self.body));
-    if let Some(err) = &self.error {
-      panel_rows.push(error_row(err.as_str()));
-    }
-    let from_trigger = self.from_picker.render().map(Message::FromPicker);
-    let can_send = !self.to.is_empty() && !self.subject.trim().is_empty();
-    panel_rows.push(send_footer_inner(can_send, self.sending, from_trigger));
-
-    let base = column(panel_rows).width(Length::Fill).height(Length::Fill);
-
-    let to_overlay = Suggestions::new(&self.to_suggestions, self.to_suggestion_cursor, |id, name| {
-      Message::ToSearchSelect(id, name)
-    })
-    .top_padding(82.0)
-    .visible(!self.to_suggestions.is_empty() && !self.to_search.is_empty())
-    .render();
-
-    let cc_overlay = Suggestions::new(&self.cc_suggestions, self.cc_suggestion_cursor, |id, name| {
-      Message::CcSearchSelect(id, name)
-    })
-    .top_padding(123.0)
-    .visible(self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty())
-    .render();
-
+    let (panel_width, panel_height) = panel_dimensions(self.expanded);
+    let base = column(build_panel_rows(self)).width(Length::Fill).height(Length::Fill);
+    let to_overlay = to_suggestion_overlay(self);
+    let cc_overlay = cc_suggestion_overlay(self);
     let from_picker_el = from_picker_overlay(self);
-
     let inner: Element<'_, Message> = stack([base.into(), to_overlay, cc_overlay, from_picker_el]).into();
-
     Card::new(inner)
       .width(Length::Fixed(panel_width))
       .height(Length::Fixed(panel_height))
@@ -392,6 +349,57 @@ impl Default for Component {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn panel_dimensions(expanded: bool) -> (f32, f32) {
+  if expanded {
+    (
+      component::compose_panel::EXPANDED_WIDTH,
+      component::compose_panel::EXPANDED_HEIGHT,
+    )
+  } else {
+    (
+      component::compose_panel::COLLAPSED_WIDTH,
+      component::compose_panel::COLLAPSED_HEIGHT,
+    )
+  }
+}
+
+fn build_panel_rows(panel: &Component) -> Vec<Element<'_, Message>> {
+  let expand_sym: &'static str = if panel.expanded { "⤡" } else { "⤢" };
+  let mut rows: Vec<Element<'_, Message>> = vec![panel_header(expand_sym), to_field(panel)];
+  if panel.cc_visible {
+    rows.push(cc_field(panel));
+  }
+  rows.push(subject_field(&panel.subject));
+  rows.push(body_area(&panel.body));
+  if let Some(err) = &panel.error {
+    rows.push(error_row(err.as_str()));
+  }
+  let from_trigger = panel.from_picker.render().map(Message::FromPicker);
+  let can_send = !panel.to.is_empty() && !panel.subject.trim().is_empty();
+  rows.push(send_footer_inner(can_send, panel.sending, from_trigger));
+  rows
+}
+
+fn to_suggestion_overlay(panel: &Component) -> Element<'_, Message> {
+  let visible = !panel.to_suggestions.is_empty() && !panel.to_search.is_empty();
+  Suggestions::new(&panel.to_suggestions, panel.to_suggestion_cursor, |id, name| {
+    Message::ToSearchSelect(id, name)
+  })
+  .top_padding(82.0)
+  .visible(visible)
+  .render()
+}
+
+fn cc_suggestion_overlay(panel: &Component) -> Element<'_, Message> {
+  let visible = panel.cc_visible && !panel.cc_suggestions.is_empty() && !panel.cc_search.is_empty();
+  Suggestions::new(&panel.cc_suggestions, panel.cc_suggestion_cursor, |id, name| {
+    Message::CcSearchSelect(id, name)
+  })
+  .top_padding(123.0)
+  .visible(visible)
+  .render()
 }
 
 fn error_row(err: &str) -> Element<'_, Message> {

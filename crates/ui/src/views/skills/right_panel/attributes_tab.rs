@@ -39,21 +39,7 @@ impl<'a> Component<'a> {
 
   /// Renders the attributes tab into an [`Element`].
   pub fn render(self) -> Element<'a, Message> {
-    let attr_pair = self
-      .state
-      .queue
-      .first()
-      .and_then(|q| super::super::skill_data::find_skill(&q.skill_name, &self.state.skill_groups))
-      .map(|(s, _)| (s.primary, s.secondary))
-      .or_else(|| {
-        self
-          .state
-          .active_character()
-          .and_then(|c| c.active_training())
-          .and_then(|t| t.skill_name.as_ref())
-          .and_then(|n| super::super::skill_data::find_skill(n, &self.state.skill_groups))
-          .map(|(s, _)| (s.primary, s.secondary))
-      });
+    let attr_pair = active_attr_pair(self.state);
     let active_primary = attr_pair.map(|(p, _)| p);
     let active_secondary = attr_pair.map(|(_, s)| s);
     let total_pts: u32 = AttrKey::ALL.iter().map(|k| self.state.attr_value(*k)).sum();
@@ -68,6 +54,24 @@ impl<'a> Component<'a> {
     .width(Length::Fill)
     .into()
   }
+}
+
+fn active_attr_pair_from_training(state: &State) -> Option<(AttrKey, AttrKey)> {
+  state
+    .active_character()
+    .and_then(|c| c.active_training())
+    .and_then(|t| t.skill_name.as_ref())
+    .and_then(|n| super::super::skill_data::find_skill(n, &state.skill_groups))
+    .map(|(s, _)| (s.primary, s.secondary))
+}
+
+fn active_attr_pair(state: &State) -> Option<(AttrKey, AttrKey)> {
+  state
+    .queue
+    .first()
+    .and_then(|q| super::super::skill_data::find_skill(&q.skill_name, &state.skill_groups))
+    .map(|(s, _)| (s.primary, s.secondary))
+    .or_else(|| active_attr_pair_from_training(state))
 }
 
 fn bar_items<'a>(

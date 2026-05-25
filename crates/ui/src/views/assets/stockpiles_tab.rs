@@ -30,6 +30,28 @@ pub enum Message {
   NewStockpile,
 }
 
+fn count_ready_piles(state: &State) -> usize {
+  state.stockpiles.iter().filter(|p| p.ready).count()
+}
+
+fn count_short_piles(state: &State) -> usize {
+  state.stockpiles.iter().filter(|p| !p.ready).count()
+}
+
+fn build_stockpile_grid(state: &State) -> Element<'_, Message> {
+  if state.stockpiles.is_empty() {
+    return stockpile_empty_state::Component::new().render();
+  }
+  let cards: Vec<Element<'_, Message>> = state
+    .stockpiles
+    .iter()
+    .map(|pile| stockpile_card::Component::new(pile).render())
+    .collect();
+  scrollable(column(cards).spacing(14.0).width(Length::Fill))
+    .height(Length::Fill)
+    .into()
+}
+
 /// Format a quantity as a compact string (K/M suffixes).
 pub(super) fn fmt_count(n: u64) -> String {
   if n >= 1_000_000 {
@@ -57,25 +79,10 @@ impl<'a> Component<'a> {
   /// Renders the stockpiles tab into an iced element.
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
-
-    let ready_count = state.stockpiles.iter().filter(|p| p.ready).count();
-    let short_count = state.stockpiles.iter().filter(|p| !p.ready).count();
-
+    let ready_count = count_ready_piles(state);
+    let short_count = count_short_piles(state);
     let toolbar = stockpile_toolbar::Component::new(ready_count, short_count).render();
-
-    let grid: Element<'_, Message> = if state.stockpiles.is_empty() {
-      stockpile_empty_state::Component::new().render()
-    } else {
-      let cards: Vec<Element<'_, Message>> = state
-        .stockpiles
-        .iter()
-        .map(|pile| stockpile_card::Component::new(pile).render())
-        .collect();
-      scrollable(column(cards).spacing(14.0).width(Length::Fill))
-        .height(Length::Fill)
-        .into()
-    };
-
+    let grid = build_stockpile_grid(state);
     let content = container(column([toolbar, grid]).width(Length::Fill).height(Length::Fill))
       .padding(Padding {
         top: 20.0,
@@ -85,7 +92,6 @@ impl<'a> Component<'a> {
       })
       .width(Length::Fill)
       .height(Length::Fill);
-
     if let Some(form) = &state.stockpile_form {
       row([content.into(), stockpile_form_panel::Component::new(form).render()])
         .width(Length::Fill)

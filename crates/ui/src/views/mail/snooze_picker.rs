@@ -116,9 +116,19 @@ pub fn preset_to_iso(label: &str) -> Option<String> {
 }
 
 fn preset_target_time(label: &str, today: NaiveDate, now: &DateTime<Utc>) -> Option<DateTime<Utc>> {
+  preset_target_time_basic(label, today).or_else(|| preset_target_time_extended(label, today, now))
+}
+
+fn preset_target_time_basic(label: &str, today: NaiveDate) -> Option<DateTime<Utc>> {
   match label {
     "Later today" => preset_later_today_target(today),
     "Tomorrow" => preset_tomorrow_target(today),
+    _ => None,
+  }
+}
+
+fn preset_target_time_extended(label: &str, today: NaiveDate, now: &DateTime<Utc>) -> Option<DateTime<Utc>> {
+  match label {
     "After downtime" => preset_after_downtime_target(today, now),
     "Next week" => preset_next_week_target(today),
     _ => None,
@@ -204,49 +214,51 @@ pub fn format_snooze_expiry(iso: &str) -> String {
   format!("{date_part} at {time_str}")
 }
 
+fn preset_btn_inner(label: &'static str, hint: &'static str) -> iced::widget::Row<'static, Message> {
+  row([
+    text(label)
+      .font(body::REGULAR)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+    text(hint)
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+}
+
 fn preset_button(label: &'static str, hint: &'static str) -> Element<'static, Message> {
   let iso = preset_to_iso(label).unwrap_or_default();
-  button(
-    row([
-      text(label)
-        .font(body::REGULAR)
-        .size(13.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .width(Length::Fill)
-        .into(),
-      text(hint)
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .align_y(Vertical::Center),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 10.0,
-    right: 10.0,
-  })
-  .on_press(Message::SnoozeSet(iso))
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
-    },
-    border: Border {
-      radius: 6.0.into(),
-      ..Border::default()
-    },
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
-  .into()
+  button(preset_btn_inner(label, hint))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 8.0,
+      bottom: 8.0,
+      left: 10.0,
+      right: 10.0,
+    })
+    .on_press(Message::SnoozeSet(iso))
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+        _ => None,
+      },
+      border: Border {
+        radius: 6.0.into(),
+        ..Border::default()
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn pick_datetime_button() -> Element<'static, Message> {
@@ -519,48 +531,50 @@ fn time_stepper(label: &'static str, value: u32, up_msg: Message, down_msg: Mess
   .into()
 }
 
+fn quick_chip_inner(label: &'static str, hint: &'static str) -> iced::widget::Row<'static, Message> {
+  row([
+    text(label)
+      .font(body::REGULAR)
+      .size(11.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(hint)
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .spacing(4.0)
+  .align_y(Vertical::Center)
+}
+
 fn quick_chip(label: &'static str, hint: &'static str, msg: Message) -> Element<'static, Message> {
-  button(
-    row([
-      text(label)
-        .font(body::REGULAR)
-        .size(11.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      text(hint)
-        .font(mono::REGULAR)
-        .size(9.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .spacing(4.0)
-    .align_y(Vertical::Center),
-  )
-  .padding(Padding {
-    top: 4.0,
-    bottom: 4.0,
-    left: 8.0,
-    right: 8.0,
-  })
-  .on_press(msg)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
-    },
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: 5.0.into(),
-      width: 1.0,
-    },
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
-  .into()
+  button(quick_chip_inner(label, hint))
+    .padding(Padding {
+      top: 4.0,
+      bottom: 4.0,
+      left: 8.0,
+      right: 8.0,
+    })
+    .on_press(msg)
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+        _ => None,
+      },
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: 5.0.into(),
+        width: 1.0,
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn prev_month_info(month: u32, year: i32) -> (u32, i32) {
@@ -600,16 +614,21 @@ fn build_month_cells(month: u32, year: i32, first_dow: i64) -> Vec<(u32, u32, i3
   cells
 }
 
+fn first_of_month_date(year: i32, month: u32) -> NaiveDate {
+  NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap())
+}
+
+fn is_selected_day(state: &CalendarState, y: i32, m: u32, d: u32) -> bool {
+  y == state.sel_year && m == state.sel_month && d == state.sel_day
+}
+
 fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> {
   let today = Utc::now().date_naive();
   let year = state.view_year;
   let month = state.view_month;
-
-  let first_of_month =
-    NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+  let first_of_month = first_of_month_date(year, month);
   let first_dow = first_of_month.weekday().number_from_monday() as i64 - 1;
   let cells = build_month_cells(month, year, first_dow);
-
   cells
     .chunks(7)
     .map(|week| {
@@ -617,7 +636,7 @@ fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> 
         .iter()
         .map(|&(d, m, y, in_month)| {
           let is_today = NaiveDate::from_ymd_opt(y, m + 1, d) == Some(today);
-          let selected = y == state.sel_year && m == state.sel_month && d == state.sel_day;
+          let selected = is_selected_day(state, y, m, d);
           calendar_day_cell(d, m, y, in_month, selected, is_today)
         })
         .collect()

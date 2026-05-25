@@ -20,16 +20,17 @@ fn named_folder_icon(folder: &Folder) -> Option<Icon> {
   }
 }
 
-fn folder_icon_widget(folder: &Folder) -> Icon {
-  if let Some(icon) = named_folder_icon(folder) {
-    return icon;
-  }
+fn unnamed_folder_icon(folder: &Folder) -> Icon {
   match folder {
     Folder::Snoozed => Icon::snooze(),
     Folder::Starred => Icon::star(),
     Folder::Trash => Icon::trash(),
     _ => Icon::inbox(),
   }
+}
+
+fn folder_icon_widget(folder: &Folder) -> Icon {
+  named_folder_icon(folder).unwrap_or_else(|| unnamed_folder_icon(folder))
 }
 
 fn folder_icon(folder: &Folder, active: bool) -> Element<'static, Message> {

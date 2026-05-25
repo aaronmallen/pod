@@ -31,12 +31,7 @@ impl<'a> Component<'a> {
   }
 
   pub fn render<M: 'static>(&self) -> Element<'static, M> {
-    let (dot_color, status_label) = match self.phase {
-      crate::views::splash::Phase::Loading => (color::accent::PLASMA, "SYNCING"),
-      crate::views::splash::Phase::Expanding => (color::accent::PLASMA, "FINALIZING"),
-      crate::views::splash::Phase::Done => (color::text::SUCCESS, "READY"),
-    };
-
+    let (dot_color, status_label) = phase_dot_and_label(self.phase);
     let version = format!("v{}", self.version);
     let content: Element<'static, M> = row([
       footer_eve_segment::<M>(),
@@ -49,28 +44,42 @@ impl<'a> Component<'a> {
     .align_y(iced::alignment::Vertical::Center)
     .into();
 
-    let top_border = container(iced::widget::Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::state::OVERLAY_MEDIUM)),
-        ..container::Style::default()
-      });
-
-    let bar = container(content)
-      .width(Length::Fill)
-      .height(Length::Fixed(24.0))
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::NAVIGATION)),
-        border: Border {
-          radius: iced::border::bottom(14.0),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      });
-
+    let top_border = footer_top_border();
+    let bar = footer_bar(content);
     column([top_border.into(), bar.into()]).width(Length::Fill).into()
   }
+}
+
+fn phase_dot_and_label(phase: &crate::views::splash::Phase) -> (Color, &'static str) {
+  match phase {
+    crate::views::splash::Phase::Loading => (color::accent::PLASMA, "SYNCING"),
+    crate::views::splash::Phase::Expanding => (color::accent::PLASMA, "FINALIZING"),
+    crate::views::splash::Phase::Done => (color::text::SUCCESS, "READY"),
+  }
+}
+
+fn footer_top_border<M: 'static>() -> iced::widget::Container<'static, M> {
+  container(iced::widget::Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::state::OVERLAY_MEDIUM)),
+      ..container::Style::default()
+    })
+}
+
+fn footer_bar<M: 'static>(content: Element<'static, M>) -> iced::widget::Container<'static, M> {
+  container(content)
+    .width(Length::Fill)
+    .height(Length::Fixed(24.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::NAVIGATION)),
+      border: Border {
+        radius: iced::border::bottom(14.0),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
 }
 
 fn footer_sep<M: 'static>() -> Element<'static, M> {

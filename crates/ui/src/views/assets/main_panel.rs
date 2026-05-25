@@ -46,14 +46,54 @@ fn tab_active_index(tab: &Tab) -> usize {
   }
 }
 
-fn tab_from_index(i: usize) -> Tab {
+fn tab_from_low_index(i: usize) -> Option<Tab> {
   match i {
-    0 => Tab::Inventory,
-    1 => Tab::Stockpiles,
+    0 => Some(Tab::Inventory),
+    1 => Some(Tab::Stockpiles),
+    _ => None,
+  }
+}
+
+fn tab_from_index(i: usize) -> Tab {
+  if let Some(tab) = tab_from_low_index(i) {
+    return tab;
+  }
+  match i {
     2 => Tab::Values,
     3 => Tab::Tracker,
     _ => Tab::Abyssals,
   }
+}
+
+fn render_active_tab(state: &State) -> Element<'_, Message> {
+  render_primary_tab(state).unwrap_or_else(|| render_secondary_tab(state))
+}
+
+fn render_primary_tab(state: &State) -> Option<Element<'_, Message>> {
+  match state.active_tab {
+    Tab::Inventory => Some(render_inventory_tab(state)),
+    Tab::Stockpiles => Some(Stockpiles::new(state).render().map(Message::StockpilesTab)),
+    _ => None,
+  }
+}
+
+fn render_secondary_tab(state: &State) -> Element<'_, Message> {
+  match state.active_tab {
+    Tab::Abyssals => Abyssals::new(state).render().map(Message::AbyssalsTab),
+    Tab::Tracker => Tracker::new(state).render().map(Message::TrackerTab),
+    _ => Values::new(state).render().map(Message::ValuesTab),
+  }
+}
+
+fn render_inventory_tab(state: &State) -> Element<'_, Message> {
+  row([
+    super::sidebar::Component::new(state).render(),
+    pane_drag_handle(),
+    Inventory::new(state).render().map(Message::InventoryTab),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
 }
 
 fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
@@ -95,21 +135,7 @@ impl<'a> Component<'a> {
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
     let tabs_el = tab_strip_el(state);
-    let body: Element<'_, Message> = match state.active_tab {
-      Tab::Abyssals => Abyssals::new(state).render().map(Message::AbyssalsTab),
-      Tab::Inventory => row([
-        super::sidebar::Component::new(state).render(),
-        pane_drag_handle(),
-        Inventory::new(state).render().map(Message::InventoryTab),
-      ])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into(),
-      Tab::Stockpiles => Stockpiles::new(state).render().map(Message::StockpilesTab),
-      Tab::Tracker => Tracker::new(state).render().map(Message::TrackerTab),
-      Tab::Values => Values::new(state).render().map(Message::ValuesTab),
-    };
-
+    let body = render_active_tab(state);
     column([tabs_el, body]).width(Length::Fill).height(Length::Fill).into()
   }
 }

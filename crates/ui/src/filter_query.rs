@@ -166,21 +166,30 @@ impl ParsedQuery {
   }
 }
 
-fn match_free_text(needle: &str, character: &Character) -> bool {
-  let needle = needle.to_lowercase();
+fn collect_free_text_parts(character: &Character) -> Vec<String> {
   let mut parts: Vec<String> = vec![
     character.name().to_lowercase(),
     character.corp_name().to_lowercase(),
     character.location_name().as_deref().unwrap_or("").to_lowercase(),
   ];
+  append_training_skill_name(&mut parts, character);
+  for (_, tag_name, _) in character.tags() {
+    parts.push(tag_name.to_lowercase());
+  }
+  parts
+}
+
+fn append_training_skill_name(parts: &mut Vec<String>, character: &Character) {
   if let Some(active) = character.skills().iter().find(|s| s.is_active_training)
     && let Some(ref skill_name) = active.skill_name
   {
     parts.push(skill_name.to_lowercase());
   }
-  for (_, tag_name, _) in character.tags() {
-    parts.push(tag_name.to_lowercase());
-  }
+}
+
+fn match_free_text(needle: &str, character: &Character) -> bool {
+  let needle = needle.to_lowercase();
+  let parts = collect_free_text_parts(character);
   parts.iter().any(|part| part.contains(needle.as_str()))
 }
 
@@ -226,13 +235,17 @@ fn match_status(values: &[String], character: &Character) -> bool {
   })
 }
 
-fn match_training(values: &[String], character: &Character) -> bool {
-  let is_active = character.skills().iter().any(|s| s.is_active_training);
-  values.iter().any(|v| match v.as_str() {
+fn training_value_matches(v: &str, is_active: bool) -> bool {
+  match v {
     "active" => is_active,
     "idle" => !is_active,
     _ => false,
-  })
+  }
+}
+
+fn match_training(values: &[String], character: &Character) -> bool {
+  let is_active = character.skills().iter().any(|s| s.is_active_training);
+  values.iter().any(|v| training_value_matches(v.as_str(), is_active))
 }
 
 fn match_name(values: &[String], character: &Character) -> bool {

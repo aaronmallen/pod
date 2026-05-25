@@ -72,9 +72,19 @@ fn category_icon(category: &str) -> Icon {
 }
 
 fn category_icon_combat(category: &str) -> Option<Icon> {
+  category_icon_combat_a(category).or_else(|| category_icon_combat_b(category))
+}
+
+fn category_icon_combat_a(category: &str) -> Option<Icon> {
   match category {
     "combat" => Some(Icon::notif_combat()),
     "fw" => Some(Icon::notif_fw()),
+    _ => None,
+  }
+}
+
+fn category_icon_combat_b(category: &str) -> Option<Icon> {
+  match category {
     "incursion" => Some(Icon::notif_incursion()),
     "war" => Some(Icon::notif_war()),
     _ => None,
@@ -82,9 +92,19 @@ fn category_icon_combat(category: &str) -> Option<Icon> {
 }
 
 fn category_icon_corp(category: &str) -> Option<Icon> {
+  category_icon_corp_a(category).or_else(|| category_icon_corp_b(category))
+}
+
+fn category_icon_corp_a(category: &str) -> Option<Icon> {
   match category {
     "alliance" => Some(Icon::notif_alliance()),
     "contact" => Some(Icon::notif_contact()),
+    _ => None,
+  }
+}
+
+fn category_icon_corp_b(category: &str) -> Option<Icon> {
+  match category {
     "corp" => Some(Icon::notif_corp()),
     "standing" => Some(Icon::notif_standing()),
     _ => None,
@@ -92,9 +112,19 @@ fn category_icon_corp(category: &str) -> Option<Icon> {
 }
 
 fn category_icon_financial(category: &str) -> Option<Icon> {
+  category_icon_financial_a(category).or_else(|| category_icon_financial_b(category))
+}
+
+fn category_icon_financial_a(category: &str) -> Option<Icon> {
   match category {
     "contract" => Some(Icon::notif_contract()),
     "insurance" => Some(Icon::notif_insurance()),
+    _ => None,
+  }
+}
+
+fn category_icon_financial_b(category: &str) -> Option<Icon> {
+  match category {
     "market" => Some(Icon::notif_market()),
     "reward" => Some(Icon::notif_reward()),
     _ => None,
@@ -102,9 +132,19 @@ fn category_icon_financial(category: &str) -> Option<Icon> {
 }
 
 fn category_icon_operational(category: &str) -> Option<Icon> {
+  category_icon_operational_a(category).or_else(|| category_icon_operational_b(category))
+}
+
+fn category_icon_operational_a(category: &str) -> Option<Icon> {
   match category {
     "clone" => Some(Icon::notif_clone()),
     "industry" => Some(Icon::notif_industry()),
+    _ => None,
+  }
+}
+
+fn category_icon_operational_b(category: &str) -> Option<Icon> {
+  match category {
     "mission" => Some(Icon::notif_mission()),
     "structure" => Some(Icon::notif_structure()),
     _ => None,

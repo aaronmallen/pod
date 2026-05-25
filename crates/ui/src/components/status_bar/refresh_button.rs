@@ -5,6 +5,21 @@ use iced::{
 
 use crate::style::{color, spacing, typography};
 
+fn refresh_btn_text_color(is_syncing: bool, status: button::Status) -> iced::Color {
+  if is_syncing {
+    color::text::TERTIARY
+  } else {
+    refresh_btn_hover_color(status)
+  }
+}
+
+fn refresh_btn_hover_color(status: button::Status) -> iced::Color {
+  match status {
+    button::Status::Hovered => color::text::PRIMARY,
+    _ => color::text::SECONDARY,
+  }
+}
+
 pub fn view(is_syncing: bool) -> Element<'static, super::Message> {
   let btn = button(
     container(
@@ -26,14 +41,7 @@ pub fn view(is_syncing: bool) -> Element<'static, super::Message> {
   })
   .height(Length::Fill)
   .style(move |_, status| button::Style {
-    text_color: if is_syncing {
-      color::text::TERTIARY
-    } else {
-      match status {
-        button::Status::Hovered => color::text::PRIMARY,
-        _ => color::text::SECONDARY,
-      }
-    },
+    text_color: refresh_btn_text_color(is_syncing, status),
     background: None,
     ..button::Style::default()
   });

@@ -201,15 +201,18 @@ pub fn expand_wishes(wishes: &[(&str, u8)], skill_groups: &[SkillGroupDef]) -> V
   out
 }
 
-fn attr_value(attrs: &EffectiveAttrs, key: AttrKey) -> u32 {
-  let v = match key {
+fn raw_attr_value(attrs: &EffectiveAttrs, key: AttrKey) -> i32 {
+  match key {
     AttrKey::Perception => attrs.perception,
     AttrKey::Memory => attrs.memory,
     AttrKey::Willpower => attrs.willpower,
     AttrKey::Intelligence => attrs.intelligence,
     AttrKey::Charisma => attrs.charisma,
-  };
-  v.max(0) as u32
+  }
+}
+
+fn attr_value(attrs: &EffectiveAttrs, key: AttrKey) -> u32 {
+  raw_attr_value(attrs, key).max(0) as u32
 }
 
 /// Compute the full plan: per-entry SP, durations, cumulative time, ETAs, and
@@ -310,33 +313,25 @@ pub fn effective_attrs(base: &BaseAttrs, implant: &ImplantBonus) -> EffectiveAtt
   }
 }
 
+fn uniform_implant_bonus(v: i32) -> ImplantBonus {
+  ImplantBonus {
+    perception: v,
+    memory: v,
+    willpower: v,
+    intelligence: v,
+    charisma: v,
+  }
+}
+
 /// Return the implant bonus for a given implant set. For `ImplantSet::Current`,
 /// the caller should pass the character's actual implant values as
 /// `current_attrs_implants`.
 pub fn implant_bonus_for_set(set: ImplantSet, current_attrs_implants: &BaseAttrs) -> ImplantBonus {
   match set {
     ImplantSet::None => ImplantBonus::default(),
-    ImplantSet::Plus3 => ImplantBonus {
-      perception: 3,
-      memory: 3,
-      willpower: 3,
-      intelligence: 3,
-      charisma: 3,
-    },
-    ImplantSet::Plus4 => ImplantBonus {
-      perception: 4,
-      memory: 4,
-      willpower: 4,
-      intelligence: 4,
-      charisma: 4,
-    },
-    ImplantSet::Plus5 => ImplantBonus {
-      perception: 5,
-      memory: 5,
-      willpower: 5,
-      intelligence: 5,
-      charisma: 5,
-    },
+    ImplantSet::Plus3 => uniform_implant_bonus(3),
+    ImplantSet::Plus4 => uniform_implant_bonus(4),
+    ImplantSet::Plus5 => uniform_implant_bonus(5),
     ImplantSet::Current => current_attrs_implants.clone(),
   }
 }
@@ -441,6 +436,40 @@ fn try_candidate(
   }
 }
 
+fn search_remap_candidates(
+  base_total: i32,
+  implant: &ImplantBonus,
+  weights: &[PairWeight],
+  current_time: f64,
+  best: &mut RemapResult,
+) {
+  const ATTR_MIN: i32 = 17;
+  const ATTR_MAX: i32 = 27;
+  for per in ATTR_MIN..=ATTR_MAX {
+    for mem in ATTR_MIN..=ATTR_MAX {
+      search_remap_wil_intl(per, mem, base_total, implant, weights, current_time, best);
+    }
+  }
+}
+
+fn search_remap_wil_intl(
+  per: i32,
+  mem: i32,
+  base_total: i32,
+  implant: &ImplantBonus,
+  weights: &[PairWeight],
+  current_time: f64,
+  best: &mut RemapResult,
+) {
+  const ATTR_MIN: i32 = 17;
+  const ATTR_MAX: i32 = 27;
+  for wil in ATTR_MIN..=ATTR_MAX {
+    for intl in ATTR_MIN..=ATTR_MAX {
+      try_candidate(per, mem, wil, intl, base_total, implant, weights, current_time, best);
+    }
+  }
+}
+
 /// Brute-force the optimal base attribute distribution. Tests all valid
 /// combinations in [17, 27] that sum to `base_total`. Always includes
 /// `current_base` as a candidate so the result is never worse than the
@@ -457,7 +486,6 @@ pub fn optimize_remap(
   if weights.is_empty() {
     return None;
   }
-
   let current_eff = effective_attrs(current_base, implant);
   let current_time = plan_time_with_attrs(&weights, &current_eff);
   let mut best = RemapResult {
@@ -466,34 +494,11 @@ pub fn optimize_remap(
     current_sec: current_time,
     is_current: true,
   };
-
-  const ATTR_MIN: i32 = 17;
-  const ATTR_MAX: i32 = 27;
-  for per in ATTR_MIN..=ATTR_MAX {
-    for mem in ATTR_MIN..=ATTR_MAX {
-      for wil in ATTR_MIN..=ATTR_MAX {
-        for intl in ATTR_MIN..=ATTR_MAX {
-          try_candidate(
-            per,
-            mem,
-            wil,
-            intl,
-            base_total,
-            implant,
-            &weights,
-            current_time,
-            &mut best,
-          );
-        }
-      }
-    }
-  }
-
+  search_remap_candidates(base_total, implant, &weights, current_time, &mut best);
   Some(best)
 }
 
-fn boost_implant(implant: &ImplantBonus, attr: AttrKey) -> ImplantBonus {
-  let mut boosted = implant.clone();
+fn apply_attr_boost(boosted: &mut ImplantBonus, attr: AttrKey) {
   match attr {
     AttrKey::Perception => boosted.perception += 1,
     AttrKey::Memory => boosted.memory += 1,
@@ -501,6 +506,11 @@ fn boost_implant(implant: &ImplantBonus, attr: AttrKey) -> ImplantBonus {
     AttrKey::Intelligence => boosted.intelligence += 1,
     AttrKey::Charisma => boosted.charisma += 1,
   }
+}
+
+fn boost_implant(implant: &ImplantBonus, attr: AttrKey) -> ImplantBonus {
+  let mut boosted = implant.clone();
+  apply_attr_boost(&mut boosted, attr);
   boosted
 }
 

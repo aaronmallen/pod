@@ -123,26 +123,48 @@ impl<M: Clone + 'static> canvas::Program<M> for Component<M> {
     let h = frame.height();
     let chart_w = w - self.pad_left - self.pad_right;
     let chart_h = h - self.pad_top - self.pad_bottom;
-    let min_v = self.data.iter().cloned().fold(f64::INFINITY, f64::min) * 0.985;
-    let max_v = self.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max) * 1.015;
+    let (min_v, max_v) = self.data_range();
     let range = max_v - min_v;
     let x_at = |i: usize| -> f32 { self.pad_left + (i as f32 / (self.data.len() - 1) as f32) * chart_w };
     let y_at = |v: f64| -> f32 { self.pad_top + chart_h - ((v - min_v) / range) as f32 * chart_h };
     let bottom_y = self.pad_top + chart_h;
-    self.draw_grid(&mut frame, w, chart_h, min_v, max_v, &y_at);
-    self.draw_fill_and_line(&mut frame, bottom_y, &x_at, &y_at);
-    if state.is_none() {
-      self.draw_end_dot(&mut frame, &x_at, &y_at);
-    }
-    self.draw_x_labels(&mut frame, h, &x_at);
-    if let Some(hover) = state {
-      self.draw_crosshair(&mut frame, hover, chart_h, bottom_y, &x_at, &y_at);
-    }
+    self.draw_series(&mut frame, state, w, h, chart_h, bottom_y, &x_at, &y_at, min_v, max_v);
     vec![frame.into_geometry()]
   }
 }
 
 impl<M: Clone + 'static> Component<M> {
+  fn data_range(&self) -> (f64, f64) {
+    let min_v = self.data.iter().cloned().fold(f64::INFINITY, f64::min) * 0.985;
+    let max_v = self.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max) * 1.015;
+    (min_v, max_v)
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  fn draw_series(
+    &self,
+    frame: &mut Frame,
+    state: &Option<HoverData>,
+    w: f32,
+    h: f32,
+    chart_h: f32,
+    bottom_y: f32,
+    x_at: &impl Fn(usize) -> f32,
+    y_at: &impl Fn(f64) -> f32,
+    min_v: f64,
+    max_v: f64,
+  ) {
+    self.draw_grid(frame, w, chart_h, min_v, max_v, y_at);
+    self.draw_fill_and_line(frame, bottom_y, x_at, y_at);
+    if state.is_none() {
+      self.draw_end_dot(frame, x_at, y_at);
+    }
+    self.draw_x_labels(frame, h, x_at);
+    if let Some(hover) = state {
+      self.draw_crosshair(frame, hover, chart_h, bottom_y, x_at, y_at);
+    }
+  }
+
   fn handle_cursor_moved(
     &self,
     state: &mut Option<HoverData>,

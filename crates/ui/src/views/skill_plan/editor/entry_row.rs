@@ -66,29 +66,36 @@ impl EntryRow {
   }
 }
 
-fn attr_chip_small(key: AttrKey, primary: bool) -> Element<'static, Message> {
-  let bg = if primary {
-    color::accent::PLASMA_HIGHLIGHT
-  } else {
-    color::state::HOVER_OVERLAY
-  };
-  let fg = if primary {
-    color::accent::PLASMA
-  } else {
-    color::text::SECONDARY
-  };
-  let border_col = if primary {
-    color::accent::PLASMA_BORDER
-  } else {
-    color::border::SUBTLE
-  };
+struct AttrChipColors {
+  bg: iced::Color,
+  fg: iced::Color,
+  border: iced::Color,
+}
 
+fn attr_chip_colors(primary: bool) -> AttrChipColors {
+  if primary {
+    AttrChipColors {
+      bg: color::accent::PLASMA_HIGHLIGHT,
+      fg: color::accent::PLASMA,
+      border: color::accent::PLASMA_BORDER,
+    }
+  } else {
+    AttrChipColors {
+      bg: color::state::HOVER_OVERLAY,
+      fg: color::text::SECONDARY,
+      border: color::border::SUBTLE,
+    }
+  }
+}
+
+fn attr_chip_small(key: AttrKey, primary: bool) -> Element<'static, Message> {
+  let c = attr_chip_colors(primary);
   container(
     text(key.short())
       .font(mono::REGULAR)
       .size(9.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(fg),
+        color: Some(c.fg),
       }),
   )
   .padding(Padding {
@@ -98,9 +105,9 @@ fn attr_chip_small(key: AttrKey, primary: bool) -> Element<'static, Message> {
     right: 5.0,
   })
   .style(move |_| container::Style {
-    background: Some(Background::Color(bg)),
+    background: Some(Background::Color(c.bg)),
     border: Border {
-      color: border_col,
+      color: c.border,
       radius: 3.0.into(),
       width: 1.0,
     },

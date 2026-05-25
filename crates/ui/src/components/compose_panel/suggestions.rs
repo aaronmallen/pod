@@ -90,6 +90,21 @@ fn suggestions_box<'a>(
     .into()
 }
 
+fn suggestion_row_bg(selected: bool, status: button::Status) -> Option<Background> {
+  if selected {
+    Some(Background::Color(color::accent::PLASMA_ACTIVE))
+  } else {
+    suggestion_row_hover_bg(status)
+  }
+}
+
+fn suggestion_row_hover_bg(status: button::Status) -> Option<Background> {
+  match status {
+    button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
+    _ => None,
+  }
+}
+
 /// Renders a single suggestion row button.
 pub fn suggestion_row<'a>(
   idx: usize,
@@ -118,14 +133,7 @@ pub fn suggestion_row<'a>(
   })
   .on_press(make_msg(id, msg_name))
   .style(move |_, status| button::Style {
-    background: if selected {
-      Some(Background::Color(color::accent::PLASMA_ACTIVE))
-    } else {
-      match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
-        _ => None,
-      }
-    },
+    background: suggestion_row_bg(selected, status),
     border: Border::default(),
     text_color: color::text::PRIMARY,
     ..button::Style::default()

@@ -374,40 +374,49 @@ fn render_item<'a>(i: usize, item: Item, is_highlighted: bool) -> Element<'a, Me
   mouse_area(btn).on_enter(Message::Highlighted(i)).into()
 }
 
+fn empty_list_msg(state: &State) -> &'static str {
+  if !state.existing_tags.is_empty() && state.query.trim().is_empty() {
+    "All tags already applied"
+  } else {
+    "Type to create a new tag"
+  }
+}
+
+fn render_empty_list(msg: &str) -> Element<'static, Message> {
+  container(
+    text(msg.to_string())
+      .font(typography::mono::REGULAR)
+      .size(10.0)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_7,
+    bottom: spacing::SPACE_7,
+    left: 0.0,
+    right: 0.0,
+  })
+  .width(Length::Fill)
+  .align_x(Horizontal::Center)
+  .into()
+}
+
+fn render_item_list<'a>(items: Vec<Item>, highlighted: usize) -> Element<'a, Message> {
+  let rows: Vec<Element<'a, Message>> = items
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| render_item(i, item, i == highlighted))
+    .collect();
+  scrollable(column(rows).width(Length::Fill)).height(220.0).into()
+}
+
 fn render_list_area<'a>(items: Vec<Item>, highlighted: usize, state: &State) -> Element<'a, Message> {
   let list_body: Element<'a, Message> = if items.is_empty() {
-    let msg = if !state.existing_tags.is_empty() && state.query.trim().is_empty() {
-      "All tags already applied"
-    } else {
-      "Type to create a new tag"
-    };
-    container(
-      text(msg)
-        .font(typography::mono::REGULAR)
-        .size(10.0)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        }),
-    )
-    .padding(Padding {
-      top: spacing::SPACE_7,
-      bottom: spacing::SPACE_7,
-      left: 0.0,
-      right: 0.0,
-    })
-    .width(Length::Fill)
-    .align_x(Horizontal::Center)
-    .into()
+    render_empty_list(empty_list_msg(state))
   } else {
-    let rows: Vec<Element<'a, Message>> = items
-      .into_iter()
-      .enumerate()
-      .map(|(i, item)| render_item(i, item, i == highlighted))
-      .collect();
-
-    scrollable(column(rows).width(Length::Fill)).height(220.0).into()
+    render_item_list(items, highlighted)
   };
-
   container(list_body).padding(6.0).width(Length::Fill).into()
 }
 

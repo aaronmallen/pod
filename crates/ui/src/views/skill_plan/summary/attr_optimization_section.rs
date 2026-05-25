@@ -17,7 +17,7 @@ use crate::{
   views::skills::skill_data::AttrKey,
 };
 
-fn attr_base(attrs: &BaseAttrs, key: AttrKey) -> i32 {
+fn read_attr(attrs: &BaseAttrs, key: AttrKey) -> i32 {
   match key {
     AttrKey::Charisma => attrs.charisma,
     AttrKey::Intelligence => attrs.intelligence,
@@ -27,13 +27,25 @@ fn attr_base(attrs: &BaseAttrs, key: AttrKey) -> i32 {
   }
 }
 
+fn attr_base(attrs: &BaseAttrs, key: AttrKey) -> i32 {
+  read_attr(attrs, key)
+}
+
 fn attr_implant(implant: &ImplantBonus, key: AttrKey) -> i32 {
-  match key {
-    AttrKey::Charisma => implant.charisma,
-    AttrKey::Intelligence => implant.intelligence,
-    AttrKey::Memory => implant.memory,
-    AttrKey::Perception => implant.perception,
-    AttrKey::Willpower => implant.willpower,
+  read_attr(implant, key)
+}
+
+fn ghost_btn_bg(status: button::Status) -> Background {
+  Background::Color(match status {
+    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_SUBTLE,
+    _ => Color::TRANSPARENT,
+  })
+}
+
+fn ghost_btn_border_color(status: button::Status) -> Color {
+  match status {
+    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_MUTED,
+    _ => color::border::SUBTLE,
   }
 }
 
@@ -54,15 +66,9 @@ fn ghost_button(label: &'static str, msg: Message) -> Element<'static, Message> 
   })
   .on_press(msg)
   .style(|_, status| button::Style {
-    background: Some(Background::Color(match status {
-      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_SUBTLE,
-      _ => Color::TRANSPARENT,
-    })),
+    background: Some(ghost_btn_bg(status)),
     border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_MUTED,
-        _ => color::border::SUBTLE,
-      },
+      color: ghost_btn_border_color(status),
       radius: 4.0.into(),
       width: 1.0,
     },
@@ -72,29 +78,37 @@ fn ghost_button(label: &'static str, msg: Message) -> Element<'static, Message> 
   .into()
 }
 
-fn implant_set_button(set: ImplantSet, label: &'static str, active: bool) -> Element<'static, Message> {
-  let bg = implant_btn_bg(active);
-  let border_color = if active {
+fn implant_btn_border_color(active: bool) -> Color {
+  if active {
     color::accent::PLASMA_MUTED
   } else {
     color::border::SUBTLE
-  };
-  let text_color = if active {
+  }
+}
+
+fn implant_btn_text_color(active: bool) -> Color {
+  if active {
     color::accent::PLASMA
   } else {
     color::text::SECONDARY
-  };
+  }
+}
+
+fn implant_set_btn_bg(active: bool, bg: Color, status: button::Status) -> Background {
+  Background::Color(if active { bg } else { implant_btn_hover_bg(status) })
+}
+
+fn implant_set_button(set: ImplantSet, label: &'static str, active: bool) -> Element<'static, Message> {
+  let bg = implant_btn_bg(active);
+  let border_color = implant_btn_border_color(active);
+  let text_color = implant_btn_text_color(active);
 
   button(
     text(label)
       .font(mono::REGULAR)
       .size(10.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(if active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        }),
+        color: Some(text_color),
       }),
   )
   .padding(Padding {
@@ -105,11 +119,7 @@ fn implant_set_button(set: ImplantSet, label: &'static str, active: bool) -> Ele
   })
   .on_press(Message::ImplantSetChanged(set))
   .style(move |_, status| button::Style {
-    background: Some(Background::Color(if active {
-      bg
-    } else {
-      implant_btn_hover_bg(status)
-    })),
+    background: Some(implant_set_btn_bg(active, bg, status)),
     border: Border {
       color: border_color,
       radius: 4.0.into(),
@@ -187,7 +197,31 @@ fn optimization_header_row() -> Element<'static, Message> {
   .into()
 }
 
+fn attr_base_val_color(highlight: bool) -> Color {
+  if highlight {
+    color::accent::PLASMA
+  } else {
+    color::text::PRIMARY
+  }
+}
+
+fn attr_implant_cell(implant_val: i32) -> Element<'static, Message> {
+  if implant_val > 0 {
+    text(format!("+{implant_val}"))
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SUCCESS),
+      })
+      .width(Length::Fixed(28.0))
+      .into()
+  } else {
+    Space::new().width(Length::Fixed(28.0)).into()
+  }
+}
+
 fn attr_value_row(key: AttrKey, base_val: i32, implant_val: i32, highlight: bool) -> Element<'static, Message> {
+  let base_color = attr_base_val_color(highlight);
   row([
     text(key.short())
       .font(mono::REGULAR)
@@ -209,25 +243,10 @@ fn attr_value_row(key: AttrKey, base_val: i32, implant_val: i32, highlight: bool
       .font(mono::MEDIUM)
       .size(12.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(if highlight {
-          color::accent::PLASMA
-        } else {
-          color::text::PRIMARY
-        }),
+        color: Some(base_color),
       })
       .into(),
-    if implant_val > 0 {
-      text(format!("+{implant_val}"))
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SUCCESS),
-        })
-        .width(Length::Fixed(28.0))
-        .into()
-    } else {
-      Space::new().width(Length::Fixed(28.0)).into()
-    },
+    attr_implant_cell(implant_val),
   ])
   .align_y(Vertical::Center)
   .spacing(4.0)

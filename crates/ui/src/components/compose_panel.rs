@@ -249,11 +249,9 @@ impl Component {
   }
 
   fn apply_cursor_confirm(&mut self) {
-    let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
-    let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
-    if to_active {
+    if self.to_cursor_active() {
       self.confirm_to_suggestion();
-    } else if cc_active {
+    } else if self.cc_cursor_active() {
       self.confirm_cc_suggestion();
     }
   }

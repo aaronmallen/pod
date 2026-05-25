@@ -67,18 +67,21 @@ fn is_recognized_key(key: &str) -> bool {
   RECOGNIZED_KEYS.contains(&key.to_lowercase().as_str())
 }
 
+fn parse_value_list(value_part: &str) -> Vec<String> {
+  value_part
+    .split(',')
+    .filter(|v| !v.is_empty())
+    .map(|v| v.to_lowercase())
+    .collect()
+}
+
 fn try_parse_key_value(negated: bool, rest: &str) -> Option<AssetFilterToken> {
   let colon_pos = rest.find(':')?;
   let key_part = &rest[..colon_pos];
   if !is_recognized_key(key_part) {
     return None;
   }
-  let value_part = &rest[colon_pos + 1..];
-  let values: Vec<String> = value_part
-    .split(',')
-    .filter(|v| !v.is_empty())
-    .map(|v| v.to_lowercase())
-    .collect();
+  let values = parse_value_list(&rest[colon_pos + 1..]);
   if values.is_empty() {
     return None;
   }
@@ -167,14 +170,16 @@ fn match_system(values: &[String], asset: &AssetRecord) -> bool {
   values.iter().any(|v| s.contains(v.as_str()))
 }
 
+fn match_free_text_asset(needle: &str, asset: &AssetRecord) -> bool {
+  let n = needle.to_lowercase();
+  asset.type_name.to_lowercase().contains(&n)
+    || asset.group_name.to_lowercase().contains(&n)
+    || asset.location_name.to_lowercase().contains(&n)
+}
+
 fn match_token(tok: &AssetFilterToken, asset: &AssetRecord, me_id: Option<i64>) -> bool {
   match tok {
-    AssetFilterToken::FreeText(s) => {
-      let needle = s.to_lowercase();
-      asset.type_name.to_lowercase().contains(&needle)
-        || asset.group_name.to_lowercase().contains(&needle)
-        || asset.location_name.to_lowercase().contains(&needle)
-    }
+    AssetFilterToken::FreeText(s) => match_free_text_asset(s, asset),
     AssetFilterToken::KeyValue {
       key,
       negated,
@@ -186,10 +191,19 @@ fn match_token(tok: &AssetFilterToken, asset: &AssetRecord, me_id: Option<i64>) 
   }
 }
 
-fn asset_matches_type_value(v: &str, asset: &AssetRecord) -> bool {
+fn asset_matches_blueprint_type(v: &str, asset: &AssetRecord) -> Option<bool> {
   match v {
-    "bpc" => asset.icon_variant == "bpc",
-    "bpo" => asset.icon_variant == "bpo",
+    "bpc" => Some(asset.icon_variant == "bpc"),
+    "bpo" => Some(asset.icon_variant == "bpo"),
+    _ => None,
+  }
+}
+
+fn asset_matches_type_value(v: &str, asset: &AssetRecord) -> bool {
+  if let Some(result) = asset_matches_blueprint_type(v, asset) {
+    return result;
+  }
+  match v {
     "singleton" => asset.is_singleton,
     "stack" => !asset.is_singleton,
     _ => false,

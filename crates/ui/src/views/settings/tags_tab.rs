@@ -179,13 +179,19 @@ fn filter_and_sort_tags<'a>(
   filtered
 }
 
+fn sort_tags_by_name(filtered: &mut Vec<&(i32, String, Option<String>)>) {
+  filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b));
+}
+
+fn sort_tags_by_color(filtered: &mut Vec<&(i32, String, Option<String>)>) {
+  filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| sort_by_color(a_name, a_color, b_name, b_color));
+}
+
 fn sort_filtered_tags(filtered: &mut Vec<&(i32, String, Option<String>)>, sort_mode: &TagSortMode) {
   match sort_mode {
     TagSortMode::Manual => {}
-    TagSortMode::Name => filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b)),
-    TagSortMode::Color => {
-      filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| sort_by_color(a_name, a_color, b_name, b_color))
-    }
+    TagSortMode::Name => sort_tags_by_name(filtered),
+    TagSortMode::Color => sort_tags_by_color(filtered),
   }
 }
 

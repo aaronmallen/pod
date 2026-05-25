@@ -5,6 +5,35 @@ use iced::{
   widget::{Space, column, container, text},
 };
 
+fn build_legend_rows(cats: &[super::super::CategoryValue]) -> Vec<Element<'static, Message>> {
+  cats
+    .iter()
+    .filter(|c| c.value > 0.0)
+    .map(|c| ValuesChartLegendItem::new(c).render())
+    .collect()
+}
+
+fn build_category_header(total_value: f64) -> Vec<Element<'static, Message>> {
+  vec![
+    text("By category")
+      .font(body::MEDIUM)
+      .size(14.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    Space::new().height(4.0).into(),
+    text(format!("{} ISK total", format::fmt_isk_full(total_value)))
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+    Space::new().height(14.0).into(),
+  ]
+}
+
 use super::{
   super::CategoryValue, Message, chart_legend_item::ValuesChartLegendItem, chart_section::ValuesChartSection,
 };
@@ -36,42 +65,21 @@ impl<'a> Component<'a> {
   /// Renders the category panel into an iced element.
   pub fn render(self) -> Element<'a, Message> {
     let stacked_bar = ValuesChartSection::new(self.cats, self.total_value).render();
-
-    let legend_rows: Vec<Element<'static, Message>> = self
-      .cats
-      .iter()
-      .filter(|c| c.value > 0.0)
-      .map(|c| ValuesChartLegendItem::new(c).render())
-      .collect();
-
+    let legend_rows = build_legend_rows(self.cats);
+    let header_items = build_category_header(self.total_value);
     container(
-      column([
-        text("By category")
-          .font(body::MEDIUM)
-          .size(14.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::PRIMARY),
-          })
-          .into(),
-        Space::new().height(4.0).into(),
-        text(format!("{} ISK total", format::fmt_isk_full(self.total_value)))
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-        Space::new().height(14.0).into(),
-        stacked_bar,
-        Space::new().height(14.0).into(),
-        column(legend_rows).spacing(6.0).into(),
-      ])
-      .padding(Padding {
-        top: 16.0,
-        bottom: 16.0,
-        left: 18.0,
-        right: 18.0,
-      }),
+      column(header_items)
+        .extend([
+          stacked_bar,
+          Space::new().height(14.0).into(),
+          column(legend_rows).spacing(6.0).into(),
+        ])
+        .padding(Padding {
+          top: 16.0,
+          bottom: 16.0,
+          left: 18.0,
+          right: 18.0,
+        }),
     )
     .width(360.0)
     .style(|_| container::Style {

@@ -1,6 +1,45 @@
-use iced::{Background, Border, Element, Length, Padding, Shadow, Vector, widget::container};
+use iced::{Background, Border, Element, Length, Padding, Shadow, Theme, Vector, widget::container};
 
 use crate::style::{color, radius};
+
+fn card_container_style(_: &Theme) -> container::Style {
+  container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::border::DEFAULT,
+      radius: radius::PANEL.into(),
+      width: 1.0,
+    },
+    shadow: Shadow {
+      blur_radius: 64.0,
+      color: color::state::OVERLAY_DARKER,
+      offset: Vector::new(0.0, 24.0),
+    },
+    ..container::Style::default()
+  }
+}
+
+fn apply_card_dimensions<'a, MSG: 'a>(
+  mut c: iced::widget::Container<'a, MSG>,
+  width: Option<Length>,
+  height: Option<Length>,
+  max_height: Option<f32>,
+  max_width: Option<f32>,
+) -> iced::widget::Container<'a, MSG> {
+  if let Some(w) = width {
+    c = c.width(w);
+  }
+  if let Some(h) = height {
+    c = c.height(h);
+  }
+  if let Some(mh) = max_height {
+    c = c.max_height(mh);
+  }
+  if let Some(mw) = max_width {
+    c = c.max_width(mw);
+  }
+  c
+}
 
 /// Floating panel surface container.
 pub struct Component<'a, MSG> {
@@ -52,32 +91,8 @@ impl<'a, MSG: 'a> Component<'a, MSG> {
   pub fn render(self) -> Element<'a, MSG> {
     let mut c = container(self.content)
       .padding(self.padding)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::RAISED)),
-        border: Border {
-          color: color::border::DEFAULT,
-          radius: radius::PANEL.into(),
-          width: 1.0,
-        },
-        shadow: Shadow {
-          blur_radius: 64.0,
-          color: color::state::OVERLAY_DARKER,
-          offset: Vector::new(0.0, 24.0),
-        },
-        ..container::Style::default()
-      });
-    if let Some(w) = self.width {
-      c = c.width(w);
-    }
-    if let Some(h) = self.height {
-      c = c.height(h);
-    }
-    if let Some(mh) = self.max_height {
-      c = c.max_height(mh);
-    }
-    if let Some(mw) = self.max_width {
-      c = c.max_width(mw);
-    }
+      .style(card_container_style);
+    c = apply_card_dimensions(c, self.width, self.height, self.max_height, self.max_width);
     c.into()
   }
 }

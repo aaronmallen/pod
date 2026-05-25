@@ -73,6 +73,13 @@ impl Default for Component {
   }
 }
 
+fn plasma_banner_style(_: &iced::Theme) -> container::Style {
+  container::Style {
+    background: Some(Background::Color(color::accent::PLASMA_BANNER)),
+    ..container::Style::default()
+  }
+}
+
 fn plasma_fill<'a>(is_syncing: bool, progress: f32) -> Element<'a, Message> {
   if !is_syncing {
     return iced::widget::Space::new()
@@ -80,40 +87,40 @@ fn plasma_fill<'a>(is_syncing: bool, progress: f32) -> Element<'a, Message> {
       .height(Length::Fill)
       .into();
   }
-
   let pct = (progress.clamp(0.0, 1.0) * 100.0) as u16;
   let rest = 100u16.saturating_sub(pct);
-
   if pct == 0 {
     iced::widget::Space::new()
       .width(Length::Fill)
       .height(Length::Fill)
       .into()
   } else if rest == 0 {
-    container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA_BANNER)),
-        ..container::Style::default()
-      })
-      .into()
+    plasma_full_fill()
   } else {
-    row([
-      container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-        .width(Length::FillPortion(pct))
-        .height(Length::Fill)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::accent::PLASMA_BANNER)),
-          ..container::Style::default()
-        })
-        .into(),
-      iced::widget::Space::new()
-        .width(Length::FillPortion(rest))
-        .height(Length::Fill)
-        .into(),
-    ])
-    .height(Length::Fill)
-    .into()
+    plasma_partial_fill(pct, rest)
   }
+}
+
+fn plasma_full_fill<'a>() -> Element<'a, Message> {
+  container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(plasma_banner_style)
+    .into()
+}
+
+fn plasma_partial_fill<'a>(pct: u16, rest: u16) -> Element<'a, Message> {
+  row([
+    container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+      .width(Length::FillPortion(pct))
+      .height(Length::Fill)
+      .style(plasma_banner_style)
+      .into(),
+    iced::widget::Space::new()
+      .width(Length::FillPortion(rest))
+      .height(Length::Fill)
+      .into(),
+  ])
+  .height(Length::Fill)
+  .into()
 }

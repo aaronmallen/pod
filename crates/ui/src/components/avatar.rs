@@ -171,13 +171,22 @@ fn hsl_to_color(hue: u16, saturation: f32, lightness: f32) -> Color {
   Color::from_rgb(r, g, b)
 }
 
-fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
+fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+  let t = normalize_hue_t(t);
+  hue_channel_from_t(p, q, t)
+}
+
+fn normalize_hue_t(mut t: f32) -> f32 {
   if t < 0.0 {
     t += 1.0;
   }
   if t > 1.0 {
     t -= 1.0;
   }
+  t
+}
+
+fn hue_channel_from_t(p: f32, q: f32, t: f32) -> f32 {
   if t < 1.0 / 6.0 {
     return p + (q - p) * 6.0 * t;
   }

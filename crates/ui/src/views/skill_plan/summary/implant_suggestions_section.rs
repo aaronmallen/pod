@@ -16,6 +16,20 @@ use crate::{
   },
 };
 
+fn suggest_btn_bg(status: button::Status) -> Background {
+  Background::Color(match status {
+    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_SUBTLE,
+    _ => Color::TRANSPARENT,
+  })
+}
+
+fn suggest_btn_border_color(status: button::Status) -> Color {
+  match status {
+    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_MUTED,
+    _ => color::border::SUBTLE,
+  }
+}
+
 fn ghost_button_suggest() -> Element<'static, Message> {
   button(
     text("Suggest")
@@ -33,15 +47,9 @@ fn ghost_button_suggest() -> Element<'static, Message> {
   })
   .on_press(Message::ImplantSuggestionsToggled)
   .style(|_, status| button::Style {
-    background: Some(Background::Color(match status {
-      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_SUBTLE,
-      _ => Color::TRANSPARENT,
-    })),
+    background: Some(suggest_btn_bg(status)),
     border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_MUTED,
-        _ => color::border::SUBTLE,
-      },
+      color: suggest_btn_border_color(status),
       radius: 4.0.into(),
       width: 1.0,
     },
@@ -129,6 +137,39 @@ fn implant_saving_row(saving: &ImplantSaving, is_first: bool) -> Element<'static
   .into()
 }
 
+fn secondary_hint_text(msg: &'static str) -> Element<'static, Message> {
+  text(msg)
+    .font(body::REGULAR)
+    .size(11.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    })
+    .into()
+}
+
+fn push_savings_body<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  show: bool,
+  savings: &'a [crate::plan_math::ImplantSaving],
+) {
+  if !show {
+    items.push(secondary_hint_text(
+      "See which implant upgrades save the most plan time.",
+    ));
+  } else if savings.is_empty() {
+    items.push(secondary_hint_text(
+      "No savings \u{2014} implants already maxed for this plan\u{2019}s mix.",
+    ));
+  } else {
+    for (i, saving) in savings.iter().enumerate() {
+      if i > 0 {
+        items.push(Space::new().height(4.0).into());
+      }
+      items.push(implant_saving_row(saving, i == 0));
+    }
+  }
+}
+
 fn implant_suggestions_header_row() -> Element<'static, Message> {
   row([
     text("IMPLANT SUGGESTIONS")
@@ -165,39 +206,9 @@ impl<'a> ImplantSuggestionsSection<'a> {
   /// Render the section into an [`Element`].
   pub fn render(self) -> Element<'a, Message> {
     let mut items: Vec<Element<'_, Message>> = Vec::new();
-
     items.push(implant_suggestions_header_row());
     items.push(Space::new().height(spacing::SPACE_3).into());
-
-    if !self.show {
-      items.push(
-        text("See which implant upgrades save the most plan time.")
-          .font(body::REGULAR)
-          .size(11.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-      );
-    } else if self.savings.is_empty() {
-      items.push(
-        text("No savings \u{2014} implants already maxed for this plan\u{2019}s mix.")
-          .font(body::REGULAR)
-          .size(11.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-      );
-    } else {
-      for (i, saving) in self.savings.iter().enumerate() {
-        if i > 0 {
-          items.push(Space::new().height(4.0).into());
-        }
-        items.push(implant_saving_row(saving, i == 0));
-      }
-    }
-
+    push_savings_body(&mut items, self.show, self.savings);
     container(column(items).width(Length::Fill))
       .padding(Padding {
         top: spacing::SPACE_3,

@@ -5,6 +5,34 @@ use iced::{
   widget::{Space, container, row},
 };
 
+fn bar_segment_for_category(c: &super::super::CategoryValue, total_value: f64) -> Element<'static, Message> {
+  let pct = (c.value / total_value * 100.0) as u16;
+  let (r, g, b) = cat_color_rgb(&c.category_name);
+  let col = iced::Color::from_rgb(r, g, b);
+  container(Space::new().width(Length::Fill).height(10.0))
+    .width(Length::FillPortion(pct.max(1)))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(col)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn bar_chart_container(bar_segments: Vec<Element<'static, Message>>) -> Element<'static, Message> {
+  container(row(bar_segments).width(Length::Fill).height(10.0))
+    .width(Length::Fill)
+    .height(10.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      border: Border {
+        radius: 5.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
 use super::{
   super::{CategoryValue, cat_color_rgb},
   Message,
@@ -30,36 +58,18 @@ impl<'a> ValuesChartSection<'a> {
 
   /// Renders the stacked bar chart into an iced element.
   pub fn render(self) -> Element<'static, Message> {
-    let mut bar_segments: Vec<Element<'static, Message>> = Vec::new();
+    let bar_segments = self.build_bar_segments();
+    bar_chart_container(bar_segments)
+  }
+
+  fn build_bar_segments(&self) -> Vec<Element<'static, Message>> {
+    let mut segments: Vec<Element<'static, Message>> = Vec::new();
     for c in self.cats {
       if c.value <= 0.0 || self.total_value <= 0.0 {
         continue;
       }
-      let pct = (c.value / self.total_value * 100.0) as u16;
-      let (r, g, b) = cat_color_rgb(&c.category_name);
-      let col = iced::Color::from_rgb(r, g, b);
-      bar_segments.push(
-        container(Space::new().width(Length::Fill).height(10.0))
-          .width(Length::FillPortion(pct.max(1)))
-          .style(move |_| container::Style {
-            background: Some(Background::Color(col)),
-            ..container::Style::default()
-          })
-          .into(),
-      );
+      segments.push(bar_segment_for_category(c, self.total_value));
     }
-
-    container(row(bar_segments).width(Length::Fill).height(10.0))
-      .width(Length::Fill)
-      .height(10.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        border: Border {
-          radius: 5.0.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into()
+    segments
   }
 }

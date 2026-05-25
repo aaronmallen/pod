@@ -99,34 +99,47 @@ fn tab_item<'a, MSG: 'a + Clone>(_index: usize, item: TabItem, is_active: bool, 
   column([btn.into(), underline]).width(Length::Shrink).into()
 }
 
+fn tab_label_color(is_active: bool) -> iced::Color {
+  if is_active {
+    color::text::PRIMARY
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn tab_badge_color(is_active: bool) -> iced::Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    color::text::TERTIARY
+  }
+}
+
 fn tab_label_row<'a, MSG: 'a>(item: &TabItem, is_active: bool) -> iced::widget::Row<'a, MSG> {
+  let lc = tab_label_color(is_active);
   let label_el = text(item.label.clone())
     .font(font::body::MEDIUM)
     .size(13.0)
     .style(move |_| iced::widget::text::Style {
-      color: Some(if is_active {
-        color::text::PRIMARY
-      } else {
-        color::text::SECONDARY
-      }),
+      color: Some(lc),
     });
   let mut children: Vec<Element<'a, MSG>> = vec![label_el.into()];
   if let Some(count) = item.count {
-    let badge_color = if is_active {
-      color::accent::PLASMA
-    } else {
-      color::text::TERTIARY
-    };
-    let count_el = text(count.to_string())
-      .font(font::mono::REGULAR)
-      .size(10.0)
-      .style(move |_| iced::widget::text::Style {
-        color: Some(badge_color),
-      });
-    children.push(Space::new().width(6.0).into());
-    children.push(count_el.into());
+    append_tab_count_badge(&mut children, count, is_active);
   }
   row(children).align_y(iced::alignment::Vertical::Center)
+}
+
+fn append_tab_count_badge<'a, MSG: 'a>(children: &mut Vec<Element<'a, MSG>>, count: usize, is_active: bool) {
+  let bc = tab_badge_color(is_active);
+  let count_el = text(count.to_string())
+    .font(font::mono::REGULAR)
+    .size(10.0)
+    .style(move |_| iced::widget::text::Style {
+      color: Some(bc),
+    });
+  children.push(Space::new().width(6.0).into());
+  children.push(count_el.into());
 }
 
 fn tab_underline<'a, MSG: 'a>(is_active: bool) -> Element<'a, MSG> {

@@ -216,6 +216,37 @@ fn palette_divider<'a, Message: 'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn swatch_border_color(swatch_color: iced::Color, is_selected: bool, status: button::Status) -> iced::Color {
+  if is_selected {
+    color::accent::PLASMA
+  } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+    iced::Color {
+      a: 0.8,
+      ..swatch_color
+    }
+  } else {
+    iced::Color {
+      a: 0.5,
+      ..swatch_color
+    }
+  }
+}
+
+fn swatch_shadow(is_selected: bool) -> iced::Shadow {
+  if is_selected {
+    iced::Shadow {
+      color: iced::Color {
+        a: 0.3,
+        ..color::accent::PLASMA
+      },
+      offset: iced::Vector::ZERO,
+      blur_radius: 4.0,
+    }
+  } else {
+    iced::Shadow::default()
+  }
+}
+
 fn swatch_button<Message: Clone + 'static>(
   swatch_color: iced::Color,
   is_selected: bool,
@@ -229,34 +260,11 @@ fn swatch_button<Message: Clone + 'static>(
     .style(move |_, status| button::Style {
       background: Some(Background::Color(swatch_color)),
       border: Border {
-        color: if is_selected {
-          color::accent::PLASMA
-        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-          iced::Color {
-            a: 0.8,
-            ..swatch_color
-          }
-        } else {
-          iced::Color {
-            a: 0.5,
-            ..swatch_color
-          }
-        },
+        color: swatch_border_color(swatch_color, is_selected, status),
         radius: Radius::from(5.0),
         width: if is_selected { 2.0 } else { 1.0 },
       },
-      shadow: if is_selected {
-        iced::Shadow {
-          color: iced::Color {
-            a: 0.3,
-            ..color::accent::PLASMA
-          },
-          offset: iced::Vector::ZERO,
-          blur_radius: 4.0,
-        }
-      } else {
-        iced::Shadow::default()
-      },
+      shadow: swatch_shadow(is_selected),
       snap: false,
       text_color: iced::Color::TRANSPARENT,
     })

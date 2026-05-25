@@ -75,19 +75,25 @@ pub enum Message {
   ToggleContainer(i64),
 }
 
-fn resolve_owner_name<'a>(state: &'a State, character_id: i64) -> &'a str {
+fn find_character_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
   state
     .characters
     .iter()
-    .find(|c| *c.id() == character_id)
+    .find(|c| *c.id() == id)
     .map(|c| c.name().as_str())
-    .or_else(|| {
-      state
-        .corporations
-        .iter()
-        .find(|c| *c.id() == character_id)
-        .map(|c| c.name().as_str())
-    })
+}
+
+fn find_corporation_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
+  state
+    .corporations
+    .iter()
+    .find(|c| *c.id() == id)
+    .map(|c| c.name().as_str())
+}
+
+fn resolve_owner_name<'a>(state: &'a State, character_id: i64) -> &'a str {
+  find_character_name(state, character_id)
+    .or_else(|| find_corporation_name(state, character_id))
     .unwrap_or("Unknown")
 }
 

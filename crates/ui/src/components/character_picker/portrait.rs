@@ -88,13 +88,22 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
   )
 }
 
-pub fn hue_to_channel(p: f32, q: f32, mut t: f32) -> f32 {
+pub fn hue_to_channel(p: f32, q: f32, t: f32) -> f32 {
+  let t = clamp_hue_t(t);
+  hue_channel_value(p, q, t)
+}
+
+fn clamp_hue_t(mut t: f32) -> f32 {
   if t < 0.0 {
     t += 1.0;
   }
   if t > 1.0 {
     t -= 1.0;
   }
+  t
+}
+
+fn hue_channel_value(p: f32, q: f32, t: f32) -> f32 {
   if t < 1.0 / 6.0 {
     return p + (q - p) * 6.0 * t;
   }

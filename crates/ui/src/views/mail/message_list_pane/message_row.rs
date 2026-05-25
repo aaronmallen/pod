@@ -75,13 +75,26 @@ fn subject_prefix_icon(msg: &MailMessage) -> Option<Element<'_, Message>> {
   }
 }
 
-fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
-  let subject_font = if msg.unread { body::MEDIUM } else { body::REGULAR };
-  let subject_color = if msg.unread {
-    color::text::PRIMARY
+fn subject_text_style(unread: bool) -> (iced::font::Font, iced::Color) {
+  if unread {
+    (body::MEDIUM, color::text::PRIMARY)
   } else {
-    color::text::STRONG
-  };
+    (body::REGULAR, color::text::STRONG)
+  }
+}
+
+fn wrap_subject_with_icon<'a>(
+  icon: Element<'a, Message>,
+  subject_text: iced::widget::Text<'a>,
+) -> Element<'a, Message> {
+  row([icon, subject_text.width(Length::Fill).into()])
+    .spacing(6.0)
+    .align_y(iced::alignment::Vertical::Center)
+    .into()
+}
+
+fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
+  let (subject_font, subject_color) = subject_text_style(msg.unread);
   let subject_text = text(&msg.subject)
     .font(subject_font)
     .size(13.0)
@@ -90,10 +103,7 @@ fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
     });
   match subject_prefix_icon(msg) {
     None => subject_text.into(),
-    Some(icon) => row([icon, subject_text.width(Length::Fill).into()])
-      .spacing(6.0)
-      .align_y(iced::alignment::Vertical::Center)
-      .into(),
+    Some(icon) => wrap_subject_with_icon(icon, subject_text),
   }
 }
 

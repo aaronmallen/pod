@@ -58,8 +58,7 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     Message::AccountPicker(msg) => update_account_picker(state, msg),
     Message::FolderPane(folder_pane::Message::FolderSelected(folder)) => update_folder_selected(state, folder),
     Message::MessageList(msg) => update_message_list(state, msg, services),
-    Message::ReadingPane(msg) => update_reading_pane(state, msg, services),
-    msg => update_non_ui(state, msg, services),
+    msg => update_reading_pane_or_non_ui(state, msg, services),
   }
 }
 
@@ -137,25 +136,7 @@ fn build_db_mail_rows(
     .filter_map(|h| {
       let mail_id = h.mail_id?;
       let is_sent = h.from == Some(character_id);
-      let recipients_display = if is_sent {
-        recipient_map
-          .get(&mail_id)
-          .map(|ids| {
-            ids
-              .iter()
-              .map(|id| {
-                name_map
-                  .get(id)
-                  .cloned()
-                  .expect("recipient name must be resolved by ESI")
-              })
-              .collect::<Vec<_>>()
-              .join(", ")
-          })
-          .unwrap_or_default()
-      } else {
-        String::new()
-      };
+      let recipients_display = build_recipients_display(is_sent, mail_id, recipient_map, name_map);
       Some(MailHeader {
         body: None,
         character_id,
@@ -285,6 +266,32 @@ fn build_picker_entries_for_accounts(
       portrait_handle: portrait_handles.get(&a.id).cloned(),
     })
     .collect()
+}
+
+fn build_recipients_display(
+  is_sent: bool,
+  mail_id: i64,
+  recipient_map: &std::collections::HashMap<i64, Vec<i64>>,
+  name_map: &std::collections::HashMap<i64, String>,
+) -> String {
+  if !is_sent {
+    return String::new();
+  }
+  recipient_map
+    .get(&mail_id)
+    .map(|ids| {
+      ids
+        .iter()
+        .map(|id| {
+          name_map
+            .get(id)
+            .cloned()
+            .expect("recipient name must be resolved by ESI")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    })
+    .unwrap_or_default()
 }
 
 fn build_portrait_handles(characters: &[Character]) -> std::collections::HashMap<i64, image::Handle> {
@@ -479,15 +486,25 @@ async fn prefetch_mail_bodies(character_id: i64, characters: Vec<Character>, esi
     "mail: prefetching {} uncached body(ies) for character {character_id}",
     mail_ids.len()
   );
+  prefetch_bodies_for_character(character_id, mail_ids, &characters, &esi, &db).await;
+}
+
+async fn prefetch_bodies_for_character(
+  character_id: i64,
+  mail_ids: Vec<i64>,
+  characters: &[Character],
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) {
   let Some(character) = characters.iter().find(|c| *c.id() == character_id) else {
     return;
   };
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
     return;
   };
   let grant = character_service::refresh_grant(character, &token);
   for mail_id in mail_ids {
-    prefetch_single_body(&esi, &grant, character_id, mail_id, &db).await;
+    prefetch_single_body(esi, &grant, character_id, mail_id, db).await;
     tokio::task::yield_now().await;
   }
 }
@@ -721,6 +738,10 @@ async fn resolve_named_recipients(names: &[&str], esi: &pod_esi::Client) -> Resu
     .ids(names)
     .await
     .map_err(|e| format!("Name resolution failed: {e}"))?;
+  Ok(collect_resolved_ids_from_result(&ids_result))
+}
+
+fn collect_resolved_ids_from_result(ids_result: &pod_esi::models::universe::ResolvedIds) -> Vec<MailRecipient> {
   let mut out = Vec::new();
   if let Some(chars) = &ids_result.characters {
     push_resolved_ids(chars, "character", &mut out);
@@ -731,7 +752,7 @@ async fn resolve_named_recipients(names: &[&str], esi: &pod_esi::Client) -> Resu
   if let Some(alliances) = &ids_result.alliances {
     push_resolved_ids(alliances, "alliance", &mut out);
   }
-  Ok(out)
+  out
 }
 
 async fn resolve_character_names(esi: &pod_esi::Client, ids: Vec<i64>) -> Vec<(i64, String)> {
@@ -803,14 +824,7 @@ async fn send_composed_mail(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<i64, String> {
-  let character = characters
-    .iter()
-    .find(|c| *c.id() == from_id)
-    .ok_or_else(|| "Sending character not found".to_string())?;
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-    return Err("Failed to refresh auth token".to_string());
-  };
-  let grant = character_service::refresh_grant(character, &token);
+  let grant = resolve_send_grant(from_id, &characters, &esi, &db).await?;
   let char_client = esi.character(&grant);
   let resolved = resolve_send_recipients(&to, &cc, &esi).await?;
   tracing::info!(
@@ -826,6 +840,22 @@ async fn send_composed_mail(
     })
     .await
     .map_err(|e| format!("Send failed: {e}"))
+}
+
+async fn resolve_send_grant(
+  from_id: i64,
+  characters: &[Character],
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Result<pod_esi::models::auth::Grant, String> {
+  let character = characters
+    .iter()
+    .find(|c| *c.id() == from_id)
+    .ok_or_else(|| "Sending character not found".to_string())?;
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    return Err("Failed to refresh auth token".to_string());
+  };
+  Ok(character_service::refresh_grant(character, &token))
 }
 
 fn strip_html(html: &str) -> Vec<String> {
@@ -949,6 +979,28 @@ fn update_check_snoozed(state: &mut State, services: &Services) -> iced::Task<Me
   iced::Task::none()
 }
 
+fn update_compose_search(
+  state: &mut State,
+  compose_msg: compose_panel::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match compose_msg {
+    compose_panel::Message::ToSearchChanged(val) => {
+      state
+        .compose
+        .update(compose_panel::Message::ToSearchChanged(val.clone()));
+      handle_compose_search(val, state, services, compose_panel::Message::ToSearchResults)
+    }
+    compose_panel::Message::CcSearchChanged(val) => {
+      state
+        .compose
+        .update(compose_panel::Message::CcSearchChanged(val.clone()));
+      handle_compose_search(val, state, services, compose_panel::Message::CcSearchResults)
+    }
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_compose_sent(state: &mut State, compose_msg: compose_panel::Message) -> iced::Task<Message> {
   match &compose_msg {
     compose_panel::Message::Sent(Ok(mail_id)) => {
@@ -965,27 +1017,20 @@ fn update_compose_sent(state: &mut State, compose_msg: compose_panel::Message) -
 }
 
 fn update_compose(state: &mut State, compose_msg: compose_panel::Message, services: &Services) -> iced::Task<Message> {
-  match &compose_msg {
+  match compose_msg {
     compose_panel::Message::Close => {
       state.compose_open = false;
-      state.compose.update(compose_msg);
+      state.compose.update(compose_panel::Message::Close);
       iced::Task::none()
     }
-    compose_panel::Message::ToSearchChanged(val) => {
-      let val = val.clone();
-      state.compose.update(compose_msg);
-      handle_compose_search(val, state, services, compose_panel::Message::ToSearchResults)
-    }
-    compose_panel::Message::CcSearchChanged(val) => {
-      let val = val.clone();
-      state.compose.update(compose_msg);
-      handle_compose_search(val, state, services, compose_panel::Message::CcSearchResults)
+    compose_panel::Message::ToSearchChanged(_) | compose_panel::Message::CcSearchChanged(_) => {
+      update_compose_search(state, compose_msg, services)
     }
     compose_panel::Message::SendPressed => {
       tracing::info!("mail: send pressed");
-      prepare_and_send_mail(state, compose_msg, services)
+      prepare_and_send_mail(state, compose_panel::Message::SendPressed, services)
     }
-    _ => update_compose_sent(state, compose_msg),
+    msg => update_compose_sent(state, msg),
   }
 }
 
@@ -1005,13 +1050,13 @@ fn delete_remove_message(state: &mut State) -> Option<(i64, i64)> {
   let character_id = state.messages[pos].character_id;
   tracing::info!("mail: delete requested — character_id: {character_id}, mail_id: {mail_id}");
   state.messages.remove(pos);
-  state.selected_message_id = state
-    .messages
-    .get(pos)
-    .or_else(|| state.messages.last())
-    .map(|m| m.id.clone());
+  state.selected_message_id = pick_next_message_id(&state.messages, pos);
   recompute_unread_counts(state);
   Some((character_id, mail_id))
+}
+
+fn pick_next_message_id(messages: &[MailMessage], pos: usize) -> Option<String> {
+  messages.get(pos).or_else(|| messages.last()).map(|m| m.id.clone())
 }
 
 fn delete_backend_task(
@@ -1127,11 +1172,22 @@ fn update_message_list(state: &mut State, msg: message_list_pane::Message, servi
       iced::Task::none()
     }
     message_list_pane::Message::MessageRightClicked(id) => update_message_right_clicked(state, id),
+    msg => update_message_list_selection(state, msg, services),
+  }
+}
+
+fn update_message_list_selection(
+  state: &mut State,
+  msg: message_list_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     message_list_pane::Message::MessageSelected(id) => update_message_selected(state, id, services),
     message_list_pane::Message::SearchChanged(q) => {
       state.search_query = q;
       iced::Task::none()
     }
+    _ => iced::Task::none(),
   }
 }
 
@@ -1150,15 +1206,24 @@ fn update_message_selected(state: &mut State, id: String, services: &Services) -
   if let Some(msg) = state.messages.iter().find(|m| m.id == id)
     && msg.body.is_empty()
   {
-    let char_id = msg.character_id;
-    let mail_id = msg.mail_id;
-    if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-      let chars = state.characters.clone();
-      return iced::Task::perform(
-        async move { fetch_mail_body(id, char_id, mail_id, chars, esi, db).await },
-        |(msg_id, body)| Message::MailBodyLoaded(msg_id, body),
-      );
-    }
+    return load_mail_body_task(id, msg.character_id, msg.mail_id, state, services);
+  }
+  iced::Task::none()
+}
+
+fn load_mail_body_task(
+  id: String,
+  char_id: i64,
+  mail_id: i64,
+  state: &State,
+  services: &Services,
+) -> iced::Task<Message> {
+  if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+    let chars = state.characters.clone();
+    return iced::Task::perform(
+      async move { fetch_mail_body(id, char_id, mail_id, chars, esi, db).await },
+      |(msg_id, body)| Message::MailBodyLoaded(msg_id, body),
+    );
   }
   iced::Task::none()
 }
@@ -1168,6 +1233,12 @@ fn update_non_ui(state: &mut State, message: Message, services: &Services) -> ic
     Message::ComposePressed => update_compose_open(state),
     Message::Compose(compose_msg) => update_compose(state, compose_msg, services),
     Message::MailBodyLoaded(msg_id, paragraphs) => update_mail_body_loaded(state, msg_id, paragraphs),
+    msg => update_mail_deleted_or_headers(state, msg),
+  }
+}
+
+fn update_mail_deleted_or_headers(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::MailDeleted => update_mail_deleted(state),
     msg => update_pane_and_headers(state, msg),
   }
@@ -1178,6 +1249,12 @@ fn update_pane_and_headers(state: &mut State, message: Message) -> iced::Task<Me
     Message::MailHeadersLoaded(messages) => update_mail_headers_loaded(state, messages),
     Message::PaneDrag(x) => update_pane_drag(state, x),
     Message::PaneDragEnd => update_pane_drag_end(state),
+    msg => update_pane_drag_start_or_noop(state, msg),
+  }
+}
+
+fn update_pane_drag_start_or_noop(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
     _ => iced::Task::none(),
   }
@@ -1218,6 +1295,13 @@ fn update_reading_pane(state: &mut State, msg: reading_pane::Message, services: 
     reading_pane::Message::ForwardPressed => update_forward(state),
     reading_pane::Message::StarToggle => update_star_toggle(state),
     msg => update_reading_pane_reply_or_snooze(state, msg, services),
+  }
+}
+
+fn update_reading_pane_or_non_ui(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::ReadingPane(msg) => update_reading_pane(state, msg, services),
+    msg => update_non_ui(state, msg, services),
   }
 }
 
@@ -1408,9 +1492,17 @@ fn update_snooze_calendar_time(state: &mut State, msg: reading_pane::Message) ->
   match msg {
     reading_pane::Message::SnoozeCalendarHourDown => update_snooze_calendar_hour_down(state),
     reading_pane::Message::SnoozeCalendarHourUp => update_snooze_calendar_hour_up(state),
-    reading_pane::Message::SnoozeCalendarMinuteDown => update_snooze_calendar_minute_down(state),
-    reading_pane::Message::SnoozeCalendarMinuteUp => update_snooze_calendar_minute_up(state),
+    reading_pane::Message::SnoozeCalendarMinuteDown | reading_pane::Message::SnoozeCalendarMinuteUp => {
+      update_snooze_calendar_minute(state, msg)
+    }
     _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_calendar_minute(state: &mut State, msg: reading_pane::Message) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::SnoozeCalendarMinuteDown => update_snooze_calendar_minute_down(state),
+    _ => update_snooze_calendar_minute_up(state),
   }
 }
 
@@ -1452,6 +1544,16 @@ fn update_snooze_calendar_msg(
     reading_pane::Message::SnoozeCalendarNextMonth
     | reading_pane::Message::SnoozeCalendarPrevMonth
     | reading_pane::Message::SnoozeCalendarSelectDay(..) => update_snooze_calendar_nav(state, msg),
+    msg => update_snooze_calendar_lifecycle_or_noop(state, msg, services),
+  }
+}
+
+fn update_snooze_calendar_lifecycle_or_noop(
+  state: &mut State,
+  msg: reading_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     reading_pane::Message::SnoozeCalendarClose
     | reading_pane::Message::SnoozeCalendarConfirm
     | reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_lifecycle(state, msg, services),
@@ -1468,12 +1570,15 @@ fn update_snooze_state_actions(
     reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
     reading_pane::Message::DeletePressed => update_delete(state, services),
     reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
-    reading_pane::Message::SnoozeFailed(e) => {
-      tracing::warn!("mail: snooze operation failed — {e}");
-      iced::Task::none()
-    }
-    _ => iced::Task::none(),
+    msg => update_snooze_failed_or_noop(msg),
   }
+}
+
+fn update_snooze_failed_or_noop(msg: reading_pane::Message) -> iced::Task<Message> {
+  if let reading_pane::Message::SnoozeFailed(e) = msg {
+    tracing::warn!("mail: snooze operation failed — {e}");
+  }
+  iced::Task::none()
 }
 
 fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
@@ -1514,20 +1619,34 @@ fn snooze_backend_task(
 ) -> iced::Task<Message> {
   iced::Task::perform(
     async move {
-      if adding {
-        if let Some(until) = &snooze_until {
-          let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
-        }
-      } else {
-        let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
-      }
+      persist_snooze_state(character_id, mail_id, adding, &snooze_until, &db).await;
       apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await
     },
-    |res| match res {
-      Ok(()) => Message::MailDeleted,
-      Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
-    },
+    snooze_result_to_message,
   )
+}
+
+async fn persist_snooze_state(
+  character_id: i64,
+  mail_id: i64,
+  adding: bool,
+  snooze_until: &Option<String>,
+  db: &pod_db::Repo,
+) {
+  if adding {
+    if let Some(until) = snooze_until {
+      let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
+    }
+  } else {
+    let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
+  }
+}
+
+fn snooze_result_to_message(res: Result<(), String>) -> Message {
+  match res {
+    Ok(()) => Message::MailDeleted,
+    Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
+  }
 }
 
 fn update_snooze_set(state: &mut State, iso: String, services: &Services) -> iced::Task<Message> {

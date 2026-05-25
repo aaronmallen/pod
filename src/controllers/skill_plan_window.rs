@@ -1337,26 +1337,33 @@ fn load_all_certs_task(db: pod_db::Repo) -> iced::Task<Message> {
   )
 }
 
-fn update_picker_tab(state: &mut State, tab: usize, services: &Services) -> iced::Task<Message> {
-  state.picker_tab = tab;
-  let needs_load = match tab {
-    1 if !state.ships_loaded => true,
-    2 if !state.modules_loaded => true,
-    3 if !state.certs_loaded => true,
-    _ => return iced::Task::none(),
-  };
-  if !needs_load {
-    return iced::Task::none();
+fn picker_tab_needs_load(state: &State, tab: usize) -> bool {
+  match tab {
+    1 => !state.ships_loaded,
+    2 => !state.modules_loaded,
+    3 => !state.certs_loaded,
+    _ => false,
   }
-  let Some(db) = services.db.clone() else {
-    return iced::Task::none();
-  };
+}
+
+fn picker_tab_load_task(tab: usize, db: pod_db::Repo) -> iced::Task<Message> {
   match tab {
     1 => load_ships_task(db),
     2 => load_modules_task(db),
     3 => load_all_certs_task(db),
     _ => iced::Task::none(),
   }
+}
+
+fn update_picker_tab(state: &mut State, tab: usize, services: &Services) -> iced::Task<Message> {
+  state.picker_tab = tab;
+  if !picker_tab_needs_load(state, tab) {
+    return iced::Task::none();
+  }
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  picker_tab_load_task(tab, db)
 }
 
 fn update_picker_toggled(state: &mut State) -> iced::Task<Message> {

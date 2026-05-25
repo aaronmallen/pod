@@ -336,40 +336,52 @@ fn handle_clones_loaded(
   result: Result<Vec<pod_model::CharacterClone>, String>,
   services: &Services,
 ) -> iced::Task<Message> {
-  match result {
-    Ok(clones) => {
-      tracing::debug!(
-        "character: {} clones loaded — character_id: {}",
-        clones.len(),
-        state.character_id
-      );
-      let type_ids: Vec<i32> = clones
-        .iter()
-        .flat_map(|c| c.implants.iter().map(|i| i.type_id))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .filter(|id| !state.implant_icons.contains_key(id))
-        .collect();
-      state.clones = LoadState::Loaded(clones);
-      if !type_ids.is_empty()
-        && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
-      {
-        return iced::Task::perform(
-          async move { load_type_icons(type_ids, esi, db).await },
-          Message::ImplantIconsLoaded,
-        );
-      }
-      iced::Task::none()
-    }
+  let clones = match result {
+    Ok(c) => c,
     Err(e) => {
       tracing::warn!(
         "character: clones load failed — character_id: {}, error: {e}",
         state.character_id
       );
       state.clones = LoadState::Error(e);
-      iced::Task::none()
+      return iced::Task::none();
     }
+  };
+  tracing::debug!(
+    "character: {} clones loaded — character_id: {}",
+    clones.len(),
+    state.character_id
+  );
+  let type_ids = collect_new_implant_type_ids(&clones, &state.implant_icons);
+  state.clones = LoadState::Loaded(clones);
+  spawn_icon_task_if_needed(type_ids, services, Message::ImplantIconsLoaded)
+}
+
+fn collect_new_implant_type_ids(
+  clones: &[pod_model::CharacterClone],
+  existing: &HashMap<i32, iced::widget::image::Handle>,
+) -> Vec<i32> {
+  clones
+    .iter()
+    .flat_map(|c| c.implants.iter().map(|i| i.type_id))
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .filter(|id| !existing.contains_key(id))
+    .collect()
+}
+
+fn spawn_icon_task_if_needed(
+  type_ids: Vec<i32>,
+  services: &Services,
+  wrap: fn(Vec<(i32, Vec<u8>)>) -> Message,
+) -> iced::Task<Message> {
+  if type_ids.is_empty() {
+    return iced::Task::none();
   }
+  let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(async move { load_type_icons(type_ids, esi, db).await }, wrap)
 }
 
 fn handle_killlog_loaded(
@@ -377,41 +389,39 @@ fn handle_killlog_loaded(
   result: Result<Vec<pod_model::CharacterKillEntry>, String>,
   services: &Services,
 ) -> iced::Task<Message> {
-  match result {
-    Ok(entries) => {
-      tracing::debug!(
-        "character: {} killlog entries loaded — character_id: {}",
-        entries.len(),
-        state.character_id
-      );
-      let type_ids: Vec<i32> = entries
-        .iter()
-        .map(|e| e.ship_type_id)
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .filter(|&id| id != 0 && !state.ship_icons.contains_key(&id))
-        .collect();
-      state.killlog = LoadState::Loaded(entries);
-      recompute_killlog_filter(state);
-      if !type_ids.is_empty()
-        && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
-      {
-        return iced::Task::perform(
-          async move { load_type_icons(type_ids, esi, db).await },
-          Message::ShipIconsLoaded,
-        );
-      }
-      iced::Task::none()
-    }
+  let entries = match result {
+    Ok(e) => e,
     Err(e) => {
       tracing::warn!(
         "character: killlog load failed — character_id: {}, error: {e}",
         state.character_id
       );
       state.killlog = LoadState::Error(e);
-      iced::Task::none()
+      return iced::Task::none();
     }
-  }
+  };
+  tracing::debug!(
+    "character: {} killlog entries loaded — character_id: {}",
+    entries.len(),
+    state.character_id
+  );
+  let type_ids = collect_new_ship_type_ids(&entries, &state.ship_icons);
+  state.killlog = LoadState::Loaded(entries);
+  recompute_killlog_filter(state);
+  spawn_icon_task_if_needed(type_ids, services, Message::ShipIconsLoaded)
+}
+
+fn collect_new_ship_type_ids(
+  entries: &[pod_model::CharacterKillEntry],
+  existing: &HashMap<i32, iced::widget::image::Handle>,
+) -> Vec<i32> {
+  entries
+    .iter()
+    .map(|e| e.ship_type_id)
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .filter(|&id| id != 0 && !existing.contains_key(&id))
+    .collect()
 }
 
 fn recompute_contact_filter(state: &mut State) {
@@ -930,27 +940,28 @@ async fn fetch_zkill_values(char_id: i64, killmail_ids: &[i64]) -> HashMap<i64, 
   if killmail_ids.is_empty() {
     return HashMap::new();
   }
+  let Some(json) = fetch_zkill_json(char_id).await else {
+    return HashMap::new();
+  };
+  json.into_iter().filter_map(extract_zkill_entry).collect()
+}
+
+async fn fetch_zkill_json(char_id: i64) -> Option<Vec<serde_json::Value>> {
   let url = format!("https://zkillboard.com/api/characterID/{char_id}/");
-  let Ok(resp) = reqwest::Client::new()
+  let resp = reqwest::Client::new()
     .get(&url)
     .header("User-Agent", "pod-app/1.0 (github.com/aaronmallen/pod)")
     .header("Accept", "application/json")
     .send()
     .await
-  else {
-    return HashMap::new();
-  };
-  let Ok(json) = resp.json::<Vec<serde_json::Value>>().await else {
-    return HashMap::new();
-  };
-  json
-    .into_iter()
-    .filter_map(|v| {
-      let id = v.get("killmail_id")?.as_i64()?;
-      let value = v.get("zkb")?.get("totalValue")?.as_f64()?;
-      Some((id, value))
-    })
-    .collect()
+    .ok()?;
+  resp.json::<Vec<serde_json::Value>>().await.ok()
+}
+
+fn extract_zkill_entry(v: serde_json::Value) -> Option<(i64, f64)> {
+  let id = v.get("killmail_id")?.as_i64()?;
+  let value = v.get("zkb")?.get("totalValue")?.as_f64()?;
+  Some((id, value))
 }
 
 async fn load_notifications(
@@ -1043,32 +1054,40 @@ async fn load_standings(
 
   let esi_standings = char_client.standings().await.map_err(|e| e.to_string())?;
   let standing_ids: Vec<i64> = esi_standings.iter().map(|s| s.from_id).collect();
-  let standing_name_map: HashMap<i64, String> = if standing_ids.is_empty() {
-    HashMap::new()
-  } else {
-    esi
-      .universe()
-      .names(&standing_ids)
-      .await
-      .unwrap_or_default()
-      .into_iter()
-      .map(|n| (n.id, n.name))
-      .collect()
-  };
+  let name_map = resolve_standing_names(&standing_ids, &esi).await;
+  Ok(assemble_standings(esi_standings, &name_map))
+}
 
-  let standings = esi_standings
+async fn resolve_standing_names(ids: &[i64], esi: &pod_esi::Client) -> HashMap<i64, String> {
+  if ids.is_empty() {
+    return HashMap::new();
+  }
+  esi
+    .universe()
+    .names(ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|n| (n.id, n.name))
+    .collect()
+}
+
+fn assemble_standings(
+  esi_standings: Vec<pod_esi::models::character::CharacterStanding>,
+  name_map: &HashMap<i64, String>,
+) -> Vec<pod_model::CharacterStanding> {
+  esi_standings
     .into_iter()
     .map(|s| pod_model::CharacterStanding {
       from_id: s.from_id,
-      from_name: standing_name_map
+      from_name: name_map
         .get(&s.from_id)
         .cloned()
         .unwrap_or_else(|| s.from_id.to_string()),
       from_type: s.from_type,
       standing: s.standing,
     })
-    .collect();
-  Ok(standings)
+    .collect()
 }
 
 async fn load_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {

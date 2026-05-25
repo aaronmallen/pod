@@ -62,6 +62,7 @@ pub enum Message {
 }
 
 pub struct State {
+  pub abyssals_filter_pane_width: f32,
   pub active_nav: Nav,
   pub active_view: ActiveView,
   pub assets_sidebar_width: f32,

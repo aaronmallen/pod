@@ -604,10 +604,13 @@ fn pane_widths_from_geometry(
   )
 }
 
-fn rail_widths_from_geometry(g: Option<&services::window_state::WindowGeometry>) -> (Option<f32>, Option<f32>) {
+fn rail_widths_from_geometry(
+  g: Option<&services::window_state::WindowGeometry>,
+) -> (Option<f32>, Option<f32>, Option<f32>) {
   (
     g.and_then(|g| g.wallet_right_rail_width),
     g.and_then(|g| g.assets_sidebar_width),
+    g.and_then(|g| g.abyssals_filter_pane_width),
   )
 }
 
@@ -618,7 +621,7 @@ fn init_main_ctrl(
 ) -> (main_ctrl::State, Task<main_ctrl::Message>) {
   let g = saved.as_ref();
   let (skills_w, mail_folder_w, mail_list_w) = pane_widths_from_geometry(g);
-  let (wallet_w, assets_w) = rail_widths_from_geometry(g);
+  let (wallet_w, assets_w, abyssals_filter_w) = rail_widths_from_geometry(g);
   main_ctrl::new(
     app.characters.clone(),
     services,
@@ -627,6 +630,7 @@ fn init_main_ctrl(
     mail_list_w,
     wallet_w,
     assets_w,
+    abyssals_filter_w,
   )
 }
 
@@ -889,6 +893,7 @@ fn build_window_geometry(app: &App, state: &main_ctrl::State) -> services::windo
     height: app.window_size.height,
     x: pos.x,
     y: pos.y,
+    abyssals_filter_pane_width: Some(state.abyssals_filter_pane_width),
     assets_sidebar_width: Some(state.assets_sidebar_width),
     skills_left_pane_width: Some(state.skills_left_pane_width),
     mail_folder_pane_width: Some(state.mail_folder_pane_width),

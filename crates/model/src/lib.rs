@@ -44,7 +44,7 @@ mod stockpile_item;
 mod wallet_journal_entry;
 mod wallet_transaction;
 
-pub use abyssal_item::{AbyssalStatViewModel, AbyssalViewModel};
+pub use abyssal_item::{AbyssalCategory, AbyssalSourceType, AbyssalStatViewModel, AbyssalViewModel, AbyssalsData};
 pub use abyssal_item_record::{AbyssalAttribute, AbyssalItemRecord};
 pub use abyssal_module_stat::AbyssalModuleStat;
 pub use asset_sync_state::Model as AssetSyncState;

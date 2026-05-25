@@ -18,6 +18,10 @@ fn tab_items(state: &State) -> Vec<TabItem> {
       count: Some(state.visible_assets().count()),
     },
     TabItem {
+      label: "Abyssals".to_string(),
+      count: Some(state.abyssals.abyssals.len()),
+    },
+    TabItem {
       label: "Stockpiles".to_string(),
       count: Some(0),
     },
@@ -29,25 +33,21 @@ fn tab_items(state: &State) -> Vec<TabItem> {
       label: "Tracker".to_string(),
       count: None,
     },
-    TabItem {
-      label: "Abyssals".to_string(),
-      count: Some(state.abyssals.abyssals.len()),
-    },
   ]
 }
 
 fn tab_active_index(tab: &Tab) -> usize {
   match tab {
     Tab::Inventory => 0,
-    Tab::Stockpiles => 1,
-    Tab::Values => 2,
+    Tab::Abyssals => 1,
+    Tab::Stockpiles => 2,
     tab => tab_active_index_ext(tab),
   }
 }
 
 fn tab_active_index_ext(tab: &Tab) -> usize {
   match tab {
-    Tab::Tracker => 3,
+    Tab::Values => 3,
     _ => 4,
   }
 }
@@ -55,7 +55,8 @@ fn tab_active_index_ext(tab: &Tab) -> usize {
 fn tab_from_low_index(i: usize) -> Option<Tab> {
   match i {
     0 => Some(Tab::Inventory),
-    1 => Some(Tab::Stockpiles),
+    1 => Some(Tab::Abyssals),
+    2 => Some(Tab::Stockpiles),
     _ => None,
   }
 }
@@ -65,9 +66,8 @@ fn tab_from_index(i: usize) -> Tab {
     return tab;
   }
   match i {
-    2 => Tab::Values,
-    3 => Tab::Tracker,
-    _ => Tab::Abyssals,
+    3 => Tab::Values,
+    _ => Tab::Tracker,
   }
 }
 

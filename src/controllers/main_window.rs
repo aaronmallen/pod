@@ -45,10 +45,25 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
           .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
       }
       if let Some(ci) = s.all_characters.iter().position(|c| *c.id() == *character.id()) {
-        s.all_characters[ci] = character;
+        s.all_characters[ci] = character.clone();
+      }
+    }
+    ActiveView::Assets(s) => {
+      if let Some(bytes) = character.portrait_data() {
+        s.abyssals
+          .portrait_handles
+          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
       }
     }
     _ => {}
+  }
+  if let Some(cached) = state.cached_assets_state.as_mut()
+    && let Some(bytes) = character.portrait_data()
+  {
+    cached
+      .abyssals
+      .portrait_handles
+      .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
   }
 }
 
@@ -72,10 +87,12 @@ pub fn new(
   mail_message_list_width: Option<f32>,
   wallet_right_rail_width: Option<f32>,
   assets_sidebar_width: Option<f32>,
+  abyssals_filter_pane_width: Option<f32>,
 ) -> (State, iced::Task<Message>) {
   let features = services.config.features();
   let (chars_state, chars_task) = characters_ctrl::new(characters.clone(), services);
   let state = State {
+    abyssals_filter_pane_width: abyssals_filter_pane_width.unwrap_or(220.0),
     active_nav: Nav::Characters,
     active_view: ActiveView::Characters(chars_state),
     assets_sidebar_width: assets_sidebar_width.unwrap_or(232.0),
@@ -281,11 +298,24 @@ fn save_sidebar_width_if_drag_end(state: &mut State, is_drag_end: bool) {
   }
 }
 
+fn save_abyssals_filter_pane_width_if_drag_end(state: &mut State, is_drag_end: bool) {
+  if !is_drag_end {
+    return;
+  }
+  if let ActiveView::Assets(s) = &state.active_view {
+    state.abyssals_filter_pane_width = s.abyssals.filter_pane_width;
+  }
+}
+
 fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
   if let Some(task) = try_handle_assets_early_exit(state, &msg, services) {
     return task;
   }
   let is_drag_end = matches!(&msg, assets::Message::PaneDragEnd);
+  let is_abyssals_drag_end = matches!(
+    &msg,
+    assets::Message::AbyssalsTab(pod_ui::views::assets::abyssals_tab::Message::PaneDragEnd)
+  );
   let chars_snapshot = state.characters.clone();
   let ActiveView::Assets(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -305,6 +335,7 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
   let base_task = assets::update(s, msg).map(Message::Assets);
   let task = build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services);
   save_sidebar_width_if_drag_end(state, is_drag_end);
+  save_abyssals_filter_pane_width_if_drag_end(state, is_abyssals_drag_end);
   task
 }
 
@@ -735,6 +766,7 @@ fn navigate_to_assets(state: &mut State, services: &Services) -> iced::Task<Mess
     state.corporations.clone(),
     services,
     state.assets_sidebar_width,
+    state.abyssals_filter_pane_width,
   );
   state.active_view = ActiveView::Assets(s);
   task.map(Message::Assets)
@@ -997,6 +1029,7 @@ mod tests {
 
     fn make_state(character: Character) -> State {
       State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
@@ -1056,6 +1089,7 @@ mod tests {
       *existing.tags_mut() = vec![(1, "pvp".to_string(), None), (2, "trader".to_string(), None)];
       let chars_view = CharactersState::new(vec![existing]);
       let mut state = State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Characters,
         active_view: ActiveView::Characters(chars_view),
         assets_sidebar_width: 232.0,
@@ -1093,11 +1127,12 @@ mod tests {
     use super::*;
 
     fn make_empty_assets_state() -> assets::State {
-      assets::new(vec![], vec![], 232.0)
+      assets::new(vec![], vec![], 232.0, 220.0)
     }
 
     fn make_main_state_with_cache(cached: assets::State) -> State {
       State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
@@ -1147,6 +1182,7 @@ mod tests {
     #[test]
     fn it_is_noop_when_no_cached_state() {
       let mut state = State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
@@ -1182,9 +1218,10 @@ mod tests {
     use super::*;
 
     fn make_state_with_assets_view(sidebar_width: f32) -> State {
-      let mut assets_state = assets::new(vec![], vec![], sidebar_width);
+      let mut assets_state = assets::new(vec![], vec![], sidebar_width, 220.0);
       assets_state.sidebar_width = sidebar_width;
       State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Assets,
         active_view: ActiveView::Assets(assets_state),
         assets_sidebar_width: 0.0,
@@ -1232,7 +1269,7 @@ mod tests {
     use super::*;
 
     fn make_assets_state(active_tab: assets::Tab) -> assets::State {
-      let mut s = assets::new(vec![], vec![], 232.0);
+      let mut s = assets::new(vec![], vec![], 232.0, 220.0);
       s.active_tab = active_tab;
       s
     }
@@ -1275,6 +1312,7 @@ mod tests {
 
     fn make_state() -> State {
       State {
+        abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
@@ -1302,7 +1340,7 @@ mod tests {
     #[test]
     fn it_saves_assets_state_to_cache_when_previous_view_was_assets() {
       let mut state = make_state();
-      state.active_view = ActiveView::Assets(assets::new(vec![], vec![], 232.0));
+      state.active_view = ActiveView::Assets(assets::new(vec![], vec![], 232.0, 220.0));
 
       swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
 

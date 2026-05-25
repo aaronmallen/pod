@@ -17,7 +17,7 @@ use chrono::NaiveDate;
 pub use drag_overlay::DragOverlay;
 pub use header::Component as Header;
 use iced::{
-  Background, Element, Event, Length, Subscription, mouse,
+  Background, Element, Event, Length, Subscription, keyboard, mouse,
   widget::{column, container, image, stack},
 };
 pub use main_panel::Component as MainPanel;
@@ -300,7 +300,7 @@ pub struct AssetValuesData {
 /// Messages produced by the assets controller.
 #[derive(Clone, Debug)]
 pub enum Message {
-  AbyssalsLoaded(Vec<pod_model::AbyssalViewModel>),
+  AbyssalsLoaded(pod_model::AbyssalsData),
   AbyssalsTab(abyssals_tab::Message),
   AssetsLoaded(Result<Vec<AssetRecord>, String>),
   InventoryTab(inventory_tab::Message),
@@ -432,7 +432,12 @@ pub fn title() -> &'static str {
 }
 
 /// Creates a new assets state.
-pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_width: f32) -> State {
+pub fn new(
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  sidebar_width: f32,
+  abyssals_filter_pane_width: f32,
+) -> State {
   let picker_entries = build_picker_entries(&characters);
   let corp_entries = build_corp_picker_entries(&corporations);
   let picker = CharacterPicker::new()
@@ -440,8 +445,10 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_w
     .entries(picker_entries)
     .corp_entries(corp_entries)
     .show_all(true);
+  let mut abyssals = abyssals_tab::AbyssalsState::default();
+  abyssals.filter_pane_width = abyssals_filter_pane_width;
   State {
-    abyssals: abyssals_tab::AbyssalsState::default(),
+    abyssals,
     active_tab: Tab::Inventory,
     asset_values_data: None,
     assets: Vec::new(),
@@ -810,9 +817,29 @@ fn apply_assets_loaded(state: &mut State, assets: Vec<AssetRecord>) {
   state.loading = false;
 }
 
+fn build_abyssal_portrait_handles(characters: &[Character]) -> HashMap<i64, image::Handle> {
+  characters
+    .iter()
+    .filter_map(|c| {
+      c.portrait_data()
+        .as_ref()
+        .map(|bytes| (*c.id(), image::Handle::from_bytes(bytes.clone())))
+    })
+    .collect()
+}
+
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
-    Message::AbyssalsLoaded(items) => state.abyssals.abyssals = items,
+    Message::AbyssalsLoaded(data) => {
+      state.abyssals.abyssals = data.items;
+      state.abyssals.categories = data.categories;
+      state.abyssals.type_icons = data
+        .type_icons
+        .into_iter()
+        .map(|(id, bytes)| (id, image::Handle::from_bytes(bytes)))
+        .collect();
+      state.abyssals.portrait_handles = build_abyssal_portrait_handles(&state.characters);
+    }
     Message::AssetsLoaded(Ok(assets)) => apply_assets_loaded(state, assets),
     Message::AssetsLoaded(Err(e)) => apply_assets_load_error(state, e),
     msg => apply_data_loaded_secondary(state, msg),
@@ -895,21 +922,117 @@ fn maybe_collapse_region(state: &mut State, a: &AssetRecord, known_keys: &HashSe
 
 fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
   match msg {
+    abyssals_tab::Message::CloseTypeModal => {
+      state.abyssals.modal_open = false;
+    }
     abyssals_tab::Message::FilterReset => {
-      state.abyssals.search_query = String::new();
-      state.abyssals.only_positive = false;
-      state.abyssals.selected_type_id = None;
+      state.abyssals.modal_open = false;
+      state.abyssals.selected_source_type_id = None;
+      state.abyssals.stat_range_filters.clear();
     }
-    abyssals_tab::Message::OnlyPositiveToggled => {
-      state.abyssals.only_positive = !state.abyssals.only_positive;
+    abyssals_tab::Message::OpenTypeModal => {
+      state.abyssals.modal_open = true;
     }
-    abyssals_tab::Message::SearchChanged(q) => {
-      state.abyssals.search_query = q;
+    abyssals_tab::Message::PaneDragStart => {
+      state.abyssals.filter_pane_dragging = true;
+      state.abyssals.filter_pane_last_drag_x = 0.0;
     }
-    abyssals_tab::Message::TypeSelected(tid) => {
-      state.abyssals.selected_type_id = tid;
+    abyssals_tab::Message::PaneDrag(x) => {
+      if state.abyssals.filter_pane_last_drag_x > 0.0 {
+        let delta = x - state.abyssals.filter_pane_last_drag_x;
+        state.abyssals.filter_pane_width = (state.abyssals.filter_pane_width + delta).max(160.0);
+      }
+      state.abyssals.filter_pane_last_drag_x = x;
+    }
+    abyssals_tab::Message::PaneDragEnd => {
+      state.abyssals.filter_pane_dragging = false;
+      state.abyssals.filter_pane_last_drag_x = 0.0;
+    }
+    abyssals_tab::Message::StatMaxFilterChanged(attr_id, val) => {
+      let entry = state.abyssals.stat_range_filters.entry(attr_id).or_insert((val, val));
+      entry.1 = val;
+    }
+    abyssals_tab::Message::StatMinFilterChanged(attr_id, val) => {
+      let entry = state.abyssals.stat_range_filters.entry(attr_id).or_insert((val, val));
+      entry.0 = val;
+    }
+    abyssals_tab::Message::TypeSelected(id) => {
+      state.abyssals.modal_open = false;
+      state.abyssals.selected_source_type_id = id;
+      state.abyssals.stat_range_filters.clear();
+      state.abyssals.slider_editing = None;
+      state.abyssals.slider_edit_text.clear();
+    }
+    abyssals_tab::Message::SliderEditStart(attr_id, endpoint, current_value) => {
+      let unit = state
+        .abyssals
+        .categories
+        .iter()
+        .flat_map(|c| c.source_types.iter())
+        .find(|t| state.abyssals.selected_source_type_id == Some(t.type_id))
+        .and_then(|t| t.stat_templates.iter().find(|s| s.attribute_id == attr_id))
+        .map(|s| s.unit_suffix.clone())
+        .unwrap_or_default();
+      state.abyssals.slider_editing = Some((attr_id, endpoint));
+      state.abyssals.slider_edit_text = format_stat_value_for_edit(current_value, &unit);
+    }
+    abyssals_tab::Message::SliderEditInput(text) => {
+      state.abyssals.slider_edit_text = text;
+    }
+    abyssals_tab::Message::SliderEditCommit(attr_id, endpoint) => {
+      commit_slider_edit(state, attr_id, endpoint);
     }
   }
+}
+
+fn format_stat_value_for_edit(value: f64, unit: &str) -> String {
+  let formatted = format!("{:.2}", value);
+  let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+  let _ = unit;
+  trimmed.to_string()
+}
+
+fn commit_slider_edit(state: &mut State, attr_id: i32, endpoint: abyssals_tab::SliderEndpoint) {
+  let text = state.abyssals.slider_edit_text.trim().to_string();
+  let Some(src_id) = state.abyssals.selected_source_type_id else {
+    state.abyssals.slider_editing = None;
+    return;
+  };
+  let Some(stat) = state
+    .abyssals
+    .categories
+    .iter()
+    .flat_map(|c| c.source_types.iter())
+    .find(|t| t.type_id == src_id)
+    .and_then(|t| t.stat_templates.iter().find(|s| s.attribute_id == attr_id))
+    .cloned()
+  else {
+    state.abyssals.slider_editing = None;
+    return;
+  };
+  let lo = stat.base_value * stat.min_mult.min(stat.max_mult);
+  let hi = stat.base_value * stat.min_mult.max(stat.max_mult);
+  let current = state
+    .abyssals
+    .stat_range_filters
+    .get(&attr_id)
+    .copied()
+    .unwrap_or((lo, hi));
+  if let Ok(parsed) = text.parse::<f64>() {
+    let clamped = parsed.clamp(lo, hi);
+    match endpoint {
+      abyssals_tab::SliderEndpoint::Min => {
+        let new_min = clamped.min(current.1);
+        state.abyssals.stat_range_filters.insert(attr_id, (new_min, current.1));
+      }
+      abyssals_tab::SliderEndpoint::Max => {
+        let new_max = clamped.max(current.0);
+        state.abyssals.stat_range_filters.insert(attr_id, (current.0, new_max));
+      }
+    }
+  }
+  state.abyssals.slider_editing = None;
+  state.abyssals.slider_edit_text.clear();
 }
 
 fn update_assets_state_messages(state: &mut State, message: Message) {
@@ -1044,14 +1167,48 @@ fn drag_event_to_message(event: Event) -> Option<Message> {
   }
 }
 
+fn abyssals_drag_event_to_message(event: Event) -> Option<Message> {
+  match event {
+    Event::Mouse(mouse::Event::CursorMoved {
+      position,
+    }) => Some(Message::AbyssalsTab(abyssals_tab::Message::PaneDrag(position.x))),
+    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+      Some(Message::AbyssalsTab(abyssals_tab::Message::PaneDragEnd))
+    }
+    _ => None,
+  }
+}
+
+fn modal_key_event_to_message(event: Event) -> Option<Message> {
+  match event {
+    Event::Keyboard(keyboard::Event::KeyPressed {
+      key: keyboard::Key::Named(keyboard::key::Named::Escape),
+      ..
+    }) => Some(Message::AbyssalsTab(abyssals_tab::Message::CloseTypeModal)),
+    _ => None,
+  }
+}
+
 /// Returns subscriptions for nav history refresh and pane drag tracking.
 pub fn subscription(state: &State) -> Subscription<Message> {
   let nav_refresh = nav_refresh_subscription();
-  if !state.dragging_pane {
-    return nav_refresh;
+  let mut subs: Vec<Subscription<Message>> = vec![nav_refresh];
+  if state.dragging_pane {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      drag_event_to_message(event)
+    }));
   }
-  let drag = iced::event::listen_with(|event, _status, _id| drag_event_to_message(event));
-  Subscription::batch([nav_refresh, drag])
+  if state.abyssals.filter_pane_dragging {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      abyssals_drag_event_to_message(event)
+    }));
+  }
+  if state.abyssals.modal_open {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      modal_key_event_to_message(event)
+    }));
+  }
+  Subscription::batch(subs)
 }
 
 pub fn asset_volume(a: &AssetRecord) -> f64 {

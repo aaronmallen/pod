@@ -80,16 +80,19 @@ pub fn new(
   corporations: Vec<Corporation>,
   services: &Services,
   sidebar_width: f32,
+  abyssals_filter_pane_width: f32,
 ) -> (State, iced::Task<Message>) {
   let chars_for_load = characters.clone();
   let corps_for_load = corporations.clone();
   let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
-  let state = assets::new(characters, corporations, sidebar_width);
+  let state = assets::new(characters, corporations, sidebar_width, abyssals_filter_pane_width);
   let task = if let Some(db) = services.db.clone() {
     let esi = services.esi_client.clone();
+    let esi_abyssals = esi.clone();
     let db_icons = db.clone();
     let db_stockpiles = db.clone();
     let db_nav = db.clone();
+    let db_abyssals = db.clone();
     let nav_char_ids = char_ids.clone();
     let assets_task = iced::Task::perform(
       load_all_assets_from_db(db, chars_for_load, corps_for_load, esi),
@@ -101,7 +104,11 @@ pub fn new(
     );
     let stockpiles_task = iced::Task::perform(load_stockpiles_with_status(db_stockpiles), Message::StockpilesLoaded);
     let nav_task = iced::Task::perform(nav_history(db_nav, nav_char_ids, 90), Message::NavHistoryLoaded);
-    iced::Task::batch([assets_task, icons_task, stockpiles_task, nav_task])
+    let abyssals_task = iced::Task::perform(
+      load_abyssals_from_db(db_abyssals, esi_abyssals),
+      Message::AbyssalsLoaded,
+    );
+    iced::Task::batch([assets_task, icons_task, stockpiles_task, nav_task, abyssals_task])
   } else {
     iced::Task::none()
   };
@@ -1471,6 +1478,718 @@ pub async fn fetch_type_icons(
     }
   }
   results
+}
+
+const UNIT_SUFFIX_TABLE: &[(i32, &str)] = &[
+  (71, " GJ"),
+  (101, " m/s"),
+  (105, " HP"),
+  (108, " s"),
+  (114, " kg"),
+  (115, " tf"),
+  (116, " MW"),
+  (117, " km"),
+  (121, " m\u{00b3}"),
+  (124, "%"),
+];
+
+fn abyssal_unit_suffix(unit_id: Option<i32>) -> String {
+  unit_id
+    .and_then(|id| UNIT_SUFFIX_TABLE.iter().find(|&&(k, _)| k == id).map(|&(_, v)| v))
+    .unwrap_or("")
+    .to_string()
+}
+
+const ABYSSAL_CATEGORY_DEFS: &[(&str, &[(&str, &str)])] = &[
+  (
+    "Electronic Warfare",
+    &[
+      ("Heavy Warp Disruptor", "Heavy Warp Disruptor"),
+      ("Heavy Warp Scrambler", "Heavy Warp Scrambler"),
+      ("Stasis Webifier", "Stasis Webifier"),
+      ("Warp Disruptor", "Warp Disruptor"),
+      ("Warp Scrambler", "Warp Scrambler"),
+    ],
+  ),
+  (
+    "Weapon Upgrades",
+    &[
+      ("Ballistic Control System", "Ballistic Control System"),
+      ("Ballistic Enhancement", "Ballistic Enhancement"),
+      ("Coolant System", "Coolant System"),
+      ("Drone Damage Amplifier", "Drone Damage Amplifier"),
+      ("Entropic Radiation Sink", "Entropic Radiation Sink"),
+      ("Fighter Support Unit", "Fighter Support Unit"),
+      ("Gauss Field Balancer", "Gauss Field Balancer"),
+      ("Gyrostabilizer", "Gyrostabilizer"),
+      ("Heat Exhaust System", "Heat Exhaust System"),
+      ("Heat Sink", "Heat Sink"),
+      ("Hydraulic Stabilization Actuator", "Hydraulic Stabilization Actuator"),
+      ("Insulated Stabilizer Array", "Insulated Stabilizer Array"),
+      ("Lateral Gyrostabilizer", "Lateral Gyrostabilizer"),
+      ("Linear Flux Stabilizer", "Linear Flux Stabilizer"),
+      ("Magnetic Field Stabilizer", "Magnetic Field Stabilizer"),
+      ("Monophonic Stabilization Actuator", "Monophonic Stabilization Actuator"),
+      ("Multiphasic Bolt Array", "Multiphasic Bolt Array"),
+      ("Muon Coil Bolt Array", "Muon Coil Bolt Array"),
+      ("Munition Inertial Suspensor", "Munition Inertial Suspensor"),
+      ("Pneumatic Stabilization Actuator", "Pneumatic Stabilization Actuator"),
+      ("Siege Module", "Siege Module"),
+      ("Stabilized Weapon Mounts", "Stabilized Weapon Mounts"),
+      ("Targeting System", "Targeting System"),
+      ("Thermal Exhaust System", "Thermal Exhaust System"),
+      ("Thermal Radiator", "Thermal Radiator"),
+      ("Vorton Tuning System", "Vorton Tuning System"),
+      ("Weapon Inertial Suspensor", "Weapon Inertial Suspensor"),
+    ],
+  ),
+  (
+    "Shield",
+    &[
+      ("Capital Ancillary Shield Booster", "Capital Ancillary Shield Booster"),
+      ("X-Large Ancillary Shield Booster", "X-Large Ancillary Shield Booster"),
+      ("Large Ancillary Shield Booster", "Large Ancillary Shield Booster"),
+      ("Medium Ancillary Shield Booster", "Medium Ancillary Shield Booster"),
+      ("Small Ancillary Shield Booster", "Small Ancillary Shield Booster"),
+      ("Capital Shield Booster", "Capital Shield Booster"),
+      ("X-Large Shield Booster", "X-Large Shield Booster"),
+      ("Large Shield Booster", "Large Shield Booster"),
+      ("Medium Shield Booster", "Medium Shield Booster"),
+      ("Small Shield Booster", "Small Shield Booster"),
+      ("Large Shield Extender", "Large Shield Extender"),
+      ("Medium Shield Extender", "Medium Shield Extender"),
+      ("Small Shield Extender", "Small Shield Extender"),
+    ],
+  ),
+  (
+    "Armor",
+    &[
+      ("Capital Ancillary Armor Repairer", "Capital Ancillary Armor Repairer"),
+      ("Large Ancillary Armor Repairer", "Large Ancillary Armor Repairer"),
+      ("Medium Ancillary Armor Repairer", "Medium Ancillary Armor Repairer"),
+      ("Small Ancillary Armor Repairer", "Small Ancillary Armor Repairer"),
+      ("Capital Armor Repairer", "Capital Armor Repairer"),
+      ("Large Armor Repairer", "Large Armor Repairer"),
+      ("Medium Armor Repairer", "Medium Armor Repairer"),
+      ("Small Armor Repairer", "Small Armor Repairer"),
+      ("1600mm", "1600mm Plates"),
+      ("800mm", "800mm Plates"),
+      ("400mm", "400mm Plates"),
+      ("200mm", "200mm Plates"),
+      ("100mm", "100mm Plates"),
+    ],
+  ),
+  (
+    "Propulsion",
+    &[
+      ("10000MN Afterburner", "10000MN Afterburner"),
+      ("100MN Afterburner", "100MN Afterburner"),
+      ("10MN Afterburner", "10MN Afterburner"),
+      ("1MN Afterburner", "1MN Afterburner"),
+      ("50000MN Microwarpdrive", "50000MN Microwarpdrive"),
+      ("500MN Microwarpdrive", "500MN Microwarpdrive"),
+      ("50MN Microwarpdrive", "50MN Microwarpdrive"),
+      ("5MN Microwarpdrive", "5MN Microwarpdrive"),
+    ],
+  ),
+  (
+    "Engineering",
+    &[
+      ("Capital Energy Neutralizer", "Capital Energy Neutralizer"),
+      ("Heavy Energy Neutralizer", "Heavy Energy Neutralizer"),
+      ("Medium Energy Neutralizer", "Medium Energy Neutralizer"),
+      ("Small Energy Neutralizer", "Small Energy Neutralizer"),
+      ("Capital Energy Nosferatu", "Capital Energy Nosferatu"),
+      ("Heavy Energy Nosferatu", "Heavy Energy Nosferatu"),
+      ("Medium Energy Nosferatu", "Medium Energy Nosferatu"),
+      ("Small Energy Nosferatu", "Small Energy Nosferatu"),
+      ("Large Cap Battery", "Large Cap Battery"),
+      ("Medium Cap Battery", "Medium Cap Battery"),
+      ("Small Cap Battery", "Small Cap Battery"),
+    ],
+  ),
+  (
+    "Miscellaneous",
+    &[
+      ("Assault Damage Control", "Assault Damage Control"),
+      ("Damage Control", "Damage Control"),
+      ("Large EMP Smartbomb", "Large EMP Smartbomb"),
+      ("Medium EMP Smartbomb", "Medium EMP Smartbomb"),
+      ("Small EMP Smartbomb", "Small EMP Smartbomb"),
+      ("Large Graviton Smartbomb", "Large Graviton Smartbomb"),
+      ("Medium Graviton Smartbomb", "Medium Graviton Smartbomb"),
+      ("Small Graviton Smartbomb", "Small Graviton Smartbomb"),
+      ("Large Plasma Smartbomb", "Large Plasma Smartbomb"),
+      ("Medium Plasma Smartbomb", "Medium Plasma Smartbomb"),
+      ("Small Plasma Smartbomb", "Small Plasma Smartbomb"),
+      ("Large Proton Smartbomb", "Large Proton Smartbomb"),
+      ("Medium Proton Smartbomb", "Medium Proton Smartbomb"),
+      ("Small Proton Smartbomb", "Small Proton Smartbomb"),
+      ("Acolyte", "Acolyte"),
+      ("Berserker", "Berserker"),
+      ("Bouncer", "Bouncer"),
+      ("Curator", "Curator"),
+      ("Garde", "Garde"),
+      ("Hammerhead", "Hammerhead"),
+      ("Hobgoblin", "Hobgoblin"),
+      ("Hornet", "Hornet"),
+      ("Infiltrator", "Infiltrator"),
+      ("Ogre", "Ogre"),
+      ("Praetor", "Praetor"),
+      ("Valkyrie", "Valkyrie"),
+      ("Vespa", "Vespa"),
+      ("Warden", "Warden"),
+      ("Warrior", "Warrior"),
+      ("Wasp", "Wasp"),
+    ],
+  ),
+  (
+    "Mining Lasers",
+    &[
+      ("Modulated Deep Core Miner", "Modulated Deep Core Miner"),
+      ("Deep Core Mining Laser", "Deep Core Mining Laser"),
+      ("Mining Laser", "Mining Laser"),
+      ("Miner", "Miner"),
+    ],
+  ),
+  (
+    "Strip Miners",
+    &[
+      ("Modulated Deep Core Strip Miner", "Modulated Deep Core Strip Miner"),
+      ("Modulated Strip Miner", "Modulated Strip Miner"),
+      ("Deep Core Strip Miner", "Deep Core Strip Miner"),
+      ("Strip Miner", "Strip Miner"),
+    ],
+  ),
+  (
+    "Ice Mining",
+    &[
+      ("Ice Mining Laser", "Ice Mining Laser"),
+      ("Ice Harvester", "Ice Harvester"),
+    ],
+  ),
+  (
+    "Gas Harvesting",
+    &[
+      ("Gas Cloud Harvester", "Gas Cloud Harvester"),
+      ("Gas Cloud Scoop", "Gas Cloud Scoop"),
+    ],
+  ),
+  (
+    "Mining Drones",
+    &[
+      ("'Excavator' Ice Harvesting Drone", "'Excavator' Ice Harvesting Drone"),
+      ("'Excavator' Mining Drone", "'Excavator' Mining Drone"),
+      ("Ice Harvesting Drone", "Ice Harvesting Drone"),
+      ("Mining Drone", "Mining Drone"),
+    ],
+  ),
+];
+
+fn find_best_match(name: &str) -> Option<(&'static str, &'static str)> {
+  let mut best_cat: &str = "";
+  let mut best_display: &str = "";
+  let mut best_len = 0usize;
+  for &(cat, patterns) in ABYSSAL_CATEGORY_DEFS {
+    for &(pattern, display) in patterns {
+      if name.contains(pattern) && pattern.len() > best_len {
+        best_cat = cat;
+        best_display = display;
+        best_len = pattern.len();
+      }
+    }
+  }
+  if best_len > 0 {
+    Some((best_cat, best_display))
+  } else {
+    None
+  }
+}
+
+fn build_abyssal_categories(
+  source_names: &[(i32, String)],
+  stat_templates_by_source: &HashMap<i32, Vec<pod_model::AbyssalStatViewModel>>,
+) -> Vec<pod_model::AbyssalCategory> {
+  let mut cat_map: HashMap<&str, Vec<(i32, &str)>> = HashMap::new();
+  for (type_id, name) in source_names {
+    if let Some((cat, display)) = find_best_match(name) {
+      cat_map.entry(cat).or_default().push((*type_id, display));
+    }
+  }
+  let mut categories = Vec::new();
+  for &(cat_name, patterns) in ABYSSAL_CATEGORY_DEFS {
+    if let Some(entries) = cat_map.get(cat_name) {
+      let mut source_types = Vec::new();
+      for &(_, display_name) in patterns {
+        let mut matched: Vec<i32> = entries
+          .iter()
+          .filter(|&&(_, d)| d == display_name)
+          .map(|&(id, _)| id)
+          .collect();
+        matched.sort_unstable();
+        for type_id in matched {
+          let stat_templates = stat_templates_by_source.get(&type_id).cloned().unwrap_or_default();
+          let name_str = source_names
+            .iter()
+            .find(|(id, _)| *id == type_id)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(display_name);
+          source_types.push(pod_model::AbyssalSourceType {
+            name: name_str.to_string(),
+            type_id,
+            stat_templates,
+          });
+        }
+      }
+      if !source_types.is_empty() {
+        categories.push(pod_model::AbyssalCategory {
+          name: cat_name.to_string(),
+          source_types,
+        });
+      }
+    }
+  }
+  categories
+}
+
+#[derive(serde::Deserialize)]
+struct DynAttrMapping {
+  #[serde(rename = "applicableTypes")]
+  applicable_types: Vec<i32>,
+}
+
+#[derive(serde::Deserialize)]
+struct DynAttrEntry {
+  #[serde(rename = "attributeIDs")]
+  attribute_ids: HashMap<i32, serde_yaml::Value>,
+  #[serde(rename = "inputOutputMapping")]
+  input_output_mapping: Vec<DynAttrMapping>,
+}
+
+fn build_dynamic_attr_map() -> HashMap<i32, HashSet<i32>> {
+  const YAML: &str = include_str!("../../tmp/eve-sde-inspect/dynamicItemAttributes.yaml");
+  let entries: HashMap<i32, DynAttrEntry> = match serde_yaml::from_str(YAML) {
+    Ok(v) => v,
+    Err(e) => {
+      tracing::warn!("abyssals: failed to parse dynamicItemAttributes.yaml: {e}");
+      return HashMap::new();
+    }
+  };
+  let mut result: HashMap<i32, HashSet<i32>> = HashMap::new();
+  for entry in entries.values() {
+    let attr_ids: Vec<i32> = entry.attribute_ids.keys().copied().collect();
+    for mapping in &entry.input_output_mapping {
+      for &source_type_id in &mapping.applicable_types {
+        result.entry(source_type_id).or_default().extend(&attr_ids);
+      }
+    }
+  }
+  result
+}
+
+fn build_synthetic_stat_templates(
+  source_type_id: i32,
+  source_base_values: &HashMap<i32, HashMap<i32, f64>>,
+  dogma_attr_map: &HashMap<i32, pod_model::DogmaAttr>,
+  allowed_attrs: Option<&HashSet<i32>>,
+) -> Vec<pod_model::AbyssalStatViewModel> {
+  let Some(base_attrs) = source_base_values.get(&source_type_id) else {
+    return vec![];
+  };
+  let mut templates: Vec<pod_model::AbyssalStatViewModel> = base_attrs
+    .iter()
+    .filter_map(|(attr_id, &base_value)| {
+      if allowed_attrs.is_some_and(|allowed| !allowed.contains(attr_id)) {
+        return None;
+      }
+      let meta = dogma_attr_map.get(attr_id)?;
+      let display_name = meta
+        .display_name()
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| meta.name())
+        .to_string();
+      if display_name.is_empty() {
+        return None;
+      }
+      Some(pod_model::AbyssalStatViewModel {
+        attribute_id: *attr_id,
+        base_value,
+        display_name,
+        high_is_good: *meta.high_is_good(),
+        icon_id: *meta.icon_id(),
+        max_mult: 1.3,
+        min_mult: 0.7,
+        rolled_value: base_value,
+        unit_suffix: abyssal_unit_suffix(*meta.unit_id()),
+      })
+    })
+    .collect();
+  templates.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+  templates
+}
+
+fn parse_mutaplasmid_tier(name: &str) -> String {
+  const TIERS: &[&str] = &[
+    "Glorified Unstable",
+    "Glorified Gravid",
+    "Glorified Decayed",
+    "Unstable",
+    "Gravid",
+    "Decayed",
+  ];
+  for tier in TIERS {
+    if name.starts_with(tier) {
+      return tier.to_string();
+    }
+  }
+  name.split_whitespace().next().unwrap_or("Unknown").to_string()
+}
+
+fn build_abyssal_stat_vm(
+  attr: &pod_model::AbyssalAttribute,
+  base_attrs: &HashMap<i32, f64>,
+  dogma_attr_map: &HashMap<i32, pod_model::DogmaAttr>,
+  stat_bounds: &HashMap<i32, (f64, f64)>,
+) -> Option<pod_model::AbyssalStatViewModel> {
+  let (min_mult, max_mult) = stat_bounds.get(attr.attribute_id()).copied()?;
+  let meta = dogma_attr_map.get(attr.attribute_id())?;
+  let display_name = meta
+    .display_name()
+    .as_deref()
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| meta.name())
+    .to_string();
+  let base_value = *base_attrs.get(attr.attribute_id()).unwrap_or(&0.0);
+  Some(pod_model::AbyssalStatViewModel {
+    attribute_id: *attr.attribute_id(),
+    base_value,
+    display_name,
+    high_is_good: *meta.high_is_good(),
+    icon_id: *meta.icon_id(),
+    max_mult,
+    min_mult,
+    rolled_value: *attr.value(),
+    unit_suffix: abyssal_unit_suffix(*meta.unit_id()),
+  })
+}
+
+fn build_abyssal_view_model(
+  record: &pod_model::AbyssalItemRecord,
+  type_name_map: &HashMap<i32, String>,
+  source_base_values: &HashMap<i32, HashMap<i32, f64>>,
+  dogma_attr_map: &HashMap<i32, pod_model::DogmaAttr>,
+  module_stats_map: &HashMap<i32, Vec<pod_model::AbyssalModuleStat>>,
+) -> pod_model::AbyssalViewModel {
+  let base_type_name = type_name_map.get(record.source_type_id()).cloned().unwrap_or_default();
+  let mutator_name = type_name_map.get(record.mutator_type_id()).cloned().unwrap_or_default();
+  let mutaplasmid_tier = parse_mutaplasmid_tier(&mutator_name);
+
+  let empty_base: HashMap<i32, f64> = HashMap::new();
+  let base_attrs = source_base_values.get(record.source_type_id()).unwrap_or(&empty_base);
+  let empty_stats: Vec<pod_model::AbyssalModuleStat> = vec![];
+  let mod_stats = module_stats_map.get(record.type_id()).unwrap_or(&empty_stats);
+  let stat_bounds: HashMap<i32, (f64, f64)> = mod_stats
+    .iter()
+    .map(|s| (*s.attribute_id(), (*s.min_mult(), *s.max_mult())))
+    .collect();
+
+  let mut stats: Vec<pod_model::AbyssalStatViewModel> = record
+    .dogma_attributes()
+    .iter()
+    .filter_map(|attr| build_abyssal_stat_vm(attr, base_attrs, dogma_attr_map, &stat_bounds))
+    .collect();
+  stats.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+
+  pod_model::AbyssalViewModel {
+    base_type_name,
+    character_id: *record.character_id(),
+    item_id: *record.item_id(),
+    location: String::new(),
+    muta_price_isk: *record.muta_price_isk(),
+    mutaplasmid_color_hue: 220,
+    mutaplasmid_tier,
+    source_type_id: *record.source_type_id(),
+    stats,
+    type_id: *record.type_id(),
+  }
+}
+
+fn resolve_top_location(item_id: i64, asset_map: &HashMap<i64, (i64, String)>, depth: u8) -> (i64, String) {
+  if depth == 0 {
+    return (0, String::new());
+  }
+  let Some((loc_id, loc_type)) = asset_map.get(&item_id) else {
+    return (0, String::new());
+  };
+  if loc_type == "item" {
+    return resolve_top_location(*loc_id, asset_map, depth - 1);
+  }
+  (*loc_id, loc_type.clone())
+}
+
+async fn build_abyssal_location_map(
+  records: &[pod_model::AbyssalItemRecord],
+  db: &pod_db::Repo,
+) -> HashMap<i64, String> {
+  let char_ids: Vec<i64> = {
+    let ids: HashSet<i64> = records.iter().map(|r| *r.character_id()).collect();
+    ids.into_iter().collect()
+  };
+  let char_assets = db
+    .characters()
+    .assets_for_character_ids(&char_ids)
+    .await
+    .unwrap_or_default();
+  let asset_by_item_id: HashMap<i64, (i64, String)> = char_assets
+    .iter()
+    .map(|a| (a.item_id, (a.location_id, a.location_type.clone())))
+    .collect();
+
+  let mut station_ids: HashSet<i32> = HashSet::new();
+  let mut solar_system_ids: HashSet<i32> = HashSet::new();
+  let mut raw_locations: HashMap<i64, (i64, String)> = HashMap::new();
+  for record in records {
+    let item_id = *record.item_id();
+    let (loc_id, loc_type) = resolve_top_location(item_id, &asset_by_item_id, 5);
+    if loc_type == "station" {
+      if let Ok(sid) = i32::try_from(loc_id) {
+        station_ids.insert(sid);
+      }
+    } else if (loc_type == "solar_system" || loc_type == "space")
+      && let Ok(sid) = i32::try_from(loc_id)
+    {
+      solar_system_ids.insert(sid);
+    }
+    raw_locations.insert(item_id, (loc_id, loc_type));
+  }
+
+  let station_rows = db
+    .universe()
+    .stations()
+    .find_by_ids(&station_ids.into_iter().collect::<Vec<_>>())
+    .await
+    .unwrap_or_default();
+  let solar_system_rows = db
+    .universe()
+    .solar_systems()
+    .find_by_ids(&solar_system_ids.into_iter().collect::<Vec<_>>())
+    .await
+    .unwrap_or_default();
+  let station_name_map: HashMap<i32, String> = station_rows.iter().map(|s| (*s.id(), s.name().clone())).collect();
+  let solar_system_name_map: HashMap<i32, String> = solar_system_rows.iter().map(|s| (s.id, s.name.clone())).collect();
+
+  raw_locations
+    .into_iter()
+    .map(|(item_id, (loc_id, loc_type))| {
+      let name = if loc_type == "station" {
+        i32::try_from(loc_id)
+          .ok()
+          .and_then(|id| station_name_map.get(&id).cloned())
+          .unwrap_or_default()
+      } else if loc_type == "solar_system" || loc_type == "space" {
+        i32::try_from(loc_id)
+          .ok()
+          .and_then(|id| solar_system_name_map.get(&id).cloned())
+          .unwrap_or_default()
+      } else {
+        String::new()
+      };
+      (item_id, name)
+    })
+    .collect()
+}
+
+pub async fn load_abyssals_from_db(db: pod_db::Repo, esi: Option<pod_esi::Client>) -> pod_model::AbyssalsData {
+  let dynamic_attr_map = build_dynamic_attr_map();
+  let source_type_ids = db
+    .universe()
+    .abyssal_source_types()
+    .all_source_type_ids()
+    .await
+    .unwrap_or_default();
+
+  let source_type_rows = if source_type_ids.is_empty() {
+    vec![]
+  } else {
+    db.universe()
+      .item_types()
+      .find_by_ids(&source_type_ids)
+      .await
+      .unwrap_or_default()
+  };
+  let source_names: Vec<(i32, String)> = source_type_rows.iter().map(|t| (t.id, t.name.clone())).collect();
+  let source_base_values_for_cats: HashMap<i32, HashMap<i32, f64>> = source_type_rows
+    .iter()
+    .map(|t| {
+      let map: HashMap<i32, f64> = t.dogma_attributes.0.iter().map(|a| (a.attribute_id, a.value)).collect();
+      (t.id, map)
+    })
+    .collect();
+
+  let source_attr_ids: Vec<i32> = {
+    let mut ids: Vec<i32> = source_base_values_for_cats
+      .values()
+      .flat_map(|m| m.keys().copied())
+      .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+  };
+  let source_dogma_attrs = db
+    .universe()
+    .dogma_attrs()
+    .find_by_ids(&source_attr_ids)
+    .await
+    .unwrap_or_default();
+  let source_dogma_attr_map: HashMap<i32, pod_model::DogmaAttr> =
+    source_dogma_attrs.into_iter().map(|a| (*a.attribute_id(), a)).collect();
+
+  let source_type_icon_requests: Vec<(i32, String)> =
+    source_type_ids.iter().map(|&id| (id, "icon".to_string())).collect();
+  let icon_rows = if let Some(ref esi_client) = esi {
+    fetch_type_icons(source_type_icon_requests, esi_client.clone(), db.clone()).await
+  } else {
+    load_cached_icons_by_variant(&source_type_icon_requests, &db).await
+  };
+  let type_icons: Vec<(i32, Vec<u8>)> = icon_rows.into_iter().map(|(id, _, bytes)| (id, bytes)).collect();
+
+  let records = match db.abyssals().all_abyssals().await {
+    Ok(r) => r,
+    Err(e) => {
+      tracing::warn!("abyssals: failed to load records: {e}");
+      let stat_templates_by_source: HashMap<i32, Vec<pod_model::AbyssalStatViewModel>> = source_type_ids
+        .iter()
+        .map(|&id| {
+          let templates = build_synthetic_stat_templates(
+            id,
+            &source_base_values_for_cats,
+            &source_dogma_attr_map,
+            dynamic_attr_map.get(&id),
+          );
+          (id, templates)
+        })
+        .collect();
+      let categories = build_abyssal_categories(&source_names, &stat_templates_by_source);
+      return pod_model::AbyssalsData {
+        categories,
+        items: vec![],
+        type_icons,
+      };
+    }
+  };
+
+  let type_ids: Vec<i32> = {
+    let mut ids: Vec<i32> = records
+      .iter()
+      .flat_map(|r| [*r.type_id(), *r.source_type_id(), *r.mutator_type_id()])
+      .collect();
+    ids.extend(source_type_ids.iter().copied());
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+  };
+  let attr_ids: Vec<i32> = {
+    let mut ids: Vec<i32> = records
+      .iter()
+      .flat_map(|r| r.dogma_attributes().iter().map(|a| *a.attribute_id()))
+      .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+  };
+
+  let item_type_rows = db
+    .universe()
+    .item_types()
+    .find_by_ids(&type_ids)
+    .await
+    .unwrap_or_default();
+  let type_name_map: HashMap<i32, String> = item_type_rows.iter().map(|t| (t.id, t.name.clone())).collect();
+  let source_base_values: HashMap<i32, HashMap<i32, f64>> = item_type_rows
+    .iter()
+    .map(|t| {
+      let map: HashMap<i32, f64> = t.dogma_attributes.0.iter().map(|a| (a.attribute_id, a.value)).collect();
+      (t.id, map)
+    })
+    .collect();
+
+  let dogma_attrs = db
+    .universe()
+    .dogma_attrs()
+    .find_by_ids(&attr_ids)
+    .await
+    .unwrap_or_default();
+  let dogma_attr_map: HashMap<i32, pod_model::DogmaAttr> =
+    dogma_attrs.into_iter().map(|a| (*a.attribute_id(), a)).collect();
+
+  let unique_abyssal_type_ids: Vec<i32> = {
+    let mut ids: Vec<i32> = records.iter().map(|r| *r.type_id()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+  };
+  let mut module_stats_map: HashMap<i32, Vec<pod_model::AbyssalModuleStat>> = HashMap::new();
+  for tid in unique_abyssal_type_ids {
+    let stats = db
+      .universe()
+      .abyssal_module_stats()
+      .find_by_type_id(tid)
+      .await
+      .unwrap_or_default();
+    module_stats_map.insert(tid, stats);
+  }
+
+  let item_location_map = build_abyssal_location_map(&records, &db).await;
+
+  let mut items: Vec<pod_model::AbyssalViewModel> = records
+    .iter()
+    .map(|record| {
+      build_abyssal_view_model(
+        record,
+        &type_name_map,
+        &source_base_values,
+        &dogma_attr_map,
+        &module_stats_map,
+      )
+    })
+    .collect();
+
+  for item in &mut items {
+    item.location = item_location_map.get(&item.item_id).cloned().unwrap_or_default();
+  }
+
+  let stat_templates_by_source: HashMap<i32, Vec<pod_model::AbyssalStatViewModel>> = source_type_ids
+    .iter()
+    .map(|&src_id| {
+      let templates = if let Some(owned) = items.iter().find(|i| i.source_type_id == src_id) {
+        owned.stats.clone()
+      } else {
+        build_synthetic_stat_templates(
+          src_id,
+          &source_base_values,
+          &source_dogma_attr_map,
+          dynamic_attr_map.get(&src_id),
+        )
+      };
+      (src_id, templates)
+    })
+    .collect();
+  let categories = build_abyssal_categories(&source_names, &stat_templates_by_source);
+
+  if records.is_empty() {
+    return pod_model::AbyssalsData {
+      categories,
+      items: vec![],
+      type_icons,
+    };
+  }
+
+  pod_model::AbyssalsData {
+    categories,
+    items,
+    type_icons,
+  }
 }
 
 #[cfg(test)]

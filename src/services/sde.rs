@@ -171,6 +171,9 @@ async fn seed_dogma_data(
   step(tx, "Seeding abyssal module stats\u{2026}").await;
   seed_abyssal_module_stats(db, &dynamic_path).await?;
 
+  step(tx, "Seeding abyssal source types\u{2026}").await;
+  seed_abyssal_source_types(db, &dynamic_path).await?;
+
   step(tx, "Seeding dogma attributes\u{2026}").await;
   seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await
 }
@@ -578,6 +581,31 @@ async fn seed_abyssal_module_stats(db: &pod_db::Repo, path: &Path) -> Result<(),
     .map_err(|e| e.to_string())
 }
 
+#[tracing::instrument(skip(db))]
+async fn seed_abyssal_source_types(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
+  let Ok(entries): Result<HashMap<i32, SdeDynamicEntry>, _> = read_yaml(path).await else {
+    return Ok(());
+  };
+
+  let mut ids: std::collections::HashSet<i32> = std::collections::HashSet::new();
+  for entry in entries.values() {
+    for mapping in &entry.input_output_mapping {
+      for &type_id in &mapping.input_types {
+        ids.insert(type_id);
+      }
+    }
+  }
+
+  let mut sorted: Vec<i32> = ids.into_iter().collect();
+  sorted.sort_unstable();
+
+  db.universe()
+    .abyssal_source_types()
+    .replace_all(&sorted)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 fn build_dogma_attr(id: i32, e: SdeDogmaAttrEntry) -> models::DogmaAttr {
   let display_name = e.display_name.map(|d| d.en()).filter(|s| !s.is_empty());
   let description = e.description.filter(|s| !s.is_empty());
@@ -920,6 +948,8 @@ struct SdeDynamicAttrBounds {
 
 #[derive(Deserialize)]
 struct SdeDynamicMapping {
+  #[serde(rename = "applicableTypes", default)]
+  input_types: Vec<i32>,
   #[serde(rename = "resultingType")]
   resulting_type: i32,
 }

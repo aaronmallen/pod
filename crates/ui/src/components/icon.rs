@@ -25,6 +25,10 @@ impl Component {
     Self::from_bytes(include_bytes!("../../../../assets/icons/draft.svg"))
   }
 
+  pub fn filter() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/filter.svg"))
+  }
+
   pub fn forward() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/forward.svg"))
   }

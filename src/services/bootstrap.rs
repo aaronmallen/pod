@@ -169,6 +169,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
     sync_assets(&mut character, char_id, &esi, &grant, &db).await;
     sync_active_ship(&character, char_id, &esi, &grant, &db).await;
     sync_corp_assets(&character, &esi, &db).await;
+    crate::services::abyssals::sync_abyssals(char_id, &esi, &crate::services::muta_market::Client::new(), &db).await;
 
     let char_client = esi.character(&grant);
     let (clones_res, implants_res) = tokio::join!(char_client.clones(), char_client.implants());

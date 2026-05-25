@@ -32,6 +32,8 @@ pub struct WindowGeometry {
   pub plan_summary_pane_width: Option<f32>,
   #[serde(default)]
   pub assets_sidebar_width: Option<f32>,
+  #[serde(default)]
+  pub abyssals_filter_pane_width: Option<f32>,
 }
 
 impl WindowGeometry {
@@ -73,6 +75,7 @@ mod tests {
       height: 800.0,
       x,
       y,
+      abyssals_filter_pane_width: None,
       skills_left_pane_width: None,
       mail_folder_pane_width: None,
       mail_message_list_width: None,

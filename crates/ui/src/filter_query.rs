@@ -45,6 +45,24 @@ fn is_recognized_key(key: &str) -> bool {
   RECOGNIZED_KEYS.contains(&key.to_lowercase().as_str())
 }
 
+fn flush_current(current: &mut String, tokens: &mut Vec<String>) {
+  if !current.is_empty() {
+    tokens.push(current.clone());
+    current.clear();
+  }
+}
+
+fn consume_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+  let mut quoted = String::new();
+  for c in chars.by_ref() {
+    if c == '"' {
+      break;
+    }
+    quoted.push(c);
+  }
+  quoted
+}
+
 fn tokenize(input: &str) -> Vec<String> {
   let mut tokens = Vec::new();
   let mut chars = input.chars().peekable();
@@ -53,25 +71,13 @@ fn tokenize(input: &str) -> Vec<String> {
   while let Some(&ch) = chars.peek() {
     if ch == '"' {
       chars.next();
-      let mut quoted = String::new();
-      for c in chars.by_ref() {
-        if c == '"' {
-          break;
-        }
-        quoted.push(c);
-      }
-      if !current.is_empty() {
-        tokens.push(current.clone());
-        current.clear();
-      }
+      flush_current(&mut current, &mut tokens);
+      let quoted = consume_quoted(&mut chars);
       if !quoted.is_empty() {
         tokens.push(quoted);
       }
     } else if ch.is_whitespace() {
-      if !current.is_empty() {
-        tokens.push(current.clone());
-        current.clear();
-      }
+      flush_current(&mut current, &mut tokens);
       chars.next();
     } else {
       current.push(ch);
@@ -79,10 +85,7 @@ fn tokenize(input: &str) -> Vec<String> {
     }
   }
 
-  if !current.is_empty() {
-    tokens.push(current);
-  }
-
+  flush_current(&mut current, &mut tokens);
   tokens
 }
 

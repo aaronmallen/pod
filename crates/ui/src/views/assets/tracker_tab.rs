@@ -22,53 +22,59 @@ pub enum Message {
   TrackerRangeChanged(TrackerRange),
 }
 
+fn range_btn_background(active: bool, status: button::Status) -> Option<Background> {
+  if active {
+    Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
+  } else {
+    match status {
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+      _ => None,
+    }
+  }
+}
+
+fn range_btn_color(active: bool) -> Color {
+  if active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn range_btn<'a>(r: &TrackerRange, active: bool) -> Element<'a, Message> {
+  let label = r.label();
+  let msg = Message::TrackerRangeChanged(r.clone());
+  button(
+    text(label)
+      .font(mono::MEDIUM)
+      .size(9.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(range_btn_color(active)),
+      }),
+  )
+  .padding(Padding {
+    top: 4.0,
+    bottom: 4.0,
+    left: 10.0,
+    right: 10.0,
+  })
+  .on_press(msg)
+  .style(move |_, status| button::Style {
+    background: range_btn_background(active, status),
+    border: Border {
+      radius: 0.0.into(),
+      ..Border::default()
+    },
+    text_color: range_btn_color(active),
+    ..button::Style::default()
+  })
+  .into()
+}
+
 fn range_row<'a>(active_range: &'a TrackerRange) -> Element<'a, Message> {
   let btns: Vec<Element<'_, Message>> = TrackerRange::all()
     .iter()
-    .map(|r| {
-      let active = r == active_range;
-      let msg = Message::TrackerRangeChanged(r.clone());
-      button(
-        text(r.label())
-          .font(mono::MEDIUM)
-          .size(9.0)
-          .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(if active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .padding(Padding {
-        top: 4.0,
-        bottom: 4.0,
-        left: 10.0,
-        right: 10.0,
-      })
-      .on_press(msg)
-      .style(move |_, status| button::Style {
-        background: if active {
-          Some(Background::Color(color::accent::PLASMA_HIGHLIGHT))
-        } else {
-          match status {
-            button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-            _ => None,
-          }
-        },
-        border: Border {
-          radius: 0.0.into(),
-          ..Border::default()
-        },
-        text_color: if active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        },
-        ..button::Style::default()
-      })
-      .into()
-    })
+    .map(|r| range_btn(r, r == active_range))
     .collect();
   container(row(btns))
     .style(|_| container::Style {

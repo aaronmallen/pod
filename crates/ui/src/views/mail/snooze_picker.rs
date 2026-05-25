@@ -860,7 +860,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     ..container::Style::default()
   });
 
-  let dropdown = crate::components::Card::new(
+  crate::components::Card::new(
     column([
       container(thin_rule()).width(Length::Fill).into(),
       header.into(),
@@ -900,9 +900,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
     .width(Length::Fixed(304.0)),
   )
   .padding(0.0)
-  .render();
-
-  dropdown
+  .render()
 }
 
 /// Builder for the snooze dropdown overlay.

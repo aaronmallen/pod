@@ -31,43 +31,51 @@ pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<M
 /// by calling [`updated_config`] after any toggle or reset.
 pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    Message::CategorySelected(cat) => {
-      let needs_load = cat == Category::Tags && state.tags.tags.is_empty();
-      state.active_category = cat;
-      if needs_load {
-        load_tags_task(services)
-      } else {
-        iced::Task::none()
-      }
-    }
-    Message::FeaturesTab(inner) => {
-      match inner {
-        features_tab::Message::SearchChanged(q) => {
-          state.features.search_query = q;
-        }
-        features_tab::Message::ToggleFeature(feature) => {
-          tracing::info!("settings: feature toggled — {feature:?}");
-          toggle_feature(&mut state.features, &feature);
-        }
-      }
-      iced::Task::none()
-    }
+    Message::CategorySelected(cat) => handle_category_selected(state, cat, services),
+    Message::FeaturesTab(inner) => handle_features_tab(state, inner),
     Message::ResetDefaults => {
-      tracing::info!("settings: reset to defaults");
-      state.features.asset_tracking = true;
-      state.features.clone_monitoring = true;
-      state.features.combat_log = true;
-      state.features.contacts = true;
-      state.features.eve_notifications = true;
-      state.features.location_tracking = true;
-      state.features.mail = true;
-      state.features.skill_monitoring = true;
-      state.features.standings = true;
-      state.features.wallet = true;
+      reset_features_defaults(&mut state.features);
       iced::Task::none()
     }
     Message::TagsTab(inner) => update_tags(state, inner, services),
   }
+}
+
+fn handle_category_selected(state: &mut State, cat: Category, services: &Services) -> iced::Task<Message> {
+  let needs_load = cat == Category::Tags && state.tags.tags.is_empty();
+  state.active_category = cat;
+  if needs_load {
+    load_tags_task(services)
+  } else {
+    iced::Task::none()
+  }
+}
+
+fn handle_features_tab(state: &mut State, inner: features_tab::Message) -> iced::Task<Message> {
+  match inner {
+    features_tab::Message::SearchChanged(q) => {
+      state.features.search_query = q;
+    }
+    features_tab::Message::ToggleFeature(feature) => {
+      tracing::info!("settings: feature toggled — {feature:?}");
+      toggle_feature(&mut state.features, &feature);
+    }
+  }
+  iced::Task::none()
+}
+
+fn reset_features_defaults(features: &mut features_tab::State) {
+  tracing::info!("settings: reset to defaults");
+  features.asset_tracking = true;
+  features.clone_monitoring = true;
+  features.combat_log = true;
+  features.contacts = true;
+  features.eve_notifications = true;
+  features.location_tracking = true;
+  features.mail = true;
+  features.skill_monitoring = true;
+  features.standings = true;
+  features.wallet = true;
 }
 
 /// Builds a new [`crate::config::Settings`] from the current state,

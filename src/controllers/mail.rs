@@ -558,20 +558,20 @@ async fn get_or_create_snoozed_label(
     .mail_labels()
     .await
     .map_err(|e| format!("Failed to fetch labels: {e}"))?;
-  match find_snoozed_label_id(&all_labels) {
-    Some(id) => Ok(Some(id)),
-    None if !add_label => Ok(None),
-    None => {
-      let id = char_client
-        .create_mail_label(NewMailLabel {
-          color: Some("#ffaa00".into()),
-          name: "Snoozed".into(),
-        })
-        .await
-        .map_err(|e| format!("Failed to create Snoozed label: {e}"))?;
-      Ok(Some(id))
-    }
+  if let Some(id) = find_snoozed_label_id(&all_labels) {
+    return Ok(Some(id));
   }
+  if !add_label {
+    return Ok(None);
+  }
+  let id = char_client
+    .create_mail_label(NewMailLabel {
+      color: Some("#ffaa00".into()),
+      name: "Snoozed".into(),
+    })
+    .await
+    .map_err(|e| format!("Failed to create Snoozed label: {e}"))?;
+  Ok(Some(id))
 }
 
 fn handle_compose_search(

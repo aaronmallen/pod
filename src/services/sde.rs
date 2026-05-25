@@ -41,26 +41,38 @@ async fn do_seed(
   let (extract_dir, build_version) = download_and_extract(tx, &tmp).await?;
 
   let composite = build_version.as_deref().map(composite_version);
-  if composite.is_some() && composite.as_deref() == read_stored_sde_version().as_deref() {
+  if sde_is_current(composite.as_deref()) {
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     return Ok(db);
   }
 
   let root = find_sde_root(&extract_dir).await;
-  let r = root.as_path();
+  seed_with_fk_guard(&db, tx, root.as_path()).await?;
+  persist_version_and_cleanup(composite, &tmp).await;
 
+  Ok(db)
+}
+
+fn sde_is_current(composite: Option<&str>) -> bool {
+  composite.is_some() && composite == read_stored_sde_version().as_deref()
+}
+
+async fn seed_with_fk_guard(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   db.disable_foreign_keys().await.map_err(|e| e.to_string())?;
-  let seed_result = seed_all_tables(&db, tx, r).await;
+  let seed_result = seed_all_tables(db, tx, r).await;
   db.enable_foreign_keys().await.map_err(|e| e.to_string())?;
-  seed_result?;
+  seed_result
+}
 
+async fn persist_version_and_cleanup(composite: Option<String>, tmp: &std::path::Path) {
   if let Some(v) = composite {
     write_stored_sde_version(&v);
   }
-
-  let _ = tokio::fs::remove_dir_all(&tmp).await;
-
-  Ok(db)
+  let _ = tokio::fs::remove_dir_all(tmp).await;
 }
 
 async fn download_and_extract(
@@ -68,28 +80,40 @@ async fn download_and_extract(
   tmp: &std::path::Path,
 ) -> Result<(std::path::PathBuf, Option<String>), String> {
   tokio::fs::create_dir_all(tmp).await.map_err(|e| e.to_string())?;
-
   let zip_path = tmp.join("sde.zip");
+  download_sde_zip(tx, &zip_path).await?;
+  let extract_dir = extract_sde_zip(tx, tmp, &zip_path).await?;
+  let build_version = read_sde_build_version(&extract_dir).await;
+  Ok((extract_dir, build_version))
+}
+
+async fn download_sde_zip(
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  zip_path: &std::path::Path,
+) -> Result<(), String> {
   let esi = pod_esi::Client::builder(crate::ESI_CLIENT_ID)
     .build()
     .map_err(|e| e.to_string())?;
-
   step(tx, "Downloading static data\u{2026}").await;
   esi
     .static_data()
-    .download_yaml(&zip_path)
+    .download_yaml(zip_path)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
 
+async fn extract_sde_zip(
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  tmp: &std::path::Path,
+  zip_path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
   step(tx, "Extracting static data\u{2026}").await;
   let extract_dir = tmp.join("extracted");
   tokio::fs::create_dir_all(&extract_dir)
     .await
     .map_err(|e| e.to_string())?;
-  extract_zip(&zip_path, &extract_dir).await?;
-
-  let build_version = read_sde_build_version(&extract_dir).await;
-  Ok((extract_dir, build_version))
+  extract_zip(zip_path, &extract_dir).await?;
+  Ok(extract_dir)
 }
 
 async fn seed_all_tables(
@@ -234,14 +258,27 @@ fn write_zip_file_entry<R: std::io::Read + ?Sized>(
   entry: &mut zip::read::ZipFile<'_, R>,
   out_path: &Path,
 ) -> Result<(), String> {
-  if let Some(parent) = out_path.parent() {
+  ensure_parent_dir(out_path)?;
+  let buf = read_entry_bytes(entry)?;
+  write_file_bytes(out_path, &buf)
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
   }
-  let mut out = std::fs::File::create(out_path).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+fn read_entry_bytes<R: std::io::Read + ?Sized>(entry: &mut zip::read::ZipFile<'_, R>) -> Result<Vec<u8>, String> {
   let mut buf = Vec::new();
   entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-  out.write_all(&buf).map_err(|e| e.to_string())?;
-  Ok(())
+  Ok(buf)
+}
+
+fn write_file_bytes(path: &Path, buf: &[u8]) -> Result<(), String> {
+  let mut out = std::fs::File::create(path).map_err(|e| e.to_string())?;
+  out.write_all(buf).map_err(|e| e.to_string())
 }
 
 /// Locates the directory that directly contains `categories.yaml`, handling
@@ -387,42 +424,7 @@ async fn seed_types(
 
   let records: Vec<_> = entries
     .into_iter()
-    .map(|(id, e)| {
-      let d = dogma.get(&id);
-      let dogma_attrs: Vec<models::DogmaAttributeEntry> = d
-        .map(|d| {
-          d.dogma_attributes
-            .iter()
-            .map(|a| models::DogmaAttributeEntry::new(a.attribute_id, a.value))
-            .collect()
-        })
-        .unwrap_or_default();
-      let dogma_effs: Vec<models::DogmaEffectEntry> = d
-        .map(|d| {
-          d.dogma_effects
-            .iter()
-            .map(|ef| models::DogmaEffectEntry::new(ef.effect_id, ef.is_default))
-            .collect()
-        })
-        .unwrap_or_default();
-
-      let mut m = models::ItemType::new(id, e.name.en());
-      m.set_description(e.description.map(|d| d.en()).unwrap_or_default());
-      m.set_item_group_id(e.group_id);
-      m.set_is_abyssal(abyssal_type_ids.contains(&id));
-      m.set_market_group_id(e.market_group_id);
-      m.set_mass(e.mass);
-      m.set_volume(e.volume);
-      m.set_capacity(e.capacity);
-      m.set_portion_size(e.portion_size);
-      m.set_radius(e.radius);
-      m.set_icon_id(e.icon_id);
-      m.set_graphic_id(e.graphic_id);
-      m.set_published(e.published);
-      *m.dogma_attributes_mut() = dogma_attrs;
-      *m.dogma_effects_mut() = dogma_effs;
-      m
-    })
+    .map(|(id, e)| build_item_type(id, e, dogma.get(&id), &abyssal_type_ids))
     .collect();
 
   db.universe()
@@ -430,6 +432,50 @@ async fn seed_types(
     .upsert_many(&records)
     .await
     .map_err(|e| e.to_string())
+}
+
+fn build_item_type(
+  id: i32,
+  e: SdeTypeEntry,
+  d: Option<&SdeTypeDogmaEntry>,
+  abyssal_type_ids: &std::collections::HashSet<i32>,
+) -> models::ItemType {
+  let mut m = models::ItemType::new(id, e.name.en());
+  m.set_description(e.description.map(|d| d.en()).unwrap_or_default());
+  m.set_item_group_id(e.group_id);
+  m.set_is_abyssal(abyssal_type_ids.contains(&id));
+  m.set_market_group_id(e.market_group_id);
+  m.set_mass(e.mass);
+  m.set_volume(e.volume);
+  m.set_capacity(e.capacity);
+  m.set_portion_size(e.portion_size);
+  m.set_radius(e.radius);
+  m.set_icon_id(e.icon_id);
+  m.set_graphic_id(e.graphic_id);
+  m.set_published(e.published);
+  *m.dogma_attributes_mut() = build_dogma_attrs(d);
+  *m.dogma_effects_mut() = build_dogma_effects(d);
+  m
+}
+
+fn build_dogma_attrs(d: Option<&SdeTypeDogmaEntry>) -> Vec<models::DogmaAttributeEntry> {
+  d.map(|d| {
+    d.dogma_attributes
+      .iter()
+      .map(|a| models::DogmaAttributeEntry::new(a.attribute_id, a.value))
+      .collect()
+  })
+  .unwrap_or_default()
+}
+
+fn build_dogma_effects(d: Option<&SdeTypeDogmaEntry>) -> Vec<models::DogmaEffectEntry> {
+  d.map(|d| {
+    d.dogma_effects
+      .iter()
+      .map(|ef| models::DogmaEffectEntry::new(ef.effect_id, ef.is_default))
+      .collect()
+  })
+  .unwrap_or_default()
 }
 
 /// Parses `dynamicItemAttributes.yaml` and returns the set of all

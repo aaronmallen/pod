@@ -84,6 +84,9 @@ pub mod m0000000048_create_asset_sync_state;
 // Canonical asset valuation
 pub mod m0000000049_add_adjusted_price_to_type_prices;
 
+// Mail body caching
+pub mod m0000000051_add_body_and_preview_to_mail_headers;
+
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
 
@@ -160,6 +163,8 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000048_create_asset_sync_state::Migration),
       // Canonical asset valuation
       Box::new(m0000000049_add_adjusted_price_to_type_prices::Migration),
+      // Mail body caching
+      Box::new(m0000000051_add_body_and_preview_to_mail_headers::Migration),
     ]
   }
 }

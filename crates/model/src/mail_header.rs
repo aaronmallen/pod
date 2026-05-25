@@ -4,14 +4,27 @@ use validator::Validate;
 
 #[derive(Clone, Debug, Validate)]
 pub struct Model {
+  /// Cached plain-text mail body (joined paragraphs), or `None` if not yet
+  /// fetched.
+  pub body: Option<String>,
+  /// EVE character ID of the owner.
   pub character_id: i64,
-  pub mail_id: i64,
-  pub subject: String,
+  /// ESI ID of the sender.
   pub from_id: Option<i64>,
+  /// Whether the character has read this mail.
   pub is_read: bool,
+  /// ESI mail ID.
+  pub mail_id: i64,
+  /// Short preview derived from the body (first ~250 chars at a word
+  /// boundary), or `None` if the body has not been fetched yet.
+  pub preview: Option<String>,
+  /// Pre-formatted comma-separated recipient display names.
+  pub recipients_display: String,
+  /// Mail subject line.
+  pub subject: String,
+  /// ISO 8601 send timestamp.
   #[validate(length(min = 1))]
   pub timestamp: String,
-  pub recipients_display: String,
 }
 
 #[cfg(test)]
@@ -22,13 +35,15 @@ mod tests {
 
   fn make_header() -> Model {
     Model {
+      body: None,
       character_id: 90_000_001,
-      mail_id: 12345,
-      subject: "Hello capsuleer".into(),
       from_id: Some(90_000_002),
       is_read: false,
-      timestamp: "2024-06-01T12:00:00Z".into(),
+      mail_id: 12345,
+      preview: None,
       recipients_display: "Test Pilot".into(),
+      subject: "Hello capsuleer".into(),
+      timestamp: "2024-06-01T12:00:00Z".into(),
     }
   }
 

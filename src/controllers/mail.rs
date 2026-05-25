@@ -142,13 +142,15 @@ fn build_db_mail_rows(
         String::new()
       };
       Some(MailHeader {
+        body: None,
         character_id,
-        mail_id,
-        subject: h.subject.clone().unwrap_or_default(),
         from_id: h.from,
         is_read: h.is_read.unwrap_or(false),
-        timestamp: h.timestamp.clone().unwrap_or_default(),
+        mail_id,
+        preview: None,
         recipients_display,
+        subject: h.subject.clone().unwrap_or_default(),
+        timestamp: h.timestamp.clone().unwrap_or_default(),
       })
     })
     .collect()

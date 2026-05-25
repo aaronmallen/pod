@@ -6,7 +6,8 @@ use pod_model::{
 };
 use sea_orm::{
   ActiveValue, ColumnTrait, DatabaseConnection, EntityLoaderTrait, EntityTrait, Order, QueryFilter, QueryOrder,
-  QuerySelect, sea_query::OnConflict,
+  QuerySelect,
+  sea_query::{Expr, OnConflict},
 };
 use validator::Validate;
 
@@ -461,29 +462,34 @@ impl<'a> Repo<'a> {
   }
 
   /// Upserts mail headers for the given character.
+  ///
+  /// Body and preview are not touched by this method — use
+  /// [`upsert_mail_body`] to persist fetched body content.
   #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_mail_headers(&self, character_id: i64, headers: &[MailHeader]) -> Result<(), Error> {
     for header in headers {
       header.validate()?;
       let active = MailHeaderActive {
+        body: ActiveValue::NotSet,
         id: ActiveValue::NotSet,
         character_id: ActiveValue::Set(character_id),
-        mail_id: ActiveValue::Set(header.mail_id),
-        subject: ActiveValue::Set(header.subject.clone()),
         from_id: ActiveValue::Set(header.from_id),
         is_read: ActiveValue::Set(header.is_read),
-        timestamp: ActiveValue::Set(header.timestamp.clone()),
+        mail_id: ActiveValue::Set(header.mail_id),
+        preview: ActiveValue::NotSet,
         recipients_display: ActiveValue::Set(header.recipients_display.clone()),
+        subject: ActiveValue::Set(header.subject.clone()),
+        timestamp: ActiveValue::Set(header.timestamp.clone()),
       };
       MailHeaderEntity::insert(active)
         .on_conflict(
           OnConflict::columns([MailHeaderColumn::CharacterId, MailHeaderColumn::MailId])
             .update_columns([
-              MailHeaderColumn::Subject,
               MailHeaderColumn::FromId,
               MailHeaderColumn::IsRead,
-              MailHeaderColumn::Timestamp,
               MailHeaderColumn::RecipientsDisplay,
+              MailHeaderColumn::Subject,
+              MailHeaderColumn::Timestamp,
             ])
             .to_owned(),
         )
@@ -491,6 +497,40 @@ impl<'a> Repo<'a> {
         .await?;
     }
     Ok(())
+  }
+
+  /// Persists a fetched mail body and derived preview for a single mail.
+  ///
+  /// This is a no-op when no row exists for the given
+  /// `(character_id, mail_id)` pair.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
+  pub async fn upsert_mail_body(
+    &self,
+    character_id: i64,
+    mail_id: i64,
+    body: &str,
+    preview: &str,
+  ) -> Result<(), Error> {
+    MailHeaderEntity::update_many()
+      .col_expr(MailHeaderColumn::Body, Expr::value(body))
+      .col_expr(MailHeaderColumn::Preview, Expr::value(preview))
+      .filter(MailHeaderColumn::CharacterId.eq(character_id))
+      .filter(MailHeaderColumn::MailId.eq(mail_id))
+      .exec(self.db)
+      .await?;
+    Ok(())
+  }
+
+  /// Returns all mail IDs for the given character whose body has not yet
+  /// been cached.
+  #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
+  pub async fn mail_ids_without_body(&self, character_id: i64) -> Result<Vec<i64>, Error> {
+    let rows = MailHeaderEntity::find()
+      .filter(MailHeaderColumn::CharacterId.eq(character_id))
+      .filter(MailHeaderColumn::Body.is_null())
+      .all(self.db)
+      .await?;
+    Ok(rows.into_iter().map(|r| r.mail_id).collect())
   }
 
   /// Upserts a snoozed mail deadline.

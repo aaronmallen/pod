@@ -436,15 +436,17 @@ pub enum WalletTransactions {
 
 #[derive(DeriveIden)]
 pub enum MailHeaders {
-  Id,
+  Body,
   CharacterId,
-  MailId,
-  Subject,
   FromId,
+  Id,
   IsRead,
-  Timestamp,
+  MailId,
+  Preview,
   RecipientsDisplay,
+  Subject,
   Table,
+  Timestamp,
 }
 
 #[derive(DeriveIden)]

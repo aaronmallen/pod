@@ -66,7 +66,7 @@ impl Component {
         .into(),
       Space::new().height(4.0).into(),
       value_el,
-      Space::new().width(102.0).height(0.0).into(),
+      Space::new().width(130.0).height(0.0).into(),
     ]))
     .padding(Padding {
       top: 8.0,

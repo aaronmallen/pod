@@ -1,5 +1,6 @@
 //! Domain models shared across the Pod crate ecosystem.
 
+mod abyssal_item;
 mod asset_sync_state;
 mod bloodline;
 mod certificate;
@@ -40,6 +41,7 @@ mod stockpile_item;
 mod wallet_journal_entry;
 mod wallet_transaction;
 
+pub use abyssal_item::{AbyssalStatViewModel, AbyssalViewModel};
 pub use asset_sync_state::Model as AssetSyncState;
 pub use bloodline::Model as Bloodline;
 pub use certificate::Certificate;

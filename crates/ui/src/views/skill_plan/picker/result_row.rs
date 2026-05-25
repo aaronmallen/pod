@@ -256,17 +256,39 @@ fn item_add_btn(on_press: Message) -> button::Button<'static, Message> {
   })
 }
 
+fn chip_color(is_active: bool) -> Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn chip_border_color(is_active: bool) -> Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    color::border::SUBTLE
+  }
+}
+
+fn chip_background(is_active: bool, status: button::Status) -> Option<Background> {
+  if is_active {
+    Some(Background::Color(color::accent::PLASMA_ACTIVE))
+  } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+    Some(Background::Color(color::state::HOVER_OVERLAY))
+  } else {
+    None
+  }
+}
+
 fn level_chip(label: &'static str, is_active: bool, on_press: Message) -> Element<'static, Message> {
   button(
     text(label)
       .font(mono::REGULAR)
       .size(10.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        }),
+        color: Some(chip_color(is_active)),
       }),
   )
   .padding(Padding {
@@ -277,27 +299,13 @@ fn level_chip(label: &'static str, is_active: bool, on_press: Message) -> Elemen
   })
   .on_press(on_press)
   .style(move |_, status| button::Style {
-    background: match (is_active, status) {
-      (true, _) => Some(Background::Color(color::accent::PLASMA_ACTIVE)),
-      (false, button::Status::Hovered | button::Status::Pressed) => {
-        Some(Background::Color(color::state::HOVER_OVERLAY))
-      }
-      _ => None,
-    },
+    background: chip_background(is_active, status),
     border: Border {
-      color: if is_active {
-        color::accent::PLASMA
-      } else {
-        color::border::SUBTLE
-      },
+      color: chip_border_color(is_active),
       radius: 3.0.into(),
       width: 1.0,
     },
-    text_color: if is_active {
-      color::accent::PLASMA
-    } else {
-      color::text::SECONDARY
-    },
+    text_color: chip_color(is_active),
     ..button::Style::default()
   })
   .into()

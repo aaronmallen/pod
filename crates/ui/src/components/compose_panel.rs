@@ -157,10 +157,22 @@ impl Component {
     match msg {
       Message::BodyAction(action) => self.body.perform(action),
       Message::Close => self.apply_close(),
-      Message::Expand => self.expanded = !self.expanded,
       Message::FromPicker(msg) => self.from_picker.update(msg),
+      msg => self.apply_stateful_message(msg),
+    }
+  }
+
+  fn apply_stateful_message(&mut self, msg: Message) {
+    match msg {
+      Message::Expand => self.expanded = !self.expanded,
       Message::SubjectChanged(val) => self.subject = val,
       Message::SuggestionCursorConfirm => self.apply_cursor_confirm(),
+      msg => self.apply_cursor_or_field(msg),
+    }
+  }
+
+  fn apply_cursor_or_field(&mut self, msg: Message) {
+    match msg {
       Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
       msg => self.apply_field_message(msg),
     }
@@ -182,13 +194,23 @@ impl Component {
   fn apply_cc_or_send_message(&mut self, msg: Message) {
     match msg {
       Message::CcAdd => self.apply_cc_add(),
-      Message::CcRemove(idx) if idx < self.cc.len() => {
-        self.cc.remove(idx);
-      }
+      Message::CcRemove(idx) => self.apply_cc_remove(idx),
+      Message::CcToggle => self.cc_visible = !self.cc_visible,
+      msg => self.apply_cc_search_or_send(msg),
+    }
+  }
+
+  fn apply_cc_remove(&mut self, idx: usize) {
+    if idx < self.cc.len() {
+      self.cc.remove(idx);
+    }
+  }
+
+  fn apply_cc_search_or_send(&mut self, msg: Message) {
+    match msg {
       Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
       Message::CcSearchResults(results) => self.apply_cc_search_results(results),
       Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
-      Message::CcToggle => self.cc_visible = !self.cc_visible,
       msg => self.apply_send_message(msg),
     }
   }

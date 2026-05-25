@@ -21,6 +21,22 @@ use super::Message;
 
 static EMPTY_MASTERY_MAP: std::sync::LazyLock<HashMap<i32, u8>> = std::sync::LazyLock::new(HashMap::new);
 
+fn filter_skills<'a>(
+  skills: &'a [crate::views::skills::skill_data::SkillDef],
+  lc: &str,
+  searching: bool,
+) -> Vec<&'a crate::views::skills::skill_data::SkillDef> {
+  if searching {
+    skills.iter().filter(|s| s.name.to_lowercase().contains(lc)).collect()
+  } else {
+    skills.iter().collect()
+  }
+}
+
+fn count_trained(skills: &[crate::views::skills::skill_data::SkillDef]) -> usize {
+  skills.iter().filter(|s| s.level >= 5).count()
+}
+
 use crate::{
   components::tab_strip::{Component as TabStrip, TabItem},
   style::color,
@@ -229,34 +245,35 @@ impl<'a> SkillPicker<'a> {
       vec![PickerSearchBar::new(self.search_query, "Search skills\u{2026}").render()];
 
     for group in self.groups {
-      let filtered: Vec<&crate::views::skills::skill_data::SkillDef> = if searching {
-        group
-          .skills
-          .iter()
-          .filter(|s| s.name.to_lowercase().contains(&lc))
-          .collect()
-      } else {
-        group.skills.iter().collect()
-      };
-
+      let filtered = filter_skills(&group.skills, &lc, searching);
       if filtered.is_empty() {
         continue;
       }
 
       let is_expanded = searching || self.expanded_groups.contains(&*group.name);
-      let trained_count = group.skills.iter().filter(|s| s.level >= 5).count();
+      let trained_count = count_trained(&group.skills);
       items.push(PickerGroupHeader::new(&group.name, is_expanded, trained_count, group.skills.len()).render());
 
       if is_expanded {
-        for skill in &filtered {
-          let planned = self.planned_levels.get(skill.name.as_str()).copied().unwrap_or(0);
-          items.push(result_row::SkillRow::new(skill, planned).render());
-        }
+        self.push_skill_rows(&mut items, &filtered);
       }
     }
 
     items.push(Space::new().height(12.0).into());
     let content = column(items).width(Length::Fill);
     scrollable(content).height(Length::Fill).width(Length::Fill).into()
+  }
+
+  fn push_skill_rows<'b>(
+    &self,
+    items: &mut Vec<Element<'b, Message>>,
+    skills: &[&'b crate::views::skills::skill_data::SkillDef],
+  ) where
+    'a: 'b,
+  {
+    for skill in skills {
+      let planned = self.planned_levels.get(skill.name.as_str()).copied().unwrap_or(0);
+      items.push(result_row::SkillRow::new(skill, planned).render());
+    }
   }
 }

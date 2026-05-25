@@ -1,9 +1,11 @@
 //! Assets window view — multi-character asset inventory.
 
 pub mod abyssals_tab;
+pub mod drag_overlay;
 pub mod header;
 pub mod inventory_tab;
 pub mod main_panel;
+pub mod picker_overlay;
 pub mod sidebar;
 pub mod stockpiles_tab;
 pub mod tracker_tab;
@@ -12,12 +14,14 @@ pub mod values_tab;
 use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
+pub use drag_overlay::DragOverlay;
 pub use header::Component as Header;
 use iced::{
-  Background, Element, Event, Length, Padding, Subscription, mouse,
-  widget::{Space, column, container, image, mouse_area, stack},
+  Background, Element, Event, Length, Subscription, mouse,
+  widget::{column, container, image, stack},
 };
 pub use main_panel::Component as MainPanel;
+pub use picker_overlay::PickerOverlay;
 use pod_model::{Character, Corporation, missing_scopes};
 pub use sidebar::Component as Sidebar;
 
@@ -28,7 +32,7 @@ use crate::{
     character_picker::{self, CharacterEntry, CorporationEntry},
     scope_missing,
   },
-  style::{color, spacing},
+  style::color,
 };
 
 /// A single resolved asset record loaded from the database.
@@ -1018,36 +1022,12 @@ fn render_base<'a>(state: &'a State) -> Element<'a, Message> {
     .into()
 }
 
-fn render_drag_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
-  if !state.dragging_pane {
-    return None;
-  }
-  Some(
-    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-      .on_move(|pt| Message::PaneDrag(pt.x))
-      .on_release(Message::PaneDragEnd)
-      .interaction(iced::mouse::Interaction::ResizingHorizontally)
-      .into(),
-  )
+fn render_drag_overlay(state: &State) -> Option<Element<'static, Message>> {
+  DragOverlay::new(state.dragging_pane).render()
 }
 
 fn render_picker_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
-  if !state.picker.is_open {
-    return None;
-  }
-  let dropdown = state.picker.dropdown().map(Message::Picker);
-  Some(
-    container(dropdown)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .align_x(iced::alignment::Horizontal::Left)
-      .padding(Padding {
-        top: spacing::layout::HEADER_HEIGHT + 8.0,
-        left: spacing::SPACE_8,
-        ..Padding::ZERO
-      })
-      .into(),
-  )
+  PickerOverlay::new(&state.picker).render()
 }
 
 fn render_scope_missing<'a>(state: &'a State) -> Option<Element<'a, Message>> {

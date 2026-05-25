@@ -2,20 +2,24 @@
 
 pub mod character_card;
 pub mod context_menu;
+pub mod ghost_card;
+pub mod ghost_overlay;
 pub mod grid_row;
 
 use std::collections::HashMap;
 
 pub use character_card::Component as CharacterCard;
 pub use context_menu::Component as ContextMenu;
+pub use ghost_card::Component as GhostCard;
+pub use ghost_overlay::Component as GhostOverlay;
 pub use grid_row::{CharacterCell, EmptySlot};
 use iced::{
-  Background, Border, Element, Length, Padding, Point, Task,
+  Border, Element, Length, Padding, Point, Task,
   widget::{Id, column, container, mouse_area, row, scrollable, stack},
 };
 use pod_model::{Character, CharacterSkill, TrainingQueueEntry};
 
-use crate::style::{color, radius, shadow, spacing};
+use crate::style::{color, radius, spacing};
 
 /// Scroll ID for the character grid; exposed so controllers can programmatically restore scroll position.
 pub static GRID_SCROLL_ID: std::sync::LazyLock<Id> = std::sync::LazyLock::new(|| Id::new("character-grid"));
@@ -287,7 +291,7 @@ impl<'a> Component<'a> {
     }
 
     if let Some(ghost_c) = ghost_char {
-      layers.push(ghost_overlay(ghost_c, ghost_handle, cursor, window_width));
+      layers.push(GhostOverlay::new(ghost_c, ghost_handle, cursor, window_width).render());
     }
 
     if layers.len() == 1 {
@@ -345,128 +349,159 @@ impl<'a> Component<'a> {
   }
 }
 
-fn ghost_card_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
-  let mut bg = color::surface::RAISED;
-  bg.a = 0.96;
+fn build_character_cell<'a>(
+  c: &'a Character,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  slot: i32,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i32>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Element<'a, Message> {
+  let id = *c.id();
+  let is_dragging = dragging_id.is_some();
+  CharacterCard::new(c)
+    .portrait_handle(portrait_handles.get(&id))
+    .feat_skill_monitoring(feat_skill_monitoring)
+    .feat_wallet(feat_wallet)
+    .is_dragging(dragging_id == Some(id))
+    .is_hover_target(is_dragging && drag_hover == Some(slot) && dragging_id != Some(id))
+    .render()
+    .map(move |msg| match msg {
+      character_card::Message::CardEntered(_) => Message::SlotEntered(slot),
+      other => Message::Card(id, other),
+    })
+}
 
-  container(content)
+fn build_grid_row<'a>(
+  row_idx: usize,
+  slot_map: &HashMap<i32, &'a Character>,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i32>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Element<'a, Message> {
+  let is_dragging = dragging_id.is_some();
+  let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(3);
+  for col_idx in 0i32..3 {
+    let slot = row_idx as i32 * 3 + col_idx;
+    if let Some(c) = slot_map.get(&slot) {
+      cells.push(build_character_cell(
+        c,
+        portrait_handles,
+        slot,
+        dragging_id,
+        drag_hover,
+        feat_skill_monitoring,
+        feat_wallet,
+      ));
+    } else {
+      cells.push(empty_slot_placeholder(slot, is_dragging));
+    }
+  }
+  row(cells).spacing(spacing::SPACE_4).into()
+}
+
+fn build_grid_rows<'a>(
+  characters: Vec<&'a Character>,
+  cols: usize,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i32>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Vec<Element<'a, Message>> {
+  if cols < 3 || characters.is_empty() {
+    return build_grid_rows_responsive(
+      characters,
+      cols,
+      portrait_handles,
+      dragging_id,
+      drag_hover,
+      feat_skill_monitoring,
+      feat_wallet,
+    );
+  }
+
+  let max_slot = characters.iter().map(|c| *c.sort_order()).max().unwrap_or(0);
+  let row_count = (max_slot / 3 + 2) as usize;
+  let slot_map: HashMap<i32, &Character> = characters.iter().map(|c| (*c.sort_order(), *c)).collect();
+
+  (0..row_count)
+    .map(|row_idx| {
+      build_grid_row(
+        row_idx,
+        &slot_map,
+        portrait_handles,
+        dragging_id,
+        drag_hover,
+        feat_skill_monitoring,
+        feat_wallet,
+      )
+    })
+    .collect()
+}
+
+fn build_grid_rows_responsive<'a>(
+  characters: Vec<&'a Character>,
+  cols: usize,
+  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
+  dragging_id: Option<i64>,
+  drag_hover: Option<i32>,
+  feat_skill_monitoring: bool,
+  feat_wallet: bool,
+) -> Vec<Element<'a, Message>> {
+  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
+  for chunk in characters.chunks(cols) {
+    let mut cells: Vec<Element<'a, Message>> = chunk
+      .iter()
+      .map(|c| {
+        let id = *c.id();
+        let sort_order = *c.sort_order();
+        CharacterCard::new(c)
+          .portrait_handle(portrait_handles.get(&id))
+          .feat_skill_monitoring(feat_skill_monitoring)
+          .feat_wallet(feat_wallet)
+          .is_dragging(dragging_id == Some(id))
+          .is_hover_target(dragging_id.is_some() && drag_hover == Some(sort_order) && dragging_id != Some(id))
+          .render()
+          .map(move |msg| match msg {
+            character_card::Message::CardEntered(_) => Message::SlotEntered(sort_order),
+            other => Message::Card(id, other),
+          })
+      })
+      .collect();
+    while cells.len() < cols {
+      cells.push(iced::widget::Space::new().width(Length::Fill).into());
+    }
+    grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
+  }
+  grid_rows
+}
+
+fn empty_slot_placeholder<'a>(slot: i32, is_dragging: bool) -> Element<'a, Message> {
+  let content = container(iced::widget::Space::new().width(Length::Fill))
     .width(Length::Fill)
     .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(bg)),
-      border: Border {
-        color: color::border::DEFAULT,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      shadow: shadow::POPOVER,
-      ..container::Style::default()
-    })
-    .into()
-}
+    .style(move |_| {
+      if is_dragging {
+        container::Style {
+          border: Border {
+            color: color::border::SUBTLE,
+            radius: radius::PANEL.into(),
+            width: 1.0,
+          },
+          ..container::Style::default()
+        }
+      } else {
+        container::Style::default()
+      }
+    });
 
-// Non-interactive ghost that follows the cursor during drag.
-// Mirrors the full card layout but has zero mouse_area elements, so all
-// events fall through to the grid cards and empty slots beneath (preserving SlotEntered).
-fn ghost_element<'a>(
-  character: &'a Character,
-  portrait_handle: Option<&'a iced::widget::image::Handle>,
-) -> Element<'a, Message> {
-  use crate::components;
-
-  let portrait = character_card::CharacterPortrait::new(character)
-    .portrait_handle(portrait_handle)
-    .render::<Message>();
-
-  let identity = container(character_card::CharacterDetail::new(character).render::<Message>())
-    .padding(Padding {
-      right: spacing::SPACE_4,
-      ..Padding::ZERO
-    })
-    .into();
-
-  let tags = ghost_tags(character);
-  let training = character_card::CharacterSkillTraining::new(character).render::<Message>();
-  let stats = ghost_stats(character);
-
-  let card_content = column([
-    portrait,
-    identity,
-    tags,
-    components::Separator::horizontal().render(),
-    training,
-    components::Separator::horizontal().render(),
-    stats,
-  ])
-  .width(Length::Fill)
-  .height(Length::Fill);
-
-  ghost_card_container(card_content)
-}
-
-fn ghost_overlay<'a>(
-  ghost_c: &'a Character,
-  ghost_handle: Option<&'a iced::widget::image::Handle>,
-  cursor: Point,
-  window_width: f32,
-) -> Element<'a, Message> {
-  let cols = grid_row::grid_cols(window_width);
-  let effective_width = window_width.min(spacing::layout::GRID_MAX_WIDTH);
-  let card_width = (effective_width - spacing::SPACE_8 * 2.0 - spacing::SPACE_4 * (cols - 1) as f32) / cols as f32;
-
-  let ghost_left = (cursor.x - card_width / 2.0).max(0.0);
-  let ghost_top = (cursor.y - spacing::layout::CHARACTER_CARD_HEIGHT * 0.3).max(0.0);
-
-  container(container(ghost_element(ghost_c, ghost_handle)).width(card_width))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-      top: ghost_top,
-      left: ghost_left,
-      ..Padding::ZERO
-    })
-    .into()
-}
-
-fn ghost_stats<'a>(character: &'a Character) -> Element<'a, Message> {
-  let location = character.location_name().as_deref();
-  let divider: Element<'a, Message> = container(iced::widget::Space::new().height(Length::Fill))
-    .width(1.0)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into();
-
-  row([
-    character_card::CharacterLocation::new(location).render::<Message>(),
-    divider,
-    character_card::CharacterWallet::new(character).render::<Message>(),
-  ])
-  .into()
-}
-
-fn ghost_tags<'a>(character: &'a Character) -> Element<'a, Message> {
-  use crate::components;
-
-  let tag_children: Vec<Element<'a, Message>> = character
-    .tags()
-    .iter()
-    .map(|(_, name, _)| components::Badge::tag(name).render::<Message>())
-    .collect();
-
-  if tag_children.is_empty() {
-    iced::widget::Space::new().width(Length::Shrink).height(0).into()
+  if is_dragging {
+    mouse_area(content).on_enter(Message::SlotEntered(slot)).into()
   } else {
-    container(row(tag_children).spacing(spacing::SPACE_1).wrap())
-      .padding(Padding {
-        top: 0.0,
-        bottom: 10.0,
-        left: spacing::SPACE_4,
-        right: spacing::SPACE_4,
-      })
-      .width(Length::Fill)
-      .into()
+    content.into()
   }
 }

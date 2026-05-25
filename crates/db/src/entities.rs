@@ -1,5 +1,7 @@
 //! SeaORM entity definitions for all database tables.
 
+pub mod abyssal_item;
+pub mod abyssal_module_stat;
 pub mod asset_sync_state;
 pub mod bloodline;
 pub mod certificate;
@@ -17,6 +19,7 @@ pub mod character_standing;
 pub mod constellation;
 pub mod corporation;
 pub mod corporation_asset;
+pub mod dogma_attr;
 pub mod dogma_attribute;
 pub mod dogma_effect;
 pub mod entity_tag;

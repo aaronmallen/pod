@@ -25,6 +25,8 @@ pub struct Model {
   /// Unique item type identifier, sourced from the ESI.
   #[sea_orm(primary_key, auto_increment = false)]
   pub id: i32,
+  /// Whether this item type is an abyssal (mutated) module type.
+  pub is_abyssal: bool,
   /// The item group this type belongs to.
   #[sea_orm(belongs_to, from = "item_group_id", to = "id")]
   pub item_group: HasOne<super::item_group::Entity>,
@@ -94,6 +96,7 @@ impl From<Model> for ItemType {
       .set_description(entity.description)
       .set_graphic_id(entity.graphic_id)
       .set_icon_id(entity.icon_id)
+      .set_is_abyssal(entity.is_abyssal)
       .set_item_group_id(entity.item_group_id)
       .set_market_group_id(entity.market_group_id)
       .set_mass(entity.mass)
@@ -117,6 +120,7 @@ impl From<ModelEx> for ItemType {
       .set_description(entity.description)
       .set_graphic_id(entity.graphic_id)
       .set_icon_id(entity.icon_id)
+      .set_is_abyssal(entity.is_abyssal)
       .set_item_group(entity.item_group.into_option().map(Into::into))
       .set_item_group_id(entity.item_group_id)
       .set_market_group(entity.market_group.into_option().map(Into::into))
@@ -146,6 +150,7 @@ impl From<ItemType> for ActiveModel {
       graphic_id: Set(*model.graphic_id()),
       id: Set(*model.id()),
       icon_id: Set(*model.icon_id()),
+      is_abyssal: Set(*model.is_abyssal()),
       item_group_id: Set(*model.item_group_id()),
       market_group_id: Set(*model.market_group_id()),
       mass: Set(*model.mass()),
@@ -173,6 +178,7 @@ impl From<ItemType> for ActiveModelEx {
       graphic_id: Set(*model.graphic_id()),
       id: Set(*model.id()),
       icon_id: Set(*model.icon_id()),
+      is_abyssal: Set(*model.is_abyssal()),
       item_group: Default::default(),
       item_group_id: Set(*model.item_group_id()),
       market_group: Default::default(),

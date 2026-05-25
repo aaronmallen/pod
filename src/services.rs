@@ -1,10 +1,12 @@
 //! Application service layer: business-logic helpers shared across controllers.
 
+pub mod abyssals;
 pub mod bootstrap;
 pub mod cache_cleaner;
 pub mod character;
 pub mod corporation;
 pub mod menu;
+pub mod muta_market;
 pub mod oauth_callback;
 pub mod portraits;
 pub mod prices;
@@ -19,5 +21,6 @@ pub struct Services {
   pub config: crate::config::Settings,
   pub db: Option<pod_db::Repo>,
   pub esi_client: Option<pod_esi::Client>,
+  pub muta_market_client: muta_market::Client,
   pub oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
 }

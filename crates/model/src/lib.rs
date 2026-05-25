@@ -1,6 +1,8 @@
 //! Domain models shared across the Pod crate ecosystem.
 
 mod abyssal_item;
+mod abyssal_item_record;
+mod abyssal_module_stat;
 mod asset_sync_state;
 mod bloodline;
 mod certificate;
@@ -15,6 +17,7 @@ mod constellation;
 mod contact;
 mod corporation;
 mod corporation_asset;
+mod dogma_attr;
 mod faction;
 mod item_category;
 mod item_group;
@@ -42,6 +45,8 @@ mod wallet_journal_entry;
 mod wallet_transaction;
 
 pub use abyssal_item::{AbyssalStatViewModel, AbyssalViewModel};
+pub use abyssal_item_record::{AbyssalAttribute, AbyssalItemRecord};
+pub use abyssal_module_stat::AbyssalModuleStat;
 pub use asset_sync_state::Model as AssetSyncState;
 pub use bloodline::Model as Bloodline;
 pub use certificate::Certificate;
@@ -59,6 +64,7 @@ pub use constellation::Model as Constellation;
 pub use contact::{Contact, ContactLabel, ContactType};
 pub use corporation::Model as Corporation;
 pub use corporation_asset::Model as CorporationAsset;
+pub use dogma_attr::DogmaAttr;
 pub use faction::Model as Faction;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;

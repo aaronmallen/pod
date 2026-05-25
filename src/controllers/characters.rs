@@ -1835,6 +1835,7 @@ mod tests {
       config: crate::config::Settings::default(),
       db: None,
       esi_client: None,
+      muta_market_client: crate::services::muta_market::Client::new(),
       oauth_callback_tx,
     }
   }

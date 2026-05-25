@@ -3,6 +3,30 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveIden)]
+pub enum AbyssalItems {
+  CharacterId,
+  DogmaAttributes,
+  ItemId,
+  MutaPriceIsk,
+  MutaPriceSynced,
+  MutatorTypeId,
+  SourceTypeId,
+  SyncedAt,
+  Table,
+  TypeId,
+}
+
+#[derive(DeriveIden)]
+pub enum AbyssalModuleStats {
+  AbyssalTypeId,
+  AttributeId,
+  Id,
+  MaxMult,
+  MinMult,
+  Table,
+}
+
+#[derive(DeriveIden)]
 pub enum AssetSyncState {
   CacheExpiresAt,
   LastSyncedAt,
@@ -284,6 +308,7 @@ pub enum ItemTypes {
   GraphicId,
   IconId,
   Id,
+  IsAbyssal,
   ItemGroupId,
   MarketGroupId,
   Mass,

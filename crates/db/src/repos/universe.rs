@@ -1,8 +1,10 @@
 use sea_orm::DatabaseConnection;
 
+pub mod abyssal_module_stats;
 pub mod bloodlines;
 pub mod certificates;
 pub mod constellations;
+pub mod dogma_attrs;
 pub mod factions;
 pub mod item_categories;
 pub mod item_groups;
@@ -29,6 +31,10 @@ impl<'a> Repo<'a> {
     }
   }
 
+  pub fn abyssal_module_stats(&self) -> abyssal_module_stats::Repo<'_> {
+    abyssal_module_stats::Repo::new(self.connection)
+  }
+
   pub fn bloodlines(&self) -> bloodlines::Repo<'_> {
     bloodlines::Repo::new(self.connection)
   }
@@ -39,6 +45,10 @@ impl<'a> Repo<'a> {
 
   pub fn constellations(&self) -> constellations::Repo<'_> {
     constellations::Repo::new(self.connection)
+  }
+
+  pub fn dogma_attrs(&self) -> dogma_attrs::Repo<'_> {
+    dogma_attrs::Repo::new(self.connection)
   }
 
   pub fn factions(&self) -> factions::Repo<'_> {

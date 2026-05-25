@@ -270,6 +270,7 @@ mod tests {
       graphic_id: Set(None),
       icon_id: Set(None),
       id: Set(id),
+      is_abyssal: Set(false),
       item_group_id: Set(0),
       market_group_id: Set(None),
       mass: Set(None),

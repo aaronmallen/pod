@@ -116,7 +116,14 @@ async fn seed_item_tables(
   seed_market_groups(db, &r.join("marketGroups.yaml")).await?;
 
   step(tx, "Seeding item types\u{2026}").await;
-  seed_types(db, &r.join("types.yaml"), &r.join("typeDogma.yaml")).await?;
+  let dynamic_path = r.join("dynamicItemAttributes.yaml");
+  seed_types(db, &r.join("types.yaml"), &r.join("typeDogma.yaml"), &dynamic_path).await?;
+
+  step(tx, "Seeding abyssal module stats\u{2026}").await;
+  seed_abyssal_module_stats(db, &dynamic_path).await?;
+
+  step(tx, "Seeding dogma attributes\u{2026}").await;
+  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await?;
 
   if r.join("certificates.yaml").exists() {
     step(tx, "Seeding certificates\u{2026}").await;
@@ -342,9 +349,15 @@ async fn seed_market_groups(db: &pod_db::Repo, path: &Path) -> Result<(), String
 }
 
 #[tracing::instrument(skip(db))]
-async fn seed_types(db: &pod_db::Repo, types_path: &Path, dogma_path: &Path) -> Result<(), String> {
+async fn seed_types(
+  db: &pod_db::Repo,
+  types_path: &Path,
+  dogma_path: &Path,
+  dynamic_path: &Path,
+) -> Result<(), String> {
   let entries: HashMap<i32, SdeTypeEntry> = read_yaml(types_path).await?;
   let dogma: HashMap<i32, SdeTypeDogmaEntry> = read_yaml(dogma_path).await?;
+  let abyssal_type_ids = collect_abyssal_type_ids(dynamic_path).await;
 
   let records: Vec<_> = entries
     .into_iter()
@@ -370,6 +383,7 @@ async fn seed_types(db: &pod_db::Repo, types_path: &Path, dogma_path: &Path) -> 
       let mut m = models::ItemType::new(id, e.name.en());
       m.set_description(e.description.map(|d| d.en()).unwrap_or_default());
       m.set_item_group_id(e.group_id);
+      m.set_is_abyssal(abyssal_type_ids.contains(&id));
       m.set_market_group_id(e.market_group_id);
       m.set_mass(e.mass);
       m.set_volume(e.volume);
@@ -387,6 +401,76 @@ async fn seed_types(db: &pod_db::Repo, types_path: &Path, dogma_path: &Path) -> 
 
   db.universe()
     .item_types()
+    .upsert_many(&records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Parses `dynamicItemAttributes.yaml` and returns the set of all
+/// `resultingType` values — these are the abyssal module type IDs.
+async fn collect_abyssal_type_ids(path: &Path) -> std::collections::HashSet<i32> {
+  let Ok(entries): Result<HashMap<i32, SdeDynamicEntry>, _> = read_yaml(path).await else {
+    return std::collections::HashSet::new();
+  };
+  entries
+    .values()
+    .flat_map(|e| e.input_output_mapping.iter())
+    .map(|m| m.resulting_type)
+    .collect()
+}
+
+#[tracing::instrument(skip(db))]
+async fn seed_abyssal_module_stats(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
+  let Ok(entries): Result<HashMap<i32, SdeDynamicEntry>, _> = read_yaml(path).await else {
+    return Ok(());
+  };
+
+  let mut records: Vec<models::AbyssalModuleStat> = Vec::new();
+  for entry in entries.values() {
+    for mapping in &entry.input_output_mapping {
+      let abyssal_type_id = mapping.resulting_type;
+      for (attr_id, bounds) in &entry.attribute_ids {
+        records.push(models::AbyssalModuleStat::new(
+          abyssal_type_id,
+          *attr_id,
+          bounds.min,
+          bounds.max,
+        ));
+      }
+    }
+  }
+
+  db.universe()
+    .abyssal_module_stats()
+    .upsert_many(&records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tracing::instrument(skip(db))]
+async fn seed_dogma_attributes(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i32, SdeDogmaAttrEntry> = read_yaml(path).await?;
+
+  let records: Vec<models::DogmaAttr> = entries
+    .into_iter()
+    .map(|(id, e)| {
+      let display_name = e.display_name.map(|d| d.en()).filter(|s| !s.is_empty());
+      let description = e.description.filter(|s| !s.is_empty());
+      let mut m = models::DogmaAttr::new(id, e.name);
+      m.set_default_value(e.default_value)
+        .set_description(description)
+        .set_display_name(display_name)
+        .set_high_is_good(e.high_is_good)
+        .set_icon_id(e.icon_id)
+        .set_published(e.published)
+        .set_stackable(e.stackable)
+        .set_unit_id(e.unit_id);
+      m
+    })
+    .collect();
+
+  db.universe()
+    .dogma_attrs()
     .upsert_many(&records)
     .await
     .map_err(|e| e.to_string())
@@ -697,6 +781,47 @@ struct SdeDogmaEffect {
   effect_id: i32,
   #[serde(rename = "isDefault", default)]
   is_default: bool,
+}
+
+#[derive(Deserialize)]
+struct SdeDynamicEntry {
+  #[serde(rename = "attributeIDs")]
+  attribute_ids: HashMap<i32, SdeDynamicAttrBounds>,
+  #[serde(rename = "inputOutputMapping", default)]
+  input_output_mapping: Vec<SdeDynamicMapping>,
+}
+
+#[derive(Deserialize)]
+struct SdeDynamicAttrBounds {
+  min: f64,
+  max: f64,
+}
+
+#[derive(Deserialize)]
+struct SdeDynamicMapping {
+  #[serde(rename = "resultingType")]
+  resulting_type: i32,
+}
+
+#[derive(Deserialize)]
+struct SdeDogmaAttrEntry {
+  #[serde(rename = "defaultValue")]
+  default_value: Option<f64>,
+  #[serde(rename = "displayName")]
+  display_name: Option<LocalizedString>,
+  #[serde(default)]
+  description: Option<String>,
+  #[serde(rename = "highIsGood", default)]
+  high_is_good: bool,
+  #[serde(rename = "iconID")]
+  icon_id: Option<i32>,
+  name: String,
+  #[serde(default)]
+  published: bool,
+  #[serde(default = "default_true")]
+  stackable: bool,
+  #[serde(rename = "unitID")]
+  unit_id: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -1169,6 +1294,60 @@ mod tests {
       let v = serde_yaml::Value::Number(large.into());
 
       assert_eq!(parse_yaml_i32(&v), None);
+    }
+  }
+
+  mod collect_abyssal_type_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_file_missing() {
+      let result = collect_abyssal_type_ids(std::path::Path::new("/tmp/nonexistent_dynamic.yaml")).await;
+
+      assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_collects_resulting_types_from_mappings() {
+      let entries = serde_yaml::Mapping::from_iter([
+        (
+          serde_yaml::Value::Number(47297i64.into()),
+          make_dynamic_entry(6, 0.6, 1.4, 47408),
+        ),
+        (
+          serde_yaml::Value::Number(47299i64.into()),
+          make_dynamic_entry(6, 0.85, 1.2, 47410),
+        ),
+      ]);
+      let tmp = std::env::temp_dir().join("pod_test_dynamic_collect.yaml");
+      let bytes = serde_yaml::to_string(&entries).unwrap();
+      std::fs::write(&tmp, bytes).unwrap();
+
+      let result = collect_abyssal_type_ids(&tmp).await;
+      let _ = std::fs::remove_file(&tmp);
+
+      assert!(result.contains(&47408));
+      assert!(result.contains(&47410));
+      assert_eq!(result.len(), 2);
+    }
+
+    fn make_dynamic_entry(attr_id: i64, min: f64, max: f64, resulting_type: i64) -> serde_yaml::Value {
+      let mut bounds = serde_yaml::Mapping::new();
+      bounds.insert("min".into(), min.into());
+      bounds.insert("max".into(), max.into());
+      let mut attr_ids = serde_yaml::Mapping::new();
+      attr_ids.insert(attr_id.into(), serde_yaml::Value::Mapping(bounds));
+      let mut mapping_entry = serde_yaml::Mapping::new();
+      mapping_entry.insert("resultingType".into(), resulting_type.into());
+      let mut entry = serde_yaml::Mapping::new();
+      entry.insert("attributeIDs".into(), serde_yaml::Value::Mapping(attr_ids));
+      entry.insert(
+        "inputOutputMapping".into(),
+        serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(mapping_entry)]),
+      );
+      serde_yaml::Value::Mapping(entry)
     }
   }
 }

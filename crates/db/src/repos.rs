@@ -1,5 +1,6 @@
 //! Repository root and sub-repository modules.
 
+pub mod abyssals;
 pub mod assets;
 pub mod characters;
 pub mod clones;
@@ -28,6 +29,11 @@ impl Root {
     Self {
       connection,
     }
+  }
+
+  /// Returns an abyssals sub-repository.
+  pub fn abyssals(&self) -> abyssals::Repo<'_> {
+    abyssals::Repo::new(&self.connection)
   }
 
   /// Returns an assets sub-repository (corporation assets and sync state).

@@ -87,6 +87,11 @@ pub mod m0000000049_add_adjusted_price_to_type_prices;
 // Mail body caching
 pub mod m0000000051_add_body_and_preview_to_mail_headers;
 
+// Abyssal items
+pub mod m0000000052_add_is_abyssal_to_item_types;
+pub mod m0000000053_create_abyssal_module_stats;
+pub mod m0000000054_create_abyssal_items;
+
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
 
@@ -165,6 +170,10 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000049_add_adjusted_price_to_type_prices::Migration),
       // Mail body caching
       Box::new(m0000000051_add_body_and_preview_to_mail_headers::Migration),
+      // Abyssal items
+      Box::new(m0000000052_add_is_abyssal_to_item_types::Migration),
+      Box::new(m0000000053_create_abyssal_module_stats::Migration),
+      Box::new(m0000000054_create_abyssal_items::Migration),
     ]
   }
 }

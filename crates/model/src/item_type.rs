@@ -72,6 +72,9 @@ pub struct Model {
   /// The unique type ID.
   #[get = "pub"]
   id: i32,
+  /// Whether this item type is an abyssal (mutated) module type.
+  #[get = "pub"]
+  is_abyssal: bool,
   /// The resolved item group record, if eagerly loaded.
   #[get = "pub"]
   item_group: Option<crate::item_group::Model>,
@@ -121,6 +124,7 @@ impl Model {
       graphic_id: None,
       id,
       icon_id: None,
+      is_abyssal: false,
       item_group: None,
       item_group_id: 0,
       market_group: None,
@@ -176,6 +180,16 @@ impl Model {
   /// Sets the icon ID, marking the record dirty if already persisted.
   pub fn set_icon_id(&mut self, icon_id: Option<i32>) -> &mut Self {
     self.icon_id = icon_id;
+    if self.persisted {
+      self.dirty = true;
+    }
+    self
+  }
+
+  /// Sets whether this type is an abyssal module, marking the record dirty
+  /// if already persisted.
+  pub fn set_is_abyssal(&mut self, is_abyssal: bool) -> &mut Self {
+    self.is_abyssal = is_abyssal;
     if self.persisted {
       self.dirty = true;
     }

@@ -36,6 +36,7 @@ struct App {
   config: config::Settings,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
+  muta_market_client: services::muta_market::Client,
   oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   phase: AppPhase,
   plan_window_position: Option<Point>,
@@ -102,6 +103,7 @@ impl Default for App {
       config: config::Settings::default(),
       db: None,
       esi_client: None,
+      muta_market_client: services::muta_market::Client::new(),
       oauth_callback_tx,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
       plan_windows: HashMap::new(),
@@ -317,6 +319,7 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
           config: app.config.clone(),
           db: app.db.clone(),
           esi_client: app.esi_client.clone(),
+          muta_market_client: app.muta_market_client.clone(),
           oauth_callback_tx: app.oauth_callback_tx.clone(),
         };
         return main_ctrl::refresh_cached_assets_if_needed(state, &services).map(|m| Message::Main(Box::new(m)));
@@ -331,6 +334,7 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
         config: app.config.clone(),
         db: app.db.clone(),
         esi_client: app.esi_client.clone(),
+        muta_market_client: app.muta_market_client.clone(),
         oauth_callback_tx: app.oauth_callback_tx.clone(),
       };
       main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
@@ -378,6 +382,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let (task, new_config) = main_ctrl::update(state, msg, &services);
@@ -398,6 +403,7 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let Some(plan_state) = app.plan_windows.get_mut(&window_id) else {
@@ -509,6 +515,7 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let saved = services::window_state::load();

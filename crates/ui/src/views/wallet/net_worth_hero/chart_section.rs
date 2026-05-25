@@ -54,48 +54,11 @@ impl<'a> ChartSection<'a> {
 
   /// Renders the chart section into an iced element.
   pub fn render(self) -> Element<'a, Message> {
-    let chart_color = if self.is_up {
-      color::status::ONLINE
-    } else {
-      color::status::DANGER
-    };
-    let bottom_rule: Element<'_, Message> = container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into();
-
-    let x_labels = x_labels_for_timeframe(self.timeframe, self.series.len());
-    let chart = LineChart::new(self.series.clone(), chart_color)
-      .with_labels(x_labels, format::fmt_isk)
-      .with_hover(Message::HoverChanged)
-      .render(Length::Fill, 180.0);
-
-    let chart_el: Element<'_, Message> = if let Some(hover) = self.chart_hover {
-      let prev_value = if hover.index > 0 {
-        self.series.get(hover.index - 1).copied()
-      } else {
-        None
-      };
-      let tooltip = hover_tooltip(hover, self.series.len(), prev_value);
-      stack([chart, tooltip]).into()
-    } else {
-      chart
-    };
-
+    let chart_color = net_worth_color(self.is_up);
+    let bottom_rule = bottom_border_rule();
+    let chart_el = build_chart_element(self.series.clone(), chart_color, self.timeframe, self.chart_hover);
     let mut column_children: Vec<Element<'_, Message>> = vec![self.top_row, Space::new().height(16.0).into(), chart_el];
-
-    if self.all_wallets && !self.characters.is_empty() {
-      let total_nw: f64 = self.characters.iter().map(|c| c.liquid + c.assets + c.escrow).sum();
-      if total_nw > 0.0 {
-        column_children.push(Space::new().height(16.0).into());
-        column_children.push(by_character_bar(self.characters, total_nw));
-      }
-    }
-
+    append_character_bar(&mut column_children, self.all_wallets, self.characters);
     column([
       container(column(column_children))
         .width(Length::Fill)
@@ -114,6 +77,63 @@ impl<'a> ChartSection<'a> {
     ])
     .width(Length::Fill)
     .into()
+  }
+}
+
+fn net_worth_color(is_up: bool) -> Color {
+  if is_up {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  }
+}
+
+fn bottom_border_rule<'a>() -> Element<'a, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn build_chart_element<'a>(
+  series: Vec<f64>,
+  chart_color: Color,
+  timeframe: &'a Timeframe,
+  chart_hover: Option<&'a HoverData>,
+) -> Element<'a, Message> {
+  let x_labels = x_labels_for_timeframe(timeframe, series.len());
+  let chart = LineChart::new(series.clone(), chart_color)
+    .with_labels(x_labels, format::fmt_isk)
+    .with_hover(Message::HoverChanged)
+    .render(Length::Fill, 180.0);
+  if let Some(hover) = chart_hover {
+    let prev_value = series
+      .get(hover.index.saturating_sub(1))
+      .copied()
+      .filter(|_| hover.index > 0);
+    let tooltip = hover_tooltip(hover, series.len(), prev_value);
+    stack([chart, tooltip]).into()
+  } else {
+    chart
+  }
+}
+
+fn append_character_bar<'a>(
+  children: &mut Vec<Element<'a, Message>>,
+  all_wallets: bool,
+  characters: &'a [WalletCharacter],
+) {
+  if !all_wallets || characters.is_empty() {
+    return;
+  }
+  let total_nw: f64 = characters.iter().map(|c| c.liquid + c.assets + c.escrow).sum();
+  if total_nw > 0.0 {
+    children.push(Space::new().height(16.0).into());
+    children.push(by_character_bar(characters, total_nw));
   }
 }
 
@@ -245,23 +265,7 @@ fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Ele
     })
     .into();
 
-  let bar_slices: Vec<Element<'_, Message>> = sorted
-    .iter()
-    .map(|c| {
-      let nw = c.liquid + c.assets + c.escrow;
-      let share = (nw / total_nw * 100.0).round() as u16;
-      let share = share.max(1);
-      let slice_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
-      container(Space::new().width(Length::FillPortion(share)).height(6.0))
-        .width(Length::FillPortion(share))
-        .height(6.0)
-        .style(move |_| container::Style {
-          background: Some(Background::Color(slice_color)),
-          ..container::Style::default()
-        })
-        .into()
-    })
-    .collect();
+  let bar_slices: Vec<Element<'_, Message>> = sorted.iter().map(|c| character_bar_slice(c, total_nw)).collect();
 
   let bar_row: Element<'_, Message> = container(row(bar_slices).width(Length::Fill).height(6.0))
     .width(Length::Fill)
@@ -276,59 +280,7 @@ fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Ele
     })
     .into();
 
-  let legend_items: Vec<Element<'_, Message>> = sorted
-    .iter()
-    .map(|c| {
-      let nw = c.liquid + c.assets + c.escrow;
-      let pct = nw / total_nw * 100.0;
-      let swatch_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
-      let swatch: Element<'_, Message> = container(Space::new().width(8.0).height(8.0))
-        .width(8.0)
-        .height(8.0)
-        .style(move |_| container::Style {
-          background: Some(Background::Color(swatch_color)),
-          border: Border {
-            radius: 2.0.into(),
-            ..Border::default()
-          },
-          ..container::Style::default()
-        })
-        .into();
-      let name_el: Element<'_, Message> = text(c.name.clone())
-        .font(crate::style::typography::body::REGULAR)
-        .size(12.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into();
-      let value_el: Element<'_, Message> = text(format::fmt_isk(nw))
-        .font(mono::REGULAR)
-        .size(11.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::MUTED),
-        })
-        .into();
-      let pct_str = format!("· {:.0}%", pct);
-      let pct_el: Element<'_, Message> = text(pct_str)
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::TERTIARY),
-        })
-        .into();
-      row([
-        swatch,
-        Space::new().width(6.0).into(),
-        name_el,
-        Space::new().width(6.0).into(),
-        value_el,
-        Space::new().width(4.0).into(),
-        pct_el,
-      ])
-      .align_y(iced::alignment::Vertical::Center)
-      .into()
-    })
-    .collect();
+  let legend_items: Vec<Element<'_, Message>> = sorted.iter().map(|c| character_legend_item(c, total_nw)).collect();
 
   let legend_row: Element<'_, Message> = row(legend_items).spacing(18.0).wrap().into();
 
@@ -339,6 +291,70 @@ fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Ele
     Space::new().height(10.0).into(),
     legend_row,
   ])
+  .into()
+}
+
+fn character_bar_slice<'a>(c: &WalletCharacter, total_nw: f64) -> Element<'a, Message> {
+  let nw = c.liquid + c.assets + c.escrow;
+  let share = ((nw / total_nw * 100.0).round() as u16).max(1);
+  let slice_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
+  container(Space::new().width(Length::FillPortion(share)).height(6.0))
+    .width(Length::FillPortion(share))
+    .height(6.0)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(slice_color)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn character_legend_item<'a>(c: &'a WalletCharacter, total_nw: f64) -> Element<'a, Message> {
+  let nw = c.liquid + c.assets + c.escrow;
+  let pct = nw / total_nw * 100.0;
+  let swatch_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
+  let swatch: Element<'_, Message> = container(Space::new().width(8.0).height(8.0))
+    .width(8.0)
+    .height(8.0)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(swatch_color)),
+      border: Border {
+        radius: 2.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into();
+  let name_el: Element<'_, Message> = text(c.name.clone())
+    .font(crate::style::typography::body::REGULAR)
+    .size(12.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::PRIMARY),
+    })
+    .into();
+  let value_el: Element<'_, Message> = text(format::fmt_isk(nw))
+    .font(mono::REGULAR)
+    .size(11.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::MUTED),
+    })
+    .into();
+  let pct_el: Element<'_, Message> = text(format!("· {:.0}%", pct))
+    .font(mono::REGULAR)
+    .size(10.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::TERTIARY),
+    })
+    .into();
+  row([
+    swatch,
+    Space::new().width(6.0).into(),
+    name_el,
+    Space::new().width(6.0).into(),
+    value_el,
+    Space::new().width(4.0).into(),
+    pct_el,
+  ])
+  .align_y(iced::alignment::Vertical::Center)
   .into()
 }
 

@@ -635,6 +635,16 @@ fn parse_import_text(input: &str) -> Vec<(String, u8)> {
   result
 }
 
+fn implant_set_to_str(set: ImplantSet) -> &'static str {
+  match set {
+    ImplantSet::None => "none",
+    ImplantSet::Plus3 => "plus3",
+    ImplantSet::Plus4 => "plus4",
+    ImplantSet::Plus5 => "plus5",
+    ImplantSet::Current => "current",
+  }
+}
+
 fn state_to_skill_plan(state: &State) -> SkillPlan {
   let plan_id = state.plan_id.clone().unwrap_or_else(uuid_v4);
   let now = std::time::SystemTime::now()
@@ -642,13 +652,7 @@ fn state_to_skill_plan(state: &State) -> SkillPlan {
     .unwrap_or_default()
     .as_secs() as i64;
 
-  let implant_set_str = match state.implant_set {
-    ImplantSet::None => "none",
-    ImplantSet::Plus3 => "plus3",
-    ImplantSet::Plus4 => "plus4",
-    ImplantSet::Plus5 => "plus5",
-    ImplantSet::Current => "current",
-  };
+  let implant_set_str = implant_set_to_str(state.implant_set);
 
   let entries: Vec<pod_model::SkillPlanEntry> = state
     .entries
@@ -872,22 +876,8 @@ fn update_cert_proficiency_changed(state: &mut State, cert_id: i32, prof: u8) ->
   iced::Task::none()
 }
 
-fn update_cert_selected(state: &mut State, cert_id: i32, prof: u8) -> iced::Task<Message> {
-  tracing::info!(
-    "skill_plan: certificate selected — cert_id: {cert_id}, proficiency: {prof}, plan: {}",
-    state.plan_name
-  );
-  let type_id_to_name: HashMap<i32, String> = state
-    .skill_groups
-    .iter()
-    .flat_map(|g| g.skills.iter())
-    .map(|s| (s.type_id, s.name.clone()))
-    .collect();
-  let Some(cert) = state.picker_certs.iter().find(|c| c.id == cert_id) else {
-    return iced::Task::none();
-  };
-  let prof_idx = (prof as usize).min(3);
-  let skill_wishes: Vec<(String, u8)> = cert
+fn cert_skill_wishes(cert: &Certificate, prof_idx: usize, type_id_to_name: &HashMap<i32, String>) -> Vec<(String, u8)> {
+  cert
     .skills
     .iter()
     .filter_map(|(type_id, levels)| {
@@ -897,7 +887,19 @@ fn update_cert_selected(state: &mut State, cert_id: i32, prof: u8) -> iced::Task
       }
       type_id_to_name.get(type_id).map(|n| (n.clone(), level))
     })
-    .collect();
+    .collect()
+}
+
+fn update_cert_selected(state: &mut State, cert_id: i32, prof: u8) -> iced::Task<Message> {
+  tracing::info!(
+    "skill_plan: certificate selected — cert_id: {cert_id}, proficiency: {prof}, plan: {}",
+    state.plan_name
+  );
+  let type_id_to_name = build_type_id_to_name(state);
+  let Some(cert) = state.picker_certs.iter().find(|c| c.id == cert_id) else {
+    return iced::Task::none();
+  };
+  let skill_wishes = cert_skill_wishes(cert, (prof as usize).min(3), &type_id_to_name);
   merge_wishes_into_plan(state, skill_wishes);
   iced::Task::none()
 }
@@ -916,16 +918,21 @@ fn update_close(state: &mut State) -> iced::Task<Message> {
   }
 }
 
+fn apply_drag_reorder(entries: &mut Vec<PlanEntry>, drag_id: &str, hover_id: &str) -> Option<()> {
+  let from_idx = entries.iter().position(|e| e.id == drag_id)?;
+  let to_idx = entries.iter().position(|e| e.id == hover_id)?;
+  let entry = entries.remove(from_idx);
+  entries.insert(to_idx, entry);
+  Some(())
+}
+
 fn update_entry_drag_end(state: &mut State) -> iced::Task<Message> {
   let drag_id = state.dragging_entry_id.take();
   let hover_id = state.drag_hover_entry_id.take();
-  if let (Some(drag_id), Some(hover_id)) = (drag_id, hover_id)
-    && drag_id != hover_id
-    && let Some(from_idx) = state.entries.iter().position(|e| e.id == drag_id)
-    && let Some(to_idx) = state.entries.iter().position(|e| e.id == hover_id)
+  if let (Some(drag), Some(hover)) = (drag_id, hover_id)
+    && drag != hover
+    && apply_drag_reorder(&mut state.entries, &drag, &hover).is_some()
   {
-    let entry = state.entries.remove(from_idx);
-    state.entries.insert(to_idx, entry);
     recompute(state);
     update_dirty(state);
   }
@@ -990,14 +997,11 @@ fn update_entry_removed(state: &mut State, id: String) -> iced::Task<Message> {
 }
 
 fn level_to_roman(level: u8) -> String {
-  match level {
-    1 => "I".to_string(),
-    2 => "II".to_string(),
-    3 => "III".to_string(),
-    4 => "IV".to_string(),
-    5 => "V".to_string(),
-    n => n.to_string(),
-  }
+  const ROMAN: [&str; 6] = ["", "I", "II", "III", "IV", "V"];
+  ROMAN
+    .get(level as usize)
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| level.to_string())
 }
 
 fn format_plan_line(skill_name: &str, to_level: u8) -> String {
@@ -1086,16 +1090,20 @@ fn update_implant_suggestions(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn add_parsed_wishes(wishes: &mut Vec<(String, u8)>, parsed: &[(String, u8)]) {
+  for (skill, level) in parsed {
+    if !wishes.iter().any(|(n, l)| n == skill && l == level) {
+      wishes.push((skill.clone(), *level));
+    }
+  }
+}
+
 fn merge_parsed_into_state(state: &mut State, parsed: Vec<(String, u8)>) {
   if parsed.is_empty() {
     return;
   }
   let mut wishes = collect_wishes(&state.entries);
-  for (skill, level) in &parsed {
-    if !wishes.iter().any(|(n, l)| n == skill && l == level) {
-      wishes.push((skill.clone(), *level));
-    }
-  }
+  add_parsed_wishes(&mut wishes, &parsed);
   let wish_refs: Vec<(&str, u8)> = wishes.iter().map(|(n, l)| (n.as_str(), *l)).collect();
   let new_entries = expand_wishes(&wish_refs, &state.skill_groups);
   state.entries = merge_entries(new_entries, &state.entries);
@@ -1242,14 +1250,27 @@ fn update_picker_cert_messages(state: &mut State, message: Message) -> iced::Tas
   }
 }
 
-fn update_picker_ship_module_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+fn update_picker_module_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::ModuleSelected(type_id, _name) => update_module_selected(state, type_id),
     Message::ModulesLoaded(modules) => update_modules_loaded(state, modules),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_picker_ship_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
     Message::ShipMasteryChanged(type_id, level) => update_ship_mastery_changed(state, type_id, level),
     Message::ShipSelected(type_id, _name, mastery) => update_ship_selected(state, type_id, mastery),
     Message::ShipsLoaded(ships) => update_ships_loaded(state, ships, services),
     _ => iced::Task::none(),
+  }
+}
+
+fn update_picker_ship_module_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::ModuleSelected(_, _) | Message::ModulesLoaded(_) => update_picker_module_messages(state, message),
+    msg => update_picker_ship_messages(state, msg, services),
   }
 }
 
@@ -1295,36 +1316,47 @@ fn update_picker_search(state: &mut State, q: String) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn load_ships_task(db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move { db.universe().item_types().find_ships("").await.unwrap_or_default() },
+    Message::ShipsLoaded,
+  )
+}
+
+fn load_modules_task(db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move { db.universe().item_types().find_modules("").await.unwrap_or_default() },
+    Message::ModulesLoaded,
+  )
+}
+
+fn load_all_certs_task(db: pod_db::Repo) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move { db.universe().certificates().find_all().await.unwrap_or_default() },
+    Message::AllCertsLoaded,
+  )
+}
+
 fn update_picker_tab(state: &mut State, tab: usize, services: &Services) -> iced::Task<Message> {
   state.picker_tab = tab;
-  if tab == 1 && !state.ships_loaded {
-    let Some(db) = services.db.clone() else {
-      return iced::Task::none();
-    };
-    return iced::Task::perform(
-      async move { db.universe().item_types().find_ships("").await.unwrap_or_default() },
-      Message::ShipsLoaded,
-    );
+  let needs_load = match tab {
+    1 if !state.ships_loaded => true,
+    2 if !state.modules_loaded => true,
+    3 if !state.certs_loaded => true,
+    _ => return iced::Task::none(),
+  };
+  if !needs_load {
+    return iced::Task::none();
   }
-  if tab == 2 && !state.modules_loaded {
-    let Some(db) = services.db.clone() else {
-      return iced::Task::none();
-    };
-    return iced::Task::perform(
-      async move { db.universe().item_types().find_modules("").await.unwrap_or_default() },
-      Message::ModulesLoaded,
-    );
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  match tab {
+    1 => load_ships_task(db),
+    2 => load_modules_task(db),
+    3 => load_all_certs_task(db),
+    _ => iced::Task::none(),
   }
-  if tab == 3 && !state.certs_loaded {
-    let Some(db) = services.db.clone() else {
-      return iced::Task::none();
-    };
-    return iced::Task::perform(
-      async move { db.universe().certificates().find_all().await.unwrap_or_default() },
-      Message::AllCertsLoaded,
-    );
-  }
-  iced::Task::none()
 }
 
 fn update_picker_toggled(state: &mut State) -> iced::Task<Message> {
@@ -1495,6 +1527,15 @@ fn update_plan_ui_save_messages(state: &mut State, message: Message, services: &
   }
 }
 
+fn update_plan_ui_close_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::CancelClose => update_cancel_close(state),
+    Message::CloseRequested => update_close(state),
+    Message::ConfirmClose => iced::window::close(state.window_id),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_plan_ui_window_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::AttrsLoaded {
@@ -1502,11 +1543,8 @@ fn update_plan_ui_window_messages(state: &mut State, message: Message) -> iced::
       current_effective_attrs,
       clone_data_missing,
     } => update_attrs_loaded(state, base_attrs, current_effective_attrs, clone_data_missing),
-    Message::CancelClose => update_cancel_close(state),
-    Message::CloseRequested => update_close(state),
-    Message::ConfirmClose => iced::window::close(state.window_id),
     Message::NameChanged(name) => update_name_changed(state, name),
-    _ => iced::Task::none(),
+    msg => update_plan_ui_close_messages(state, msg),
   }
 }
 

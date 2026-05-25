@@ -1,20 +1,18 @@
 //! Skill group accordion component.
 
 pub mod group_header;
+pub mod search_bar;
 pub mod skill_row;
 
 pub use group_header::Component as GroupHeader;
 use iced::{
-  Element, Length, Padding,
-  widget::{Space, column, container},
+  Element, Length,
+  widget::{Space, column},
 };
+pub use search_bar::SearchBar;
 pub use skill_row::Component as SkillRow;
 
 use super::super::{State, queue_levels};
-use crate::{
-  components::SearchBox,
-  style::{color, spacing},
-};
 
 /// Messages produced by the browser tab.
 #[derive(Clone, Debug)]
@@ -23,21 +21,24 @@ pub enum Message {
   SearchChanged(String),
 }
 
+/// Browser tab body component for the skills panel.
 pub struct Component<'a> {
   state: &'a State,
 }
 
 impl<'a> Component<'a> {
+  /// Creates a new [`Component`] bound to the given view [`State`].
   pub fn new(state: &'a State) -> Self {
     Self {
       state,
     }
   }
 
+  /// Renders the browser tab into an [`Element`].
   pub fn render(self) -> Element<'a, Message> {
     let q_levels = queue_levels(&self.state.queue);
     let lc = self.state.search_query.trim().to_lowercase();
-    let mut group_els: Vec<Element<'_, Message>> = vec![search_bar(&self.state.search_query)];
+    let mut group_els: Vec<Element<'_, Message>> = vec![SearchBar::new(&self.state.search_query).render()];
     for group in &self.state.skill_groups {
       self.append_group_els(&mut group_els, group, &lc, &q_levels);
     }
@@ -125,24 +126,4 @@ fn group_trained_count(
         .unwrap_or(false)
     })
     .count()
-}
-
-fn search_bar<'a>(query: &'a str) -> Element<'a, Message> {
-  let search_box = SearchBox::new("Search skills…", query, Message::SearchChanged)
-    .height(36.0)
-    .icon_size(14.0)
-    .icon_spacing(10.0)
-    .horizontal_padding(spacing::SPACE_3)
-    .background(color::surface::BASE)
-    .render();
-
-  container(search_box)
-    .padding(Padding {
-      top: 14.0,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into()
 }

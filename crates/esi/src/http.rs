@@ -189,6 +189,24 @@ impl Client {
       "esi: response"
     );
 
+    let (total_pages, mut results) = self.parse_page1_response::<T>(url_base, status, resp).await?;
+
+    if total_pages > 1 {
+      let remaining = self.fetch_remaining_pages(url_base, token, total_pages).await?;
+      results.extend(remaining);
+    }
+
+    Ok(results)
+  }
+
+  /// Validates the page-1 response status, handles rate-limit and error cases, and returns
+  /// the total page count together with the deserialized first-page body.
+  async fn parse_page1_response<T: DeserializeOwned>(
+    &self,
+    url_base: &str,
+    status: u16,
+    resp: reqwest::Response,
+  ) -> Result<(u32, Vec<T>), Error> {
     if status == 420 {
       let secs = retry_after_secs(&resp);
       tracing::warn!(
@@ -202,17 +220,10 @@ impl Client {
     if !(200u16..300).contains(&status) {
       return Err(api_error(resp).await);
     }
-
     let total_pages = parse_x_pages_header(&resp);
     let body = resp.bytes().await?;
-    let mut results: Vec<T> = serde_json::from_slice(&body)?;
-
-    if total_pages > 1 {
-      let remaining = self.fetch_remaining_pages(url_base, token, total_pages).await?;
-      results.extend(remaining);
-    }
-
-    Ok(results)
+    let items: Vec<T> = serde_json::from_slice(&body)?;
+    Ok((total_pages, items))
   }
 
   /// Sends an authenticated JSON POST and discards the response body.
@@ -608,16 +619,16 @@ fn retry_after_secs(resp: &reqwest::Response) -> u64 {
 async fn stream_response_to_file(resp: &mut reqwest::Response, dest: &std::path::Path) -> Result<(), Error> {
   use tokio::io::AsyncWriteExt as _;
 
-  let mut file = tokio::fs::File::create(dest)
-    .await
-    .map_err(|e| Error::Internal(e.to_string()))?;
+  let mut file = tokio::fs::File::create(dest).await.map_err(io_err)?;
   while let Some(chunk) = resp.chunk().await? {
-    file
-      .write_all(&chunk)
-      .await
-      .map_err(|e| Error::Internal(e.to_string()))?;
+    file.write_all(&chunk).await.map_err(io_err)?;
   }
-  file.shutdown().await.map_err(|e| Error::Internal(e.to_string()))
+  file.shutdown().await.map_err(io_err)
+}
+
+/// Converts an I/O error into [`Error::Internal`].
+fn io_err(e: std::io::Error) -> Error {
+  Error::Internal(e.to_string())
 }
 
 #[cfg(test)]

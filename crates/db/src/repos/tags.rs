@@ -1,7 +1,8 @@
 //! Repository for global tag and entity-tag assignment persistence.
 
 use sea_orm::{
-  ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+  ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
+  TransactionTrait,
   sea_query::{Expr, OnConflict},
 };
 
@@ -174,32 +175,9 @@ impl<'a> Repo<'a> {
     let entity_type = entity_type.to_string();
     self
       .db
-      .transaction::<_, (), sea_orm::DbErr>(|txn| {
-        Box::pin(async move {
-          EntityTagEntity::delete_many()
-            .filter(EntityTagColumn::EntityId.eq(entity_id))
-            .filter(EntityTagColumn::EntityType.eq(&entity_type))
-            .exec(txn)
-            .await?;
-
-          for tag_id in tag_ids {
-            EntityTagEntity::insert(EntityTagActive {
-              entity_id: ActiveValue::Set(entity_id),
-              entity_type: ActiveValue::Set(entity_type.clone()),
-              tag_id: ActiveValue::Set(tag_id),
-            })
-            .exec(txn)
-            .await?;
-          }
-
-          Ok(())
-        })
-      })
+      .transaction::<_, (), sea_orm::DbErr>(|txn| Box::pin(replace_entity_tags(txn, entity_id, entity_type, tag_ids)))
       .await
-      .map_err(|e| match e {
-        sea_orm::TransactionError::Transaction(db_err) => Error::Database(db_err),
-        sea_orm::TransactionError::Connection(db_err) => Error::Database(db_err),
-      })
+      .map_err(map_txn_err)
   }
 
   /// Returns all tags assigned to the given character.
@@ -237,6 +215,36 @@ impl<'a> Repo<'a> {
         .all(self.db)
         .await?,
     )
+  }
+}
+
+async fn replace_entity_tags(
+  txn: &DatabaseTransaction,
+  entity_id: i64,
+  entity_type: String,
+  tag_ids: Vec<i32>,
+) -> Result<(), sea_orm::DbErr> {
+  EntityTagEntity::delete_many()
+    .filter(EntityTagColumn::EntityId.eq(entity_id))
+    .filter(EntityTagColumn::EntityType.eq(&entity_type))
+    .exec(txn)
+    .await?;
+  for tag_id in tag_ids {
+    EntityTagEntity::insert(EntityTagActive {
+      entity_id: ActiveValue::Set(entity_id),
+      entity_type: ActiveValue::Set(entity_type.clone()),
+      tag_id: ActiveValue::Set(tag_id),
+    })
+    .exec(txn)
+    .await?;
+  }
+  Ok(())
+}
+
+fn map_txn_err(e: sea_orm::TransactionError<sea_orm::DbErr>) -> Error {
+  match e {
+    sea_orm::TransactionError::Transaction(db_err) => Error::Database(db_err),
+    sea_orm::TransactionError::Connection(db_err) => Error::Database(db_err),
   }
 }
 

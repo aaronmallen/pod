@@ -8,6 +8,25 @@ use iced::{
 use super::Message;
 use crate::style::{color, spacing, typography::body};
 
+fn from_queue_btn_style(status: button::Status) -> button::Style {
+  button::Style {
+    background: None,
+    border: Border {
+      color: match status {
+        button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
+        _ => color::border::SUBTLE,
+      },
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: match status {
+      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
+      _ => color::text::SECONDARY,
+    },
+    ..button::Style::default()
+  }
+}
+
 pub struct Component;
 
 impl Component {
@@ -31,22 +50,7 @@ impl Component {
       right: spacing::SPACE_3,
     })
     .on_press(Message::FromQueue)
-    .style(|_, status| button::Style {
-      background: None,
-      border: Border {
-        color: match status {
-          button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
-          _ => color::border::SUBTLE,
-        },
-        radius: 6.0.into(),
-        width: 1.0,
-      },
-      text_color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-        _ => color::text::SECONDARY,
-      },
-      ..button::Style::default()
-    })
+    .style(|_, status| from_queue_btn_style(status))
     .into()
   }
 }

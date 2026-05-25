@@ -75,22 +75,33 @@ impl Component {
   }
 }
 
+struct AttrChipColors {
+  bg: iced::Color,
+  fg: iced::Color,
+  border: iced::Color,
+}
+
+fn attr_chip_colors(primary: bool) -> AttrChipColors {
+  if primary {
+    AttrChipColors {
+      bg: color::accent::PLASMA_HIGHLIGHT,
+      fg: color::accent::PLASMA,
+      border: color::accent::PLASMA_BORDER,
+    }
+  } else {
+    AttrChipColors {
+      bg: color::state::HOVER_OVERLAY,
+      fg: color::text::SECONDARY,
+      border: color::border::SUBTLE,
+    }
+  }
+}
+
 pub fn attr_chip<'a>(key: AttrKey, primary: bool) -> Element<'a, Message> {
-  let bg = if primary {
-    color::accent::PLASMA_HIGHLIGHT
-  } else {
-    color::state::HOVER_OVERLAY
-  };
-  let fg = if primary {
-    color::accent::PLASMA
-  } else {
-    color::text::SECONDARY
-  };
-  let border_col = if primary {
-    color::accent::PLASMA_BORDER
-  } else {
-    color::border::SUBTLE
-  };
+  let colors = attr_chip_colors(primary);
+  let bg = colors.bg;
+  let fg = colors.fg;
+  let border_col = colors.border;
 
   container(
     text(key.short())

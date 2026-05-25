@@ -11,6 +11,31 @@ use crate::{
   views::skills::right_panel::Message,
 };
 
+fn tab_text_color(is_active: bool) -> iced::Color {
+  if is_active {
+    color::text::PRIMARY
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn tab_btn_style(is_active: bool) -> button::Style {
+  button::Style {
+    background: None,
+    border: Border::default(),
+    text_color: tab_text_color(is_active),
+    ..button::Style::default()
+  }
+}
+
+fn tab_underline_bg(is_active: bool) -> iced::Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    Color::TRANSPARENT
+  }
+}
+
 /// A single tab button with an active underline indicator.
 pub struct TabButton {
   is_active: bool,
@@ -31,16 +56,13 @@ impl TabButton {
   /// Renders the tab button into an `Element`.
   pub fn render(self) -> Element<'static, Message> {
     let is_active = self.is_active;
+    let tab_color = tab_text_color(is_active);
     let btn = button(
       text(self.label)
         .font(body::MEDIUM)
         .size(13.0)
         .style(move |_| iced::widget::text::Style {
-          color: Some(if is_active {
-            color::text::PRIMARY
-          } else {
-            color::text::SECONDARY
-          }),
+          color: Some(tab_color),
         }),
     )
     .width(Length::Fill)
@@ -51,26 +73,14 @@ impl TabButton {
       right: 14.0,
     })
     .on_press(Message::TabSelected(self.tab))
-    .style(move |_, _| button::Style {
-      background: None,
-      border: Border::default(),
-      text_color: if is_active {
-        color::text::PRIMARY
-      } else {
-        color::text::SECONDARY
-      },
-      ..button::Style::default()
-    });
+    .style(move |_, _| tab_btn_style(is_active));
 
+    let underline_bg = tab_underline_bg(is_active);
     let underline = container(Space::new().width(Length::Fill).height(2.0))
       .width(Length::Fill)
       .height(2.0)
       .style(move |_| container::Style {
-        background: Some(Background::Color(if is_active {
-          color::accent::PLASMA
-        } else {
-          Color::TRANSPARENT
-        })),
+        background: Some(Background::Color(underline_bg)),
         ..container::Style::default()
       });
 

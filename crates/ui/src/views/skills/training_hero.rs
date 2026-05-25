@@ -18,6 +18,20 @@ pub use right_col::Component as RightCol;
 use super::{ComputedQueueItem, Message, State};
 use crate::style::{color, spacing};
 
+fn build_hero_inner<'a, 'b>(state: &'a State, items: &'b [ComputedQueueItem], sp_rate: f32) -> Element<'a, Message>
+where
+  'a: 'b,
+{
+  let has_active = state.active_character().and_then(|c| c.active_training()).is_some();
+  if has_active {
+    Active::new(state, sp_rate).render()
+  } else if let Some(entry) = items.first() {
+    QueueItem::new(entry.clone(), sp_rate).render()
+  } else {
+    Idle::new().render()
+  }
+}
+
 pub struct Component<'a, 'b> {
   state: &'a State,
   items: &'b [ComputedQueueItem],
@@ -37,25 +51,7 @@ where
   }
 
   pub fn render(self) -> Element<'a, Message> {
-    let hero_inner: Element<'_, Message> = if let Some(entry) = self.items.first()
-      && self
-        .state
-        .active_character()
-        .and_then(|c| c.active_training())
-        .is_none()
-    {
-      QueueItem::new(entry.clone(), self.sp_rate).render()
-    } else if self
-      .state
-      .active_character()
-      .and_then(|c| c.active_training())
-      .is_some()
-    {
-      Active::new(self.state, self.sp_rate).render()
-    } else {
-      Idle::new().render()
-    };
-
+    let hero_inner = build_hero_inner(self.state, self.items, self.sp_rate);
     container(container(hero_inner).width(Length::Fill).style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {

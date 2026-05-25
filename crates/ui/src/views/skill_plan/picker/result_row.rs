@@ -360,6 +360,29 @@ fn skill_pip_colors(trained: bool, planned: bool) -> (Color, Color) {
   }
 }
 
+fn untrained_pip_btn(
+  pip: iced::widget::Container<'static, Message>,
+  skill_name: String,
+  lv: u8,
+) -> Element<'static, Message> {
+  button(pip)
+    .padding(0)
+    .on_press(Message::SkillPicked(skill_name, lv))
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::accent::PLASMA_ACTIVE)),
+        _ => None,
+      },
+      border: Border {
+        color: Color::TRANSPARENT,
+        radius: 1.5.into(),
+        width: 0.0,
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
 fn skill_pip_row(skill: &SkillDef, planned_level: u8) -> iced::widget::Row<'static, Message> {
   let pips: Vec<Element<'_, Message>> = (1u8..=5)
     .map(|lv| {
@@ -371,24 +394,7 @@ fn skill_pip_row(skill: &SkillDef, planned_level: u8) -> iced::widget::Row<'stat
       if trained {
         pip.into()
       } else {
-        button(pip)
-          .padding(0)
-          .on_press(Message::SkillPicked(skill.name.to_string(), lv))
-          .style(|_, status| button::Style {
-            background: match status {
-              button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(color::accent::PLASMA_ACTIVE))
-              }
-              _ => None,
-            },
-            border: Border {
-              color: Color::TRANSPARENT,
-              radius: 1.5.into(),
-              width: 0.0,
-            },
-            ..button::Style::default()
-          })
-          .into()
+        untrained_pip_btn(pip, skill.name.to_string(), lv)
       }
     })
     .collect();

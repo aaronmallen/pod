@@ -21,6 +21,81 @@ use super::Message;
 
 static EMPTY_MASTERY_MAP: std::sync::LazyLock<HashMap<i32, u8>> = std::sync::LazyLock::new(HashMap::new);
 
+fn build_picker_tabs(active_tab: usize) -> Element<'static, Message> {
+  TabStrip::new(vec![
+    TabItem {
+      label: "Skills".to_string(),
+      count: None,
+    },
+    TabItem {
+      label: "Ships".to_string(),
+      count: None,
+    },
+    TabItem {
+      label: "Modules".to_string(),
+      count: None,
+    },
+    TabItem {
+      label: "Certs".to_string(),
+      count: None,
+    },
+  ])
+  .active(active_tab)
+  .render(Message::PickerTabChanged)
+}
+
+fn picker_container<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
+  container(content)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: 0.0.into(),
+        width: 0.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn push_module_group_rows<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  groups: &Vec<(&'a str, Vec<&'a ItemTypeSummary>)>,
+  searching: bool,
+  expanded_groups: &HashSet<String>,
+) {
+  for (group_name, mods) in groups {
+    let is_expanded = searching || expanded_groups.contains(*group_name);
+    items.push(PickerGroupHeader::dynamic(group_name, mods.len(), is_expanded).render());
+    if is_expanded {
+      for module in mods {
+        items.push(result_row::ModuleRow::new(module).render());
+      }
+    }
+  }
+}
+
+fn push_ship_group_rows<'a>(
+  items: &mut Vec<Element<'a, Message>>,
+  groups: &Vec<(&'a str, Vec<&'a ItemTypeSummary>)>,
+  searching: bool,
+  expanded_groups: &HashSet<String>,
+  mastery_selection: &HashMap<i32, u8>,
+) {
+  for (group_name, ships) in groups {
+    let is_expanded = searching || expanded_groups.contains(*group_name);
+    items.push(PickerGroupHeader::dynamic(group_name, ships.len(), is_expanded).render());
+    if is_expanded {
+      for ship in ships {
+        let mastery = mastery_selection.get(&ship.id).copied().unwrap_or(1);
+        items.push(result_row::ShipRow::new(ship, mastery).render());
+      }
+    }
+  }
+}
+
 fn filter_skills<'a>(
   skills: &'a [crate::views::skills::skill_data::SkillDef],
   lc: &str,
@@ -116,49 +191,15 @@ impl<'a> SkillPicker<'a> {
 
   /// Renders the skill picker panel into an iced element.
   pub fn render(self) -> Element<'a, Message> {
-    let tabs = TabStrip::new(vec![
-      TabItem {
-        label: "Skills".to_string(),
-        count: None,
-      },
-      TabItem {
-        label: "Ships".to_string(),
-        count: None,
-      },
-      TabItem {
-        label: "Modules".to_string(),
-        count: None,
-      },
-      TabItem {
-        label: "Certs".to_string(),
-        count: None,
-      },
-    ])
-    .active(self.picker_tab)
-    .render(Message::PickerTabChanged);
-
+    let tabs = build_picker_tabs(self.picker_tab);
     let body: Element<'_, Message> = match self.picker_tab {
       1 => self.ships_tab(),
       2 => self.modules_tab(),
       3 => self.certs_tab(),
       _ => self.skills_tab(),
     };
-
     let content = column([tabs, body]).height(Length::Fill).width(Length::Fill);
-
-    container(content)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::RAISED)),
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: 0.0.into(),
-          width: 0.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
+    picker_container(content)
   }
 
   fn certs_tab(self) -> Element<'a, Message> {
@@ -195,15 +236,7 @@ impl<'a> SkillPicker<'a> {
     let mut items: Vec<Element<'_, Message>> =
       vec![PickerSearchBar::new(self.search_query, "Search modules\u{2026}").render()];
     let groups = utils::collect_item_groups(self.modules, &lc, searching);
-    for (group_name, mods) in &groups {
-      let is_expanded = searching || self.expanded_groups.contains(*group_name);
-      items.push(PickerGroupHeader::dynamic(group_name, mods.len(), is_expanded).render());
-      if is_expanded {
-        for module in mods {
-          items.push(result_row::ModuleRow::new(module).render());
-        }
-      }
-    }
+    push_module_group_rows(&mut items, &groups, searching, self.expanded_groups);
     items.push(Space::new().height(12.0).into());
     scrollable(column(items).width(Length::Fill))
       .height(Length::Fill)
@@ -220,16 +253,13 @@ impl<'a> SkillPicker<'a> {
     let mut items: Vec<Element<'_, Message>> =
       vec![PickerSearchBar::new(self.search_query, "Search ships\u{2026}").render()];
     let groups = utils::collect_item_groups(self.ships, &lc, searching);
-    for (group_name, ships) in &groups {
-      let is_expanded = searching || self.expanded_groups.contains(*group_name);
-      items.push(PickerGroupHeader::dynamic(group_name, ships.len(), is_expanded).render());
-      if is_expanded {
-        for ship in ships {
-          let mastery = self.ship_mastery_selection.get(&ship.id).copied().unwrap_or(1);
-          items.push(result_row::ShipRow::new(ship, mastery).render());
-        }
-      }
-    }
+    push_ship_group_rows(
+      &mut items,
+      &groups,
+      searching,
+      self.expanded_groups,
+      self.ship_mastery_selection,
+    );
     items.push(Space::new().height(12.0).into());
     scrollable(column(items).width(Length::Fill))
       .height(Length::Fill)

@@ -17,6 +17,33 @@ pub use row::Component as Row;
 use super::{ComputedQueueItem, Message, State};
 use crate::style::{color, spacing};
 
+fn build_queue_container(items: &[ComputedQueueItem], skip_n: usize) -> Element<'static, Message> {
+  if items.len() <= skip_n {
+    return EmptyState::new().render();
+  }
+  let total_secs: f32 = items.iter().map(|i| i.duration_secs).sum();
+  let total_n = items.len() - skip_n;
+
+  let mut row_els: Vec<Element<'_, Message>> = vec![ColHeader::new().render()];
+  for (i, item) in items.iter().enumerate().skip(skip_n) {
+    row_els.push(Row::new(item.clone(), i - skip_n).render());
+  }
+  row_els.push(Footer::new(total_n, total_secs).render());
+
+  container(column(row_els).width(Length::Fill))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: 10.0.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
 pub struct Component<'a, 'b> {
   state: &'a State,
   items: &'b [ComputedQueueItem],
@@ -40,32 +67,7 @@ where
       .and_then(|c| c.active_training())
       .is_some();
     let skip_n = if has_active { 1 } else { 0 };
-
-    let queue_container: Element<'_, Message> = if self.items.len() <= skip_n {
-      EmptyState::new().render()
-    } else {
-      let total_secs: f32 = self.items.iter().map(|i| i.duration_secs).sum();
-      let total_n = self.items.len() - skip_n;
-
-      let mut row_els: Vec<Element<'_, Message>> = vec![ColHeader::new().render()];
-      for (i, item) in self.items.iter().enumerate().skip(skip_n) {
-        row_els.push(Row::new(item.clone(), i - skip_n).render());
-      }
-      row_els.push(Footer::new(total_n, total_secs).render());
-
-      container(column(row_els).width(Length::Fill))
-        .width(Length::Fill)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::surface::RAISED)),
-          border: Border {
-            color: color::border::SUBTLE,
-            radius: 10.0.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        })
-        .into()
-    };
+    let queue_container = build_queue_container(self.items, skip_n);
 
     container(queue_container)
       .width(Length::Fill)

@@ -66,6 +66,29 @@ impl Component {
   }
 }
 
+fn role_badge_el(is_primary: bool, is_secondary: bool) -> Element<'static, Message> {
+  if is_primary || is_secondary {
+    let label = if is_primary { "PRIMARY" } else { "SECONDARY" };
+    container(
+      text(label)
+        .font(mono::REGULAR)
+        .size(9.0)
+        .style(|_| iced::widget::text::Style {
+          color: Some(color::accent::PLASMA),
+        }),
+    )
+    .padding(Padding {
+      top: 0.0,
+      bottom: 0.0,
+      left: 8.0,
+      right: 0.0,
+    })
+    .into()
+  } else {
+    Space::new().width(0.0).into()
+  }
+}
+
 fn label_row(key: AttrKey, total_val: u32, is_primary: bool, is_secondary: bool) -> Element<'static, Message> {
   row([
     text(key.label())
@@ -76,25 +99,7 @@ fn label_row(key: AttrKey, total_val: u32, is_primary: bool, is_secondary: bool)
       })
       .width(Length::Fill)
       .into(),
-    if is_primary || is_secondary {
-      container(
-        text(if is_primary { "PRIMARY" } else { "SECONDARY" })
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .padding(Padding {
-        top: 0.0,
-        bottom: 0.0,
-        left: 8.0,
-        right: 0.0,
-      })
-      .into()
-    } else {
-      Space::new().width(0.0).into()
-    },
+    role_badge_el(is_primary, is_secondary),
     Space::new().width(Length::Fill).into(),
     text(total_val.to_string())
       .font(mono::MEDIUM)

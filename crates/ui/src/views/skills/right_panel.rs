@@ -38,28 +38,9 @@ impl<'a> Component<'a> {
   }
 
   pub fn render(self) -> Element<'a, Message> {
-    let tabs = [
-      (RightTab::Browse, "Browse"),
-      (RightTab::Attrs, "Attributes"),
-      (RightTab::Plans, "Plans"),
-    ];
-    let tab_btns: Vec<Element<'_, Message>> = tabs
-      .iter()
-      .map(|(tab, label)| TabButton::new(*tab, label, self.state.right_tab == *tab).render())
-      .collect();
-    let tab_bar = column([
-      row(tab_btns).width(Length::Fill).into(),
-      components::Separator::horizontal().render(),
-    ])
-    .width(Length::Fill);
+    let tab_bar = build_tab_bar(self.state);
     let confirm_id = self.state.confirm_delete_plan_id.as_deref();
-    let tab_content: Element<'_, Message> = match self.state.right_tab {
-      RightTab::Browse => Browser::new(self.state).render().map(Message::BrowserTab),
-      RightTab::Attrs => Attributes::new(self.state).render().map(|m| match m {}),
-      RightTab::Plans => Plans::new(&self.state.plans, self.state.plans_loaded, confirm_id)
-        .render()
-        .map(Message::PlansTab),
-    };
+    let tab_content = build_tab_content(self.state, confirm_id);
     let panel = column([tab_bar.into(), scrollable(tab_content).height(Length::Fill).into()]).height(Length::Fill);
     container(panel)
       .width(Length::Fill)
@@ -69,6 +50,33 @@ impl<'a> Component<'a> {
         ..container::Style::default()
       })
       .into()
+  }
+}
+
+fn build_tab_bar(state: &State) -> iced::widget::Column<'_, Message> {
+  let tabs = [
+    (RightTab::Browse, "Browse"),
+    (RightTab::Attrs, "Attributes"),
+    (RightTab::Plans, "Plans"),
+  ];
+  let tab_btns: Vec<Element<'_, Message>> = tabs
+    .iter()
+    .map(|(tab, label)| TabButton::new(*tab, label, state.right_tab == *tab).render())
+    .collect();
+  column([
+    row(tab_btns).width(Length::Fill).into(),
+    components::Separator::horizontal().render(),
+  ])
+  .width(Length::Fill)
+}
+
+fn build_tab_content<'a>(state: &'a State, confirm_id: Option<&'a str>) -> Element<'a, Message> {
+  match state.right_tab {
+    RightTab::Browse => Browser::new(state).render().map(Message::BrowserTab),
+    RightTab::Attrs => Attributes::new(state).render().map(|m| match m {}),
+    RightTab::Plans => Plans::new(&state.plans, state.plans_loaded, confirm_id)
+      .render()
+      .map(Message::PlansTab),
   }
 }
 

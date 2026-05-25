@@ -145,6 +145,28 @@ fn confirm_row(plan_id: String) -> Element<'static, Message> {
   .into()
 }
 
+fn open_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: None,
+    border: Border {
+      color: if active {
+        color::accent::PLASMA
+      } else {
+        color::border::SUBTLE
+      },
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: if active {
+      color::accent::PLASMA
+    } else {
+      color::text::PRIMARY
+    },
+    ..button::Style::default()
+  }
+}
+
 fn open_btn(plan_id: String) -> Element<'static, Message> {
   button(
     text("Open")
@@ -161,23 +183,30 @@ fn open_btn(plan_id: String) -> Element<'static, Message> {
     right: spacing::SPACE_3,
   })
   .on_press(Message::OpenPlan(plan_id))
-  .style(|_, status| button::Style {
+  .style(|_, status| open_btn_style(status))
+  .into()
+}
+
+fn delete_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
     background: None,
     border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
-        _ => color::border::SUBTLE,
+      color: if active {
+        color::status::DANGER
+      } else {
+        Color::TRANSPARENT
       },
       radius: 6.0.into(),
       width: 1.0,
     },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
-      _ => color::text::PRIMARY,
+    text_color: if active {
+      color::status::DANGER
+    } else {
+      color::text::TERTIARY
     },
     ..button::Style::default()
-  })
-  .into()
+  }
 }
 
 fn delete_btn(plan_id: String) -> Element<'static, Message> {
@@ -196,22 +225,7 @@ fn delete_btn(plan_id: String) -> Element<'static, Message> {
     right: 8.0,
   })
   .on_press(Message::DeleteRequested(plan_id))
-  .style(|_, status| button::Style {
-    background: None,
-    border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::status::DANGER,
-        _ => Color::TRANSPARENT,
-      },
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::status::DANGER,
-      _ => color::text::TERTIARY,
-    },
-    ..button::Style::default()
-  })
+  .style(|_, status| delete_btn_style(status))
   .into()
 }
 
@@ -247,6 +261,28 @@ fn confirm_delete_btn(plan_id: String) -> Element<'static, Message> {
   .into()
 }
 
+fn cancel_delete_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: None,
+    border: Border {
+      color: if active {
+        color::border::DEFAULT
+      } else {
+        color::border::SUBTLE
+      },
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: if active {
+      color::text::PRIMARY
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  }
+}
+
 fn cancel_delete_btn(_plan_id: String) -> Element<'static, Message> {
   button(
     text("Cancel")
@@ -263,22 +299,7 @@ fn cancel_delete_btn(_plan_id: String) -> Element<'static, Message> {
     right: 8.0,
   })
   .on_press(Message::DeleteCancelled)
-  .style(|_, status| button::Style {
-    background: None,
-    border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
-        _ => color::border::SUBTLE,
-      },
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
+  .style(|_, status| cancel_delete_btn_style(status))
   .into()
 }
 

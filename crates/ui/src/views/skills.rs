@@ -89,13 +89,18 @@ impl State {
 }
 
 fn attr_value_from_attrs(attrs: &CharacterAttributes, key: AttrKey) -> u32 {
-  match key {
-    AttrKey::Perception => attrs.perception as u32,
-    AttrKey::Willpower => attrs.willpower as u32,
-    AttrKey::Intelligence => attrs.intelligence as u32,
-    AttrKey::Memory => attrs.memory as u32,
-    AttrKey::Charisma => attrs.charisma as u32,
-  }
+  let values = [
+    (AttrKey::Perception, attrs.perception as u32),
+    (AttrKey::Willpower, attrs.willpower as u32),
+    (AttrKey::Intelligence, attrs.intelligence as u32),
+    (AttrKey::Memory, attrs.memory as u32),
+    (AttrKey::Charisma, attrs.charisma as u32),
+  ];
+  values
+    .iter()
+    .find(|(k, _)| *k == key)
+    .map(|(_, v)| *v)
+    .unwrap_or_else(|| key.value())
 }
 
 /// Messages produced by the skills view.
@@ -119,18 +124,22 @@ pub enum Message {
   SkillGroupsLoaded(Vec<SkillGroupDef>),
 }
 
-/// Returns a subscription that tracks cursor movement during pane drag.
-pub fn subscription(state: &State) -> Subscription<Message> {
-  if !state.dragging_pane {
-    return Subscription::none();
-  }
-  iced::event::listen_with(|event, _status, _id| match event {
+fn pane_drag_event(event: Event) -> Option<Message> {
+  match event {
     Event::Mouse(mouse::Event::CursorMoved {
       position,
     }) => Some(Message::PaneDrag(position.x)),
     Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
     _ => None,
-  })
+  }
+}
+
+/// Returns a subscription that tracks cursor movement during pane drag.
+pub fn subscription(state: &State) -> Subscription<Message> {
+  if !state.dragging_pane {
+    return Subscription::none();
+  }
+  iced::event::listen_with(|event, _status, _id| pane_drag_event(event))
 }
 
 /// Format SP as compact string: "47.32M", "5.10K", "256"
@@ -159,13 +168,19 @@ pub fn queue_levels(queue: &[QueueItem]) -> HashMap<String, u8> {
 /// Processes a skills message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
+    Message::Picker(msg) => update_picker(state, msg),
+    msg => update_non_picker(state, msg),
+  }
+  iced::Task::none()
+}
+
+fn update_non_picker(state: &mut State, msg: Message) {
+  match msg {
     Message::PaneDrag(x) => update_pane_drag(state, x),
     Message::PaneDragEnd => update_pane_drag_end(state),
     Message::PaneDragStart => update_pane_drag_start(state),
-    Message::Picker(msg) => update_picker(state, msg),
     msg => update_non_pane(state, msg),
   }
-  iced::Task::none()
 }
 
 fn update_non_pane(state: &mut State, msg: Message) {
@@ -243,18 +258,20 @@ fn update_right_panel(state: &mut State, msg: right_panel::Message) {
 }
 
 fn update_right_plans_tab(state: &mut State, tab_msg: right_panel::plans_tab::Message) {
+  use right_panel::plans_tab::Message as M;
   match tab_msg {
-    right_panel::plans_tab::Message::DeleteCancelled => {
-      state.confirm_delete_plan_id = None;
-    }
-    right_panel::plans_tab::Message::DeleteConfirmed(_) => {}
-    right_panel::plans_tab::Message::DeleteRequested(id) => {
-      state.confirm_delete_plan_id = Some(id);
-    }
-    right_panel::plans_tab::Message::FromQueue => {}
-    right_panel::plans_tab::Message::NewPlan => {}
-    right_panel::plans_tab::Message::OpenPlan(_) => {}
+    M::DeleteCancelled => update_plans_tab_delete_cancelled(state),
+    M::DeleteRequested(id) => update_plans_tab_delete_requested(state, id),
+    M::DeleteConfirmed(_) | M::FromQueue | M::NewPlan | M::OpenPlan(_) => {}
   }
+}
+
+fn update_plans_tab_delete_cancelled(state: &mut State) {
+  state.confirm_delete_plan_id = None;
+}
+
+fn update_plans_tab_delete_requested(state: &mut State, id: String) {
+  state.confirm_delete_plan_id = Some(id);
 }
 
 fn update_skill_groups_loaded(state: &mut State, groups: Vec<SkillGroupDef>) {

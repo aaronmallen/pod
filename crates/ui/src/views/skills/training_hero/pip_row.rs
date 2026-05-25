@@ -47,19 +47,22 @@ impl Component {
   }
 }
 
+fn pip_colors(i: u8, current: u8, target: u8) -> (Color, Color) {
+  if i <= current {
+    (color::text::PRIMARY, color::text::PRIMARY)
+  } else if i == target {
+    (color::accent::PLASMA, color::accent::PLASMA)
+  } else if i < target {
+    (color::accent::PLASMA_MUTED, color::accent::PLASMA_HALF)
+  } else {
+    (Color::TRANSPARENT, color::border::SUBTLE)
+  }
+}
+
 pub fn pip_ladder<'a>(current: u8, target: u8) -> Element<'a, Message> {
   let pips: Vec<Element<'_, Message>> = (1u8..=5)
     .map(|i| {
-      let (bg, border) = if i <= current {
-        (color::text::PRIMARY, color::text::PRIMARY)
-      } else if i == target {
-        (color::accent::PLASMA, color::accent::PLASMA)
-      } else if i < target {
-        (color::accent::PLASMA_MUTED, color::accent::PLASMA_HALF)
-      } else {
-        (Color::TRANSPARENT, color::border::SUBTLE)
-      };
-
+      let (bg, border) = pip_colors(i, current, target);
       container(Space::new())
         .width(12.0)
         .height(8.0)
@@ -80,12 +83,6 @@ pub fn pip_ladder<'a>(current: u8, target: u8) -> Element<'a, Message> {
 }
 
 pub fn roman(n: u8) -> &'static str {
-  match n {
-    1 => "I",
-    2 => "II",
-    3 => "III",
-    4 => "IV",
-    5 => "V",
-    _ => "?",
-  }
+  const NUMERALS: [&str; 6] = ["?", "I", "II", "III", "IV", "V"];
+  NUMERALS.get(n as usize).copied().unwrap_or("?")
 }

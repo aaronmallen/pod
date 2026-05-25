@@ -55,15 +55,7 @@ impl<'a> Component<'a> {
   ) where
     'a: 'g,
   {
-    let filtered: Vec<_> = if lc.is_empty() {
-      group.skills.iter().collect()
-    } else {
-      group
-        .skills
-        .iter()
-        .filter(|s| s.name.to_lowercase().contains(lc))
-        .collect()
-    };
+    let filtered = filter_group_skills(group, lc);
     if filtered.is_empty() {
       return;
     }
@@ -82,17 +74,40 @@ impl<'a> Component<'a> {
       .render(),
     );
     if is_expanded {
-      for skill in &filtered {
-        let char_level = self
-          .state
-          .char_skill_map
-          .get(skill.name.as_str())
-          .map(|(l, _)| *l)
-          .unwrap_or(0);
-        let queue_level = q_levels.get(skill.name.as_str()).copied().unwrap_or(char_level);
-        group_els.push(SkillRow::new(skill, char_level, queue_level).render());
-      }
+      self.push_expanded_skill_rows(group_els, &filtered, q_levels);
     }
+  }
+
+  fn push_expanded_skill_rows<'g>(
+    &self,
+    group_els: &mut Vec<Element<'_, Message>>,
+    filtered: &[&'g pod_model::SkillDef],
+    q_levels: &std::collections::HashMap<String, u8>,
+  ) where
+    'a: 'g,
+  {
+    for skill in filtered {
+      let char_level = self
+        .state
+        .char_skill_map
+        .get(skill.name.as_str())
+        .map(|(l, _)| *l)
+        .unwrap_or(0);
+      let queue_level = q_levels.get(skill.name.as_str()).copied().unwrap_or(char_level);
+      group_els.push(SkillRow::new(skill, char_level, queue_level).render());
+    }
+  }
+}
+
+fn filter_group_skills<'g>(group: &'g pod_model::SkillGroupDef, lc: &str) -> Vec<&'g pod_model::SkillDef> {
+  if lc.is_empty() {
+    group.skills.iter().collect()
+  } else {
+    group
+      .skills
+      .iter()
+      .filter(|s| s.name.to_lowercase().contains(lc))
+      .collect()
   }
 }
 

@@ -16,8 +16,8 @@ use crate::{
   views::wallet::{Message, State, Tab},
 };
 
-fn tab_bar(state: &State) -> Element<'_, Message> {
-  let tabs = vec![
+fn tab_items(state: &State) -> Vec<TabItem> {
+  vec![
     TabItem {
       label: "Market".to_string(),
       count: Some(state.filtered_market.len()),
@@ -30,19 +30,30 @@ fn tab_bar(state: &State) -> Element<'_, Message> {
       label: "Journal".to_string(),
       count: Some(state.filtered_journal.len()),
     },
-  ];
-  let active_index = match state.active_tab {
+  ]
+}
+
+fn tab_index_to_tab(i: usize) -> Tab {
+  match i {
+    0 => Tab::Market,
+    1 => Tab::Contracts,
+    _ => Tab::Journal,
+  }
+}
+
+fn tab_to_index(tab: &Tab) -> usize {
+  match tab {
     Tab::Market => 0,
     Tab::Contracts => 1,
     Tab::Journal => 2,
-  };
-  TabStrip::new(tabs).active(active_index).render(|i| {
-    Message::TabSelected(match i {
-      0 => Tab::Market,
-      1 => Tab::Contracts,
-      _ => Tab::Journal,
-    })
-  })
+  }
+}
+
+fn tab_bar(state: &State) -> Element<'_, Message> {
+  let active_index = tab_to_index(&state.active_tab);
+  TabStrip::new(tab_items(state))
+    .active(active_index)
+    .render(|i| Message::TabSelected(tab_index_to_tab(i)))
 }
 
 /// Builder for the wallet main panel.

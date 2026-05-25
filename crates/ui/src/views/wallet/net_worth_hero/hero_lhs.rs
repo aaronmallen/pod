@@ -1,7 +1,7 @@
 //! Left-hand side of the net worth hero: label, value, and change badge.
 
 use iced::{
-  Background, Border, Element, Padding, Theme,
+  Background, Border, Color, Element, Padding, Theme,
   widget::{Space, column, container, text},
 };
 
@@ -44,48 +44,9 @@ impl HeroLhs {
     } else {
       color::status::DANGER
     };
-    let hero_label: Element<'_, Message> = text("NET WORTH")
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into();
-    let hero_value: Element<'_, Message> = text(format::fmt_isk_full(self.current))
-      .font(body::MEDIUM)
-      .size(32.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into();
-    let change_sign = if self.is_up { "▲" } else { "▼" };
-    let change_str = format!(
-      "{} {} · {}{:.2}%",
-      change_sign,
-      format::fmt_isk(self.change.abs()),
-      if self.change_pct >= 0.0 { "+" } else { "-" },
-      self.change_pct.abs(),
-    );
-    let change_badge: Element<'_, Message> = container(text(change_str).font(mono::MEDIUM).size(11.0).style(
-      move |_: &Theme| iced::widget::text::Style {
-        color: Some(change_color),
-      },
-    ))
-    .padding(Padding {
-      top: 4.0,
-      bottom: 4.0,
-      left: 10.0,
-      right: 10.0,
-    })
-    .style(move |_| container::Style {
-      background: Some(Background::Color(color::with_alpha(change_color, 0.10))),
-      border: Border {
-        radius: 4.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into();
+    let hero_label = net_worth_label();
+    let hero_value = net_worth_value(self.current);
+    let change_badge = change_badge(self.change, self.change_pct, self.is_up, change_color);
     column([
       hero_label,
       Space::new().height(6.0).into(),
@@ -95,4 +56,59 @@ impl HeroLhs {
     ])
     .into()
   }
+}
+
+fn net_worth_label<'a>() -> Element<'a, Message> {
+  text("NET WORTH")
+    .font(mono::REGULAR)
+    .size(9.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    })
+    .into()
+}
+
+fn net_worth_value(current: f64) -> Element<'static, Message> {
+  text(format::fmt_isk_full(current))
+    .font(body::MEDIUM)
+    .size(32.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::PRIMARY),
+    })
+    .into()
+}
+
+fn change_badge(change: f64, change_pct: f64, is_up: bool, change_color: Color) -> Element<'static, Message> {
+  let change_sign = if is_up { "▲" } else { "▼" };
+  let pct_sign = if change_pct >= 0.0 { "+" } else { "-" };
+  let change_str = format!(
+    "{} {} · {}{:.2}%",
+    change_sign,
+    format::fmt_isk(change.abs()),
+    pct_sign,
+    change_pct.abs(),
+  );
+  container(
+    text(change_str)
+      .font(mono::MEDIUM)
+      .size(11.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(change_color),
+      }),
+  )
+  .padding(Padding {
+    top: 4.0,
+    bottom: 4.0,
+    left: 10.0,
+    right: 10.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(change_color, 0.10))),
+    border: Border {
+      radius: 4.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
 }

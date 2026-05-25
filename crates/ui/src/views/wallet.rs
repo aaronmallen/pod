@@ -305,18 +305,25 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 fn scope_gate(state: &State) -> Option<Element<'_, Message>> {
   let char_id = state.selected_character()?;
   let wc = state.characters.iter().find(|c| c.id == char_id)?;
-  let granted_str = wc.granted_scopes.as_deref().unwrap_or("");
-  let granted: Vec<&str> = if granted_str.is_empty() {
-    Vec::new()
-  } else {
-    granted_str.split(' ').collect()
-  };
+  let granted = parse_granted_scopes(wc.granted_scopes.as_deref().unwrap_or(""));
   if missing_scopes(&granted, &["esi-wallet.read_character_wallet.v1"]).is_empty() {
     return None;
   }
-  Some(ScopeMissing::new(char_id, "wallet").render().map(|m| match m {
+  Some(scope_missing_element(char_id))
+}
+
+fn parse_granted_scopes(granted_str: &str) -> Vec<&str> {
+  if granted_str.is_empty() {
+    Vec::new()
+  } else {
+    granted_str.split(' ').collect()
+  }
+}
+
+fn scope_missing_element(char_id: i64) -> Element<'static, Message> {
+  ScopeMissing::new(char_id, "wallet").render().map(|m| match m {
     scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-  }))
+  })
 }
 
 fn wallet_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
@@ -531,10 +538,15 @@ fn update_hover_changed(state: &mut State, hover: Option<HoverData>) {
 
 fn update_simple_display(state: &mut State, msg: Message) {
   match msg {
-    Message::ContractsTab(_) | Message::ReauthorizeCharacter(_) => {}
     Message::DivisionSelected(d) => update_division_selected(state, d),
     Message::HoverChanged(h) => update_hover_changed(state, h),
     Message::SearchChanged(q) => update_search_changed(state, q),
+    msg => update_simple_display_nav(state, msg),
+  }
+}
+
+fn update_simple_display_nav(state: &mut State, msg: Message) {
+  match msg {
     Message::TabSelected(t) => update_tab_selected(state, t),
     Message::TimeframeChanged(tf) => update_timeframe_changed(state, tf),
     _ => {}

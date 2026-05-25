@@ -35,13 +35,29 @@ pub fn status_color_for(status: &str) -> Color {
 
 /// Map a contract status string to a human-readable label.
 pub fn status_label_for(status: &str) -> String {
+  known_status_label(status)
+    .map(str::to_string)
+    .unwrap_or_else(|| status.replace('_', " "))
+}
+
+fn known_status_label(status: &str) -> Option<&'static str> {
+  known_status_label_active(status).or_else(|| known_status_label_terminal(status))
+}
+
+fn known_status_label_active(status: &str) -> Option<&'static str> {
   match status {
-    "finished" => "Finished".to_string(),
-    "in_progress" => "In Progress".to_string(),
-    "outstanding" => "Outstanding".to_string(),
-    "outbid" => "Outbid".to_string(),
-    "failed" => "Failed".to_string(),
-    "expired" => "Expired".to_string(),
-    other => other.replace('_', " "),
+    "finished" => Some("Finished"),
+    "in_progress" => Some("In Progress"),
+    "outstanding" => Some("Outstanding"),
+    _ => None,
+  }
+}
+
+fn known_status_label_terminal(status: &str) -> Option<&'static str> {
+  match status {
+    "outbid" => Some("Outbid"),
+    "failed" => Some("Failed"),
+    "expired" => Some("Expired"),
+    _ => None,
   }
 }

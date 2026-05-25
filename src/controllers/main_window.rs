@@ -106,14 +106,20 @@ pub fn reauth(services: &Services) -> iced::Task<Message> {
   trigger_reauth(services)
 }
 
-fn view_subscription(state: &State) -> Subscription<Message> {
+fn subscription_for_streaming_views(state: &State) -> Subscription<Message> {
   match &state.active_view {
-    ActiveView::Assets(s) => assets::subscription(s).map(Message::Assets),
-    ActiveView::Characters(chars_state) => characters_ctrl::subscription(chars_state).map(Message::Characters),
-    ActiveView::Mail(s) => mail::subscription(s).map(Message::Mail),
     ActiveView::Skills(s) => skills_ctrl::subscription(s).map(Message::Skills),
     ActiveView::Wallet(s) => wallet::subscription(s).map(Message::Wallet),
     _ => Subscription::none(),
+  }
+}
+
+fn view_subscription(state: &State) -> Subscription<Message> {
+  match &state.active_view {
+    ActiveView::Assets(s) => assets::subscription(s).map(Message::Assets),
+    ActiveView::Characters(s) => characters_ctrl::subscription(s).map(Message::Characters),
+    ActiveView::Mail(s) => mail::subscription(s).map(Message::Mail),
+    _ => subscription_for_streaming_views(state),
   }
 }
 
@@ -307,6 +313,35 @@ fn collect_new_item_icons(msg: &assets::Message, s: &assets::State) -> Option<Ve
   }
 }
 
+fn parse_stockpile_items(form: &assets::StockpileForm) -> Vec<(i32, i32)> {
+  form
+    .items
+    .iter()
+    .filter_map(|it| {
+      let t = it.type_id_text.trim().parse::<i32>().ok()?;
+      let q = it.qty_text.trim().parse::<i32>().ok()?;
+      Some((t, q))
+    })
+    .collect()
+}
+
+fn build_stockpile_db_task(db: pod_db::Repo, form: &assets::StockpileForm) -> iced::Task<Message> {
+  let name = form.name.clone();
+  let location_id = form.location_id_text.trim().parse::<i64>().ok();
+  let items = parse_stockpile_items(form);
+  if let Some(editing_id) = form.editing_id {
+    iced::Task::perform(
+      assets_ctrl::update_stockpile(db, editing_id, name, location_id, None, items),
+      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
+    )
+  } else {
+    iced::Task::perform(
+      assets_ctrl::create_stockpile(db, name, location_id, None, items),
+      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
+    )
+  }
+}
+
 fn handle_assets_stockpile_save(
   s: &mut assets::State,
   msg: assets::Message,
@@ -318,29 +353,8 @@ fn handle_assets_stockpile_save(
   let Some(db) = services.db.clone() else {
     return iced::Task::none();
   };
-  let name = form.name.clone();
-  let location_id = form.location_id_text.trim().parse::<i64>().ok();
-  let items: Vec<(i32, i32)> = form
-    .items
-    .iter()
-    .filter_map(|it| {
-      let t = it.type_id_text.trim().parse::<i32>().ok()?;
-      let q = it.qty_text.trim().parse::<i32>().ok()?;
-      Some((t, q))
-    })
-    .collect();
   let base_task = assets::update(s, msg).map(Message::Assets);
-  let db_task = if let Some(editing_id) = form.editing_id {
-    iced::Task::perform(
-      assets_ctrl::update_stockpile(db, editing_id, name, location_id, None, items),
-      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
-    )
-  } else {
-    iced::Task::perform(
-      assets_ctrl::create_stockpile(db, name, location_id, None, items),
-      |piles| Message::Assets(assets::Message::StockpilesLoaded(piles)),
-    )
-  };
+  let db_task = build_stockpile_db_task(db, &form);
   s.stockpile_form = None;
   iced::Task::batch([base_task, db_task])
 }
@@ -361,6 +375,30 @@ fn handle_assets_stockpile_delete(
   iced::Task::batch([base_task, delete_task])
 }
 
+fn build_values_task(
+  should_refresh: bool,
+  s: &mut assets::State,
+  chars_snapshot: Vec<Character>,
+) -> Option<iced::Task<Message>> {
+  if !should_refresh {
+    return None;
+  }
+  let assets_snapshot = s.assets.clone();
+  s.values_loading = true;
+  Some(iced::Task::perform(
+    assets_ctrl::asset_values_breakdown(assets_snapshot, chars_snapshot),
+    |data| Message::Assets(assets::Message::ValuesLoaded(data)),
+  ))
+}
+
+fn build_icon_task(new_items: Option<Vec<(i32, String)>>, services: &Services) -> Option<iced::Task<Message>> {
+  let (items, esi, db) = (new_items?, services.esi_client.clone()?, services.db.clone()?);
+  Some(iced::Task::perform(
+    async move { assets_ctrl::fetch_type_icons(items, esi, db).await },
+    |icons| Message::Assets(assets::Message::ItemIconsLoaded(icons)),
+  ))
+}
+
 fn build_assets_follow_up_tasks(
   base_task: iced::Task<Message>,
   should_refresh_values: bool,
@@ -369,25 +407,8 @@ fn build_assets_follow_up_tasks(
   chars_snapshot: Vec<Character>,
   services: &Services,
 ) -> iced::Task<Message> {
-  let values_task = if should_refresh_values {
-    let assets_snapshot = s.assets.clone();
-    s.values_loading = true;
-    Some(iced::Task::perform(
-      assets_ctrl::asset_values_breakdown(assets_snapshot, chars_snapshot),
-      |data| Message::Assets(assets::Message::ValuesLoaded(data)),
-    ))
-  } else {
-    None
-  };
-  let icon_task =
-    if let (Some(items), Some(esi), Some(db)) = (new_items, services.esi_client.clone(), services.db.clone()) {
-      Some(iced::Task::perform(
-        async move { assets_ctrl::fetch_type_icons(items, esi, db).await },
-        |icons| Message::Assets(assets::Message::ItemIconsLoaded(icons)),
-      ))
-    } else {
-      None
-    };
+  let values_task = build_values_task(should_refresh_values, s, chars_snapshot);
+  let icon_task = build_icon_task(new_items, services);
   let mut tasks = vec![base_task];
   if let Some(vt) = values_task {
     tasks.push(vt);
@@ -398,38 +419,35 @@ fn build_assets_follow_up_tasks(
   iced::Task::batch(tasks)
 }
 
+fn extract_character_detail_nav_id(msg: &character_detail::Message) -> Option<i64> {
+  match msg {
+    character_detail::Message::CharacterSwitched(id) => Some(*id),
+    character_detail::Message::Picker(character_picker::Message::Select(
+      character_picker::PickerSelection::Character(id),
+    )) => Some(*id),
+    _ => None,
+  }
+}
+
+fn navigate_to_character_detail(state: &mut State, char_id: i64, services: &Services) -> iced::Task<Message> {
+  let Some(character) = state.characters.iter().find(|c| *c.id() == char_id).cloned() else {
+    return iced::Task::none();
+  };
+  let (detail_state, detail_task) = character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
+  state.active_view = ActiveView::CharacterDetail(detail_state);
+  detail_task.map(Message::CharacterDetail)
+}
+
 fn update_character_detail(
   state: &mut State,
   msg: character_detail::Message,
   services: &Services,
 ) -> iced::Task<Message> {
-  match &msg {
-    character_detail::Message::CharacterSwitched(char_id) => {
-      let char_id = *char_id;
-      let Some(character) = state.characters.iter().find(|c| *c.id() == char_id).cloned() else {
-        return iced::Task::none();
-      };
-      let (detail_state, detail_task) =
-        character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
-      state.active_view = ActiveView::CharacterDetail(detail_state);
-      return detail_task.map(Message::CharacterDetail);
-    }
-    character_detail::Message::Picker(character_picker::Message::Select(
-      character_picker::PickerSelection::Character(char_id),
-    )) => {
-      let char_id = *char_id;
-      let Some(character) = state.characters.iter().find(|c| *c.id() == char_id).cloned() else {
-        return iced::Task::none();
-      };
-      let (detail_state, detail_task) =
-        character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
-      state.active_view = ActiveView::CharacterDetail(detail_state);
-      return detail_task.map(Message::CharacterDetail);
-    }
-    character_detail::Message::ReauthorizeCharacter(_char_id) => {
-      return trigger_reauth(services);
-    }
-    _ => {}
+  if let Some(char_id) = extract_character_detail_nav_id(&msg) {
+    return navigate_to_character_detail(state, char_id, services);
+  }
+  if let character_detail::Message::ReauthorizeCharacter(_) = &msg {
+    return trigger_reauth(services);
   }
   let ActiveView::CharacterDetail(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -437,12 +455,26 @@ fn update_character_detail(
   character_detail_ctrl::update(s, msg, services).map(Message::CharacterDetail)
 }
 
-fn update_characters(state: &mut State, msg: characters::Message, services: &Services) -> iced::Task<Message> {
-  let is_drag_end = matches!(
-    &msg,
+fn is_characters_drag_end(msg: &characters::Message) -> bool {
+  matches!(
+    msg,
     characters::Message::CharactersTab(m)
       if matches!(m, characters::characters_tab::Message::DragEnd)
-  );
+  )
+}
+
+fn sync_character_order_after_drag(state: &mut State) {
+  let ActiveView::Characters(s) = &state.active_view else {
+    return;
+  };
+  let new_order: Vec<i64> = s.all_characters.iter().map(|c| *c.id()).collect();
+  state
+    .characters
+    .sort_by_key(|c| new_order.iter().position(|&id| id == *c.id()).unwrap_or(usize::MAX));
+}
+
+fn update_characters(state: &mut State, msg: characters::Message, services: &Services) -> iced::Task<Message> {
+  let is_drag_end = is_characters_drag_end(&msg);
   if let Some(task) = handle_characters_navigation(state, &msg, services) {
     return task;
   }
@@ -452,12 +484,53 @@ fn update_characters(state: &mut State, msg: characters::Message, services: &Ser
   };
   let task = characters_ctrl::update(chars_state, msg, services).map(Message::Characters);
   if is_drag_end {
-    let new_order: Vec<i64> = chars_state.all_characters.iter().map(|c| *c.id()).collect();
-    state
-      .characters
-      .sort_by_key(|c| new_order.iter().position(|&id| id == *c.id()).unwrap_or(usize::MAX));
+    sync_character_order_after_drag(state);
   }
   task
+}
+
+fn nav_to_character_detail_from_list(
+  state: &mut State,
+  char_id: i64,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  let character = state.characters.iter().find(|c| *c.id() == char_id).cloned()?;
+  state.active_nav = Nav::Characters;
+  let (detail_state, detail_task) = character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
+  state.active_view = ActiveView::CharacterDetail(detail_state);
+  Some(detail_task.map(Message::CharacterDetail))
+}
+
+fn nav_to_skills_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
+  state.active_nav = Nav::Skills;
+  let (mut s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
+  let _ = skills_ctrl::update(
+    &mut s,
+    skills::Message::Picker(character_picker::Message::Select(
+      character_picker::PickerSelection::Character(char_id),
+    )),
+    services,
+  );
+  state.active_view = ActiveView::Skills(s);
+  Some(task.map(Message::Skills))
+}
+
+fn nav_to_wallet_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
+  state.active_nav = Nav::Wallet;
+  let (mut s, task) = wallet_ctrl::new(
+    state.characters.clone(),
+    state.corporations.clone(),
+    services,
+    state.wallet_right_rail_width,
+  );
+  let _ = wallet::update(
+    &mut s,
+    wallet::Message::CharacterPicker(character_picker::Message::Select(
+      character_picker::PickerSelection::Character(char_id),
+    )),
+  );
+  state.active_view = ActiveView::Wallet(s);
+  Some(task.map(Message::Wallet))
 }
 
 fn handle_characters_navigation(
@@ -466,46 +539,14 @@ fn handle_characters_navigation(
   services: &Services,
 ) -> Option<iced::Task<Message>> {
   match msg {
-    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToDetail(char_id)) => {
-      let char_id = *char_id;
-      let character = state.characters.iter().find(|c| *c.id() == char_id).cloned()?;
-      state.active_nav = Nav::Characters;
-      let (detail_state, detail_task) =
-        character_detail_ctrl::new(char_id, character, state.characters.clone(), services);
-      state.active_view = ActiveView::CharacterDetail(detail_state);
-      Some(detail_task.map(Message::CharacterDetail))
+    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToDetail(id)) => {
+      nav_to_character_detail_from_list(state, *id, services)
     }
-    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToSkills(char_id)) => {
-      let char_id = *char_id;
-      state.active_nav = Nav::Skills;
-      let (mut s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
-      let _ = skills_ctrl::update(
-        &mut s,
-        skills::Message::Picker(character_picker::Message::Select(
-          character_picker::PickerSelection::Character(char_id),
-        )),
-        services,
-      );
-      state.active_view = ActiveView::Skills(s);
-      Some(task.map(Message::Skills))
+    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToSkills(id)) => {
+      nav_to_skills_for_character(state, *id, services)
     }
-    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToWallet(char_id)) => {
-      let char_id = *char_id;
-      state.active_nav = Nav::Wallet;
-      let (mut s, task) = wallet_ctrl::new(
-        state.characters.clone(),
-        state.corporations.clone(),
-        services,
-        state.wallet_right_rail_width,
-      );
-      let _ = wallet::update(
-        &mut s,
-        wallet::Message::CharacterPicker(character_picker::Message::Select(
-          character_picker::PickerSelection::Character(char_id),
-        )),
-      );
-      state.active_view = ActiveView::Wallet(s);
-      Some(task.map(Message::Wallet))
+    characters::Message::CharactersTab(characters::characters_tab::Message::NavigateToWallet(id)) => {
+      nav_to_wallet_for_character(state, *id, services)
     }
     _ => None,
   }
@@ -559,12 +600,14 @@ fn apply_confirm_remove_corporation(state: &mut State) {
   }
 }
 
+fn apply_corporation_added(state: &mut State, corp: &Corporation) {
+  state.corporations.retain(|c: &Corporation| *c.id() != *corp.id());
+  state.corporations.push(corp.clone());
+}
+
 fn apply_corporations_tab_update(state: &mut State, tab_msg: &characters::corporations_tab::Message) {
   match tab_msg {
-    characters::corporations_tab::Message::CorporationAdded(corp) => {
-      state.corporations.retain(|c: &Corporation| *c.id() != *corp.id());
-      state.corporations.push(corp.clone());
-    }
+    characters::corporations_tab::Message::CorporationAdded(corp) => apply_corporation_added(state, corp),
     characters::corporations_tab::Message::CorporationRemoved(id) => {
       state.corporations.retain(|c: &Corporation| *c.id() != *id);
     }
@@ -573,6 +616,25 @@ fn apply_corporations_tab_update(state: &mut State, tab_msg: &characters::corpor
     }
     _ => {}
   }
+}
+
+fn apply_character_skill_update(c: &mut Character, skills: &[CharacterSkill], tq: &[pod_model::TrainingQueueEntry]) {
+  let skill_map: std::collections::HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
+  for s in c.skills_mut().iter_mut() {
+    s.is_active_training = false;
+    if let Some(updated) = skill_map.get(&s.skill_id) {
+      s.is_active_training = updated.is_active_training;
+      s.skill_name = updated.skill_name.clone();
+      s.skillpoints = updated.skillpoints;
+      s.trained_level = updated.trained_level;
+      s.training_end_time = updated.training_end_time;
+      s.training_level_end_sp = updated.training_level_end_sp;
+      s.training_level_start_sp = updated.training_level_start_sp;
+      s.training_start_sp = updated.training_start_sp;
+      s.training_start_time = updated.training_start_time;
+    }
+  }
+  *c.training_queue_mut() = tq.to_vec();
 }
 
 fn apply_skill_queues_refreshed(
@@ -584,22 +646,7 @@ fn apply_skill_queues_refreshed(
     let Some(c) = state.characters.iter_mut().find(|c| *c.id() == *id) else {
       continue;
     };
-    let skill_map: std::collections::HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
-    for s in c.skills_mut().iter_mut() {
-      s.is_active_training = false;
-      if let Some(updated) = skill_map.get(&s.skill_id) {
-        s.is_active_training = updated.is_active_training;
-        s.skill_name = updated.skill_name.clone();
-        s.skillpoints = updated.skillpoints;
-        s.trained_level = updated.trained_level;
-        s.training_end_time = updated.training_end_time;
-        s.training_level_end_sp = updated.training_level_end_sp;
-        s.training_level_start_sp = updated.training_level_start_sp;
-        s.training_start_sp = updated.training_start_sp;
-        s.training_start_time = updated.training_start_time;
-      }
-    }
-    *c.training_queue_mut() = tq.clone();
+    apply_character_skill_update(c, skills, tq);
   }
   if let ActiveView::Skills(s) = &mut state.active_view {
     let updated_chars = state.characters.clone();

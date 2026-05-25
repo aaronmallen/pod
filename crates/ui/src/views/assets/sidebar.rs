@@ -1,90 +1,29 @@
 //! Location tree sidebar — scrollable container with the 5-level region/constellation/system/location/container tree.
 
+pub mod all_assets_row;
 pub mod constellation_row;
 pub mod container_row;
 pub mod location_row;
+pub mod locations_label;
 pub mod region_row;
 pub mod system_row;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub use all_assets_row::Component as AllAssetsRow;
 pub use constellation_row::Component as ConstellationRow;
 pub use container_row::Component as ContainerRow;
 use iced::{
-  Background, Border, Element, Length, Padding, Theme,
-  widget::{button, column, container, row, scrollable, text},
+  Background, Border, Element, Length,
+  widget::{column, container, scrollable},
 };
 pub use location_row::Component as LocationRow;
+pub use locations_label::Component as LocationsLabel;
 pub use region_row::Component as RegionRow;
 pub use system_row::Component as SystemRow;
 
 use super::{Message, State, asset_value};
-use crate::{
-  asset_filter_query::AssetFilterQuery,
-  components::section_label,
-  style::{
-    button as btn_style, color,
-    typography::{body, mono},
-  },
-};
-
-fn all_assets_row_label(active: bool) -> Element<'static, Message> {
-  text("All assets")
-    .font(body::REGULAR)
-    .size(12.0)
-    .style(move |_: &Theme| iced::widget::text::Style {
-      color: Some(if active {
-        color::text::PRIMARY
-      } else {
-        color::text::STRONG
-      }),
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-fn all_assets_row<'a>(active: bool) -> Element<'a, Message> {
-  let glyph_color = color::text::SECONDARY;
-  let msg = Message::LocationSelected(None);
-  let row_children: Vec<Element<'_, Message>> = vec![
-    text("∑")
-      .font(mono::REGULAR)
-      .size(11.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(glyph_color),
-      })
-      .into(),
-    all_assets_row_label(active),
-  ];
-
-  button(
-    row(row_children)
-      .spacing(6.0)
-      .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 5.0,
-    bottom: 5.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .width(Length::Fill)
-  .on_press(msg)
-  .style(move |_, status| btn_style::list_item_active(active, status))
-  .into()
-}
-
-fn locations_label() -> Element<'static, Message> {
-  container(section_label("Locations"))
-    .padding(Padding {
-      top: 16.0,
-      bottom: 5.0,
-      left: 18.0,
-      right: 14.0,
-    })
-    .width(Length::Fill)
-    .into()
-}
+use crate::{asset_filter_query::AssetFilterQuery, style::color};
 
 fn collect_containers<'a>(
   source: &'a [super::AssetRecord],
@@ -302,8 +241,8 @@ fn count_filtered(
 
 fn build_sidebar_items<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   let mut items: Vec<Element<'_, Message>> = Vec::new();
-  items.push(locations_label());
-  items.push(all_assets_row(state.selected_loc.is_none()));
+  items.push(LocationsLabel::new().render());
+  items.push(AllAssetsRow::new(state.selected_loc.is_none()).render());
 
   let source: &[super::AssetRecord] = &state.assets;
   let owner_id = state.selected_corporation().or_else(|| state.selected_character());

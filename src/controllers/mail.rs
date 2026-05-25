@@ -1337,6 +1337,10 @@ fn update_snooze_set(state: &mut State, iso: String, services: &Services) -> ice
   let snooze_until = if adding { Some(iso.clone()) } else { None };
   if adding {
     msg.snoozed = Some(iso);
+    // Remove from inbox view immediately when snoozed while in inbox/all.
+    if matches!(state.selected_folder, Folder::Inbox | Folder::All) {
+      state.selected_message_id = None;
+    }
   } else {
     msg.snoozed = None;
   }
@@ -1398,6 +1402,48 @@ fn update_star_toggle(state: &mut State) -> iced::Task<Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod derive_preview {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_joined_text_when_shorter_than_max() {
+      let paragraphs = vec!["Hello world".to_string(), "How are you".to_string()];
+
+      let result = derive_preview(&paragraphs, 250);
+
+      assert_eq!(result, "Hello world How are you");
+    }
+
+    #[test]
+    fn it_truncates_at_word_boundary_when_text_exceeds_max() {
+      let long = "word ".repeat(60);
+      let paragraphs = vec![long];
+
+      let result = derive_preview(&paragraphs, 30);
+
+      assert!(result.len() <= 30);
+      assert!(!result.ends_with(' '));
+    }
+
+    #[test]
+    fn it_returns_empty_for_empty_paragraphs() {
+      let result = derive_preview(&[], 250);
+
+      assert_eq!(result, "");
+    }
+
+    #[test]
+    fn it_falls_back_to_hard_cut_when_no_whitespace_boundary() {
+      let paragraphs = vec!["abcdefghijklmnop".to_string()];
+
+      let result = derive_preview(&paragraphs, 5);
+
+      assert_eq!(result, "abcde");
+    }
+  }
 
   mod date_bucket_label {
     use pretty_assertions::assert_eq;

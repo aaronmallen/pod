@@ -512,20 +512,20 @@ fn folder_display_label(folder: &Folder) -> &'static str {
 
 fn message_matches_folder_kind(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox",
-    Folder::Starred => m.starred,
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Sent => m.folder == "sent",
-    Folder::Drafts => m.folder == "drafts",
+    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
     Folder::Archive => m.folder == "archive",
-    Folder::Trash => m.folder == "trash",
+    Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
+    Folder::Sent => m.folder == "sent",
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Starred => m.starred,
+    Folder::Trash => m.folder == "trash",
   }
 }
 
 fn message_in_folder(m: &MailMessage, folder: &Folder, account_id: i64) -> bool {
   if matches!(folder, Folder::All) {
-    return m.folder == "inbox";
+    return m.folder == "inbox" && m.snoozed.is_none();
   }
   m.character_id == account_id && message_matches_folder_kind(m, folder)
 }

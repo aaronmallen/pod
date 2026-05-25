@@ -37,7 +37,7 @@ fn passes_account_filter(m: &MailMessage, folder: &Folder, account_id: i64) -> b
 
 fn passes_folder_type(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox",
+    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
     Folder::Archive => m.folder == "archive",
     Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),

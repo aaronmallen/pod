@@ -273,7 +273,7 @@ pub fn label_rows<'a>(messages: &'a [super::MailMessage], selected: &'a Folder) 
 
 fn matches_folder_type(m: &super::MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox",
+    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
     Folder::Archive => m.folder == "archive",
     Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),

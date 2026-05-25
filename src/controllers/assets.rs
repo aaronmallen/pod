@@ -296,6 +296,38 @@ fn humanize_flag(flag: &str) -> &'static str {
   }
 }
 
+/// Loads cached structure names from the DB, returning a map of
+/// structure_id → (name, solar_system_id).
+async fn load_structures_from_db(db: &pod_db::Repo, unique_struct_ids: &[i64]) -> HashMap<i64, (String, i64)> {
+  db.universe()
+    .structure_cache()
+    .find_by_ids(unique_struct_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, name, sys_id)| (id, (name, sys_id.unwrap_or(0))))
+    .collect()
+}
+
+/// Returns `Ok(result)` if all IDs are resolved, otherwise `Err` listing
+/// the still-missing IDs.
+fn check_all_resolved(
+  unique_struct_ids: Vec<i64>,
+  result: HashMap<i64, (String, i64)>,
+) -> Result<HashMap<i64, (String, i64)>, String> {
+  let still_missing: Vec<i64> = unique_struct_ids
+    .into_iter()
+    .filter(|id| !result.contains_key(id))
+    .collect();
+  if still_missing.is_empty() {
+    Ok(result)
+  } else {
+    Err(format!(
+      "could not resolve ESI names for structure IDs: {still_missing:?}"
+    ))
+  }
+}
+
 /// Resolves player structure names: DB cache first, ESI fallback for unknowns.
 ///
 /// Returns a map of structure_id → (name, solar_system_id). The solar_system_id
@@ -314,16 +346,7 @@ async fn resolve_structure_names(
   }
 
   let unique_struct_ids: Vec<i64> = unique_ids(locs.iter().map(|(id, _)| *id));
-
-  let mut result: HashMap<i64, (String, i64)> = db
-    .universe()
-    .structure_cache()
-    .find_by_ids(&unique_struct_ids)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(id, name, sys_id)| (id, (name, sys_id.unwrap_or(0))))
-    .collect();
+  let mut result = load_structures_from_db(db, &unique_struct_ids).await;
 
   let missing: Vec<i64> = unique_struct_ids
     .iter()
@@ -340,17 +363,7 @@ async fn resolve_structure_names(
     }
   }
 
-  let still_missing: Vec<i64> = unique_struct_ids
-    .into_iter()
-    .filter(|id| !result.contains_key(id))
-    .collect();
-  if still_missing.is_empty() {
-    Ok(result)
-  } else {
-    Err(format!(
-      "could not resolve ESI names for structure IDs: {still_missing:?}"
-    ))
-  }
+  check_all_resolved(unique_struct_ids, result)
 }
 
 /// Queries ESI for each missing structure, trying available characters in turn.
@@ -737,21 +750,38 @@ fn resolve_constellation_region(row: &RawAssetRow, maps: &AssetMaps) -> (i32, St
   (constellation_id, constellation_name, region_id, region_name)
 }
 
+/// Returns the solar system ID for a station location.
+fn solar_system_id_for_station(location_id: i64, station_map: &HashMap<i32, Station>) -> Option<i32> {
+  if location_id >= i32::MAX as i64 {
+    return None;
+  }
+  station_map.get(&(location_id as i32)).map(|s| *s.solar_system_id())
+}
+
+/// Returns the solar system ID for a solar-system or space location.
+fn solar_system_id_for_space(location_id: i64) -> Option<i32> {
+  i32::try_from(location_id).ok()
+}
+
+/// Returns the solar system ID for a player-structure location.
+fn solar_system_id_for_structure(location_id: i64, structure_name_map: &HashMap<i64, (String, i64)>) -> Option<i32> {
+  structure_name_map.get(&location_id).and_then(
+    |(_, sys_id)| {
+      if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
+    },
+  )
+}
+
 /// Returns the solar system ID for a row's top-level location, if resolvable.
 fn resolve_solar_system_id(row: &RawAssetRow, maps: &AssetMaps) -> Option<i32> {
   if row.location_type == "station" && row.location_id < i32::MAX as i64 {
-    maps
-      .station_map
-      .get(&(row.location_id as i32))
-      .map(|s| *s.solar_system_id())
+    solar_system_id_for_station(row.location_id, &maps.station_map)
   } else if (row.location_type == "solar_system" || row.location_type == "space") && row.location_id < i32::MAX as i64 {
-    i32::try_from(row.location_id).ok()
+    solar_system_id_for_space(row.location_id)
   } else {
     let is_at_structure = row.location_id >= i32::MAX as i64 && !maps.item_index.contains_key(&row.location_id);
     if is_at_structure {
-      maps.structure_name_map.get(&row.location_id).and_then(|(_, sys_id)| {
-        if *sys_id > 0 { i32::try_from(*sys_id).ok() } else { None }
-      })
+      solar_system_id_for_structure(row.location_id, &maps.structure_name_map)
     } else {
       None
     }
@@ -1237,13 +1267,10 @@ fn build_top_items(valued: &[(&AssetRecord, f64)]) -> Vec<TopItem> {
   items
 }
 
-pub async fn fetch_type_icons(
-  items: Vec<(i32, String)>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> Vec<(i32, String, Vec<u8>)> {
+/// Groups item requests by variant and loads all matching icons from the DB cache.
+async fn load_cached_icons_by_variant(items: &[(i32, String)], db: &pod_db::Repo) -> Vec<(i32, String, Vec<u8>)> {
   let mut by_variant: HashMap<String, Vec<i32>> = HashMap::new();
-  for (type_id, variant) in &items {
+  for (type_id, variant) in items {
     by_variant.entry(variant.clone()).or_default().push(*type_id);
   }
   let mut cached: Vec<(i32, String, Vec<u8>)> = Vec::new();
@@ -1256,23 +1283,42 @@ pub async fn fetch_type_icons(
       .unwrap_or_default();
     cached.extend(rows.into_iter().map(|(id, data)| (id, variant.clone(), data)));
   }
+  cached
+}
+
+/// Fetches one icon from ESI and persists it to the DB cache.
+async fn fetch_and_persist_icon(
+  type_id: i32,
+  variant: &str,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Option<Vec<u8>> {
+  let fetch_result = match variant {
+    "bpc" => esi.images().type_bpc(type_id as i64, 32).await,
+    "bpo" => esi.images().type_bpo(type_id as i64, 32).await,
+    _ => esi.images().type_icon(type_id as i64, 32).await,
+  };
+  if let Ok(bytes) = fetch_result {
+    let _ = db.universe().type_icons().upsert(type_id, variant, bytes.clone()).await;
+    Some(bytes)
+  } else {
+    None
+  }
+}
+
+pub async fn fetch_type_icons(
+  items: Vec<(i32, String)>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> Vec<(i32, String, Vec<u8>)> {
+  let cached = load_cached_icons_by_variant(&items, &db).await;
   let cached_keys: HashSet<(i32, String)> = cached.iter().map(|(id, v, _)| (*id, v.clone())).collect();
   let mut results = cached;
   for (type_id, variant) in items {
     if cached_keys.contains(&(type_id, variant.clone())) {
       continue;
     }
-    let fetch_result = match variant.as_str() {
-      "bpc" => esi.images().type_bpc(type_id as i64, 32).await,
-      "bpo" => esi.images().type_bpo(type_id as i64, 32).await,
-      _ => esi.images().type_icon(type_id as i64, 32).await,
-    };
-    if let Ok(bytes) = fetch_result {
-      let _ = db
-        .universe()
-        .type_icons()
-        .upsert(type_id, &variant, bytes.clone())
-        .await;
+    if let Some(bytes) = fetch_and_persist_icon(type_id, &variant, &esi, &db).await {
       results.push((type_id, variant, bytes));
     }
   }

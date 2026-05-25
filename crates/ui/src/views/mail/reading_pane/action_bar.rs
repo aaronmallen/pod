@@ -12,6 +12,44 @@ use crate::{
   style::{color, typography::body},
 };
 
+fn toolbar_btn_text_color(active: bool) -> iced::Color {
+  if active {
+    color::status::CAUTION
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn toolbar_btn_hover_text_color(danger: bool) -> iced::Color {
+  if danger {
+    color::status::DANGER
+  } else {
+    color::text::PRIMARY
+  }
+}
+
+fn toolbar_btn_style(
+  text_color: iced::Color,
+  hover_text_color: iced::Color,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+  move |_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: if hovered {
+        Some(Background::Color(color::state::HOVER_OVERLAY))
+      } else {
+        None
+      },
+      border: Border {
+        radius: 6.0.into(),
+        ..Border::default()
+      },
+      text_color: if hovered { hover_text_color } else { text_color },
+      ..button::Style::default()
+    }
+  }
+}
+
 fn mail_toolbar_btn<'a>(
   icon: Icon,
   label: &str,
@@ -19,16 +57,8 @@ fn mail_toolbar_btn<'a>(
   danger: bool,
   msg: Option<Message>,
 ) -> Element<'a, Message> {
-  let text_color = if active {
-    color::status::CAUTION
-  } else {
-    color::text::SECONDARY
-  };
-  let hover_text_color = if danger {
-    color::status::DANGER
-  } else {
-    color::text::PRIMARY
-  };
+  let text_color = toolbar_btn_text_color(active);
+  let hover_text_color = toolbar_btn_hover_text_color(danger);
   let icon_el = icon.size(14.0).render::<Message>();
   let label_el = text(label.to_string())
     .font(body::MEDIUM)
@@ -44,21 +74,7 @@ fn mail_toolbar_btn<'a>(
       left: 10.0,
       right: 10.0,
     })
-    .style(move |_, status| button::Style {
-      background: match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-        _ => None,
-      },
-      border: Border {
-        radius: 6.0.into(),
-        ..Border::default()
-      },
-      text_color: match status {
-        button::Status::Hovered | button::Status::Pressed => hover_text_color,
-        _ => text_color,
-      },
-      ..button::Style::default()
-    });
+    .style(toolbar_btn_style(text_color, hover_text_color));
   if let Some(m) = msg {
     btn.on_press(m).into()
   } else {

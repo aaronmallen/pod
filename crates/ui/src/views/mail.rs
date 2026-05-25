@@ -496,17 +496,47 @@ fn context_menu_danger_btn(label: &str, msg: Message) -> Element<'_, Message> {
   .into()
 }
 
-fn folder_display_label(folder: &Folder) -> &'static str {
+const FOLDER_LABELS: &[(u8, &str)] = &[
+  (0, "All Inboxes"),
+  (1, "Inbox"),
+  (2, "Starred"),
+  (3, "Snoozed"),
+  (4, "Sent"),
+  (5, "Drafts"),
+  (6, "Archive"),
+  (7, "Trash"),
+];
+
+fn folder_discriminant(folder: &Folder) -> u8 {
   match folder {
-    Folder::All => "All Inboxes",
-    Folder::Inbox => "Inbox",
-    Folder::Starred => "Starred",
-    Folder::Snoozed => "Snoozed",
-    Folder::Sent => "Sent",
-    Folder::Drafts => "Drafts",
-    Folder::Archive => "Archive",
-    Folder::Trash => "Trash",
-    Folder::Label(_) => "Label",
+    Folder::All => 0,
+    Folder::Inbox => 1,
+    Folder::Starred => 2,
+    Folder::Snoozed => 3,
+    Folder::Sent => 4,
+    Folder::Drafts => 5,
+    Folder::Archive => 6,
+    Folder::Trash => 7,
+    Folder::Label(_) => 255,
+  }
+}
+
+fn folder_display_label(folder: &Folder) -> &'static str {
+  let key = folder_discriminant(folder);
+  FOLDER_LABELS
+    .iter()
+    .find(|(k, _)| *k == key)
+    .map(|(_, v)| *v)
+    .unwrap_or("Label")
+}
+
+fn message_matches_folder_kind_ext(m: &MailMessage, folder: &Folder) -> bool {
+  match folder {
+    Folder::Sent => m.folder == "sent",
+    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Starred => m.starred,
+    Folder::Trash => m.folder == "trash",
+    _ => false,
   }
 }
 
@@ -516,10 +546,7 @@ fn message_matches_folder_kind(m: &MailMessage, folder: &Folder) -> bool {
     Folder::Archive => m.folder == "archive",
     Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
-    Folder::Sent => m.folder == "sent",
-    Folder::Snoozed => m.snoozed.is_some(),
-    Folder::Starred => m.starred,
-    Folder::Trash => m.folder == "trash",
+    _ => message_matches_folder_kind_ext(m, folder),
   }
 }
 

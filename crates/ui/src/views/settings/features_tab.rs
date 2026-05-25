@@ -1,13 +1,15 @@
 //! Features settings panel: feature-flag toggles with search.
 
 mod feature_row;
+pub mod feature_search_bar;
 pub mod feature_toggle;
 
 use feature_row::FeatureRow;
+pub use feature_search_bar::FeatureSearchBar;
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Space, column, container, row, scrollable, text, text_input},
+  widget::{Space, column, container, row, scrollable, text},
 };
 
 use crate::style::{color, radius, spacing};
@@ -184,7 +186,7 @@ fn features_panel_header(state: &State, total_shown: usize) -> Element<'_, Messa
   )
   .size(13.0)
   .color(color::text::SECONDARY);
-  let search_row = features_search_row(state, total_shown);
+  let search_row = FeatureSearchBar::new(&state.search_query, total_shown).render();
   column([
     row([panel_title.into(), Space::new().width(Length::Fill).into()])
       .align_y(Vertical::Center)
@@ -226,65 +228,6 @@ fn features_scroll_body<'a>(state: &'a State, flags: Vec<FlagData>) -> Element<'
   }))
   .width(Length::Fill)
   .height(Length::Fill)
-  .into()
-}
-
-fn features_search_row(state: &State, total_shown: usize) -> Element<'_, Message> {
-  let search_icon = crate::components::Icon::search()
-    .size(14.0)
-    .color(color::text::SECONDARY)
-    .render::<Message>();
-  let count_chip = container(text(format!("{total_shown}")).size(9.0).color(color::text::TERTIARY))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
-    })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-  container(
-    row([
-      search_icon,
-      text_input("Filter features\u{2026}", &state.search_query)
-        .on_input(Message::SearchChanged)
-        .size(13.0)
-        .style(|_, _| text_input::Style {
-          background: Background::Color(iced::Color::TRANSPARENT),
-          border: Border::default(),
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          selection: color::accent::PLASMA_SUBTLE,
-          value: color::text::PRIMARY,
-        })
-        .into(),
-      count_chip.into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .max_width(480.0)
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: radius::CHIP.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
   .into()
 }
 

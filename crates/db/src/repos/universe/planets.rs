@@ -72,11 +72,7 @@ impl<'a> Repo<'a> {
     if records.is_empty() {
       return Ok(());
     }
-    let mut active = Vec::with_capacity(records.len());
-    for record in records {
-      record.validate()?;
-      active.push(ActiveModel::from(record.clone()));
-    }
+    let active = validate_records(records)?;
     for chunk in active.chunks(200) {
       Entity::insert_many(chunk.to_vec())
         .on_conflict(
@@ -96,6 +92,15 @@ impl<'a> Repo<'a> {
     }
     Ok(())
   }
+}
+
+fn validate_records(records: &[Planet]) -> Result<Vec<ActiveModel>, Error> {
+  let mut active = Vec::with_capacity(records.len());
+  for record in records {
+    record.validate()?;
+    active.push(ActiveModel::from(record.clone()));
+  }
+  Ok(active)
 }
 
 #[cfg(test)]

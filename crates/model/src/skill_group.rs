@@ -2,13 +2,24 @@
 
 /// One of the five EVE neural training attributes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum AttrKey {
-  Perception,
-  Willpower,
-  Intelligence,
-  Memory,
-  Charisma,
+  Perception = 0,
+  Willpower = 1,
+  Intelligence = 2,
+  Memory = 3,
+  Charisma = 4,
 }
+
+/// Static table of `(eve_id, base_value, implant_bonus, short_name, display_name)` per
+/// `AttrKey`, ordered to match `AttrKey::ALL`.
+const ATTR_TABLE: [(u8, u32, i32, &str, &str); 5] = [
+  (167, 27, 5, "Per", "Perception"),
+  (168, 24, 5, "Wil", "Willpower"),
+  (165, 21, 4, "Int", "Intelligence"),
+  (166, 19, 4, "Mem", "Memory"),
+  (164, 17, 3, "Cha", "Charisma"),
+];
 
 impl AttrKey {
   pub const ALL: [AttrKey; 5] = [
@@ -20,37 +31,31 @@ impl AttrKey {
   ];
 
   pub fn value(self) -> u32 {
-    self.attr_tuple().1
+    self.attr_row().1
   }
 
   pub fn implant(self) -> i32 {
-    self.attr_tuple().2
+    self.attr_row().2
   }
 
   pub fn short(self) -> &'static str {
-    self.attr_tuple().3
+    self.attr_row().3
   }
 
   pub fn label(self) -> &'static str {
-    self.attr_tuple().4
+    self.attr_row().4
   }
 
-  fn attr_tuple(self) -> (u8, u32, i32, &'static str, &'static str) {
-    match self {
-      AttrKey::Perception => (167, 27, 5, "Per", "Perception"),
-      AttrKey::Willpower => (168, 24, 5, "Wil", "Willpower"),
-      AttrKey::Intelligence => (165, 21, 4, "Int", "Intelligence"),
-      AttrKey::Memory => (166, 19, 4, "Mem", "Memory"),
-      AttrKey::Charisma => (164, 17, 3, "Cha", "Charisma"),
-    }
+  fn attr_row(self) -> (u8, u32, i32, &'static str, &'static str) {
+    ATTR_TABLE[self as usize]
   }
 
   /// Convert from EVE dogma attribute value (164–168) to `AttrKey`.
   pub fn from_eve_id(id: u8) -> Self {
-    AttrKey::ALL
+    ATTR_TABLE
       .iter()
-      .find(|k| k.attr_tuple().0 == id)
-      .copied()
+      .position(|row| row.0 == id)
+      .and_then(|i| AttrKey::ALL.get(i).copied())
       .unwrap_or(AttrKey::Perception)
   }
 }

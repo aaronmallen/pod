@@ -17,18 +17,30 @@ pub async fn ensure_valid_token(corp: &Corporation, esi: &pod_esi::Client, db: &
     return Some(corp.access_token().clone());
   }
 
+  tracing::info!("auth: refreshing token for corporation {} ({})", corp.id(), corp.name());
+  let grant = build_corp_grant(corp);
+  refresh_and_persist_corp_token(corp, &grant, esi, db).await
+}
+
+fn build_corp_grant(corp: &Corporation) -> Grant {
   let expires_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*corp.token_expires_at() as u64);
-  let grant = Grant::new(
+  Grant::new(
     corp.access_token().clone(),
     *corp.auth_character_id(),
     String::new(),
     expires_at,
     corp.refresh_token().clone(),
     corp.scopes().clone(),
-  );
+  )
+}
 
-  tracing::info!("auth: refreshing token for corporation {} ({})", corp.id(), corp.name());
-  let new_grant = match esi.auth().refresh(&grant).await {
+async fn refresh_and_persist_corp_token(
+  corp: &Corporation,
+  grant: &Grant,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Option<String> {
+  let new_grant = match esi.auth().refresh(grant).await {
     Ok(g) => g,
     Err(e) => {
       tracing::warn!(

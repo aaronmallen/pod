@@ -140,6 +140,15 @@ async fn seed_core_item_data(
   tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
   r: &Path,
 ) -> Result<(), String> {
+  seed_taxonomy(db, tx, r).await?;
+  seed_dogma_data(db, tx, r).await
+}
+
+async fn seed_taxonomy(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   step(tx, "Seeding item categories\u{2026}").await;
   seed_categories(db, &r.join("categories.yaml")).await?;
 
@@ -147,8 +156,14 @@ async fn seed_core_item_data(
   seed_groups(db, &r.join("groups.yaml")).await?;
 
   step(tx, "Seeding market groups\u{2026}").await;
-  seed_market_groups(db, &r.join("marketGroups.yaml")).await?;
+  seed_market_groups(db, &r.join("marketGroups.yaml")).await
+}
 
+async fn seed_dogma_data(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   let dynamic_path = r.join("dynamicItemAttributes.yaml");
   step(tx, "Seeding item types\u{2026}").await;
   seed_types(db, &r.join("types.yaml"), &r.join("typeDogma.yaml"), &dynamic_path).await?;
@@ -200,6 +215,15 @@ async fn seed_universe_tables(
   tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
   r: &Path,
 ) -> Result<(), String> {
+  seed_space_structure(db, tx, r).await?;
+  seed_space_objects(db, tx, r).await
+}
+
+async fn seed_space_structure(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   step(tx, "Seeding universe regions\u{2026}").await;
   seed_regions(db, &r.join("mapRegions.yaml")).await?;
 
@@ -207,8 +231,14 @@ async fn seed_universe_tables(
   seed_constellations(db, &r.join("mapConstellations.yaml")).await?;
 
   step(tx, "Seeding solar systems\u{2026}").await;
-  seed_solar_systems(db, &r.join("mapSolarSystems.yaml")).await?;
+  seed_solar_systems(db, &r.join("mapSolarSystems.yaml")).await
+}
 
+async fn seed_space_objects(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   step(tx, "Seeding stars\u{2026}").await;
   seed_stars(db, &r.join("mapStars.yaml")).await?;
 
@@ -239,11 +269,19 @@ fn open_zip_archive(zip_path: &Path) -> Result<zip::ZipArchive<std::fs::File>, S
 fn extract_zip_sync(zip_path: &Path, dest: &Path) -> Result<(), String> {
   let mut archive = open_zip_archive(zip_path)?;
   for i in 0..archive.len() {
-    let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-    let out_path = dest.join(entry.name());
-    extract_zip_entry(&mut entry, &out_path)?;
+    extract_archive_entry(&mut archive, i, dest)?;
   }
   Ok(())
+}
+
+fn extract_archive_entry(
+  archive: &mut zip::ZipArchive<std::fs::File>,
+  index: usize,
+  dest: &Path,
+) -> Result<(), String> {
+  let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
+  let out_path = dest.join(entry.name());
+  extract_zip_entry(&mut entry, &out_path)
 }
 
 fn extract_zip_entry<R: std::io::Read + ?Sized>(
@@ -291,15 +329,20 @@ async fn find_sde_root(extract_dir: &Path) -> PathBuf {
   if extract_dir.join("categories.yaml").exists() {
     return extract_dir.to_owned();
   }
-  if let Ok(mut rd) = tokio::fs::read_dir(extract_dir).await {
-    while let Ok(Some(entry)) = rd.next_entry().await {
-      let path = entry.path();
-      if path.is_dir() && path.join("categories.yaml").exists() {
-        return path;
-      }
+  find_sde_root_in_subdirs(extract_dir)
+    .await
+    .unwrap_or_else(|| extract_dir.to_owned())
+}
+
+async fn find_sde_root_in_subdirs(extract_dir: &Path) -> Option<PathBuf> {
+  let mut rd = tokio::fs::read_dir(extract_dir).await.ok()?;
+  while let Ok(Some(entry)) = rd.next_entry().await {
+    let path = entry.path();
+    if path.is_dir() && path.join("categories.yaml").exists() {
+      return Some(path);
     }
   }
-  extract_dir.to_owned()
+  None
 }
 
 fn extract_build_number(build: &serde_yaml::Value) -> Option<String> {
@@ -706,31 +749,28 @@ async fn seed_solar_systems(db: &pod_db::Repo, path: &Path) -> Result<(), String
 #[tracing::instrument(skip(db))]
 async fn seed_stars(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeStarMap> = read_yaml(path).await?;
-
-  let records: Vec<_> = entries
-    .into_iter()
-    .map(|(id, e)| {
-      let mut m = models::Star::new(id, format!("Star {id}"));
-      m.set_solar_system_id(e.solar_system_id);
-      m.set_item_type_id(e.type_id);
-      if let Some(r) = e.radius {
-        m.set_radius(r as i64);
-      }
-      if let Some(stats) = e.statistics {
-        m.set_spectral_class(stats.spectral_class.unwrap_or_default());
-        m.set_age(stats.age.unwrap_or(0.0) as i64);
-        m.set_luminosity(stats.luminosity.unwrap_or(0.0));
-        m.set_temperature(stats.temperature.unwrap_or(0.0) as i32);
-      }
-      m
-    })
-    .collect();
-
+  let records: Vec<_> = entries.into_iter().map(|(id, e)| build_star(id, e)).collect();
   db.universe()
     .stars()
     .upsert_many(&records)
     .await
     .map_err(|e| e.to_string())
+}
+
+fn build_star(id: i32, e: SdeStarMap) -> models::Star {
+  let mut m = models::Star::new(id, format!("Star {id}"));
+  m.set_solar_system_id(e.solar_system_id);
+  m.set_item_type_id(e.type_id);
+  if let Some(r) = e.radius {
+    m.set_radius(r as i64);
+  }
+  if let Some(stats) = e.statistics {
+    m.set_spectral_class(stats.spectral_class.unwrap_or_default());
+    m.set_age(stats.age.unwrap_or(0.0) as i64);
+    m.set_luminosity(stats.luminosity.unwrap_or(0.0));
+    m.set_temperature(stats.temperature.unwrap_or(0.0) as i32);
+  }
+  m
 }
 
 #[tracing::instrument(skip(db))]

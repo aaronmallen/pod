@@ -78,11 +78,14 @@ fn apply_blocking() -> Result<(), String> {
 }
 
 fn fetch_pending_update() -> Result<cargo_packager_updater::Update, String> {
+  check_for_update()?.ok_or_else(|| "no update available".to_string())
+}
+
+fn check_for_update() -> Result<Option<cargo_packager_updater::Update>, String> {
   build_updater()
     .map_err(|e| e.to_string())?
     .check()
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "no update available".to_string())
+    .map_err(|e| e.to_string())
 }
 
 async fn check_inner() -> Result<Option<String>, String> {
@@ -92,11 +95,11 @@ async fn check_inner() -> Result<Option<String>, String> {
 }
 
 fn check_blocking() -> Result<Option<String>, String> {
-  let updater = build_updater().map_err(|e| e.to_string())?;
-  updater
-    .check()
-    .map(|opt| opt.map(|u| u.version))
-    .map_err(|e| e.to_string())
+  check_for_update().map(extract_update_version)
+}
+
+fn extract_update_version(opt: Option<cargo_packager_updater::Update>) -> Option<String> {
+  opt.map(|u| u.version)
 }
 
 fn handle_apply_result(result: Result<(), String>) -> Message {

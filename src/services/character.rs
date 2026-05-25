@@ -155,22 +155,34 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
     return Some(character.access_token().clone());
   }
 
+  tracing::info!(
+    "auth: refreshing token for character {} ({})",
+    character.id(),
+    character.name()
+  );
+  let grant = build_character_grant(character);
+  refresh_and_persist_character_token(character, &grant, esi, db).await
+}
+
+fn build_character_grant(character: &Character) -> Grant {
   let expires_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*character.token_expires_at() as u64);
-  let grant = Grant::new(
+  Grant::new(
     character.access_token().clone(),
     *character.id(),
     character.name().clone(),
     expires_at,
     character.refresh_token().clone(),
     vec![],
-  );
+  )
+}
 
-  tracing::info!(
-    "auth: refreshing token for character {} ({})",
-    character.id(),
-    character.name()
-  );
-  let new_grant = match esi.auth().refresh(&grant).await {
+async fn refresh_and_persist_character_token(
+  character: &Character,
+  grant: &Grant,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Option<String> {
+  let new_grant = match esi.auth().refresh(grant).await {
     Ok(g) => g,
     Err(e) => {
       tracing::warn!(

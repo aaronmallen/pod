@@ -22,13 +22,21 @@ fn stream() -> impl iced::futures::Stream<Item = (String, String)> {
 }
 
 fn bind_listener() -> Option<tokio::net::TcpListener> {
-  let std_listener = match std::net::TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}")) {
-    Ok(l) => l,
+  let std_listener = bind_std_listener()?;
+  configure_std_listener(std_listener)
+}
+
+fn bind_std_listener() -> Option<std::net::TcpListener> {
+  match std::net::TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}")) {
+    Ok(l) => Some(l),
     Err(e) => {
       tracing::error!("OAuth callback port {CALLBACK_PORT} unavailable: {e}");
-      return None;
+      None
     }
-  };
+  }
+}
+
+fn configure_std_listener(std_listener: std::net::TcpListener) -> Option<tokio::net::TcpListener> {
   if let Err(e) = std_listener.set_nonblocking(true) {
     tracing::error!("OAuth callback listener set_nonblocking failed: {e}");
     return None;

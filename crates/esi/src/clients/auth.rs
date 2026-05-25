@@ -187,9 +187,13 @@ fn extract_scopes(scp: Option<serde_json::Value>) -> Vec<String> {
   match scp {
     None => vec![],
     Some(serde_json::Value::String(s)) => vec![s],
-    Some(serde_json::Value::Array(arr)) => arr.into_iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+    Some(serde_json::Value::Array(arr)) => extract_scopes_from_array(arr),
     Some(_) => vec![],
   }
+}
+
+fn extract_scopes_from_array(arr: Vec<serde_json::Value>) -> Vec<String> {
+  arr.into_iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()
 }
 
 /// Adds the correct `=` padding to a stripped base64url string.

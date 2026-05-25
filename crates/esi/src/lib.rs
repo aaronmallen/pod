@@ -223,15 +223,8 @@ impl ClientBuilder {
   /// Builds the [`Client`], returning an error if validation fails.
   pub fn build(self) -> Result<Client, Error> {
     self.validate().map_err(|e| Error::Internal(e.to_string()))?;
-    let inner = reqwest::Client::builder()
-      .user_agent(concat!("pod/", env!("CARGO_PKG_VERSION")))
-      .timeout(std::time::Duration::from_secs(30))
-      .build()
-      .map_err(Error::Http)?;
-    let cache = match self.cache {
-      CacheType::Disk(path) => CacheStore::Disk(cache::DiskStore::new(path)),
-      CacheType::Memory => CacheStore::Memory(cache::MemoryStore::default()),
-    };
+    let inner = build_reqwest_client()?;
+    let cache = resolve_cache(self.cache);
     let rate_limiter = Arc::new(http::RateLimiter::new());
     let http = http::Client::new(cache, inner, rate_limiter);
     Ok(Client {
@@ -239,6 +232,21 @@ impl ClientBuilder {
       client_id: self.client_id,
       http,
     })
+  }
+}
+
+fn build_reqwest_client() -> Result<reqwest::Client, Error> {
+  reqwest::Client::builder()
+    .user_agent(concat!("pod/", env!("CARGO_PKG_VERSION")))
+    .timeout(std::time::Duration::from_secs(30))
+    .build()
+    .map_err(Error::Http)
+}
+
+fn resolve_cache(cache_type: CacheType) -> CacheStore {
+  match cache_type {
+    CacheType::Disk(path) => CacheStore::Disk(cache::DiskStore::new(path)),
+    CacheType::Memory => CacheStore::Memory(cache::MemoryStore::default()),
   }
 }
 

@@ -125,13 +125,7 @@ impl Client {
     self.rate_limit.check().await;
 
     let cached = self.cache.get(url);
-    let mut req = self.inner.get(url);
-    if let Some(ref entry) = cached {
-      req = req.header("If-None-Match", &entry.0);
-    }
-    if let Some(t) = token {
-      req = req.bearer_auth(t);
-    }
+    let req = self.build_cached_get_request(url, token, cached.as_ref());
 
     tracing::trace!(method = "GET", url = url, cached = cached.is_some(), "esi: request");
     let start = Instant::now();
@@ -158,6 +152,23 @@ impl Client {
     Err(self.map_error_status(status, resp).await)
   }
 
+  /// Builds a GET request with optional ETag and bearer-auth headers.
+  fn build_cached_get_request(
+    &self,
+    url: &str,
+    token: Option<&str>,
+    cached: Option<&(String, bytes::Bytes)>,
+  ) -> reqwest::RequestBuilder {
+    let mut req = self.inner.get(url);
+    if let Some(entry) = cached {
+      req = req.header("If-None-Match", &entry.0);
+    }
+    if let Some(t) = token {
+      req = req.bearer_auth(t);
+    }
+    req
+  }
+
   /// Fetches all pages of a paginated ESI endpoint concurrently and merges them into a single `Vec`.
   ///
   /// Page 1 is fetched first to read the `X-Pages` header; remaining pages are dispatched in
@@ -168,13 +179,27 @@ impl Client {
     url_base: &str,
     token: Option<&str>,
   ) -> Result<Vec<T>, Error> {
+    let (total_pages, mut results) = self.fetch_page1(url_base, token).await?;
+
+    if total_pages > 1 {
+      let remaining = self.fetch_remaining_pages(url_base, token, total_pages).await?;
+      results.extend(remaining);
+    }
+
+    Ok(results)
+  }
+
+  /// Fetches page 1 of a paginated endpoint, returning the total page count
+  /// and the deserialized first-page body.
+  async fn fetch_page1<T: DeserializeOwned>(
+    &self,
+    url_base: &str,
+    token: Option<&str>,
+  ) -> Result<(u32, Vec<T>), Error> {
     let page1_url = UrlBuilder::new(url_base).param("page", "1").build();
     self.rate_limit.check().await;
 
-    let mut req = self.inner.get(&page1_url);
-    if let Some(t) = token {
-      req = req.bearer_auth(t);
-    }
+    let req = build_optional_auth_request(self.inner.get(&page1_url), token);
 
     tracing::trace!(method = "GET", url = url_base, page = 1, "esi: request");
     let start = Instant::now();
@@ -189,14 +214,7 @@ impl Client {
       "esi: response"
     );
 
-    let (total_pages, mut results) = self.parse_page1_response::<T>(url_base, status, resp).await?;
-
-    if total_pages > 1 {
-      let remaining = self.fetch_remaining_pages(url_base, token, total_pages).await?;
-      results.extend(remaining);
-    }
-
-    Ok(results)
+    self.parse_page1_response(url_base, status, resp).await
   }
 
   /// Validates the page-1 response status, handles rate-limit and error cases, and returns
@@ -350,6 +368,17 @@ impl Client {
     token: Option<&str>,
     total_pages: u32,
   ) -> Result<Vec<T>, Error> {
+    let mut set = self.spawn_page_tasks(url_base, token, total_pages);
+    collect_join_set_results(&mut set).await
+  }
+
+  /// Spawns one task per page (2..=`total_pages`) into a `JoinSet`.
+  fn spawn_page_tasks<T: DeserializeOwned + Send + 'static>(
+    &self,
+    url_base: &str,
+    token: Option<&str>,
+    total_pages: u32,
+  ) -> tokio::task::JoinSet<Result<Vec<T>, Error>> {
     let mut set = tokio::task::JoinSet::new();
     for page in 2..=total_pages {
       let http = self.inner.clone();
@@ -358,12 +387,7 @@ impl Client {
       let token = token.map(|t| t.to_owned());
       set.spawn(Self::fetch_page(http, rate_limit, url, token));
     }
-    let mut results = Vec::new();
-    while let Some(result) = set.join_next().await {
-      let page = result.map_err(|e| Error::Internal(e.to_string()))??;
-      results.extend(page);
-    }
-    Ok(results)
+    set
   }
 
   /// Maps a non-2xx status code to the appropriate error variant.
@@ -466,15 +490,8 @@ impl RateLimiter {
 
   /// Reads ESI error-limit headers from `resp` and updates the rate-limit state.
   pub fn update_from_response(&self, resp: &reqwest::Response) {
-    let headers = resp.headers();
-    let remain = headers
-      .get(ESI_ERROR_REMAIN_HEADER)
-      .and_then(|v| v.to_str().ok())
-      .and_then(|s| s.parse::<u32>().ok());
-    let reset = headers
-      .get(ESI_ERROR_RESET_HEADER)
-      .and_then(|v| v.to_str().ok())
-      .and_then(|s| s.parse::<u64>().ok());
+    let remain = parse_header_u32(resp, ESI_ERROR_REMAIN_HEADER);
+    let reset = parse_header_u64(resp, ESI_ERROR_RESET_HEADER);
     if let (Some(remain), Some(reset)) = (remain, reset) {
       self.update(remain, reset);
     }
@@ -629,6 +646,41 @@ async fn stream_response_to_file(resp: &mut reqwest::Response, dest: &std::path:
 /// Converts an I/O error into [`Error::Internal`].
 fn io_err(e: std::io::Error) -> Error {
   Error::Internal(e.to_string())
+}
+
+/// Parses a response header value as a `u32`, returning `None` if absent or unparseable.
+fn parse_header_u32(resp: &reqwest::Response, name: &str) -> Option<u32> {
+  resp
+    .headers()
+    .get(name)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|s| s.parse().ok())
+}
+
+/// Parses a response header value as a `u64`, returning `None` if absent or unparseable.
+fn parse_header_u64(resp: &reqwest::Response, name: &str) -> Option<u64> {
+  resp
+    .headers()
+    .get(name)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|s| s.parse().ok())
+}
+
+/// Attaches a bearer-auth header to `req` when `token` is `Some`.
+fn build_optional_auth_request(req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+  if let Some(t) = token { req.bearer_auth(t) } else { req }
+}
+
+/// Drains a `JoinSet` of paged results, extending `results` with each page.
+async fn collect_join_set_results<T: Send + 'static>(
+  set: &mut tokio::task::JoinSet<Result<Vec<T>, Error>>,
+) -> Result<Vec<T>, Error> {
+  let mut results = Vec::new();
+  while let Some(result) = set.join_next().await {
+    let page = result.map_err(|e| Error::Internal(e.to_string()))??;
+    results.extend(page);
+  }
+  Ok(results)
 }
 
 #[cfg(test)]

@@ -12,24 +12,6 @@ use crate::{
   views::wallet::{Message, State},
 };
 
-fn separator_v<'a>() -> Element<'a, Message> {
-  use iced::{
-    Background,
-    widget::{Space, container, container::Style},
-  };
-
-  use crate::style::color;
-
-  container(Space::new().width(1.0).height(32.0))
-    .width(1.0)
-    .height(32.0)
-    .style(|_| Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..Style::default()
-    })
-    .into()
-}
-
 /// Builder for the wallet header stats row.
 pub struct Component<'a> {
   state: &'a State,
@@ -73,11 +55,11 @@ impl<'a> Component<'a> {
 
     row([
       liquid_el,
-      separator_v(),
+      super::vertical_separator::VerticalSeparator::new().render(),
       assets_el,
-      separator_v(),
+      super::vertical_separator::VerticalSeparator::new().render(),
       escrow_el,
-      separator_v(),
+      super::vertical_separator::VerticalSeparator::new().render(),
       net_el,
     ])
     .spacing(spacing::SPACE_8)

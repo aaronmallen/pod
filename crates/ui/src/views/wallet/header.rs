@@ -1,30 +1,19 @@
 //! Wallet header — character picker button, stats row, and bottom border.
 
 pub mod stats_row;
+pub mod vertical_separator;
 
 use iced::{
   Background, Element, Length, Padding,
   widget::{Space, column, container, row},
 };
 pub use stats_row::Component as StatsRow;
+pub use vertical_separator::VerticalSeparator;
 
 use crate::{
   style::{color, spacing},
   views::wallet::{Message, State},
 };
-
-fn separator_v<'a>() -> Element<'a, Message> {
-  use iced::widget::Space;
-
-  container(Space::new().width(1.0).height(32.0))
-    .width(1.0)
-    .height(32.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into()
-}
 
 /// Builder for the wallet header.
 pub struct Component<'a> {
@@ -44,7 +33,7 @@ impl<'a> Component<'a> {
     let picker_el = self.state.picker.render().map(Message::CharacterPicker);
     let stats_row = StatsRow::new(self.state).render();
     let content = container(
-      row([picker_el, separator_v(), stats_row])
+      row([picker_el, VerticalSeparator::new().render(), stats_row])
         .align_y(iced::alignment::Vertical::Center)
         .spacing(spacing::SPACE_8),
     )

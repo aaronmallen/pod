@@ -99,11 +99,7 @@ pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta
         let attrs: Vec<AbyssalAttribute> = dynamic
           .dogma_attributes
           .iter()
-          .filter_map(|v| {
-            let attr_id = v.get("attribute_id")?.as_i64()? as i32;
-            let value = v.get("value")?.as_f64()?;
-            Some(AbyssalAttribute::new(attr_id, value))
-          })
+          .map(|v| AbyssalAttribute::new(v.attribute_id, v.value))
           .collect();
 
         let record = AbyssalItemRecord::new(

@@ -143,4 +143,44 @@ mod tests {
       assert!(result.is_err());
     }
   }
+
+  mod dynamic_item {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_deserializes_a_dynamic_item() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/v1/dogma/dynamic/items/47804/1038913810254/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "created_by": 90000001,
+          "dogma_attributes": [
+            { "attribute_id": 6, "value": 1.2 },
+            { "attribute_id": 50, "value": 85.0 },
+            { "attribute_id": 30, "value": 9500.0 }
+          ],
+          "dogma_effects": [
+            { "effect_id": 11, "is_default": true },
+            { "effect_id": 13, "is_default": false }
+          ],
+          "mutator_type_id": 49730,
+          "source_type_id": 2488
+        })))
+        .mount(&server)
+        .await;
+
+      let esi = make_esi(&server.uri());
+      let item = esi.dogma().dynamic_item(47804, 1038913810254).await.unwrap();
+
+      assert_eq!(item.source_type_id, 2488);
+      assert_eq!(item.mutator_type_id, 49730);
+      assert_eq!(item.dogma_attributes.len(), 3);
+      assert_eq!(item.dogma_attributes[0].attribute_id, 6);
+      assert_eq!(item.dogma_attributes[0].value, 1.2);
+      assert_eq!(item.dogma_effects.len(), 2);
+      assert!(item.dogma_effects[0].is_default);
+    }
+  }
 }

@@ -43,12 +43,26 @@ pub struct DogmaEffect {
   pub tracking_speed_attribute_id: Option<i32>,
 }
 
+/// A single dogma attribute value on a dynamic item.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DogmaAttrValue {
+  pub attribute_id: i32,
+  pub value: f64,
+}
+
+/// A single dogma effect entry on a dynamic item.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DogmaEffectValue {
+  pub effect_id: i32,
+  pub is_default: bool,
+}
+
 /// A dynamically mutated item.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DynamicItem {
   pub created_by: i64,
-  pub dogma_attributes: Vec<serde_json::Value>,
-  pub dogma_effects: Vec<serde_json::Value>,
+  pub dogma_attributes: Vec<DogmaAttrValue>,
+  pub dogma_effects: Vec<DogmaEffectValue>,
   pub mutator_type_id: i32,
   pub source_type_id: i32,
 }

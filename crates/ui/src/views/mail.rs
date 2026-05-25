@@ -507,18 +507,28 @@ const FOLDER_LABELS: &[(u8, &str)] = &[
   (7, "Trash"),
 ];
 
-fn folder_discriminant(folder: &Folder) -> u8 {
+fn folder_discriminant_low(folder: &Folder) -> Option<u8> {
   match folder {
-    Folder::All => 0,
-    Folder::Inbox => 1,
-    Folder::Starred => 2,
-    Folder::Snoozed => 3,
-    Folder::Sent => 4,
+    Folder::All => Some(0),
+    Folder::Inbox => Some(1),
+    Folder::Starred => Some(2),
+    Folder::Snoozed => Some(3),
+    Folder::Sent => Some(4),
+    _ => None,
+  }
+}
+
+fn folder_discriminant_high(folder: &Folder) -> u8 {
+  match folder {
     Folder::Drafts => 5,
     Folder::Archive => 6,
     Folder::Trash => 7,
-    Folder::Label(_) => 255,
+    _ => 255,
   }
+}
+
+fn folder_discriminant(folder: &Folder) -> u8 {
+  folder_discriminant_low(folder).unwrap_or_else(|| folder_discriminant_high(folder))
 }
 
 fn folder_display_label(folder: &Folder) -> &'static str {
@@ -638,6 +648,28 @@ fn mail_header_count_col(folder: &Folder, total_messages: usize, total_unread: u
   .into()
 }
 
+fn compose_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: active.then(|| Background::Color(color::state::HOVER_OVERLAY)),
+    border: Border {
+      color: if active {
+        color::border::DEFAULT
+      } else {
+        color::border::SUBTLE
+      },
+      radius: 8.0.into(),
+      width: 1.0,
+    },
+    text_color: if active {
+      color::text::PRIMARY
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  }
+}
+
 fn mail_header_compose_btn() -> Element<'static, Message> {
   button(
     row([
@@ -663,24 +695,6 @@ fn mail_header_compose_btn() -> Element<'static, Message> {
     right: 14.0,
   })
   .on_press(Message::ComposePressed)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
-    },
-    border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
-        _ => color::border::SUBTLE,
-      },
-      radius: 8.0.into(),
-      width: 1.0,
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
+  .style(compose_btn_style)
   .into()
 }

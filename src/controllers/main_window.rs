@@ -754,11 +754,18 @@ fn update_settings(
   apply_settings_save(state, settings_task, updated_cfg, services)
 }
 
+fn nav_feature_enabled(state: &State, nav: Nav) -> bool {
+  match nav {
+    Nav::Assets => state.feat_asset_tracking,
+    Nav::Mail => state.feat_mail,
+    Nav::Skills => state.feat_skill_monitoring,
+    Nav::Wallet => state.feat_wallet,
+    _ => true,
+  }
+}
+
 fn active_nav_was_hidden(state: &State) -> bool {
-  matches!(state.active_nav, Nav::Assets) && !state.feat_asset_tracking
-    || matches!(state.active_nav, Nav::Mail) && !state.feat_mail
-    || matches!(state.active_nav, Nav::Skills) && !state.feat_skill_monitoring
-    || matches!(state.active_nav, Nav::Wallet) && !state.feat_wallet
+  !nav_feature_enabled(state, state.active_nav)
 }
 
 fn apply_settings_features(state: &mut State, cfg: &crate::config::Settings) {

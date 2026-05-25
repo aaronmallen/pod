@@ -176,6 +176,15 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   }
 }
 
+fn handle_global_confirm_event(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    Message::ConfirmRemove => update_confirm_remove(state, services),
+    Message::ConfirmRemoveCorporation => update_confirm_remove_corporation(state, services),
+    Message::DismissConfirmRemove | Message::DismissConfirmRemoveCorporation => dismiss_confirm(state, msg),
+    _ => iced::Task::none(),
+  }
+}
+
 fn handle_global_event(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
   match msg {
     Message::AddCharacterError(e) | Message::AddCorporationError(e) => set_add_error(state, e),
@@ -183,11 +192,8 @@ fn handle_global_event(state: &mut State, msg: Message, services: &Services) -> 
       state.all_tags = tags;
       iced::Task::none()
     }
-    Message::ConfirmRemove => update_confirm_remove(state, services),
-    Message::ConfirmRemoveCorporation => update_confirm_remove_corporation(state, services),
-    Message::DismissConfirmRemove | Message::DismissConfirmRemoveCorporation => dismiss_confirm(state, msg),
     Message::TagModal(msg) => handle_tag_modal(state, msg, services),
-    _ => iced::Task::none(),
+    msg => handle_global_confirm_event(state, msg, services),
   }
 }
 
@@ -590,6 +596,18 @@ fn tag_modal_keyboard_subscription() -> Subscription<Message> {
   })
 }
 
+fn filter_key_message(key: &Key, modifiers: keyboard::Modifiers) -> Option<Message> {
+  match key {
+    Key::Character(c) if c.as_ref() == "k" && (modifiers.command() || modifiers.control()) => {
+      Some(Message::SearchFilter(search_filter::Message::FocusInput))
+    }
+    Key::Named(Named::Escape) => Some(Message::SearchFilter(search_filter::Message::QueryChanged(
+      String::new(),
+    ))),
+    _ => None,
+  }
+}
+
 fn filter_keyboard_subscription() -> Subscription<Message> {
   iced::event::listen_with(|event, _status, _id| {
     let Event::Keyboard(keyboard::Event::KeyPressed {
@@ -600,15 +618,7 @@ fn filter_keyboard_subscription() -> Subscription<Message> {
     else {
       return None;
     };
-    match key {
-      Key::Character(c) if c.as_ref() == "k" && (modifiers.command() || modifiers.control()) => {
-        Some(Message::SearchFilter(search_filter::Message::FocusInput))
-      }
-      Key::Named(Named::Escape) => Some(Message::SearchFilter(search_filter::Message::QueryChanged(
-        String::new(),
-      ))),
-      _ => None,
-    }
+    filter_key_message(&key, modifiers)
   })
 }
 

@@ -246,20 +246,26 @@ fn build_skill_groups_task(services: &Services) -> iced::Task<Message> {
   }
 }
 
-fn compute_sp_rate(state: &State) -> f32 {
-  let attr_pair = state
+fn sp_attrs_from_queue(state: &State) -> Option<(AttrKey, AttrKey)> {
+  state
     .queue
     .first()
     .and_then(|q| find_skill(&q.skill_name, &state.skill_groups))
     .map(|(s, _)| (s.primary, s.secondary))
-    .or_else(|| {
-      state
-        .active_character()
-        .and_then(|c| c.active_training())
-        .and_then(|t| t.skill_name.as_ref())
-        .and_then(|n| find_skill(n, &state.skill_groups))
-        .map(|(s, _)| (s.primary, s.secondary))
-    })
+}
+
+fn sp_attrs_from_active_training(state: &State) -> Option<(AttrKey, AttrKey)> {
+  state
+    .active_character()
+    .and_then(|c| c.active_training())
+    .and_then(|t| t.skill_name.as_ref())
+    .and_then(|n| find_skill(n, &state.skill_groups))
+    .map(|(s, _)| (s.primary, s.secondary))
+}
+
+fn compute_sp_rate(state: &State) -> f32 {
+  let attr_pair = sp_attrs_from_queue(state)
+    .or_else(|| sp_attrs_from_active_training(state))
     .unwrap_or((AttrKey::Perception, AttrKey::Willpower));
   sp_per_sec(state.attr_value(attr_pair.0), state.attr_value(attr_pair.1))
 }

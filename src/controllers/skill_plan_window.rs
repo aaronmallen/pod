@@ -945,18 +945,22 @@ fn update_entry_drag_start(state: &mut State, id: String) -> iced::Task<Message>
   iced::Task::none()
 }
 
+fn toggle_note_expanded(state: &mut State, id: String) {
+  if state.note_expanded.as_deref() == Some(&id) {
+    state.note_expanded = None;
+  } else {
+    state.note_expanded = Some(id.clone());
+    if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id)
+      && entry.note.is_none()
+    {
+      entry.note = Some(String::new());
+    }
+  }
+}
+
 fn update_entry_note(state: &mut State, id: String, note: String) -> iced::Task<Message> {
   if note.is_empty() {
-    if state.note_expanded.as_deref() == Some(&id) {
-      state.note_expanded = None;
-    } else {
-      state.note_expanded = Some(id.clone());
-      if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id)
-        && entry.note.is_none()
-      {
-        entry.note = Some(String::new());
-      }
-    }
+    toggle_note_expanded(state, id);
   } else if let Some(entry) = state.entries.iter_mut().find(|e| e.id == id) {
     state.note_expanded = Some(id.clone());
     entry.note = Some(note);
@@ -1082,26 +1086,30 @@ fn update_implant_suggestions(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn merge_parsed_into_state(state: &mut State, parsed: Vec<(String, u8)>) {
+  if parsed.is_empty() {
+    return;
+  }
+  let mut wishes = collect_wishes(&state.entries);
+  for (skill, level) in &parsed {
+    if !wishes.iter().any(|(n, l)| n == skill && l == level) {
+      wishes.push((skill.clone(), *level));
+    }
+  }
+  let wish_refs: Vec<(&str, u8)> = wishes.iter().map(|(n, l)| (n.as_str(), *l)).collect();
+  let new_entries = expand_wishes(&wish_refs, &state.skill_groups);
+  state.entries = merge_entries(new_entries, &state.entries);
+  recompute(state);
+  update_dirty(state);
+}
+
 fn update_import_clipboard(state: &mut State) -> iced::Task<Message> {
   tracing::info!("skill_plan: import from clipboard — plan: {}", state.plan_name);
   state.import_dropdown_open = false;
   let text = arboard::Clipboard::new()
     .and_then(|mut cb| cb.get_text())
     .unwrap_or_default();
-  let parsed = parse_import_text(&text);
-  if !parsed.is_empty() {
-    let mut wishes = collect_wishes(&state.entries);
-    for (skill, level) in &parsed {
-      if !wishes.iter().any(|(n, l)| n == skill && l == level) {
-        wishes.push((skill.clone(), *level));
-      }
-    }
-    let wish_refs: Vec<(&str, u8)> = wishes.iter().map(|(n, l)| (n.as_str(), *l)).collect();
-    let new_entries = expand_wishes(&wish_refs, &state.skill_groups);
-    state.entries = merge_entries(new_entries, &state.entries);
-    recompute(state);
-    update_dirty(state);
-  }
+  merge_parsed_into_state(state, parse_import_text(&text));
   iced::Task::none()
 }
 
@@ -1132,20 +1140,7 @@ fn update_import_path_chosen(state: &mut State, path: std::path::PathBuf) -> ice
     state.plan_name
   );
   let text = std::fs::read_to_string(&path).unwrap_or_default();
-  let parsed = parse_import_text(&text);
-  if !parsed.is_empty() {
-    let mut wishes = collect_wishes(&state.entries);
-    for (skill, level) in &parsed {
-      if !wishes.iter().any(|(n, l)| n == skill && l == level) {
-        wishes.push((skill.clone(), *level));
-      }
-    }
-    let wish_refs: Vec<(&str, u8)> = wishes.iter().map(|(n, l)| (n.as_str(), *l)).collect();
-    let new_entries = expand_wishes(&wish_refs, &state.skill_groups);
-    state.entries = merge_entries(new_entries, &state.entries);
-    recompute(state);
-    update_dirty(state);
-  }
+  merge_parsed_into_state(state, parse_import_text(&text));
   iced::Task::none()
 }
 
@@ -1258,15 +1253,21 @@ fn update_picker_ship_module_messages(state: &mut State, message: Message, servi
   }
 }
 
+fn update_picker_search_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
+    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
+    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_picker_misc_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
     Message::PickerGroupToggled(name) => update_picker_group_toggled(state, name),
     Message::PickerSearchChanged(q) => update_picker_search(state, q),
-    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
     Message::PickerToggled => update_picker_toggled(state),
-    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
-    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
-    _ => iced::Task::none(),
+    msg => update_picker_search_messages(state, msg, services),
   }
 }
 
@@ -1340,6 +1341,14 @@ fn update_plan_entry_drag_messages(state: &mut State, message: Message) -> iced:
   }
 }
 
+fn update_plan_loaded_message(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::PlanLoaded(None) => update_plan_loaded_none(state),
+    Message::PlanLoaded(Some(plan)) => update_plan_loaded(state, plan),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::EntryDragEnd | Message::EntryDragHover(_) | Message::EntryDragStart(_) => {
@@ -1348,9 +1357,7 @@ fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task
     Message::EntryNoteChanged(id, note) => update_entry_note(state, id, note),
     Message::EntryPriorityChanged(id, priority) => update_entry_priority_changed(state, id, priority),
     Message::EntryRemoved(id) => update_entry_removed(state, id),
-    Message::PlanLoaded(None) => update_plan_loaded_none(state),
-    Message::PlanLoaded(Some(plan)) => update_plan_loaded(state, plan),
-    _ => iced::Task::none(),
+    msg => update_plan_loaded_message(state, msg),
   }
 }
 

@@ -419,25 +419,21 @@ fn submit_tag_rename(state: &mut State, services: &Services) -> iced::Task<Messa
   )
 }
 
-fn update_tags_misc(state: &mut State, msg: tags_tab::Message) -> iced::Task<Message> {
+fn update_tags_misc_state(state: &mut State, msg: &tags_tab::Message) {
   match msg {
-    tags_tab::Message::Loaded(tags) => {
-      state.tags.tags = tags;
-    }
-    tags_tab::Message::NewNameChanged(s) => {
-      state.tags.new_name = s;
-    }
-    tags_tab::Message::Reordered(Err(e)) => {
-      tracing::error!("settings: tag reorder failed — {e}");
-    }
-    tags_tab::Message::Reordered(Ok(_)) => {}
-    tags_tab::Message::SearchChanged(s) => {
-      state.tags.search = s;
-    }
-    tags_tab::Message::SortModeChanged(mode) => {
-      state.tags.sort_mode = mode;
-    }
+    tags_tab::Message::Loaded(tags) => state.tags.tags = tags.clone(),
+    tags_tab::Message::NewNameChanged(s) => state.tags.new_name = s.clone(),
+    tags_tab::Message::SearchChanged(s) => state.tags.search = s.clone(),
+    tags_tab::Message::SortModeChanged(mode) => state.tags.sort_mode = mode.clone(),
     _ => {}
+  }
+}
+
+fn update_tags_misc(state: &mut State, msg: tags_tab::Message) -> iced::Task<Message> {
+  if let tags_tab::Message::Reordered(Err(e)) = &msg {
+    tracing::error!("settings: tag reorder failed — {e}");
+  } else {
+    update_tags_misc_state(state, &msg);
   }
   iced::Task::none()
 }

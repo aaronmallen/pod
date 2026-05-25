@@ -1317,25 +1317,66 @@ fn update_snooze_calendar_select_day(state: &mut State, year: i32, month: u32, d
   iced::Task::none()
 }
 
+fn update_snooze_calendar_chips(state: &mut State, msg: reading_pane::Message) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::SnoozeCalendarChipDowntime => update_snooze_calendar_chip_downtime(state),
+    reading_pane::Message::SnoozeCalendarChipEvening => update_snooze_calendar_chip_evening(state),
+    reading_pane::Message::SnoozeCalendarChipMorning => update_snooze_calendar_chip_morning(state),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_calendar_time(state: &mut State, msg: reading_pane::Message) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::SnoozeCalendarHourDown => update_snooze_calendar_hour_down(state),
+    reading_pane::Message::SnoozeCalendarHourUp => update_snooze_calendar_hour_up(state),
+    reading_pane::Message::SnoozeCalendarMinuteDown => update_snooze_calendar_minute_down(state),
+    reading_pane::Message::SnoozeCalendarMinuteUp => update_snooze_calendar_minute_up(state),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_calendar_nav(state: &mut State, msg: reading_pane::Message) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::SnoozeCalendarNextMonth => update_snooze_calendar_next_month(state),
+    reading_pane::Message::SnoozeCalendarPrevMonth => update_snooze_calendar_prev_month(state),
+    reading_pane::Message::SnoozeCalendarSelectDay(y, m, d) => update_snooze_calendar_select_day(state, y, m, d),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_calendar_lifecycle(
+  state: &mut State,
+  msg: reading_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::SnoozeCalendarClose => update_snooze_calendar_close(state),
+    reading_pane::Message::SnoozeCalendarConfirm => update_snooze_calendar_confirm(state, services),
+    reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_open(state),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_snooze_calendar_msg(
   state: &mut State,
   msg: reading_pane::Message,
   services: &Services,
 ) -> iced::Task<Message> {
   match msg {
-    reading_pane::Message::SnoozeCalendarChipDowntime => update_snooze_calendar_chip_downtime(state),
-    reading_pane::Message::SnoozeCalendarChipEvening => update_snooze_calendar_chip_evening(state),
-    reading_pane::Message::SnoozeCalendarChipMorning => update_snooze_calendar_chip_morning(state),
-    reading_pane::Message::SnoozeCalendarClose => update_snooze_calendar_close(state),
-    reading_pane::Message::SnoozeCalendarConfirm => update_snooze_calendar_confirm(state, services),
-    reading_pane::Message::SnoozeCalendarHourDown => update_snooze_calendar_hour_down(state),
-    reading_pane::Message::SnoozeCalendarHourUp => update_snooze_calendar_hour_up(state),
-    reading_pane::Message::SnoozeCalendarMinuteDown => update_snooze_calendar_minute_down(state),
-    reading_pane::Message::SnoozeCalendarMinuteUp => update_snooze_calendar_minute_up(state),
-    reading_pane::Message::SnoozeCalendarNextMonth => update_snooze_calendar_next_month(state),
-    reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_open(state),
-    reading_pane::Message::SnoozeCalendarPrevMonth => update_snooze_calendar_prev_month(state),
-    reading_pane::Message::SnoozeCalendarSelectDay(y, m, d) => update_snooze_calendar_select_day(state, y, m, d),
+    reading_pane::Message::SnoozeCalendarChipDowntime
+    | reading_pane::Message::SnoozeCalendarChipEvening
+    | reading_pane::Message::SnoozeCalendarChipMorning => update_snooze_calendar_chips(state, msg),
+    reading_pane::Message::SnoozeCalendarHourDown
+    | reading_pane::Message::SnoozeCalendarHourUp
+    | reading_pane::Message::SnoozeCalendarMinuteDown
+    | reading_pane::Message::SnoozeCalendarMinuteUp => update_snooze_calendar_time(state, msg),
+    reading_pane::Message::SnoozeCalendarNextMonth
+    | reading_pane::Message::SnoozeCalendarPrevMonth
+    | reading_pane::Message::SnoozeCalendarSelectDay(..) => update_snooze_calendar_nav(state, msg),
+    reading_pane::Message::SnoozeCalendarClose
+    | reading_pane::Message::SnoozeCalendarConfirm
+    | reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_lifecycle(state, msg, services),
     _ => iced::Task::none(),
   }
 }

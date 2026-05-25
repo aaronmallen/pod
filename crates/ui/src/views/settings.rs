@@ -1,13 +1,15 @@
 //! Settings view: feature-flag toggles and preferences.
 
+pub mod features_tab;
+
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   border::Radius,
   widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input},
 };
 
-use crate::style::{color, component, radius, shadow, spacing, typography};
+use crate::style::{color, radius, shadow, spacing, typography};
 
 const TAG_PALETTE: &[(&str, &str)] = &[
   ("Plasma", "#3FB8DB"),
@@ -24,7 +26,7 @@ const TAG_PALETTE: &[(&str, &str)] = &[
 ];
 
 /// Which settings category is currently shown.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum Category {
   #[default]
   Features,
@@ -50,7 +52,9 @@ impl<'a> Component<'a> {
     let header = render_header();
     let categories = render_categories_pane(state);
     let panel = match &state.active_category {
-      Category::Features => render_features_panel(state),
+      Category::Features => features_tab::Component::new(&state.features)
+        .render()
+        .map(Message::FeaturesTab),
       Category::Tags => render_tags_panel(state),
     };
     let body: Element<'_, Message> = row([categories, panel]).width(Length::Fill).height(Length::Fill).into();
@@ -65,30 +69,15 @@ impl<'a> Component<'a> {
   }
 }
 
-/// A single toggleable feature flag.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Feature {
-  AssetTracking,
-  CloneMonitoring,
-  CombatLog,
-  Contacts,
-  EveNotifications,
-  LocationTracking,
-  Mail,
-  SkillMonitoring,
-  Standings,
-  Wallet,
-}
-
 /// Messages produced by the settings view.
 #[derive(Clone, Debug)]
 pub enum Message {
   /// A settings category was selected in the sidebar.
   CategorySelected(Category),
+  /// A message from the features tab panel.
+  FeaturesTab(features_tab::Message),
   /// All settings were reset to their defaults.
   ResetDefaults,
-  /// The feature search query changed.
-  SearchChanged(String),
   /// The color picker for a tag was closed.
   TagColorClose,
   /// The hex draft in the color picker changed.
@@ -135,25 +124,15 @@ pub enum Message {
   TagSortModeChanged(TagSortMode),
   /// The full tag list was loaded from the database.
   TagsLoaded(Vec<(i32, String, Option<String>)>),
-  /// A feature flag was toggled.
-  ToggleFeature(Feature),
 }
 
 /// Runtime state for the settings view.
+#[derive(Default)]
 pub struct State {
   /// The currently active settings category.
   pub active_category: Category,
-  pub asset_tracking: bool,
-  pub clone_monitoring: bool,
-  pub combat_log: bool,
-  pub contacts: bool,
-  pub eve_notifications: bool,
-  pub location_tracking: bool,
-  pub mail: bool,
-  /// Search query for the features list.
-  pub search_query: String,
-  pub skill_monitoring: bool,
-  pub standings: bool,
+  /// State for the features tab panel.
+  pub features: features_tab::State,
   /// Current hex draft in the color picker text input.
   pub tag_color_hex_draft: String,
   /// Id of the tag whose color picker is currently open, if any.
@@ -174,62 +153,6 @@ pub struct State {
   pub tag_sort_mode: TagSortMode,
   /// All tags, in manual sort order.
   pub tags: Vec<(i32, String, Option<String>)>,
-  pub wallet: bool,
-}
-
-impl Default for State {
-  fn default() -> Self {
-    Self {
-      active_category: Category::default(),
-      asset_tracking: true,
-      clone_monitoring: true,
-      combat_log: true,
-      contacts: true,
-      eve_notifications: true,
-      location_tracking: true,
-      mail: true,
-      search_query: String::new(),
-      skill_monitoring: true,
-      standings: true,
-      tag_color_hex_draft: String::new(),
-      tag_color_open: None,
-      tag_draft: String::new(),
-      tag_drag_over: None,
-      tag_dragging: None,
-      tag_editing: None,
-      tag_new_name: String::new(),
-      tag_search: String::new(),
-      tag_sort_mode: TagSortMode::default(),
-      tags: Vec::new(),
-      wallet: true,
-    }
-  }
-}
-
-impl State {
-  /// Count how many feature flags are currently enabled.
-  pub fn enabled_count(&self) -> usize {
-    [
-      self.asset_tracking,
-      self.clone_monitoring,
-      self.combat_log,
-      self.contacts,
-      self.eve_notifications,
-      self.location_tracking,
-      self.mail,
-      self.skill_monitoring,
-      self.standings,
-      self.wallet,
-    ]
-    .iter()
-    .filter(|&&v| v)
-    .count()
-  }
-
-  /// Total number of feature flags.
-  pub const fn total_count() -> usize {
-    10
-  }
 }
 
 /// Sort mode for the tag list.
@@ -242,31 +165,6 @@ pub enum TagSortMode {
   Manual,
   /// Alphabetical by name.
   Name,
-}
-
-struct FlagData {
-  description: &'static str,
-  enabled: bool,
-  feature: Feature,
-  title: &'static str,
-}
-
-fn all_flags(state: &State) -> Vec<FlagData> {
-  let mut flags = character_flags(state);
-  flags.extend(world_flags(state));
-  flags
-}
-
-fn build_visible_flags(state: &State) -> Vec<FlagData> {
-  let q = state.search_query.trim().to_lowercase();
-  let all = all_flags(state);
-  if q.is_empty() {
-    return all;
-  }
-  all
-    .into_iter()
-    .filter(|f| f.title.to_lowercase().contains(&q) || f.description.to_lowercase().contains(&q))
-    .collect()
 }
 
 fn categories_active_indicator() -> Element<'static, Message> {
@@ -369,41 +267,6 @@ fn categories_item_row(
     .into()
 }
 
-fn character_flags(state: &State) -> Vec<FlagData> {
-  vec![
-    FlagData {
-      description: "Sync jump-clone locations and active-clone implants",
-      enabled: state.clone_monitoring,
-      feature: Feature::CloneMonitoring,
-      title: "Clone Monitoring",
-    },
-    FlagData {
-      description: "Read character contacts and contact labels",
-      enabled: state.contacts,
-      feature: Feature::Contacts,
-      title: "Contacts",
-    },
-    FlagData {
-      description: "Read recent character killmails",
-      enabled: state.combat_log,
-      feature: Feature::CombatLog,
-      title: "Combat Log",
-    },
-    FlagData {
-      description: "Read EVE notification feed",
-      enabled: state.eve_notifications,
-      feature: Feature::EveNotifications,
-      title: "EVE Notifications",
-    },
-    FlagData {
-      description: "Read character standings toward NPCs and other players",
-      enabled: state.standings,
-      feature: Feature::Standings,
-      title: "Standings",
-    },
-  ]
-}
-
 fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft: &'a str) -> Element<'a, Message> {
   let header = text("PICK A COLOR")
     .font(typography::mono::REGULAR)
@@ -431,12 +294,12 @@ fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft
             color: if is_selected {
               color::accent::PLASMA
             } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-              Color {
+              iced::Color {
                 a: 0.8,
                 ..swatch_color
               }
             } else {
-              Color {
+              iced::Color {
                 a: 0.5,
                 ..swatch_color
               }
@@ -446,7 +309,7 @@ fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft
           },
           shadow: if is_selected {
             iced::Shadow {
-              color: Color {
+              color: iced::Color {
                 a: 0.3,
                 ..color::accent::PLASMA
               },
@@ -457,7 +320,7 @@ fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft
             iced::Shadow::default()
           },
           snap: false,
-          text_color: Color::TRANSPARENT,
+          text_color: iced::Color::TRANSPARENT,
         })
         .into()
     })
@@ -479,7 +342,7 @@ fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft
     .size(12.0)
     .padding(Padding::ZERO)
     .style(|_, _| text_input::Style {
-      background: Background::Color(Color::TRANSPARENT),
+      background: Background::Color(iced::Color::TRANSPARENT),
       border: Border::default(),
       icon: color::text::SECONDARY,
       placeholder: color::text::TERTIARY,
@@ -489,7 +352,7 @@ fn color_picker_popover<'a>(tag_id: i32, current_hex: Option<&'a str>, hex_draft
 
   let preview_color = normalize_hex(hex_draft)
     .and_then(|h| hex_to_iced_color(&h))
-    .unwrap_or(Color::TRANSPARENT);
+    .unwrap_or(iced::Color::TRANSPARENT);
   let hex_preview = container(Space::new())
     .width(18.0)
     .height(18.0)
@@ -614,7 +477,7 @@ fn drag_handle<'a, MSG: 'a>(draggable: bool) -> Element<'a, MSG> {
   .into()
 }
 
-fn drag_handle_pair<'a, MSG: 'a>(dot_color: Color) -> Element<'a, MSG> {
+fn drag_handle_pair<'a, MSG: 'a>(dot_color: iced::Color) -> Element<'a, MSG> {
   row([
     container(Space::new())
       .width(2.4)
@@ -656,140 +519,7 @@ fn drop_indicator<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn feature_esi_chip() -> Element<'static, Message> {
-  container(text("ESI").size(9.0).color(color::accent::PLASMA))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-      border: Border {
-        color: color::state::SELECTION,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn features_panel_header(state: &State, total_shown: usize) -> Element<'_, Message> {
-  let panel_title = text("Features").size(18.0).color(color::text::PRIMARY);
-  let panel_desc = text(
-    "Toggle individual Pod capabilities on or off. Changes apply \
-    immediately and sync across your linked characters; reload any \
-    view to see the result.",
-  )
-  .size(13.0)
-  .color(color::text::SECONDARY);
-  let search_row = features_search_row(state, total_shown);
-  column([
-    row([panel_title.into(), Space::new().width(Length::Fill).into()])
-      .align_y(Vertical::Center)
-      .into(),
-    Space::new().height(4.0).into(),
-    panel_desc.into(),
-    Space::new().height(spacing::SPACE_3_5).into(),
-    search_row,
-  ])
-  .padding(Padding {
-    top: 24.0,
-    bottom: spacing::SPACE_3_5,
-    left: 36.0,
-    right: 36.0,
-  })
-  .into()
-}
-
-fn features_scroll_body<'a>(state: &'a State, flags: Vec<FlagData>) -> Element<'a, Message> {
-  let scroll_content: Vec<Element<'_, Message>> = if flags.is_empty() {
-    vec![
-      container(
-        text(format!("No features match \"{}\".", state.search_query))
-          .size(13.0)
-          .color(color::text::SECONDARY),
-      )
-      .width(Length::Fill)
-      .padding(Padding::new(80.0))
-      .into(),
-    ]
-  } else {
-    flags.into_iter().map(render_feature_row).collect()
-  };
-  scrollable(column(scroll_content).width(Length::Fill).padding(Padding {
-    top: 0.0,
-    bottom: 60.0,
-    left: 36.0,
-    right: 36.0,
-  }))
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .into()
-}
-
-fn features_search_row(state: &State, total_shown: usize) -> Element<'_, Message> {
-  let search_icon = crate::components::Icon::search()
-    .size(14.0)
-    .color(color::text::SECONDARY)
-    .render::<Message>();
-  let count_chip = container(text(format!("{total_shown}")).size(9.0).color(color::text::TERTIARY))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
-    })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-  container(
-    row([
-      search_icon,
-      text_input("Filter features\u{2026}", &state.search_query)
-        .on_input(Message::SearchChanged)
-        .size(13.0)
-        .style(|_, _| text_input::Style {
-          background: Background::Color(Color::TRANSPARENT),
-          border: Border::default(),
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          selection: color::accent::PLASMA_SUBTLE,
-          value: color::text::PRIMARY,
-        })
-        .into(),
-      count_chip.into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .max_width(480.0)
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: radius::CHIP.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn hex_to_iced_color(hex: &str) -> Option<Color> {
+fn hex_to_iced_color(hex: &str) -> Option<iced::Color> {
   let hex = hex.trim_start_matches('#');
   if hex.len() != 6 {
     return None;
@@ -797,7 +527,7 @@ fn hex_to_iced_color(hex: &str) -> Option<Color> {
   let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
   let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
   let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
-  Some(Color {
+  Some(iced::Color {
     r,
     g,
     b,
@@ -818,8 +548,8 @@ fn normalize_hex(raw: &str) -> Option<String> {
 }
 
 fn render_categories_pane(state: &State) -> Element<'_, Message> {
-  let enabled = state.enabled_count();
-  let total = State::total_count();
+  let enabled = state.features.enabled_count();
+  let total = features_tab::State::total_count();
   let label = text("Categories").size(9.0).color(color::text::SECONDARY);
 
   let features_row = categories_item_row(
@@ -876,61 +606,6 @@ fn render_categories_pane(state: &State) -> Element<'_, Message> {
     right_border.into(),
   ])
   .into()
-}
-
-fn render_feature_row(flag: FlagData) -> Element<'static, Message> {
-  let title = text(flag.title).size(14.0).color(color::text::PRIMARY);
-  let description = text(flag.description).size(12.0).color(color::text::SECONDARY);
-  let toggle = render_toggle(flag.enabled, flag.feature);
-  let bottom_border = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-  column([
-    row([
-      column([
-        row([title.into(), feature_esi_chip()])
-          .spacing(10.0)
-          .align_y(Vertical::Center)
-          .into(),
-        Space::new().height(4.0).into(),
-        description.into(),
-      ])
-      .into(),
-      Space::new().width(Length::Fill).into(),
-      container(toggle).align_y(Vertical::Center).height(Length::Fill).into(),
-    ])
-    .align_y(Vertical::Center)
-    .padding(Padding {
-      top: 16.0,
-      bottom: 16.0,
-      left: 4.0,
-      right: 4.0,
-    })
-    .into(),
-    bottom_border.into(),
-  ])
-  .into()
-}
-
-fn render_features_panel(state: &State) -> Element<'_, Message> {
-  let flags = build_visible_flags(state);
-  let panel_inner_header = features_panel_header(state, flags.len());
-  let inner_header_border = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-  let scrollable_body = features_scroll_body(state, flags);
-  column([panel_inner_header, inner_header_border.into(), scrollable_body])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
 }
 
 fn render_header() -> Element<'static, Message> {
@@ -1014,7 +689,7 @@ fn render_tag_row<'a>(
         } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
           color::accent::PLASMA_MUTED
         } else if color_hex.is_some() {
-          Color {
+          iced::Color {
             a: 0.5,
             ..swatch_color
           }
@@ -1025,7 +700,7 @@ fn render_tag_row<'a>(
         width: if color_open { 2.0 } else { 1.0 },
       },
       snap: false,
-      text_color: Color::TRANSPARENT,
+      text_color: iced::Color::TRANSPARENT,
       shadow: iced::Shadow::default(),
     });
 
@@ -1109,7 +784,7 @@ fn render_tag_row<'a>(
   };
 
   let row_bg = if is_dragging {
-    Some(Background::Color(Color {
+    Some(Background::Color(iced::Color {
       a: 0.04,
       ..color::accent::PLASMA
     }))
@@ -1198,18 +873,6 @@ fn render_tags_panel(state: &State) -> Element<'_, Message> {
   } else {
     panel
   }
-}
-
-fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
-  let track = toggle_track(on);
-  button(track)
-    .padding(Padding::ZERO)
-    .style(|_, _| button::Style {
-      background: None,
-      ..button::Style::default()
-    })
-    .on_press(Message::ToggleFeature(feature))
-    .into()
 }
 
 fn sort_mode_button(label: &'static str, is_active: bool, msg: Message) -> Element<'static, Message> {
@@ -1377,7 +1040,7 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
     .font(typography::body::REGULAR)
     .size(13.0)
     .style(|_, _| text_input::Style {
-      background: Background::Color(Color::TRANSPARENT),
+      background: Background::Color(iced::Color::TRANSPARENT),
       border: Border::default(),
       icon: color::text::SECONDARY,
       placeholder: color::text::TERTIARY,
@@ -1495,7 +1158,7 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
         .on_input(Message::TagSearchChanged)
         .size(13.0)
         .style(|_, _| text_input::Style {
-          background: Background::Color(Color::TRANSPARENT),
+          background: Background::Color(iced::Color::TRANSPARENT),
           border: Border::default(),
           icon: color::text::SECONDARY,
           placeholder: color::text::TERTIARY,
@@ -1636,12 +1299,12 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
 fn tag_preview_chip<'a>(name: &'a str, color_hex: Option<&'a str>) -> Element<'a, Message> {
   let (bg, fg, bd) = match color_hex.and_then(hex_to_iced_color) {
     Some(c) => (
-      Color {
+      iced::Color {
         a: 0.12,
         ..c
       },
       c,
-      Color {
+      iced::Color {
         a: 0.45,
         ..c
       },
@@ -1672,98 +1335,4 @@ fn tag_preview_chip<'a>(name: &'a str, color_hex: Option<&'a str>) -> Element<'a
     ..container::Style::default()
   })
   .into()
-}
-
-fn toggle_thumb(on: bool) -> container::Container<'static, Message> {
-  let thumb_color = if on {
-    color::state::TOGGLE_THUMB
-  } else {
-    color::text::MEDIUM
-  };
-  container(Space::new())
-    .width(component::toggle::THUMB_SIZE)
-    .height(component::toggle::THUMB_SIZE)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(thumb_color)),
-      border: Border {
-        radius: radius::FULL.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-}
-
-fn toggle_track(on: bool) -> container::Container<'static, Message> {
-  let bg_color = if on {
-    color::accent::PLASMA
-  } else {
-    color::state::PRESSED_OVERLAY
-  };
-  let border_color = if on {
-    color::accent::PLASMA
-  } else {
-    color::border::DEFAULT
-  };
-  let thumb_offset = if on {
-    component::toggle::THUMB_ON_OFFSET
-  } else {
-    component::toggle::THUMB_OFF_OFFSET
-  };
-  let thumb = toggle_thumb(on);
-  container(
-    container(thumb)
-      .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: thumb_offset,
-        right: 0.0,
-      })
-      .align_y(Vertical::Center),
-  )
-  .width(component::toggle::TRACK_WIDTH)
-  .height(component::toggle::TRACK_HEIGHT)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(bg_color)),
-    border: Border {
-      color: border_color,
-      radius: radius::FULL.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-}
-
-fn world_flags(state: &State) -> Vec<FlagData> {
-  vec![
-    FlagData {
-      description: "Poll the character\u{2019}s current solar-system location",
-      enabled: state.location_tracking,
-      feature: Feature::LocationTracking,
-      title: "Location Tracking",
-    },
-    FlagData {
-      description: "Sync skill levels and active skill-training queue",
-      enabled: state.skill_monitoring,
-      feature: Feature::SkillMonitoring,
-      title: "Skill Monitoring",
-    },
-    FlagData {
-      description: "Read, organise, and send EVE mail",
-      enabled: state.mail,
-      feature: Feature::Mail,
-      title: "Mail",
-    },
-    FlagData {
-      description: "Read character wallet balance, journal, and transactions",
-      enabled: state.wallet,
-      feature: Feature::Wallet,
-      title: "Wallet",
-    },
-    FlagData {
-      description: "Read character assets and resolve player-owned structure names",
-      enabled: state.asset_tracking,
-      feature: Feature::AssetTracking,
-      title: "Asset Tracking",
-    },
-  ]
 }

@@ -1,6 +1,6 @@
 //! Settings controller: manages feature flag state and config persistence.
 
-use pod_ui::views::settings::{Category, Feature, Message, State, TagSortMode};
+use pod_ui::views::settings::{Category, Message, State, TagSortMode, features_tab};
 
 use crate::services::Services;
 
@@ -8,16 +8,19 @@ use crate::services::Services;
 pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<Message>) {
   let state = State {
     active_category: Category::default(),
-    asset_tracking: *features.asset_tracking(),
-    clone_monitoring: *features.clone_monitoring(),
-    combat_log: *features.combat_log(),
-    contacts: *features.contacts(),
-    eve_notifications: *features.eve_notifications(),
-    location_tracking: *features.location_tracking(),
-    mail: *features.mail(),
-    search_query: String::new(),
-    skill_monitoring: *features.skill_monitoring(),
-    standings: *features.standings(),
+    features: features_tab::State {
+      asset_tracking: *features.asset_tracking(),
+      clone_monitoring: *features.clone_monitoring(),
+      combat_log: *features.combat_log(),
+      contacts: *features.contacts(),
+      eve_notifications: *features.eve_notifications(),
+      location_tracking: *features.location_tracking(),
+      mail: *features.mail(),
+      search_query: String::new(),
+      skill_monitoring: *features.skill_monitoring(),
+      standings: *features.standings(),
+      wallet: *features.wallet(),
+    },
     tag_color_hex_draft: String::new(),
     tag_color_open: None,
     tag_draft: String::new(),
@@ -28,7 +31,6 @@ pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<M
     tag_search: String::new(),
     tag_sort_mode: TagSortMode::default(),
     tags: Vec::new(),
-    wallet: *features.wallet(),
   };
   (state, iced::Task::none())
 }
@@ -47,22 +49,30 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
         iced::Task::none()
       }
     }
-    Message::ResetDefaults => {
-      tracing::info!("settings: reset to defaults");
-      state.asset_tracking = true;
-      state.clone_monitoring = true;
-      state.combat_log = true;
-      state.contacts = true;
-      state.eve_notifications = true;
-      state.location_tracking = true;
-      state.mail = true;
-      state.skill_monitoring = true;
-      state.standings = true;
-      state.wallet = true;
+    Message::FeaturesTab(inner) => {
+      match inner {
+        features_tab::Message::SearchChanged(q) => {
+          state.features.search_query = q;
+        }
+        features_tab::Message::ToggleFeature(feature) => {
+          tracing::info!("settings: feature toggled — {feature:?}");
+          toggle_feature(&mut state.features, &feature);
+        }
+      }
       iced::Task::none()
     }
-    Message::SearchChanged(q) => {
-      state.search_query = q;
+    Message::ResetDefaults => {
+      tracing::info!("settings: reset to defaults");
+      state.features.asset_tracking = true;
+      state.features.clone_monitoring = true;
+      state.features.combat_log = true;
+      state.features.contacts = true;
+      state.features.eve_notifications = true;
+      state.features.location_tracking = true;
+      state.features.mail = true;
+      state.features.skill_monitoring = true;
+      state.features.standings = true;
+      state.features.wallet = true;
       iced::Task::none()
     }
     Message::TagColorClose => {
@@ -295,11 +305,6 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
       state.tags = tags;
       iced::Task::none()
     }
-    Message::ToggleFeature(feature) => {
-      tracing::info!("settings: feature toggled — {feature:?}");
-      toggle_feature(state, &feature);
-      iced::Task::none()
-    }
   }
 }
 
@@ -308,16 +313,16 @@ pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Tas
 /// `app.config`.
 pub fn updated_config(state: &State, current: &crate::config::Settings) -> crate::config::Settings {
   let features = crate::config::features::Settings::from_flags(
-    state.asset_tracking,
-    state.clone_monitoring,
-    state.combat_log,
-    state.contacts,
-    state.eve_notifications,
-    state.location_tracking,
-    state.mail,
-    state.skill_monitoring,
-    state.standings,
-    state.wallet,
+    state.features.asset_tracking,
+    state.features.clone_monitoring,
+    state.features.combat_log,
+    state.features.contacts,
+    state.features.eve_notifications,
+    state.features.location_tracking,
+    state.features.mail,
+    state.features.skill_monitoring,
+    state.features.standings,
+    state.features.wallet,
   );
   let mut config = current.clone();
   config.set_features(features);
@@ -364,24 +369,17 @@ fn reorder_task(state: &State, services: &Services) -> iced::Task<Message> {
   )
 }
 
-fn toggle_feature(state: &mut State, feature: &Feature) {
+fn toggle_feature(features: &mut features_tab::State, feature: &features_tab::Feature) {
   match feature {
-    Feature::AssetTracking => state.asset_tracking = !state.asset_tracking,
-    Feature::CloneMonitoring => state.clone_monitoring = !state.clone_monitoring,
-    Feature::CombatLog => state.combat_log = !state.combat_log,
-    Feature::Contacts => state.contacts = !state.contacts,
-    Feature::EveNotifications => state.eve_notifications = !state.eve_notifications,
-    feature => toggle_feature_b(state, feature),
-  }
-}
-
-fn toggle_feature_b(state: &mut State, feature: &Feature) {
-  match feature {
-    Feature::LocationTracking => state.location_tracking = !state.location_tracking,
-    Feature::Mail => state.mail = !state.mail,
-    Feature::SkillMonitoring => state.skill_monitoring = !state.skill_monitoring,
-    Feature::Standings => state.standings = !state.standings,
-    Feature::Wallet => state.wallet = !state.wallet,
-    _ => {}
+    features_tab::Feature::AssetTracking => features.asset_tracking = !features.asset_tracking,
+    features_tab::Feature::CloneMonitoring => features.clone_monitoring = !features.clone_monitoring,
+    features_tab::Feature::CombatLog => features.combat_log = !features.combat_log,
+    features_tab::Feature::Contacts => features.contacts = !features.contacts,
+    features_tab::Feature::EveNotifications => features.eve_notifications = !features.eve_notifications,
+    features_tab::Feature::LocationTracking => features.location_tracking = !features.location_tracking,
+    features_tab::Feature::Mail => features.mail = !features.mail,
+    features_tab::Feature::SkillMonitoring => features.skill_monitoring = !features.skill_monitoring,
+    features_tab::Feature::Standings => features.standings = !features.standings,
+    features_tab::Feature::Wallet => features.wallet = !features.wallet,
   }
 }

@@ -684,7 +684,8 @@ fn update_settings(
 ) -> (iced::Task<Message>, Option<crate::config::Settings>) {
   let is_save = matches!(
     &msg,
-    settings::Message::ToggleFeature(_) | settings::Message::ResetDefaults
+    settings::Message::FeaturesTab(settings::features_tab::Message::ToggleFeature(_))
+      | settings::Message::ResetDefaults
   );
   let ActiveView::Settings(s) = &mut state.active_view else {
     return (iced::Task::none(), None);

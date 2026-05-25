@@ -378,11 +378,10 @@ fn update_tags_misc(state: &mut State, msg: tags_tab::Message) -> iced::Task<Mes
     tags_tab::Message::NewNameChanged(s) => {
       state.tags.new_name = s;
     }
-    tags_tab::Message::Reordered(result) => {
-      if let Err(e) = result {
-        tracing::error!("settings: tag reorder failed — {e}");
-      }
+    tags_tab::Message::Reordered(Err(e)) => {
+      tracing::error!("settings: tag reorder failed — {e}");
     }
+    tags_tab::Message::Reordered(Ok(_)) => {}
     tags_tab::Message::SearchChanged(s) => {
       state.tags.search = s;
     }

@@ -148,54 +148,66 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
   if state.tags.is_empty() {
     return TagEmptyState::new().render();
   }
-
   let search = state.search.trim().to_lowercase();
-  let draggable = state.sort_mode == TagSortMode::Manual && search.is_empty();
-
-  let mut filtered: Vec<&(i32, String, Option<String>)> = state
-    .tags
-    .iter()
-    .filter(|(_, name, _)| search.is_empty() || name.to_lowercase().contains(&search))
-    .collect();
-
-  match state.sort_mode {
-    TagSortMode::Manual => {}
-    TagSortMode::Name => filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b)),
-    TagSortMode::Color => filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| match (a_color, b_color) {
-      (Some(_), None) => std::cmp::Ordering::Less,
-      (None, Some(_)) => std::cmp::Ordering::Greater,
-      (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
-      (None, None) => a_name.cmp(b_name),
-    }),
-  }
-
+  let filtered = filter_and_sort_tags(&state.tags, &search, &state.sort_mode);
   if filtered.is_empty() {
     return TagEmptyState::new().query(&state.search).render();
   }
+  let draggable = state.sort_mode == TagSortMode::Manual && search.is_empty();
+  let items = build_tag_list_items(state, &filtered, draggable);
+  scrollable(column(items).width(Length::Fill).padding(Padding {
+    top: 8.0,
+    bottom: 60.0,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
+  }))
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
 
-  let mut items: Vec<Element<'_, Message>> = Vec::new();
-  let is_active_drag = state.dragging.is_some();
+fn filter_and_sort_tags<'a>(
+  tags: &'a [(i32, String, Option<String>)],
+  search: &str,
+  sort_mode: &TagSortMode,
+) -> Vec<&'a (i32, String, Option<String>)> {
+  let mut filtered: Vec<&(i32, String, Option<String>)> = tags
+    .iter()
+    .filter(|(_, name, _)| search.is_empty() || name.to_lowercase().contains(search))
+    .collect();
+  sort_filtered_tags(&mut filtered, sort_mode);
+  filtered
+}
 
-  for (id, name, color_hex) in &filtered {
-    let editing = state.editing == Some(*id);
-    let color_open = state.color_open == Some(*id);
-    let is_dragging_this = state.dragging == Some(*id);
-    let is_drop_above = is_active_drag && !is_dragging_this && state.drag_over == Some(*id);
-
-    let mut row_builder = TagListRow::new(*id, name)
-      .draggable(draggable)
-      .editing(editing)
-      .draft(&state.draft)
-      .color_open(color_open)
-      .is_dragging(is_dragging_this)
-      .is_drop_above(is_drop_above);
-
-    if let Some(hex) = color_hex.as_deref() {
-      row_builder = row_builder.color_hex(hex);
+fn sort_filtered_tags(filtered: &mut Vec<&(i32, String, Option<String>)>, sort_mode: &TagSortMode) {
+  match sort_mode {
+    TagSortMode::Manual => {}
+    TagSortMode::Name => filtered.sort_by(|(_, a, _), (_, b, _)| a.cmp(b)),
+    TagSortMode::Color => {
+      filtered.sort_by(|(_, a_name, a_color), (_, b_name, b_color)| sort_by_color(a_name, a_color, b_name, b_color))
     }
+  }
+}
 
-    let row_elements = row_builder.render();
+fn sort_by_color(a_name: &str, a_color: &Option<String>, b_name: &str, b_color: &Option<String>) -> std::cmp::Ordering {
+  match (a_color, b_color) {
+    (Some(_), None) => std::cmp::Ordering::Less,
+    (None, Some(_)) => std::cmp::Ordering::Greater,
+    (Some(ca), Some(cb)) => ca.cmp(cb).then(a_name.cmp(b_name)),
+    (None, None) => a_name.cmp(b_name),
+  }
+}
 
+fn build_tag_list_items<'a>(
+  state: &'a State,
+  filtered: &[&'a (i32, String, Option<String>)],
+  draggable: bool,
+) -> Vec<Element<'a, Message>> {
+  let is_active_drag = state.dragging.is_some();
+  let mut items: Vec<Element<'_, Message>> = Vec::new();
+  for (id, name, color_hex) in filtered {
+    let is_dragging_this = state.dragging == Some(*id);
+    let row_elements = build_tag_row_elements(state, *id, name, color_hex, draggable, is_active_drag, is_dragging_this);
     if is_active_drag && !is_dragging_this {
       let id_copy = *id;
       items.push(
@@ -207,14 +219,28 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
       items.extend(row_elements);
     }
   }
+  items
+}
 
-  scrollable(column(items).width(Length::Fill).padding(Padding {
-    top: 8.0,
-    bottom: 60.0,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  }))
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .into()
+fn build_tag_row_elements<'a>(
+  state: &'a State,
+  id: i32,
+  name: &'a str,
+  color_hex: &'a Option<String>,
+  draggable: bool,
+  is_active_drag: bool,
+  is_dragging_this: bool,
+) -> Vec<Element<'a, Message>> {
+  let is_drop_above = is_active_drag && !is_dragging_this && state.drag_over == Some(id);
+  let mut row_builder = TagListRow::new(id, name)
+    .draggable(draggable)
+    .editing(state.editing == Some(id))
+    .draft(&state.draft)
+    .color_open(state.color_open == Some(id))
+    .is_dragging(is_dragging_this)
+    .is_drop_above(is_drop_above);
+  if let Some(hex) = color_hex.as_deref() {
+    row_builder = row_builder.color_hex(hex);
+  }
+  row_builder.render()
 }

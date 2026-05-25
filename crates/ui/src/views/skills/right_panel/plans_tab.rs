@@ -1,19 +1,23 @@
 //! Saved plans list component.
 
 pub mod empty_state;
+pub mod from_queue_button;
 pub mod loading_state;
+pub mod new_plan_button;
 pub mod plan_card;
 
 pub use empty_state::Component as PlansEmptyState;
+pub use from_queue_button::Component as FromQueueButton;
 use iced::{
-  Background, Border, Element, Length, Padding,
-  widget::{Space, button, column, container, text},
+  Element, Length, Padding,
+  widget::{Space, column, container},
 };
 pub use loading_state::Component as PlansLoadingState;
+pub use new_plan_button::Component as NewPlanButton;
 pub use plan_card::Component as PlanCard;
 use pod_model::SkillPlan;
 
-use crate::style::{color, spacing, typography::body};
+use crate::style::spacing;
 
 /// Messages produced by the plans tab.
 #[derive(Clone, Debug)]
@@ -64,14 +68,14 @@ impl<'a> Component<'a> {
 
     let footer = container(
       iced::widget::row([
-        new_plan_btn(),
+        NewPlanButton::new().render(),
         Space::new().width(spacing::SPACE_2).into(),
-        from_queue_btn(),
+        FromQueueButton::new().render(),
       ])
       .align_y(iced::alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .padding(Padding {
+    .padding(iced::Padding {
       top: spacing::SPACE_3,
       bottom: spacing::SPACE_3,
       left: spacing::SPACE_4,
@@ -80,71 +84,4 @@ impl<'a> Component<'a> {
 
     column([list.into(), footer.into()]).width(Length::Fill).into()
   }
-}
-
-pub(super) fn new_plan_btn<'a>() -> Element<'a, Message> {
-  button(
-    text("New plan")
-      .font(body::MEDIUM)
-      .size(12.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::NewPlan)
-  .style(|_, status| button::Style {
-    background: Some(Background::Color(match status {
-      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_SUBTLE,
-      _ => iced::Color::TRANSPARENT,
-    })),
-    border: Border {
-      color: color::accent::PLASMA_MUTED,
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: color::accent::PLASMA,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-pub(super) fn from_queue_btn<'a>() -> Element<'a, Message> {
-  button(
-    text("From queue")
-      .font(body::REGULAR)
-      .size(12.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::FromQueue)
-  .style(|_, status| button::Style {
-    background: None,
-    border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
-        _ => color::border::SUBTLE,
-      },
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
-  .into()
 }

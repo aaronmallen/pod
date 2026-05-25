@@ -500,6 +500,22 @@ fn apply_tag_task(
   }
 }
 
+async fn fetch_corporation_tags(
+  entity_id: i64,
+  tag_name: String,
+  existing_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+  let tag = db.tags().find_or_create(&tag_name).await.ok()?;
+  let mut new_ids = existing_ids;
+  if !new_ids.contains(&tag.id) {
+    new_ids.push(tag.id);
+  }
+  db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
+  let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
+  Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
+}
+
 fn apply_corporation_tag_task(
   entity_id: i64,
   tag_name: String,
@@ -507,24 +523,28 @@ fn apply_corporation_tag_task(
   db: pod_db::Repo,
 ) -> iced::Task<Message> {
   iced::Task::perform(
-    async move {
-      let tag = db.tags().find_or_create(&tag_name).await.ok()?;
-      let mut new_ids = existing_ids;
-      if !new_ids.contains(&tag.id) {
-        new_ids.push(tag.id);
-      }
-      db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
-      let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-      Some((
-        entity_id,
-        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
-      ))
-    },
+    fetch_corporation_tags(entity_id, tag_name, existing_ids, db),
     |result| match result {
       Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
       None => Message::TagsApplied,
     },
   )
+}
+
+async fn fetch_character_tags(
+  entity_id: i64,
+  tag_name: String,
+  existing_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+  let tag = db.tags().find_or_create(&tag_name).await.ok()?;
+  let mut new_ids = existing_ids;
+  if !new_ids.contains(&tag.id) {
+    new_ids.push(tag.id);
+  }
+  db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
+  let tags = db.tags().tags_for_character(entity_id).await.ok()?;
+  Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
 }
 
 fn apply_character_tag_task(
@@ -534,19 +554,7 @@ fn apply_character_tag_task(
   db: pod_db::Repo,
 ) -> iced::Task<Message> {
   iced::Task::perform(
-    async move {
-      let tag = db.tags().find_or_create(&tag_name).await.ok()?;
-      let mut new_ids = existing_ids;
-      if !new_ids.contains(&tag.id) {
-        new_ids.push(tag.id);
-      }
-      db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
-      let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-      Some((
-        entity_id,
-        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
-      ))
-    },
+    fetch_character_tags(entity_id, tag_name, existing_ids, db),
     |result| match result {
       Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
       None => Message::TagsApplied,
@@ -1070,6 +1078,22 @@ fn map_character_assets(character_id: i64, raw: Vec<pod_esi::models::character::
 /// Assigns a slot index one past the current maximum so new characters land at the end of the
 /// grid without colliding with existing ones. The upsert's ON CONFLICT clause does not update
 /// sort_order, so re-authorizing an existing character preserves its current slot.
+async fn persist_character_data(
+  db: &pod_db::Repo,
+  character_id: i64,
+  skills: &[CharacterSkill],
+  assets: &[CharacterAsset],
+) -> Result<(), String> {
+  db.characters()
+    .upsert_skills(character_id, skills)
+    .await
+    .map_err(|e| e.to_string())?;
+  db.characters()
+    .upsert_assets(character_id, assets)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 async fn persist_character(
   db: &pod_db::Repo,
   character: &mut Character,
@@ -1080,15 +1104,7 @@ async fn persist_character(
   let next_order = db.characters().next_sort_order().await.map_err(|e| e.to_string())?;
   character.set_sort_order(next_order);
   db.characters().upsert(character).await.map_err(|e| e.to_string())?;
-  db.characters()
-    .upsert_skills(character_id, skills)
-    .await
-    .map_err(|e| e.to_string())?;
-  db.characters()
-    .upsert_assets(character_id, assets)
-    .await
-    .map_err(|e| e.to_string())?;
-  Ok(())
+  persist_character_data(db, character_id, skills, assets).await
 }
 
 /// Runs the OAuth flow for re-authorizing an existing character with updated scopes.

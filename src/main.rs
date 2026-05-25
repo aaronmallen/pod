@@ -306,39 +306,43 @@ fn dispatch_window_event(app: &mut App, msg: Message) -> Task<Message> {
   }
 }
 
+fn apply_synced_character(app: &mut App, character: Box<Character>) -> Task<Message> {
+  if let Some(idx) = app.characters.iter().position(|c| *c.id() == *character.id()) {
+    app.characters[idx] = (*character).clone();
+  }
+  let AppPhase::Main(state) = &mut app.phase else {
+    return Task::none();
+  };
+  main_ctrl::apply_synced_character(state, *character);
+  let services = Services {
+    config: app.config.clone(),
+    db: app.db.clone(),
+    esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
+  };
+  main_ctrl::refresh_cached_assets_if_needed(state, &services).map(|m| Message::Main(Box::new(m)))
+}
+
+fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
+  let AppPhase::Main(_) = &app.phase else {
+    return Task::none();
+  };
+  let services = Services {
+    config: app.config.clone(),
+    db: app.db.clone(),
+    esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
+  };
+  main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
+}
+
 fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> Task<Message> {
   use services::bootstrap::Message as BootMsg;
   match msg {
-    BootMsg::CharacterSynced(character) => {
-      if let Some(idx) = app.characters.iter().position(|c| *c.id() == *character.id()) {
-        app.characters[idx] = (*character).clone();
-      }
-      if let AppPhase::Main(state) = &mut app.phase {
-        main_ctrl::apply_synced_character(state, *character);
-        let services = Services {
-          config: app.config.clone(),
-          db: app.db.clone(),
-          esi_client: app.esi_client.clone(),
-          muta_market_client: app.muta_market_client.clone(),
-          oauth_callback_tx: app.oauth_callback_tx.clone(),
-        };
-        return main_ctrl::refresh_cached_assets_if_needed(state, &services).map(|m| Message::Main(Box::new(m)));
-      }
-      Task::none()
-    }
-    BootMsg::TokenRefreshFailed(_) => {
-      let AppPhase::Main(_) = &app.phase else {
-        return Task::none();
-      };
-      let services = Services {
-        config: app.config.clone(),
-        db: app.db.clone(),
-        esi_client: app.esi_client.clone(),
-        muta_market_client: app.muta_market_client.clone(),
-        oauth_callback_tx: app.oauth_callback_tx.clone(),
-      };
-      main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
-    }
+    BootMsg::CharacterSynced(character) => apply_synced_character(app, character),
+    BootMsg::TokenRefreshFailed(_) => handle_token_refresh_failed(app),
     _ => Task::none(),
   }
 }
@@ -360,21 +364,32 @@ fn get_plan_seed(skills_msg: &skills::Message, state: &main_ctrl::State) -> Opti
   }
 }
 
+fn is_pane_drag_end(msg: &main_ctrl::Message) -> bool {
+  matches!(
+    msg,
+    main_window::Message::Assets(assets::Message::PaneDragEnd)
+      | main_window::Message::Mail(mail::Message::PaneDragEnd)
+      | main_window::Message::Skills(skills::Message::PaneDragEnd)
+      | main_window::Message::Wallet(wallet::Message::PaneDragEnd)
+  )
+}
+
+fn dispatch_skills_plan(app: &mut App, msg: &main_ctrl::Message) -> Option<Task<Message>> {
+  let main_window::Message::Skills(skills_msg) = msg else {
+    return None;
+  };
+  let AppPhase::Main(state) = &mut app.phase else {
+    return None;
+  };
+  let (char_id, seed) = get_plan_seed(skills_msg, state)?;
+  Some(open_skill_plan_window(app, char_id, seed))
+}
+
 fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
-  let is_assets_pane_drag_end = matches!(&msg, main_window::Message::Assets(assets::Message::PaneDragEnd));
-  let is_mail_pane_drag_end = matches!(&msg, main_window::Message::Mail(mail::Message::PaneDragEnd));
-  let is_skills_pane_drag_end = matches!(&msg, main_window::Message::Skills(skills::Message::PaneDragEnd));
-  let is_wallet_pane_drag_end = matches!(&msg, main_window::Message::Wallet(wallet::Message::PaneDragEnd));
-
-  if let main_window::Message::Skills(ref skills_msg) = msg {
-    let AppPhase::Main(state) = &mut app.phase else {
-      return Task::none();
-    };
-    if let Some((char_id, seed)) = get_plan_seed(skills_msg, state) {
-      return open_skill_plan_window(app, char_id, seed);
-    }
+  let drag_end = is_pane_drag_end(&msg);
+  if let Some(task) = dispatch_skills_plan(app, &msg) {
+    return task;
   }
-
   let AppPhase::Main(state) = &mut app.phase else {
     return Task::none();
   };
@@ -390,7 +405,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     app.config = cfg;
   }
   let task = task.map(|m| Message::Main(Box::new(m)));
-  if is_assets_pane_drag_end || is_mail_pane_drag_end || is_skills_pane_drag_end || is_wallet_pane_drag_end {
+  if drag_end {
     save_geometry(app);
   }
   task
@@ -602,7 +617,7 @@ fn handle_banner_message(app: &mut App, msg: update_banner::Message) -> Task<Mes
   }
 }
 
-fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Task<Message> {
+fn handle_updater_apply(app: &mut App, msg: services::updater::Message) -> Task<Message> {
   use services::updater::Message as UpdMsg;
   match msg {
     UpdMsg::ApplyComplete => {
@@ -617,14 +632,27 @@ fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Tas
       app.update_state = services::updater::UpdateState::Downloading;
       services::updater::apply().map(Message::Updater)
     }
-    UpdMsg::CheckComplete(Some(version)) => {
-      if app.update_dismissed_for.as_deref() != Some(version.as_str()) {
-        app.update_dismissed_for = None;
-      }
-      app.update_state = services::updater::UpdateState::UpdateAvailable(version);
-      Task::none()
-    }
-    UpdMsg::CheckComplete(None) | UpdMsg::CheckFailed => Task::none(),
+    _ => unreachable!(),
+  }
+}
+
+fn handle_updater_check(app: &mut App, version: Option<String>) -> Task<Message> {
+  let Some(version) = version else {
+    return Task::none();
+  };
+  if app.update_dismissed_for.as_deref() != Some(version.as_str()) {
+    app.update_dismissed_for = None;
+  }
+  app.update_state = services::updater::UpdateState::UpdateAvailable(version);
+  Task::none()
+}
+
+fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Task<Message> {
+  use services::updater::Message as UpdMsg;
+  match msg {
+    UpdMsg::ApplyComplete | UpdMsg::ApplyFailed(_) | UpdMsg::ApplyRequested => handle_updater_apply(app, msg),
+    UpdMsg::CheckComplete(version) => handle_updater_check(app, version),
+    UpdMsg::CheckFailed => Task::none(),
     UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
     UpdMsg::RestartRequested => {
       services::updater::restart();
@@ -845,11 +873,73 @@ fn banner_state(
   }
 }
 
-/// Opens a new skill plan window and registers it in the app's plan window map.
-///
-/// The window is created immediately with a default all-20 attribute set.
-/// An async task is then dispatched to load real ESI attributes from the DB
-/// and send back an `AttrsLoaded` message once complete.
+fn build_attrs_loaded_message(
+  win_id: window::Id,
+  character_id: i64,
+  effective_opt: Option<pod_model::NeuralAttributes>,
+  clone_bonus: Option<pod_model::NeuralAttributes>,
+) -> Message {
+  use pod_ui::views::skill_plan::Message as PlanMsg;
+  let fallback = BaseAttrs {
+    intelligence: 20,
+    memory: 20,
+    perception: 20,
+    willpower: 20,
+    charisma: 20,
+  };
+  let (current_effective_attrs, clone_data_missing) = match effective_opt {
+    Some(eff) => (
+      BaseAttrs {
+        charisma: eff.charisma,
+        intelligence: eff.intelligence,
+        memory: eff.memory,
+        perception: eff.perception,
+        willpower: eff.willpower,
+      },
+      false,
+    ),
+    None => {
+      tracing::warn!(
+        "character {character_id}: effective attributes not yet synced, \
+        using all-20 fallback for skill plan"
+      );
+      (fallback.clone(), true)
+    }
+  };
+  let clone_data_missing = clone_data_missing || clone_bonus.is_none();
+  let clone_bonus = clone_bonus.unwrap_or_default();
+  let base_attrs = BaseAttrs {
+    charisma: current_effective_attrs.charisma - clone_bonus.charisma,
+    intelligence: current_effective_attrs.intelligence - clone_bonus.intelligence,
+    memory: current_effective_attrs.memory - clone_bonus.memory,
+    perception: current_effective_attrs.perception - clone_bonus.perception,
+    willpower: current_effective_attrs.willpower - clone_bonus.willpower,
+  };
+  Message::SkillPlan(
+    win_id,
+    PlanMsg::AttrsLoaded {
+      base_attrs,
+      current_effective_attrs,
+      clone_data_missing,
+    },
+  )
+}
+
+fn load_attrs_task(db: pod_db::Repo, win_id: window::Id, character_id: i64) -> Task<Message> {
+  Task::perform(
+    async move {
+      let effective_opt = db.characters().effective_attributes(character_id).await.unwrap_or(None);
+      let clone_bonus = db
+        .clones()
+        .active_clone_implant_bonus(character_id)
+        .await
+        .unwrap_or(None);
+      (effective_opt, clone_bonus)
+    },
+    move |(effective_opt, clone_bonus)| build_attrs_loaded_message(win_id, character_id, effective_opt, clone_bonus),
+  )
+}
+
 pub(crate) fn open_skill_plan_window(
   app: &mut App,
   character_id: i64,
@@ -890,66 +980,10 @@ pub(crate) fn open_skill_plan_window(
   );
   app.plan_windows.insert(win_id, state);
   let plan_task = init_task.map(move |m| Message::SkillPlan(win_id, m));
-  let attrs_task = if let Some(db) = app.db.clone() {
-    Task::perform(
-      async move {
-        let effective_opt = db.characters().effective_attributes(character_id).await.unwrap_or(None);
-        let clone_bonus = db
-          .clones()
-          .active_clone_implant_bonus(character_id)
-          .await
-          .unwrap_or(None);
-        (effective_opt, clone_bonus)
-      },
-      move |(effective_opt, clone_bonus)| {
-        use pod_ui::views::skill_plan::Message as PlanMsg;
-        let fallback = BaseAttrs {
-          intelligence: 20,
-          memory: 20,
-          perception: 20,
-          willpower: 20,
-          charisma: 20,
-        };
-        let (current_effective_attrs, clone_data_missing) = match effective_opt {
-          Some(eff) => (
-            BaseAttrs {
-              charisma: eff.charisma,
-              intelligence: eff.intelligence,
-              memory: eff.memory,
-              perception: eff.perception,
-              willpower: eff.willpower,
-            },
-            false,
-          ),
-          None => {
-            tracing::warn!(
-              "character {character_id}: effective attributes not yet synced, \
-              using all-20 fallback for skill plan"
-            );
-            (fallback.clone(), true)
-          }
-        };
-        let clone_data_missing = clone_data_missing || clone_bonus.is_none();
-        let clone_bonus = clone_bonus.unwrap_or_default();
-        let base_attrs = BaseAttrs {
-          charisma: current_effective_attrs.charisma - clone_bonus.charisma,
-          intelligence: current_effective_attrs.intelligence - clone_bonus.intelligence,
-          memory: current_effective_attrs.memory - clone_bonus.memory,
-          perception: current_effective_attrs.perception - clone_bonus.perception,
-          willpower: current_effective_attrs.willpower - clone_bonus.willpower,
-        };
-        Message::SkillPlan(
-          win_id,
-          PlanMsg::AttrsLoaded {
-            base_attrs,
-            current_effective_attrs,
-            clone_data_missing,
-          },
-        )
-      },
-    )
-  } else {
-    Task::none()
-  };
+  let attrs_task = app
+    .db
+    .clone()
+    .map(|db| load_attrs_task(db, win_id, character_id))
+    .unwrap_or_else(Task::none);
   Task::batch([open_task.map(Message::WindowOpened), plan_task, attrs_task])
 }

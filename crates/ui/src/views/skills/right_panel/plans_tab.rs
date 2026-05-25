@@ -1,12 +1,15 @@
 //! Saved plans list component.
 
+pub mod empty_state;
+pub mod loading_state;
 pub mod plan_card;
 
+pub use empty_state::Component as PlansEmptyState;
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Horizontal,
   widget::{Space, button, column, container, text},
 };
+pub use loading_state::Component as PlansLoadingState;
 pub use plan_card::Component as PlanCard;
 use pod_model::SkillPlan;
 
@@ -40,11 +43,11 @@ impl<'a> Component<'a> {
 
   pub fn render(self) -> Element<'a, Message> {
     if !self.plans_loaded {
-      return loading_state();
+      return PlansLoadingState::new().render();
     }
 
     if self.plans.is_empty() {
-      return empty_state();
+      return PlansEmptyState::new().render();
     }
 
     let items: Vec<Element<'_, Message>> = self
@@ -79,67 +82,7 @@ impl<'a> Component<'a> {
   }
 }
 
-fn loading_state<'a>() -> Element<'a, Message> {
-  container(
-    text("Loading plans\u{2026}")
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .align_x(Horizontal::Center)
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 36.0,
-    bottom: 36.0,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
-  .into()
-}
-
-fn empty_state<'a>() -> Element<'a, Message> {
-  container(
-    column([
-      text("No skill plans yet")
-        .font(body::MEDIUM)
-        .size(15.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      Space::new().height(4.0).into(),
-      text("Create your first plan to start optimizing your skill queue.")
-        .font(body::REGULAR)
-        .size(13.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      Space::new().height(spacing::SPACE_4).into(),
-      iced::widget::row([
-        new_plan_btn(),
-        Space::new().width(spacing::SPACE_2).into(),
-        from_queue_btn(),
-      ])
-      .align_y(iced::alignment::Vertical::Center)
-      .into(),
-    ])
-    .align_x(Horizontal::Center),
-  )
-  .align_x(Horizontal::Center)
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 36.0,
-    bottom: 36.0,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
-  .into()
-}
-
-fn new_plan_btn<'a>() -> Element<'a, Message> {
+pub(super) fn new_plan_btn<'a>() -> Element<'a, Message> {
   button(
     text("New plan")
       .font(body::MEDIUM)
@@ -171,7 +114,7 @@ fn new_plan_btn<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn from_queue_btn<'a>() -> Element<'a, Message> {
+pub(super) fn from_queue_btn<'a>() -> Element<'a, Message> {
   button(
     text("From queue")
       .font(body::REGULAR)

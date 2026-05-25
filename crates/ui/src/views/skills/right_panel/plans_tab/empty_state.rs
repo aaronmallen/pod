@@ -6,7 +6,7 @@ use iced::{
   widget::{Space, column, container, text},
 };
 
-use super::{Message, from_queue_btn, new_plan_btn};
+use super::{FromQueueButton, Message, NewPlanButton};
 use crate::style::{color, spacing, typography::body};
 
 pub struct Component;
@@ -36,9 +36,9 @@ impl Component {
           .into(),
         Space::new().height(spacing::SPACE_4).into(),
         iced::widget::row([
-          new_plan_btn(),
+          NewPlanButton::new().render(),
           Space::new().width(spacing::SPACE_2).into(),
-          from_queue_btn(),
+          FromQueueButton::new().render(),
         ])
         .align_y(iced::alignment::Vertical::Center)
         .into(),

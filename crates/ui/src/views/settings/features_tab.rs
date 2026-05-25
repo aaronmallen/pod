@@ -9,10 +9,10 @@ pub use feature_search_bar::FeatureSearchBar;
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Space, column, container, row, scrollable, text},
+  widget::{Space, button, column, container, row, scrollable, text},
 };
 
-use crate::style::{color, radius, spacing};
+use crate::style::{color, component, radius, spacing};
 
 /// Builder for the features settings panel.
 pub struct Component<'a> {

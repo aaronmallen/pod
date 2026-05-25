@@ -48,40 +48,49 @@ impl Component {
 
   /// Renders the banner into an [`Element`].
   pub fn render<'a>(self) -> Element<'a, Message> {
-    let inner: Element<'a, Message> = match self.state {
-      BannerState::Downloading => render_downloading(),
-      BannerState::Error(msg) => render_error(msg),
-      BannerState::ReadyToRestart => render_ready_to_restart(),
-      BannerState::UpdateAvailable(version) => render_update_available(version),
-    };
-
-    let bottom_border = container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA_MUTED)),
-        ..container::Style::default()
-      });
-
-    let content = container(inner)
-      .width(Length::Fill)
-      .height(40.0)
-      .align_y(iced::alignment::Vertical::Center)
-      .padding(Padding {
-        top: 0.0,
-        bottom: 0.0,
-        left: 16.0,
-        right: 16.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-        ..container::Style::default()
-      });
-
+    let inner = banner_inner(self.state);
+    let bottom_border = banner_bottom_border();
+    let content = banner_content(inner);
     iced::widget::column([content.into(), bottom_border.into()])
       .width(Length::Fill)
       .into()
   }
+}
+
+fn banner_inner(state: BannerState) -> Element<'static, Message> {
+  match state {
+    BannerState::Downloading => render_downloading(),
+    BannerState::Error(msg) => render_error(msg),
+    BannerState::ReadyToRestart => render_ready_to_restart(),
+    BannerState::UpdateAvailable(version) => render_update_available(version),
+  }
+}
+
+fn banner_bottom_border<'a>() -> iced::widget::Container<'a, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent::PLASMA_MUTED)),
+      ..container::Style::default()
+    })
+}
+
+fn banner_content(inner: Element<'_, Message>) -> iced::widget::Container<'_, Message> {
+  container(inner)
+    .width(Length::Fill)
+    .height(40.0)
+    .align_y(iced::alignment::Vertical::Center)
+    .padding(Padding {
+      top: 0.0,
+      bottom: 0.0,
+      left: 16.0,
+      right: 16.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
+      ..container::Style::default()
+    })
 }
 
 fn render_downloading<'a>() -> Element<'a, Message> {

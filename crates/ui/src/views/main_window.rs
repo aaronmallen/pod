@@ -123,40 +123,56 @@ impl<'a> Component<'a> {
   }
 }
 
+fn make_nav_item(
+  icon: components::Icon,
+  nav: Nav,
+  has_badge: bool,
+  active: Nav,
+  hovered: Option<Nav>,
+) -> Element<'static, Message> {
+  mouse_area(
+    NavButton::new(
+      icon,
+      active == nav,
+      hovered == Some(nav),
+      has_badge,
+      Message::Navigate(nav),
+    )
+    .render(),
+  )
+  .on_enter(Message::HoverNav(Some(nav)))
+  .on_exit(Message::HoverNav(None))
+  .into()
+}
+
+fn build_nav_items(state: &State, active: Nav, hovered: Option<Nav>) -> Vec<Element<'_, Message>> {
+  let unread_mail: u32 = 0;
+  let mut items: Vec<Element<'_, Message>> = vec![make_nav_item(
+    Icon::characters(),
+    Nav::Characters,
+    false,
+    active,
+    hovered,
+  )];
+  if state.feat_skill_monitoring {
+    items.push(make_nav_item(Icon::skills(), Nav::Skills, false, active, hovered));
+  }
+  if state.feat_mail {
+    items.push(make_nav_item(Icon::mail(), Nav::Mail, unread_mail > 0, active, hovered));
+  }
+  if state.feat_wallet {
+    items.push(make_nav_item(Icon::wallet(), Nav::Wallet, false, active, hovered));
+  }
+  if state.feat_asset_tracking {
+    items.push(make_nav_item(Icon::assets(), Nav::Assets, false, active, hovered));
+  }
+  items
+}
+
 fn render_rail(state: &State) -> Element<'_, Message> {
   let active = state.active_nav;
   let hovered = state.hovered_nav;
-  let unread_mail: u32 = 0;
-
-  let nav_item = |icon, nav: Nav, has_badge| {
-    mouse_area(
-      NavButton::new(
-        icon,
-        active == nav,
-        hovered == Some(nav),
-        has_badge,
-        Message::Navigate(nav),
-      )
-      .render(),
-    )
-    .on_enter(Message::HoverNav(Some(nav)))
-    .on_exit(Message::HoverNav(None))
-    .into()
-  };
-
-  let mut nav_items: Vec<Element<'_, Message>> = vec![nav_item(Icon::characters(), Nav::Characters, false)];
-  if state.feat_skill_monitoring {
-    nav_items.push(nav_item(Icon::skills(), Nav::Skills, false));
-  }
-  if state.feat_mail {
-    nav_items.push(nav_item(Icon::mail(), Nav::Mail, unread_mail > 0));
-  }
-  if state.feat_wallet {
-    nav_items.push(nav_item(Icon::wallet(), Nav::Wallet, false));
-  }
-  if state.feat_asset_tracking {
-    nav_items.push(nav_item(Icon::assets(), Nav::Assets, false));
-  }
+  let nav_items = build_nav_items(state, active, hovered);
 
   let settings_btn = mouse_area(
     NavButton::new(
@@ -189,6 +205,12 @@ fn render_active_view_with_size(view: &ActiveView, window_width: f32, window_hei
   match view {
     ActiveView::CharacterDetail(s) => render_character_detail(s),
     ActiveView::Characters(s) => render_characters(s, window_width, window_height),
+    _ => render_active_view_sized(view, window_width),
+  }
+}
+
+fn render_active_view_sized(view: &ActiveView, window_width: f32) -> Element<'_, Message> {
+  match view {
     ActiveView::Mail(s) => render_mail(s, window_width),
     ActiveView::Skills(s) => render_skills(s, window_width),
     ActiveView::Wallet(s) => render_wallet(s, window_width),

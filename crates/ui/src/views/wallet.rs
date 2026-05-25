@@ -125,23 +125,11 @@ pub enum Timeframe {
 
 impl Timeframe {
   pub fn label(&self) -> &'static str {
-    match self {
-      Self::W1 => "1W",
-      Self::M1 => "1M",
-      Self::M3 => "3M",
-      Self::M6 => "6M",
-      Self::Y1 => "1Y",
-    }
+    timeframe_label_and_days(self).0
   }
 
   pub fn days(&self) -> usize {
-    match self {
-      Self::W1 => 7,
-      Self::M1 => 30,
-      Self::M3 => 90,
-      Self::M6 => 180,
-      Self::Y1 => 365,
-    }
+    timeframe_label_and_days(self).1
   }
 
   pub fn all() -> &'static [Timeframe] {
@@ -152,6 +140,22 @@ impl Timeframe {
       Timeframe::M6,
       Timeframe::Y1,
     ]
+  }
+}
+
+fn timeframe_label_and_days(tf: &Timeframe) -> (&'static str, usize) {
+  match tf {
+    Timeframe::W1 => ("1W", 7),
+    Timeframe::M1 => ("1M", 30),
+    Timeframe::M3 => ("3M", 90),
+    _ => timeframe_label_and_days_long(tf),
+  }
+}
+
+fn timeframe_label_and_days_long(tf: &Timeframe) -> (&'static str, usize) {
+  match tf {
+    Timeframe::M6 => ("6M", 180),
+    _ => ("1Y", 365),
   }
 }
 
@@ -239,20 +243,14 @@ impl State {
     if self.is_corp_selected() {
       return 0.0;
     }
-    match self.selected_character() {
-      None => self.characters.iter().map(|c| c.assets).sum(),
-      Some(id) => self.characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.assets),
-    }
+    character_field_total(&self.characters, self.selected_character(), |c| c.assets)
   }
 
   pub fn total_escrow(&self) -> f64 {
     if self.is_corp_selected() {
       return 0.0;
     }
-    match self.selected_character() {
-      None => self.characters.iter().map(|c| c.escrow).sum(),
-      Some(id) => self.characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.escrow),
-    }
+    character_field_total(&self.characters, self.selected_character(), |c| c.escrow)
   }
 
   pub fn total_liquid(&self) -> f64 {
@@ -263,6 +261,17 @@ impl State {
       None => all_characters_liquid(&self.characters, &self.all_corp_balances),
       Some(id) => character_liquid(&self.characters, id),
     }
+  }
+}
+
+fn character_field_total(
+  characters: &[WalletCharacter],
+  selected: Option<i64>,
+  field: impl Fn(&WalletCharacter) -> f64,
+) -> f64 {
+  match selected {
+    None => characters.iter().map(field).sum(),
+    Some(id) => characters.iter().find(|c| c.id == id).map_or(0.0, |c| field(c)),
   }
 }
 
@@ -293,13 +302,17 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   if state.dragging_pane.is_none() {
     return Subscription::none();
   }
-  iced::event::listen_with(|event, _status, _id| match event {
+  iced::event::listen_with(pane_drag_event_filter)
+}
+
+fn pane_drag_event_filter(event: Event, _status: iced::event::Status, _id: iced::window::Id) -> Option<Message> {
+  match event {
     Event::Mouse(mouse::Event::CursorMoved {
       position,
     }) => Some(Message::PaneDrag(position.x)),
     Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
     _ => None,
-  })
+  }
 }
 
 fn scope_gate(state: &State) -> Option<Element<'_, Message>> {
@@ -403,6 +416,12 @@ fn update_dispatch(state: &mut State, msg: Message) {
       journal,
       market,
     } => update_corp_data(state, divisions, journal, market),
+    msg => update_dispatch_tab(state, msg),
+  }
+}
+
+fn update_dispatch_tab(state: &mut State, msg: Message) {
+  match msg {
     Message::JournalTab(msg) => update_journal_tab(state, msg),
     Message::MarketTab(msg) => update_market_tab(state, msg),
     msg => update_simple(state, msg),

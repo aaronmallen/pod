@@ -130,7 +130,7 @@ fn append_character_bar<'a>(
   if !all_wallets || characters.is_empty() {
     return;
   }
-  let total_nw: f64 = characters.iter().map(|c| c.liquid + c.assets + c.escrow).sum();
+  let total_nw: f64 = characters.iter().map(|c| character_net_worth(c)).sum();
   if total_nw > 0.0 {
     children.push(Space::new().height(16.0).into());
     children.push(by_character_bar(characters, total_nw));
@@ -139,30 +139,32 @@ fn append_character_bar<'a>(
 
 fn x_labels_for_timeframe(tf: &Timeframe, n: usize) -> Vec<String> {
   let days = tf.days();
-  let label_for = |i: usize| -> String {
-    if i == 4 {
-      return "today".to_string();
-    }
-    let series_idx = (i as f32 / 4.0 * (n.saturating_sub(1)) as f32).round() as usize;
-    let days_ago = if n > 1 {
-      (days as f32 * (1.0 - series_idx as f32 / (n.saturating_sub(1)) as f32)).round() as usize
-    } else {
-      days
-    };
-    if days_ago == 0 {
-      return "today".to_string();
-    }
-    if days <= 30 {
-      format!("{}d ago", days_ago)
-    } else if days <= 90 {
-      let weeks = (days_ago + 3) / 7;
-      format!("{}w ago", weeks.max(1))
-    } else {
-      let months = (days_ago + 14) / 30;
-      format!("{}mo ago", months.max(1))
-    }
+  (0..5).map(|i| x_label_at(i, days, n)).collect()
+}
+
+fn x_label_at(i: usize, days: usize, n: usize) -> String {
+  let series_idx = (i as f32 / 4.0 * (n.saturating_sub(1)) as f32).round() as usize;
+  let days_ago = if n > 1 {
+    (days as f32 * (1.0 - series_idx as f32 / (n.saturating_sub(1)) as f32)).round() as usize
+  } else {
+    days
   };
-  (0..5).map(label_for).collect()
+  if i == 4 || days_ago == 0 {
+    return "today".to_string();
+  }
+  days_ago_label(days, days_ago)
+}
+
+fn days_ago_label(days: usize, days_ago: usize) -> String {
+  if days <= 30 {
+    format!("{}d ago", days_ago)
+  } else if days <= 90 {
+    let weeks = (days_ago + 3) / 7;
+    format!("{}w ago", weeks.max(1))
+  } else {
+    let months = (days_ago + 14) / 30;
+    format!("{}mo ago", months.max(1))
+  }
 }
 
 fn tooltip_date_label(series_len: usize, index: usize) -> String {
@@ -251,22 +253,33 @@ fn hover_tooltip(hover: &HoverData, series_len: usize, prev_value: Option<f64>) 
   .into()
 }
 
-fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Element<'a, Message> {
+fn character_net_worth(c: &WalletCharacter) -> f64 {
+  c.liquid + c.assets + c.escrow
+}
+
+fn sort_characters_by_net_worth<'a>(characters: &'a [WalletCharacter]) -> Vec<&'a WalletCharacter> {
   let mut sorted: Vec<&WalletCharacter> = characters.iter().collect();
   sorted.sort_by(|a, b| {
-    let nw_a = a.liquid + a.assets + a.escrow;
-    let nw_b = b.liquid + b.assets + b.escrow;
-    nw_b.partial_cmp(&nw_a).unwrap_or(std::cmp::Ordering::Equal)
+    character_net_worth(b)
+      .partial_cmp(&character_net_worth(a))
+      .unwrap_or(std::cmp::Ordering::Equal)
   });
+  sorted
+}
 
-  let section_label: Element<'_, Message> = text("BY CHARACTER")
+fn by_character_section_label<'a>() -> Element<'a, Message> {
+  text("BY CHARACTER")
     .font(mono::REGULAR)
     .size(9.0)
     .style(|_: &Theme| iced::widget::text::Style {
       color: Some(color::text::TERTIARY),
     })
-    .into();
+    .into()
+}
 
+fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Element<'a, Message> {
+  let sorted = sort_characters_by_net_worth(characters);
+  let section_label = by_character_section_label();
   let bar_slices: Vec<Element<'_, Message>> = sorted.iter().map(|c| character_bar_slice(c, total_nw)).collect();
 
   let bar_row: Element<'_, Message> = container(row(bar_slices).width(Length::Fill).height(6.0))
@@ -283,7 +296,6 @@ fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Ele
     .into();
 
   let legend_items: Vec<Element<'_, Message>> = sorted.iter().map(|c| character_legend_item(c, total_nw)).collect();
-
   let legend_row: Element<'_, Message> = row(legend_items).spacing(18.0).wrap().into();
 
   column([
@@ -297,7 +309,7 @@ fn by_character_bar<'a>(characters: &'a [WalletCharacter], total_nw: f64) -> Ele
 }
 
 fn character_bar_slice<'a>(c: &WalletCharacter, total_nw: f64) -> Element<'a, Message> {
-  let nw = c.liquid + c.assets + c.escrow;
+  let nw = character_net_worth(c);
   let share = ((nw / total_nw * 100.0).round() as u16).max(1);
   let slice_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
   container(Space::new().width(Length::FillPortion(share)).height(6.0))
@@ -311,7 +323,7 @@ fn character_bar_slice<'a>(c: &WalletCharacter, total_nw: f64) -> Element<'a, Me
 }
 
 fn character_legend_item<'a>(c: &'a WalletCharacter, total_nw: f64) -> Element<'a, Message> {
-  let nw = c.liquid + c.assets + c.escrow;
+  let nw = character_net_worth(c);
   let pct = nw / total_nw * 100.0;
   let swatch_color = hsl_to_color(c.portrait_tone as f32, 0.50, 0.48);
   let swatch: Element<'_, Message> = container(Space::new().width(8.0).height(8.0))
@@ -364,18 +376,26 @@ fn hsl_to_color(h: f32, s: f32, l: f32) -> Color {
   let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
   let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
   let m = l - c / 2.0;
-  let (r, g, b) = if h < 60.0 {
-    (c, x, 0.0)
-  } else if h < 120.0 {
-    (x, c, 0.0)
-  } else if h < 180.0 {
-    (0.0, c, x)
+  let (r, g, b) = hsl_rgb_components(h, c, x);
+  Color::from_rgb(r + m, g + m, b + m)
+}
+
+fn hsl_rgb_components(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+  if h < 120.0 {
+    hsl_rgb_low(h, c, x)
   } else if h < 240.0 {
-    (0.0, x, c)
+    hsl_rgb_mid(h, c, x)
   } else if h < 300.0 {
     (x, 0.0, c)
   } else {
     (c, 0.0, x)
-  };
-  Color::from_rgb(r + m, g + m, b + m)
+  }
+}
+
+fn hsl_rgb_low(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+  if h < 60.0 { (c, x, 0.0) } else { (x, c, 0.0) }
+}
+
+fn hsl_rgb_mid(h: f32, c: f32, x: f32) -> (f32, f32, f32) {
+  if h < 180.0 { (0.0, c, x) } else { (0.0, x, c) }
 }

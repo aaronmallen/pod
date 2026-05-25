@@ -16,6 +16,74 @@ use crate::{
   views::wallet::{MarketEntry, market_tab::Message, ts_label},
 };
 
+fn side_color(is_sell: bool) -> iced::Color {
+  if is_sell {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  }
+}
+
+fn build_left_col<'a>(entry: &'a MarketEntry) -> Element<'a, Message> {
+  let item_row: Element<'_, Message> = row([
+    QtyBadge::new(entry.qty).render(),
+    Space::new().width(6.0).into(),
+    text(&entry.item)
+      .font(body::REGULAR)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+  ])
+  .align_y(iced::alignment::Vertical::Center)
+  .width(Length::Fill)
+  .into();
+
+  column([
+    item_row,
+    text(format!("{} / unit", format::fmt_isk(entry.unit)))
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .width(Length::Fill)
+  .into()
+}
+
+fn build_right_col<'a>(entry: &'a MarketEntry, side_color: iced::Color) -> Element<'a, Message> {
+  column([
+    container(
+      text(format::fmt_isk(entry.total))
+        .font(mono::MEDIUM)
+        .size(13.0)
+        .style(move |_: &Theme| iced::widget::text::Style {
+          color: Some(side_color),
+        }),
+    )
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .into(),
+    container(
+      text(ts_label(entry.ts_secs))
+        .font(mono::REGULAR)
+        .size(10.0)
+        .style(|_: &Theme| iced::widget::text::Style {
+          color: Some(color::text::TERTIARY),
+        }),
+    )
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .into(),
+  ])
+  .width(96.0)
+  .into()
+}
+
 /// Builder for a single market entry row.
 pub struct MarketEntryRow<'a> {
   entry: &'a MarketEntry,
@@ -35,68 +103,9 @@ impl<'a> MarketEntryRow<'a> {
   pub fn render(self) -> Element<'a, Message> {
     let entry = self.entry;
     let is_sell = entry.side == "sell";
-    let side_color = if is_sell {
-      color::status::ONLINE
-    } else {
-      color::status::DANGER
-    };
-
-    let item_row: Element<'_, Message> = row([
-      QtyBadge::new(entry.qty).render(),
-      Space::new().width(6.0).into(),
-      text(&entry.item)
-        .font(body::REGULAR)
-        .size(13.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .width(Length::Fill)
-        .into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Length::Fill)
-    .into();
-
-    let left_col: Element<'_, Message> = column([
-      item_row,
-      text(format!("{} / unit", format::fmt_isk(entry.unit)))
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .width(Length::Fill)
-    .into();
-
-    let right_col: Element<'_, Message> = column([
-      container(
-        text(format::fmt_isk(entry.total))
-          .font(mono::MEDIUM)
-          .size(13.0)
-          .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(side_color),
-          }),
-      )
-      .width(Length::Fill)
-      .align_x(Horizontal::Right)
-      .into(),
-      container(
-        text(ts_label(entry.ts_secs))
-          .font(mono::REGULAR)
-          .size(10.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::TERTIARY),
-          }),
-      )
-      .width(Length::Fill)
-      .align_x(Horizontal::Right)
-      .into(),
-    ])
-    .width(96.0)
-    .into();
-
+    let side_color = side_color(is_sell);
+    let left_col = build_left_col(entry);
+    let right_col = build_right_col(entry, side_color);
     let badge_cell: Element<'_, Message> = container(SideBadge::new(is_sell).render()).width(44.0).into();
 
     let inner = row([

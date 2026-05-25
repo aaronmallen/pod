@@ -506,18 +506,29 @@ async fn cache_structure_names_from_assets(
   esi: &Client,
   db: &pod_db::Repo,
 ) {
-  let structure_ids: Vec<i64> = assets
+  let structure_ids = collect_uncached_structure_ids(assets, db).await;
+  if structure_ids.is_empty() {
+    return;
+  }
+  let resolved = resolve_structures(structure_ids, character, grant, esi).await;
+  persist_structure_names(resolved, character, db).await;
+}
+
+fn asset_structure_ids(assets: &[CharacterAsset]) -> Vec<i64> {
+  assets
     .iter()
     .filter(|a| a.location_type != "item" && a.location_id >= i32::MAX as i64)
     .map(|a| a.location_id)
     .collect::<HashSet<_>>()
     .into_iter()
-    .collect();
+    .collect()
+}
 
+async fn collect_uncached_structure_ids(assets: &[CharacterAsset], db: &pod_db::Repo) -> Vec<i64> {
+  let structure_ids = asset_structure_ids(assets);
   if structure_ids.is_empty() {
-    return;
+    return vec![];
   }
-
   let cached: HashSet<i64> = db
     .universe()
     .structure_cache()
@@ -527,12 +538,17 @@ async fn cache_structure_names_from_assets(
     .into_iter()
     .map(|(id, _, _)| id)
     .collect();
+  structure_ids.into_iter().filter(|id| !cached.contains(id)).collect()
+}
 
-  let mut resolved: Vec<(i64, String, Option<i64>)> = Vec::new();
-  for id in structure_ids {
-    if cached.contains(&id) {
-      continue;
-    }
+async fn resolve_structures(
+  ids: Vec<i64>,
+  character: &Character,
+  grant: &pod_esi::models::auth::Grant,
+  esi: &Client,
+) -> Vec<(i64, String, Option<i64>)> {
+  let mut resolved = Vec::new();
+  for id in ids {
     if let Ok(info) = esi.universe().structure(id).auth(grant).detail().await {
       resolved.push((id, info.name, Some(info.solar_system_id)));
     } else {
@@ -543,7 +559,10 @@ async fn cache_structure_names_from_assets(
       );
     }
   }
+  resolved
+}
 
+async fn persist_structure_names(resolved: Vec<(i64, String, Option<i64>)>, character: &Character, db: &pod_db::Repo) {
   if !resolved.is_empty()
     && let Err(e) = db.universe().structure_cache().upsert_many(&resolved).await
   {
@@ -568,48 +587,66 @@ async fn sync_clones_to_db(
     }
   };
   let active_implant_ids = implants_res.unwrap_or_default();
+  let data_map = fetch_implant_data_map(&clones_data, &active_implant_ids, db).await;
+  let now = chrono::Utc::now().to_rfc3339();
+  let clone_data = build_clone_data(char_id, &clones_data, &active_implant_ids, &data_map, &now);
+  if let Err(e) = db.clones().upsert_startup_clones(&clone_data).await {
+    tracing::warn!("bootstrap: failed to persist clones for character {char_id}: {e}");
+  }
+}
 
-  let mut all_type_ids: Vec<i32> = active_implant_ids.clone();
+async fn fetch_implant_data_map(
+  clones_data: &pod_esi::models::character::Clones,
+  active_implant_ids: &[i32],
+  db: &pod_db::Repo,
+) -> HashMap<i32, (String, i32, String)> {
+  let mut all_type_ids: Vec<i32> = active_implant_ids.to_vec();
   for jc in &clones_data.jump_clones {
     all_type_ids.extend_from_slice(&jc.implants);
   }
   all_type_ids.sort_unstable();
   all_type_ids.dedup();
-
-  let implant_rows = db
-    .universe()
+  db.universe()
     .item_types()
     .implant_data_for_ids(&all_type_ids)
     .await
-    .unwrap_or_default();
-
-  let data_map: HashMap<i32, (String, i32, String)> = implant_rows
+    .unwrap_or_default()
     .into_iter()
     .map(|(tid, bonus, slot, name)| (tid, (bonus, slot, name)))
-    .collect();
+    .collect()
+}
 
-  let now = chrono::Utc::now().to_rfc3339();
+fn build_implants(
+  clone_id: i64,
+  type_ids: &[i32],
+  data_map: &HashMap<i32, (String, i32, String)>,
+) -> Vec<pod_db::StartupImplant> {
+  type_ids
+    .iter()
+    .enumerate()
+    .map(|(i, &tid)| {
+      let (bonus, slot, name) = data_map
+        .get(&tid)
+        .cloned()
+        .unwrap_or_else(|| ("{}".to_string(), (i + 1) as i32, tid.to_string()));
+      pod_db::StartupImplant {
+        clone_id,
+        type_id: tid,
+        slot,
+        name,
+        attribute_bonus: bonus,
+      }
+    })
+    .collect()
+}
 
-  let build_implants = |clone_id: i64, type_ids: &[i32]| -> Vec<pod_db::StartupImplant> {
-    type_ids
-      .iter()
-      .enumerate()
-      .map(|(i, &tid)| {
-        let (bonus, slot, name) = data_map
-          .get(&tid)
-          .cloned()
-          .unwrap_or_else(|| ("{}".to_string(), (i + 1) as i32, tid.to_string()));
-        pod_db::StartupImplant {
-          clone_id,
-          type_id: tid,
-          slot,
-          name,
-          attribute_bonus: bonus,
-        }
-      })
-      .collect()
-  };
-
+fn build_clone_data(
+  char_id: i64,
+  clones_data: &pod_esi::models::character::Clones,
+  active_implant_ids: &[i32],
+  data_map: &HashMap<i32, (String, i32, String)>,
+  now: &str,
+) -> Vec<(pod_db::StartupClone, Vec<pod_db::StartupImplant>)> {
   let home_loc_id = clones_data
     .home_location
     .as_ref()
@@ -622,13 +659,10 @@ async fn sync_clones_to_db(
     is_active: true,
     location_id: home_loc_id,
     name: None,
-    synced_at: now.clone(),
+    synced_at: now.to_string(),
   };
-  let active_implants = build_implants(0, &active_implant_ids);
-
-  let mut clone_data: Vec<(pod_db::StartupClone, Vec<pod_db::StartupImplant>)> = vec![(active_clone, active_implants)];
-
-  for jc in clones_data.jump_clones {
+  let mut clone_data = vec![(active_clone, build_implants(0, active_implant_ids, data_map))];
+  for jc in &clones_data.jump_clones {
     let Some(clone_id) = jc.clone_id else {
       continue;
     };
@@ -638,16 +672,12 @@ async fn sync_clones_to_db(
       installed_at: clones_data.last_station_change_date.clone(),
       is_active: false,
       location_id: jc.location_id,
-      name: jc.name,
-      synced_at: now.clone(),
+      name: jc.name.clone(),
+      synced_at: now.to_string(),
     };
-    let implants = build_implants(clone_id, &jc.implants);
-    clone_data.push((clone, implants));
+    clone_data.push((clone, build_implants(clone_id, &jc.implants, data_map)));
   }
-
-  if let Err(e) = db.clones().upsert_startup_clones(&clone_data).await {
-    tracing::warn!("bootstrap: failed to persist clones for character {char_id}: {e}");
-  }
+  clone_data
 }
 
 async fn step(tx: &mut Tx, label: String) {

@@ -22,8 +22,14 @@ fn read_attr(attrs: &BaseAttrs, key: AttrKey) -> i32 {
     AttrKey::Charisma => attrs.charisma,
     AttrKey::Intelligence => attrs.intelligence,
     AttrKey::Memory => attrs.memory,
+    key => read_attr_ext(attrs, key),
+  }
+}
+
+fn read_attr_ext(attrs: &BaseAttrs, key: AttrKey) -> i32 {
+  match key {
     AttrKey::Perception => attrs.perception,
-    AttrKey::Willpower => attrs.willpower,
+    _ => attrs.willpower,
   }
 }
 

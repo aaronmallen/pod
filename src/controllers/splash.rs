@@ -31,9 +31,7 @@ pub fn handle_bootstrap(
   match msg {
     bootstrap::Message::SeedingRequired(db_val) => handle_seeding_required(state, db, step_label, db_val),
     bootstrap::Message::SeedingComplete(db_val) => handle_seeding_complete(state, db, db_val),
-    bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
-    bootstrap::Message::StepChanged(label) => apply_step_progress(state, step_label, label),
-    msg => handle_bootstrap_ext(state, db, characters, esi_client, msg),
+    msg => handle_bootstrap_later(state, db, characters, esi_client, step_label, msg),
   }
 }
 
@@ -61,6 +59,21 @@ fn apply_step_progress(state: &mut State, step_label: &mut String, label: String
     state.progress_target = (state.progress_target + 0.25).min(1.0);
   }
   HandleResult::None
+}
+
+fn handle_bootstrap_later(
+  state: &mut State,
+  db: &mut Option<pod_db::Repo>,
+  characters: &mut Vec<Character>,
+  esi_client: &mut Option<pod_esi::Client>,
+  step_label: &mut String,
+  msg: bootstrap::Message,
+) -> HandleResult {
+  match msg {
+    bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
+    bootstrap::Message::StepChanged(label) => apply_step_progress(state, step_label, label),
+    msg => handle_bootstrap_ext(state, db, characters, esi_client, msg),
+  }
 }
 
 fn handle_bootstrap_ext(

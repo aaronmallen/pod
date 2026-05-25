@@ -41,8 +41,14 @@ fn tab_active_index(tab: &Tab) -> usize {
     Tab::Inventory => 0,
     Tab::Stockpiles => 1,
     Tab::Values => 2,
+    tab => tab_active_index_ext(tab),
+  }
+}
+
+fn tab_active_index_ext(tab: &Tab) -> usize {
+  match tab {
     Tab::Tracker => 3,
-    Tab::Abyssals => 4,
+    _ => 4,
   }
 }
 

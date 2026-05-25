@@ -206,8 +206,14 @@ fn raw_attr_value(attrs: &EffectiveAttrs, key: AttrKey) -> i32 {
     AttrKey::Perception => attrs.perception,
     AttrKey::Memory => attrs.memory,
     AttrKey::Willpower => attrs.willpower,
+    key => raw_attr_value_ext(attrs, key),
+  }
+}
+
+fn raw_attr_value_ext(attrs: &EffectiveAttrs, key: AttrKey) -> i32 {
+  match key {
     AttrKey::Intelligence => attrs.intelligence,
-    AttrKey::Charisma => attrs.charisma,
+    _ => attrs.charisma,
   }
 }
 
@@ -331,8 +337,14 @@ pub fn implant_bonus_for_set(set: ImplantSet, current_attrs_implants: &BaseAttrs
     ImplantSet::None => ImplantBonus::default(),
     ImplantSet::Plus3 => uniform_implant_bonus(3),
     ImplantSet::Plus4 => uniform_implant_bonus(4),
+    set => implant_bonus_for_set_ext(set, current_attrs_implants),
+  }
+}
+
+fn implant_bonus_for_set_ext(set: ImplantSet, current_attrs_implants: &BaseAttrs) -> ImplantBonus {
+  match set {
     ImplantSet::Plus5 => uniform_implant_bonus(5),
-    ImplantSet::Current => current_attrs_implants.clone(),
+    _ => current_attrs_implants.clone(),
   }
 }
 
@@ -503,8 +515,14 @@ fn apply_attr_boost(boosted: &mut ImplantBonus, attr: AttrKey) {
     AttrKey::Perception => boosted.perception += 1,
     AttrKey::Memory => boosted.memory += 1,
     AttrKey::Willpower => boosted.willpower += 1,
+    attr => apply_attr_boost_ext(boosted, attr),
+  }
+}
+
+fn apply_attr_boost_ext(boosted: &mut ImplantBonus, attr: AttrKey) {
+  match attr {
     AttrKey::Intelligence => boosted.intelligence += 1,
-    AttrKey::Charisma => boosted.charisma += 1,
+    _ => boosted.charisma += 1,
   }
 }
 

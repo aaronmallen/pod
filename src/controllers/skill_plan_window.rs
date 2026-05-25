@@ -557,16 +557,20 @@ fn collect_wishes(entries: &[PlanEntry]) -> Vec<(String, u8)> {
   result
 }
 
+fn apply_wish(wishes: &mut Vec<(String, u8)>, skill: String, level: u8) {
+  if let Some(existing) = wishes.iter_mut().find(|(n, _)| n == &skill) {
+    if level > existing.1 {
+      existing.1 = level;
+    }
+  } else {
+    wishes.push((skill, level));
+  }
+}
+
 fn merge_wishes_into_plan(state: &mut State, new_wishes: Vec<(String, u8)>) {
   let mut wishes = collect_wishes(&state.entries);
   for (skill, level) in new_wishes {
-    if let Some(existing) = wishes.iter_mut().find(|(n, _)| n == &skill) {
-      if level > existing.1 {
-        existing.1 = level;
-      }
-    } else {
-      wishes.push((skill, level));
-    }
+    apply_wish(&mut wishes, skill, level);
   }
   let wish_refs: Vec<(&str, u8)> = wishes.iter().map(|(n, l)| (n.as_str(), *l)).collect();
   let new_entries = expand_wishes(&wish_refs, &state.skill_groups);

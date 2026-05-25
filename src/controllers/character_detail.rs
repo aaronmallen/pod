@@ -84,6 +84,12 @@ fn handle_filter_or_loaded(state: &mut State, message: Message, services: &Servi
       recompute_killlog_filter(state);
       iced::Task::none()
     }
+    msg => handle_filter_ext(state, msg, services),
+  }
+}
+
+fn handle_filter_ext(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
     Message::NotificationsFilterChanged(f) => {
       tracing::info!("character: notifications filter changed — {f:?}");
       state.notifications_filter = f;

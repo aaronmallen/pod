@@ -849,21 +849,20 @@ async fn fetch_char_location(
   let char_client = esi.character(&grant);
   let loc = char_client.location().await.ok()?;
   let docked = loc.station_id.is_some() || loc.structure_id.is_some();
-  let name = if let Some(sid) = loc.station_id {
-    esi.universe().station(sid).await.ok().map(|s| s.name)
-  } else {
-    esi
-      .universe()
-      .solar_system(loc.solar_system_id)
-      .await
-      .ok()
-      .map(|s| s.name)
-  };
+  let name = fetch_location_name(esi, loc.station_id, loc.solar_system_id).await;
   let _ = db
     .characters()
     .update_location(*character.id(), name.clone(), Some(docked))
     .await;
   Some((*character.id(), name, Some(docked)))
+}
+
+async fn fetch_location_name(esi: &pod_esi::Client, station_id: Option<i64>, system_id: i64) -> Option<String> {
+  if let Some(sid) = station_id {
+    esi.universe().station(sid).await.ok().map(|s| s.name)
+  } else {
+    esi.universe().solar_system(system_id).await.ok().map(|s| s.name)
+  }
 }
 
 async fn fetch_locations(

@@ -851,6 +851,12 @@ fn nav_feature_flag(state: &State, nav: Nav) -> Option<bool> {
   match nav {
     Nav::Assets => Some(state.feat_asset_tracking),
     Nav::Mail => Some(state.feat_mail),
+    nav => nav_feature_flag_ext(state, nav),
+  }
+}
+
+fn nav_feature_flag_ext(state: &State, nav: Nav) -> Option<bool> {
+  match nav {
     Nav::Skills => Some(state.feat_skill_monitoring),
     Nav::Wallet => Some(state.feat_wallet),
     _ => None,

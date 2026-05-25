@@ -284,12 +284,16 @@ fn extract_archive_entry(
   extract_zip_entry(&mut entry, &out_path)
 }
 
+fn create_dir_at(path: &Path) -> Result<(), String> {
+  std::fs::create_dir_all(path).map_err(|e| e.to_string())
+}
+
 fn extract_zip_entry<R: std::io::Read + ?Sized>(
   entry: &mut zip::read::ZipFile<'_, R>,
   out_path: &Path,
 ) -> Result<(), String> {
   if entry.is_dir() {
-    std::fs::create_dir_all(out_path).map_err(|e| e.to_string())?;
+    create_dir_at(out_path)?;
   } else {
     write_zip_file_entry(entry, out_path)?;
   }

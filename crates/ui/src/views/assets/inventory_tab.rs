@@ -47,49 +47,9 @@ impl<'a> Component<'a> {
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
     let filter_bar_el = filter_bar(state);
-
-    let sorted = state.sorted_assets();
-    let table: Element<'_, Message> = if sorted.is_empty() {
-      EmptyState::new("No assets match the current filters.").render()
-    } else {
-      let header_row = table_header(&state.sort_col, state.sort_asc);
-      let all_assets = state.all_assets();
-      let visible = state.visible_count.min(sorted.len());
-      let page: Vec<&AssetRecord> = sorted[..visible].to_vec();
-      let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers);
-      let data_rows: Vec<Element<'_, Message>> = tree_rows
-        .into_iter()
-        .map(|a| {
-          let owner_name = state
-            .characters
-            .iter()
-            .find(|c| *c.id() == a.character_id)
-            .map(|c| c.name().as_str())
-            .or_else(|| {
-              state
-                .corporations
-                .iter()
-                .find(|c| *c.id() == a.character_id)
-                .map(|c| c.name().as_str())
-            })
-            .unwrap_or("Unknown");
-          let expanded = state.expanded_containers.contains(&a.item_id);
-          asset_table_row(a, owner_name, &state.item_icons, expanded)
-        })
-        .collect();
-      let data = scrollable(column(data_rows).width(Length::Fill))
-        .height(Length::Fill)
-        .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y));
-      column([header_row, data.into()])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    };
-
+    let table = build_table(state);
     let anchor = column([filter_bar_el, table]).width(Length::Fill).height(Length::Fill);
-
     let help_el = help_pop_over::Component::new().render().map(Message::HelpPopOver);
-
     let overlay = container(help_el)
       .height(Length::Fill)
       .width(Length::Fill)
@@ -99,7 +59,6 @@ impl<'a> Component<'a> {
         right: 20.0,
         ..Padding::ZERO
       });
-
     Popover::new(anchor, overlay, state.help_pop_over.visible).render()
   }
 }
@@ -114,6 +73,49 @@ pub enum Message {
   SearchChanged(String),
   SortChanged(SortCol),
   ToggleContainer(i64),
+}
+
+fn resolve_owner_name<'a>(state: &'a State, character_id: i64) -> &'a str {
+  state
+    .characters
+    .iter()
+    .find(|c| *c.id() == character_id)
+    .map(|c| c.name().as_str())
+    .or_else(|| {
+      state
+        .corporations
+        .iter()
+        .find(|c| *c.id() == character_id)
+        .map(|c| c.name().as_str())
+    })
+    .unwrap_or("Unknown")
+}
+
+fn build_table<'a>(state: &'a State) -> Element<'a, Message> {
+  let sorted = state.sorted_assets();
+  if sorted.is_empty() {
+    return EmptyState::new("No assets match the current filters.").render();
+  }
+  let header_row = table_header(&state.sort_col, state.sort_asc);
+  let all_assets = state.all_assets();
+  let visible = state.visible_count.min(sorted.len());
+  let page: Vec<&AssetRecord> = sorted[..visible].to_vec();
+  let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers);
+  let data_rows: Vec<Element<'_, Message>> = tree_rows
+    .into_iter()
+    .map(|a| {
+      let owner_name = resolve_owner_name(state, a.character_id);
+      let expanded = state.expanded_containers.contains(&a.item_id);
+      asset_table_row(a, owner_name, &state.item_icons, expanded)
+    })
+    .collect();
+  let data = scrollable(column(data_rows).width(Length::Fill))
+    .height(Length::Fill)
+    .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y));
+  column([header_row, data.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn append_subtree<'a>(
@@ -288,11 +290,7 @@ fn asset_value_cell(val: f64) -> Element<'static, Message> {
     .into()
 }
 
-fn build_tree_rows<'a>(
-  sorted: Vec<&'a AssetRecord>,
-  all_assets: &'a [AssetRecord],
-  expanded: &HashSet<i64>,
-) -> Vec<&'a AssetRecord> {
+fn build_children_map<'a>(all_assets: &'a [AssetRecord]) -> HashMap<i64, Vec<&'a AssetRecord>> {
   let mut children_map: HashMap<i64, Vec<&'a AssetRecord>> = HashMap::new();
   for a in all_assets {
     if a.container_id != 0 {
@@ -302,13 +300,24 @@ fn build_tree_rows<'a>(
   for children in children_map.values_mut() {
     children.sort_by(|a, b| a.type_name.cmp(&b.type_name));
   }
+  children_map
+}
 
+fn collect_roots<'a>(sorted: Vec<&'a AssetRecord>) -> Vec<&'a AssetRecord> {
   let visible_ids: HashSet<i64> = sorted.iter().map(|a| a.item_id).collect();
-  let roots: Vec<&AssetRecord> = sorted
+  sorted
     .into_iter()
     .filter(|a| a.container_id == 0 || !visible_ids.contains(&a.location_id))
-    .collect();
+    .collect()
+}
 
+fn build_tree_rows<'a>(
+  sorted: Vec<&'a AssetRecord>,
+  all_assets: &'a [AssetRecord],
+  expanded: &HashSet<i64>,
+) -> Vec<&'a AssetRecord> {
+  let children_map = build_children_map(all_assets);
+  let roots = collect_roots(sorted);
   let mut result = Vec::new();
   for root in roots {
     append_subtree(root, &children_map, expanded, &mut result);

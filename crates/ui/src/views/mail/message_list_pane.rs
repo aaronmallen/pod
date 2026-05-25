@@ -34,9 +34,13 @@ fn passes_account_filter(m: &MailMessage, folder: &Folder, account_id: i64) -> b
   matches!(folder, Folder::All) || m.character_id == account_id
 }
 
+fn is_inbox_message(m: &MailMessage) -> bool {
+  m.folder == "inbox" && m.snoozed.is_none()
+}
+
 fn passes_folder_type(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
+    Folder::All | Folder::Inbox => is_inbox_message(m),
     Folder::Archive => m.folder == "archive",
     Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),
@@ -67,6 +71,32 @@ fn filter_folder_messages(state: &State) -> Vec<&MailMessage> {
     .collect()
 }
 
+fn build_day_groups<'a>(visible: &[&'a MailMessage]) -> Vec<(String, Vec<&'a MailMessage>)> {
+  let mut grouped: Vec<(String, Vec<&'a MailMessage>)> = Vec::new();
+  for msg in visible {
+    if let Some(last) = grouped.last_mut()
+      && last.0 == msg.date_label
+    {
+      last.1.push(msg);
+      continue;
+    }
+    grouped.push((msg.date_label.clone(), vec![msg]));
+  }
+  grouped
+}
+
+fn build_list_rows<'a>(grouped: Vec<(String, Vec<&'a MailMessage>)>, state: &'a State) -> Vec<Element<'a, Message>> {
+  let mut rows: Vec<Element<'_, Message>> = Vec::new();
+  for (day, msgs) in grouped {
+    rows.push(day_header::Component::new(day).render());
+    for msg in msgs {
+      let selected = state.selected_message_id.as_deref() == Some(msg.id.as_str());
+      rows.push(message_row::Component::new(msg, selected, state).render());
+    }
+  }
+  rows
+}
+
 /// Builder for the message list middle pane.
 pub struct Component<'a> {
   state: &'a State,
@@ -92,26 +122,8 @@ impl<'a> Component<'a> {
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
     let visible = filter_folder_messages(state);
-
-    let mut grouped: Vec<(String, Vec<&MailMessage>)> = Vec::new();
-    for msg in &visible {
-      if let Some(last) = grouped.last_mut()
-        && last.0 == msg.date_label
-      {
-        last.1.push(msg);
-        continue;
-      }
-      grouped.push((msg.date_label.clone(), vec![msg]));
-    }
-
-    let mut list_rows: Vec<Element<'_, Message>> = Vec::new();
-    for (day, msgs) in grouped {
-      list_rows.push(day_header::Component::new(day).render());
-      for msg in msgs {
-        let selected = state.selected_message_id.as_deref() == Some(msg.id.as_str());
-        list_rows.push(message_row::Component::new(msg, selected, state).render());
-      }
-    }
+    let grouped = build_day_groups(&visible);
+    let mut list_rows = build_list_rows(grouped, state);
 
     if visible.is_empty() && !state.search_query.is_empty() {
       list_rows.push(empty_state::Component::new(&state.search_query).render());

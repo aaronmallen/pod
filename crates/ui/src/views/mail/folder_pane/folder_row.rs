@@ -11,25 +11,25 @@ use crate::{
   style::{color, typography::body},
 };
 
+fn folder_icon_widget(folder: &Folder) -> Icon {
+  match folder {
+    Folder::Archive => Icon::archive(),
+    Folder::Drafts => Icon::draft(),
+    Folder::Inbox | Folder::All | Folder::Label(_) => Icon::inbox(),
+    Folder::Sent => Icon::send(),
+    Folder::Snoozed => Icon::snooze(),
+    Folder::Starred => Icon::star(),
+    Folder::Trash => Icon::trash(),
+  }
+}
+
 fn folder_icon(folder: &Folder, active: bool) -> Element<'static, Message> {
   let color = if active {
     color::accent::PLASMA
   } else {
     color::text::SECONDARY
   };
-  match folder {
-    Folder::Archive => Icon::archive(),
-    Folder::Drafts => Icon::draft(),
-    Folder::Inbox => Icon::inbox(),
-    Folder::Sent => Icon::send(),
-    Folder::Snoozed => Icon::snooze(),
-    Folder::Starred => Icon::star(),
-    Folder::Trash => Icon::trash(),
-    _ => Icon::inbox(),
-  }
-  .size(16.0)
-  .color(color)
-  .render::<Message>()
+  folder_icon_widget(folder).size(16.0).color(color).render::<Message>()
 }
 
 fn folder_row_content(
@@ -271,9 +271,13 @@ pub fn label_rows<'a>(messages: &'a [super::MailMessage], selected: &'a Folder) 
     .collect()
 }
 
+fn is_inbox_message(m: &super::MailMessage) -> bool {
+  m.folder == "inbox" && m.snoozed.is_none()
+}
+
 fn matches_folder_type(m: &super::MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
+    Folder::All | Folder::Inbox => is_inbox_message(m),
     Folder::Archive => m.folder == "archive",
     Folder::Drafts => m.folder == "drafts",
     Folder::Label(l) => m.labels.contains(l),

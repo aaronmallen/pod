@@ -178,28 +178,31 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
 
 fn handle_global_event(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    Message::AddCharacterError(e) | Message::AddCorporationError(e) => {
-      state.add_status = Some(format!("Error: {e}"));
-      iced::Task::none()
-    }
+    Message::AddCharacterError(e) | Message::AddCorporationError(e) => set_add_error(state, e),
     Message::AllTagsLoaded(tags) => {
       state.all_tags = tags;
       iced::Task::none()
     }
     Message::ConfirmRemove => update_confirm_remove(state, services),
     Message::ConfirmRemoveCorporation => update_confirm_remove_corporation(state, services),
-    Message::DismissConfirmRemove => {
-      state.confirm_remove = None;
-      iced::Task::none()
-    }
-    Message::DismissConfirmRemoveCorporation => {
-      state.confirm_remove_corporation = None;
-      iced::Task::none()
-    }
+    Message::DismissConfirmRemove | Message::DismissConfirmRemoveCorporation => dismiss_confirm(state, msg),
     Message::TagModal(msg) => handle_tag_modal(state, msg, services),
-    Message::TagsApplied => iced::Task::none(),
     _ => iced::Task::none(),
   }
+}
+
+fn set_add_error(state: &mut State, e: String) -> iced::Task<Message> {
+  state.add_status = Some(format!("Error: {e}"));
+  iced::Task::none()
+}
+
+fn dismiss_confirm(state: &mut State, msg: Message) -> iced::Task<Message> {
+  match msg {
+    Message::DismissConfirmRemove => state.confirm_remove = None,
+    Message::DismissConfirmRemoveCorporation => state.confirm_remove_corporation = None,
+    _ => {}
+  }
+  iced::Task::none()
 }
 
 fn refilter(state: &mut State) {
@@ -620,8 +623,13 @@ fn active_keyboard_subscription(state: &State) -> Subscription<Message> {
 
 /// Returns timer-based refresh subscriptions.
 fn ticker_subscriptions(state: &State) -> Vec<Subscription<Message>> {
-  let mut subs: Vec<Subscription<Message>> = Vec::new();
+  let mut subs = feature_ticker_subs(state);
+  subs.extend(always_on_ticker_subs());
+  subs
+}
 
+fn feature_ticker_subs(state: &State) -> Vec<Subscription<Message>> {
+  let mut subs: Vec<Subscription<Message>> = Vec::new();
   if state.feat_location_tracking {
     subs.push(
       iced::time::every(std::time::Duration::from_secs(60))
@@ -640,15 +648,18 @@ fn ticker_subscriptions(state: &State) -> Vec<Subscription<Message>> {
         .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
     );
   }
-  subs.extend([
+  subs
+}
+
+fn always_on_ticker_subs() -> Vec<Subscription<Message>> {
+  vec![
     iced::time::every(std::time::Duration::from_secs(300))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpWalletRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CharactersTab(characters_tab::Message::CharacterPublicRefreshTick)),
     iced::time::every(std::time::Duration::from_secs(3600))
       .map(|_| Message::CorporationsTab(corporations_tab::Message::CorpPublicRefreshTick)),
-  ]);
-  subs
+  ]
 }
 
 /// Returns a task that reloads all global tags from the database.
@@ -1663,32 +1674,49 @@ fn update_drag(state: &mut State, services: &Services) -> iced::Task<Message> {
     .character_pane
     .update(characters_tab::Message::DragEnd)
     .map(Message::CharactersTab);
-  if let (Some(dragging_id), Some(slot)) = (dragging, target_slot) {
-    let current_slot = state
-      .all_characters
-      .iter()
-      .find(|c| *c.id() == dragging_id)
-      .map(|c| *c.sort_order());
-    if current_slot != Some(slot) {
-      let updates = compute_new_slot_indices(&state.all_characters, dragging_id, slot);
-      for (id, new_slot) in &updates {
-        if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == *id) {
-          c.set_sort_order(*new_slot);
-        }
-      }
-      state.all_characters.sort_by_key(|c| *c.sort_order());
-      refilter(state);
-      if let Some(db) = services.db.clone() {
-        let updates_clone = updates.clone();
-        let db_task = iced::Task::perform(
-          async move { db.characters().update_sort_orders(&updates_clone).await.ok() },
-          |_| Message::TagsApplied,
-        );
-        return iced::Task::batch([pane_task, db_task]);
-      }
-    }
+  if let (Some(dragging_id), Some(slot)) = (dragging, target_slot)
+    && let Some(db_task) = apply_drag_reorder(state, dragging_id, slot, services)
+  {
+    return iced::Task::batch([pane_task, db_task]);
   }
   pane_task
+}
+
+fn apply_drag_reorder(
+  state: &mut State,
+  dragging_id: i64,
+  slot: i32,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  let current_slot = state
+    .all_characters
+    .iter()
+    .find(|c| *c.id() == dragging_id)
+    .map(|c| *c.sort_order());
+  if current_slot == Some(slot) {
+    return None;
+  }
+  let updates = compute_new_slot_indices(&state.all_characters, dragging_id, slot);
+  apply_slot_updates(state, &updates);
+  persist_drag_order(updates, services)
+}
+
+fn apply_slot_updates(state: &mut State, updates: &[(i64, i32)]) {
+  for (id, new_slot) in updates {
+    if let Some(c) = state.all_characters.iter_mut().find(|c| *c.id() == *id) {
+      c.set_sort_order(*new_slot);
+    }
+  }
+  state.all_characters.sort_by_key(|c| *c.sort_order());
+  refilter(state);
+}
+
+fn persist_drag_order(updates: Vec<(i64, i32)>, services: &Services) -> Option<iced::Task<Message>> {
+  let db = services.db.clone()?;
+  Some(iced::Task::perform(
+    async move { db.characters().update_sort_orders(&updates).await.ok() },
+    |_| Message::TagsApplied,
+  ))
 }
 
 fn handle_add_character(state: &mut State, services: &Services) -> iced::Task<Message> {

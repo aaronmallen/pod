@@ -1,5 +1,6 @@
 //! Picker row + SP/queue stat cells + bottom border.
 
+pub mod hdivider;
 pub mod queue_stats;
 
 use iced::{
@@ -40,9 +41,9 @@ impl<'a> Component<'a> {
 
     let mut items: Vec<Element<'_, Message>> = vec![
       picker_btn,
-      hdivider(),
+      hdivider::HDivider::new().render(),
       SpStat::new(total_sp).render(),
-      hdivider(),
+      hdivider::HDivider::new().render(),
       QueueStat::new(self.queue_len, self.total_secs, self.low_queue).render(),
       Space::new().width(Length::Fill).into(),
     ];
@@ -69,15 +70,4 @@ impl<'a> Component<'a> {
       });
     column([hrow.into(), border_line.into()]).width(Length::Fill).into()
   }
-}
-
-fn hdivider<'a>() -> Element<'a, Message> {
-  container(Space::new().width(1.0).height(44.0))
-    .width(1.0)
-    .height(44.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into()
 }

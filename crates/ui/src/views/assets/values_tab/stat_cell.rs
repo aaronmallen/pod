@@ -79,24 +79,31 @@ impl ValuesStatCell {
         width,
       } => render_header(label, width),
       ValuesStatCellKind::TotalHeader => render_total_header(),
-      ValuesStatCellKind::Value {
-        value,
-        row_total,
-      } => render_value(value, row_total),
-      ValuesStatCellKind::RowTotal {
-        value,
-      } => render_row_total(value),
       ValuesStatCellKind::CharName {
         name,
       } => render_char_name(name),
-      ValuesStatCellKind::TotalsLabel => render_totals_label(),
-      ValuesStatCellKind::ColTotal {
-        value,
-      } => render_col_total(value),
-      ValuesStatCellKind::GrandTotal {
-        value,
-      } => render_grand_total(value),
+      kind => render_data_cell(kind),
     }
+  }
+}
+
+fn render_data_cell(kind: ValuesStatCellKind) -> Element<'static, Message> {
+  match kind {
+    ValuesStatCellKind::Value {
+      value,
+      row_total,
+    } => render_value(value, row_total),
+    ValuesStatCellKind::RowTotal {
+      value,
+    } => render_row_total(value),
+    ValuesStatCellKind::TotalsLabel => render_totals_label(),
+    ValuesStatCellKind::ColTotal {
+      value,
+    } => render_col_total(value),
+    ValuesStatCellKind::GrandTotal {
+      value,
+    } => render_grand_total(value),
+    _ => render_totals_label(),
   }
 }
 

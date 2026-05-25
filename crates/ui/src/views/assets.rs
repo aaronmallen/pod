@@ -548,9 +548,22 @@ fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
 
 fn sort_cmp(col: &SortCol, a: &AssetRecord, b: &AssetRecord) -> std::cmp::Ordering {
   match col {
+    SortCol::Name | SortCol::Category | SortCol::Qty | SortCol::Owner => sort_cmp_identity(col, a, b),
+    _ => sort_cmp_numeric(col, a, b),
+  }
+}
+
+fn sort_cmp_identity(col: &SortCol, a: &AssetRecord, b: &AssetRecord) -> std::cmp::Ordering {
+  match col {
     SortCol::Name => a.type_name.cmp(&b.type_name),
     SortCol::Category => a.category_key.cmp(&b.category_key),
     SortCol::Qty => a.quantity.cmp(&b.quantity),
+    _ => a.character_id.cmp(&b.character_id),
+  }
+}
+
+fn sort_cmp_numeric(col: &SortCol, a: &AssetRecord, b: &AssetRecord) -> std::cmp::Ordering {
+  match col {
     SortCol::UnitValue => std::cmp::Ordering::Equal,
     SortCol::TotalValue => asset_value(a)
       .partial_cmp(&asset_value(b))
@@ -558,8 +571,7 @@ fn sort_cmp(col: &SortCol, a: &AssetRecord, b: &AssetRecord) -> std::cmp::Orderi
     SortCol::Volume => asset_volume(a)
       .partial_cmp(&asset_volume(b))
       .unwrap_or(std::cmp::Ordering::Equal),
-    SortCol::Location => sort_cmp_location(a, b),
-    SortCol::Owner => a.character_id.cmp(&b.character_id),
+    _ => sort_cmp_location(a, b),
   }
 }
 
@@ -628,14 +640,23 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
     inventory_tab::Message::CategoryChanged(cat) => update_category_changed(state, cat),
     inventory_tab::Message::HelpPopOver(inner) => update_help_pop_over_inner(state, inner),
     inventory_tab::Message::HelpToggle => update_help_toggle(state),
+    msg => update_inventory_tab_secondary(state, msg),
+  }
+}
+
+fn update_inventory_tab_secondary(state: &mut State, msg: inventory_tab::Message) {
+  match msg {
     inventory_tab::Message::ScrollUpdate(y) => update_scroll_update(state, y),
     inventory_tab::Message::SearchChanged(q) => update_search_changed(state, q),
     inventory_tab::Message::SortChanged(col) => update_sort_changed(state, col),
-    inventory_tab::Message::ToggleContainer(id) => {
-      if !state.expanded_containers.remove(&id) {
-        state.expanded_containers.insert(id);
-      }
-    }
+    inventory_tab::Message::ToggleContainer(id) => update_toggle_container(state, id),
+    _ => {}
+  }
+}
+
+fn update_toggle_container(state: &mut State, id: i64) {
+  if !state.expanded_containers.remove(&id) {
+    state.expanded_containers.insert(id);
   }
 }
 
@@ -685,13 +706,17 @@ fn update_stockpile_form(state: &mut State, msg: stockpiles_tab::Message) {
   match msg {
     stockpiles_tab::Message::FormNameChanged(name) => form_set_name(state, name),
     stockpiles_tab::Message::FormLocationChanged(loc) => form_set_location(state, loc),
+    stockpiles_tab::Message::FormCancel => state.stockpile_form = None,
+    msg => update_stockpile_form_items(state, msg),
+  }
+}
+
+fn update_stockpile_form_items(state: &mut State, msg: stockpiles_tab::Message) {
+  match msg {
     stockpiles_tab::Message::FormItemTypeChanged(idx, val) => form_set_item_type(state, idx, val),
     stockpiles_tab::Message::FormItemQtyChanged(idx, val) => form_set_item_qty(state, idx, val),
     stockpiles_tab::Message::FormAddItem => form_add_item(state),
     stockpiles_tab::Message::FormRemoveItem(idx) => form_remove_item(state, idx),
-    stockpiles_tab::Message::FormCancel => {
-      state.stockpile_form = None;
-    }
     _ => {}
   }
 }
@@ -746,19 +771,23 @@ fn apply_assets_loaded(state: &mut State, assets: Vec<AssetRecord>) {
 
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
-    Message::AbyssalsLoaded(items) => {
-      state.abyssals.abyssals = items;
-    }
+    Message::AbyssalsLoaded(items) => state.abyssals.abyssals = items,
     Message::AssetsLoaded(Ok(assets)) => apply_assets_loaded(state, assets),
-    Message::AssetsLoaded(Err(e)) => {
-      eprintln!("assets: failed to load: {e}");
-      state.loading = false;
-    }
+    Message::AssetsLoaded(Err(e)) => apply_assets_load_error(state, e),
+    msg => apply_data_loaded_secondary(state, msg),
+  }
+}
+
+fn apply_assets_load_error(state: &mut State, e: String) {
+  eprintln!("assets: failed to load: {e}");
+  state.loading = false;
+}
+
+fn apply_data_loaded_secondary(state: &mut State, message: Message) {
+  match message {
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
     Message::NavHistoryLoaded(history) => update_nav_history(state, history),
-    Message::StockpilesLoaded(piles) => {
-      state.stockpiles = piles;
-    }
+    Message::StockpilesLoaded(piles) => state.stockpiles = piles,
     Message::ValuesLoaded(data) => {
       state.asset_values_data = Some(data);
       state.values_loading = false;

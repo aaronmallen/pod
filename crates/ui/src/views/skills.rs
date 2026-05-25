@@ -1,6 +1,7 @@
 //! Skills view: queue display, character selection, and skill browser.
 
 pub mod header;
+pub mod pane_drag_handle;
 pub mod queue_section;
 pub mod right_panel;
 pub mod skill_data;
@@ -322,7 +323,7 @@ fn view(state: &State, window_width: f32) -> Element<'_, Message> {
   let warn = WarningStrip::new(low_queue).render();
   let left = left_col(state, computed_items, sp_rate, window_width);
   let right = RightPanel::new(state).render().map(Message::RightPanel);
-  let body = row([left, pane_drag_handle(), right]).height(Length::Fill);
+  let body = row([left, pane_drag_handle::Component::new().render(), right]).height(Length::Fill);
 
   let mut col = vec![hdr];
   if let Some(w) = warn {
@@ -400,21 +401,6 @@ where
   )
   .height(Length::Fill)
   .width(Length::Fixed(pane_width))
-  .into()
-}
-
-fn pane_drag_handle() -> Element<'static, Message> {
-  mouse_area(
-    container(Space::new().width(4.0).height(Length::Fill))
-      .width(4.0)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(crate::style::color::border::SUBTLE)),
-        ..container::Style::default()
-      }),
-  )
-  .on_press(Message::PaneDragStart)
-  .interaction(iced::mouse::Interaction::ResizingHorizontally)
   .into()
 }
 

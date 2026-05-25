@@ -157,13 +157,8 @@ fn attach_icon_task(
   }
 }
 
-fn build_contract_entry(
-  row: CharacterContract,
-  names: &HashMap<i64, String>,
-  locations: &HashMap<i64, String>,
-) -> ContractEntry {
-  let ts = parse_iso_to_unix(&row.date_issued);
-  let counterparty_id = if row.issuer_id == row.character_id {
+fn contract_counterparty_id(row: &CharacterContract) -> i64 {
+  if row.issuer_id == row.character_id {
     if row.acceptor_id != 0 {
       row.acceptor_id
     } else {
@@ -171,24 +166,38 @@ fn build_contract_entry(
     }
   } else {
     row.issuer_id
-  };
-  let counterparty = if counterparty_id != 0 {
-    names
-      .get(&counterparty_id)
-      .cloned()
-      .unwrap_or_else(|| format!("#{counterparty_id}"))
+  }
+}
+
+fn contract_counterparty_name(id: i64, names: &HashMap<i64, String>) -> String {
+  if id != 0 {
+    names.get(&id).cloned().unwrap_or_else(|| format!("#{id}"))
   } else {
     String::new()
-  };
+  }
+}
+
+fn contract_title(row: &CharacterContract) -> String {
+  if row.title.is_empty() {
+    format!("Contract #{}", row.contract_id)
+  } else {
+    row.title.clone()
+  }
+}
+
+fn build_contract_entry(
+  row: CharacterContract,
+  names: &HashMap<i64, String>,
+  locations: &HashMap<i64, String>,
+) -> ContractEntry {
+  let ts = parse_iso_to_unix(&row.date_issued);
+  let counterparty_id = contract_counterparty_id(&row);
+  let counterparty = contract_counterparty_name(counterparty_id, names);
   let location = row
     .start_location_id
     .and_then(|id| locations.get(&id).cloned())
     .unwrap_or_default();
-  let title = if row.title.is_empty() {
-    format!("Contract #{}", row.contract_id)
-  } else {
-    row.title
-  };
+  let title = contract_title(&row);
   ContractEntry {
     id: format!("{}-{}", row.character_id, row.contract_id),
     who: row.character_id,
@@ -891,46 +900,56 @@ fn recompute_filters(state: &mut State) {
   update_journal_totals(state);
 }
 
-fn recompute_series(state: &mut State) {
-  let corp_selected = state.is_corp_selected();
+fn collect_series_journal(state: &State) -> Vec<JournalEntry> {
+  if state.is_corp_selected() {
+    return state.corp_journal.clone();
+  }
   let selected_char = state.selected_character();
-  let mut entries: Vec<JournalEntry> = if corp_selected {
-    state.corp_journal.clone()
-  } else {
-    state
-      .journal
-      .iter()
-      .filter(|e| selected_char.is_none_or(|id| e.who == id))
-      .cloned()
-      .collect()
-  };
-  entries.sort_by_key(|e| Reverse(e.ts_secs));
-  state.net_worth_series = build_net_worth_series(&entries);
-
-  let days = state.timeframe.days();
-  let total = state.net_worth_series.len();
-  state.chart_series = if total <= days {
-    state.net_worth_series.clone()
-  } else {
-    state.net_worth_series[total - days..].to_vec()
-  };
-
-  state.net_worth_change = if state.chart_series.len() < 2 {
-    0.0
-  } else {
-    let s = &state.chart_series;
-    s[s.len() - 1] - s[0]
-  };
+  state
+    .journal
+    .iter()
+    .filter(|e| selected_char.is_none_or(|id| e.who == id))
+    .cloned()
+    .collect()
 }
 
-async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
-  let ids: Vec<i64> = rows
+fn trim_series_to_days(series: &[f64], days: usize) -> Vec<f64> {
+  let total = series.len();
+  if total <= days {
+    series.to_vec()
+  } else {
+    series[total - days..].to_vec()
+  }
+}
+
+fn net_worth_change(chart: &[f64]) -> f64 {
+  if chart.len() < 2 {
+    0.0
+  } else {
+    chart[chart.len() - 1] - chart[0]
+  }
+}
+
+fn recompute_series(state: &mut State) {
+  let mut entries = collect_series_journal(state);
+  entries.sort_by_key(|e| Reverse(e.ts_secs));
+  state.net_worth_series = build_net_worth_series(&entries);
+  state.chart_series = trim_series_to_days(&state.net_worth_series, state.timeframe.days());
+  state.net_worth_change = net_worth_change(&state.chart_series);
+}
+
+fn collect_contract_entity_ids(rows: &[CharacterContract]) -> Vec<i64> {
+  rows
     .iter()
     .flat_map(|r| [r.acceptor_id, r.assignee_id])
     .filter(|&id| id != 0)
     .collect::<HashSet<_>>()
     .into_iter()
-    .collect();
+    .collect()
+}
+
+async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
+  let ids = collect_contract_entity_ids(rows);
   if ids.is_empty() {
     return HashMap::new();
   }

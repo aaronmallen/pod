@@ -270,6 +270,38 @@ fn compute_sp_rate(state: &State) -> f32 {
   sp_per_sec(state.attr_value(attr_pair.0), state.attr_value(attr_pair.1))
 }
 
+struct QueueItemSp {
+  sp_needed: u64,
+  sp_now: u64,
+  sp_to: u64,
+  progress: f32,
+}
+
+fn sp_for_range(rank: u8, from_level: u8, to_level: u8) -> u64 {
+  ((from_level + 1)..=to_level).map(|l| sp_cost(rank as f64, l)).sum()
+}
+
+fn compute_queue_item_sp(item: &QueueItem, rank: u8, sp_base: u64, is_first: bool) -> QueueItemSp {
+  if is_first {
+    let total = sp_for_range(rank, item.from_level, item.to_level);
+    let done = (total as f32 * item.progress) as u64;
+    QueueItemSp {
+      sp_needed: total.saturating_sub(done),
+      sp_now: sp_base + done,
+      sp_to: sp_base + total,
+      progress: item.progress,
+    }
+  } else {
+    let needed = sp_for_range(rank, item.from_level, item.to_level);
+    QueueItemSp {
+      sp_needed: needed,
+      sp_now: sp_base,
+      sp_to: sp_base + needed,
+      progress: 0.0,
+    }
+  }
+}
+
 fn compute_queue(
   queue: &[QueueItem],
   sp_rate: f32,
@@ -282,37 +314,29 @@ fn compute_queue(
       .map(|(s, g)| (s.rank, s.primary, s.secondary, g.to_owned(), s.sp))
       .unwrap_or((1, AttrKey::Perception, AttrKey::Willpower, String::new(), 0));
 
-    let to_level = item.to_level;
-    let from_level = item.from_level;
-
-    let (sp_needed, sp_now, sp_to, progress) = if i == 0 {
-      let total_for_range: u64 = ((from_level + 1)..=to_level).map(|l| sp_cost(rank as f64, l)).sum();
-      let done = (total_for_range as f32 * item.progress) as u64;
-      let needed = total_for_range.saturating_sub(done);
-      (needed, sp_base + done, sp_base + total_for_range, item.progress)
+    let sp = compute_queue_item_sp(item, rank, sp_base, i == 0);
+    let duration_secs = if sp_rate > 0.0 {
+      sp.sp_needed as f32 / sp_rate
     } else {
-      let needed: u64 = ((from_level + 1)..=to_level).map(|l| sp_cost(rank as f64, l)).sum();
-      (needed, sp_base, sp_base + needed, 0.0)
+      0.0
     };
-
-    let duration_secs = if sp_rate > 0.0 { sp_needed as f32 / sp_rate } else { 0.0 };
     let cum_start = cursor;
     cursor += duration_secs;
 
     result.push(ComputedQueueItem {
       cum_start_secs: cum_start,
       duration_secs,
-      from_level,
+      from_level: item.from_level,
       group_name,
       primary,
-      progress,
+      progress: sp.progress,
       rank,
       secondary,
       skill_name: item.skill_name.clone(),
-      sp_needed,
-      sp_now,
-      sp_to,
-      to_level,
+      sp_needed: sp.sp_needed,
+      sp_now: sp.sp_now,
+      sp_to: sp.sp_to,
+      to_level: item.to_level,
     });
   }
   result

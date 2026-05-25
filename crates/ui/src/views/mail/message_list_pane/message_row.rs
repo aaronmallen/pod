@@ -6,7 +6,7 @@ use iced::{
 };
 
 use super::{
-  super::{MailMessage, State},
+  super::{MailMessage, State, snooze_picker},
   Message,
 };
 use crate::{
@@ -179,7 +179,12 @@ fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
       }),
     })
     .width(Length::Fill);
-  let time_text = text(&msg.time)
+  let time_display: String = msg
+    .snoozed
+    .as_deref()
+    .map(snooze_picker::format_snooze_expiry)
+    .unwrap_or_else(|| msg.time.clone());
+  let time_text = text(time_display)
     .font(mono::REGULAR)
     .size(10.0)
     .style(|_: &Theme| iced::widget::text::Style {

@@ -1,6 +1,6 @@
 //! Snooze dropdown overlay: preset buttons and a custom date/time calendar.
 
-use chrono::{Datelike, NaiveDate, Utc, Weekday};
+use chrono::{Datelike, NaiveDate, Timelike, Utc, Weekday};
 use iced::{
   Background, Border, Color, Element, Length, Padding, Theme,
   alignment::Vertical,
@@ -142,6 +142,43 @@ pub fn preset_to_iso(label: &str) -> Option<String> {
     _ => return None,
   };
   Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+/// Format an ISO 8601 UTC snooze timestamp into a human-readable label.
+///
+/// Returns labels relative to today:
+/// - "Today at HH:MM" when the expiry falls on the current UTC day
+/// - "Tomorrow at HH:MM" when the expiry falls on the next UTC day
+/// - "Mon DD MMM at HH:MM" for dates further out
+///
+/// Returns the raw ISO string on parse failure.
+pub fn format_snooze_expiry(iso: &str) -> String {
+  use chrono::DateTime;
+  let Ok(dt) = iso.parse::<DateTime<Utc>>() else {
+    return iso.to_string();
+  };
+  let now = Utc::now();
+  let today = now.date_naive();
+  let tomorrow = today.succ_opt().unwrap_or(today);
+  let snooze_date = dt.date_naive();
+  let day_name = match dt.weekday() {
+    Weekday::Mon => "Mon",
+    Weekday::Tue => "Tue",
+    Weekday::Wed => "Wed",
+    Weekday::Thu => "Thu",
+    Weekday::Fri => "Fri",
+    Weekday::Sat => "Sat",
+    Weekday::Sun => "Sun",
+  };
+  let time_str = format!("{:02}:{:02}", dt.hour(), dt.minute());
+  if snooze_date == today {
+    format!("Today at {time_str}")
+  } else if snooze_date == tomorrow {
+    format!("Tomorrow at {time_str}")
+  } else {
+    let month_abbr = &MONTH_NAMES[dt.month0() as usize][..3];
+    format!("{} {} {} at {}", day_name, dt.day(), month_abbr, time_str)
+  }
 }
 
 fn preset_button(label: &'static str, hint: &'static str) -> Element<'static, Message> {
@@ -967,6 +1004,42 @@ mod tests {
 
         assert_eq!(result, "Mon 25 May · 14:22");
       }
+    }
+  }
+
+  mod format_snooze_expiry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_iso_string_on_parse_failure() {
+      let result = format_snooze_expiry("not-a-date");
+
+      assert_eq!(result, "not-a-date");
+    }
+
+    #[test]
+    fn it_formats_a_known_future_date_with_weekday() {
+      // 2030-07-15 is a Monday
+      let result = format_snooze_expiry("2030-07-15T09:00:00Z");
+
+      assert_eq!(result, "Mon 15 Jul at 09:00");
+    }
+
+    #[test]
+    fn it_zero_pads_single_digit_time_values() {
+      // 2030-07-15 is a Monday
+      let result = format_snooze_expiry("2030-07-15T07:05:00Z");
+
+      assert_eq!(result, "Mon 15 Jul at 07:05");
+    }
+
+    #[test]
+    fn it_returns_some_string_for_valid_iso() {
+      let result = format_snooze_expiry("2030-01-01T09:00:00Z");
+
+      assert!(!result.is_empty());
     }
   }
 

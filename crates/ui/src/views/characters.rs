@@ -16,8 +16,7 @@ pub use corporations_tab::Component as CorporationPane;
 pub use empty_state::Component as EmptyState;
 pub use header::Component as Header;
 use iced::{
-  Background, Element, Length, Padding,
-  alignment::Horizontal,
+  Background, Element, Length,
   widget::{column, container, stack},
 };
 use pod_model::{Character, Corporation};
@@ -181,17 +180,14 @@ impl<'a> Component<'a> {
 
     let base = render_base(state, query, is_filtered, window_width, window_height);
 
-    let needs_overlay = state.search_filter.help_pop_over.visible
-      || state.confirm_remove.is_some()
-      || state.confirm_remove_corporation.is_some()
-      || state.tag_modal.is_some();
+    let needs_overlay =
+      state.confirm_remove.is_some() || state.confirm_remove_corporation.is_some() || state.tag_modal.is_some();
 
     if !needs_overlay {
       return base;
     }
 
     let mut layers: Vec<Element<'_, Message>> = vec![base];
-    push_help_overlay(state, &mut layers);
     push_confirm_remove_overlay(state, window_width, window_height, &mut layers);
     push_confirm_remove_corporation_overlay(state, window_width, window_height, &mut layers);
     push_tag_modal_overlay(state, window_width, window_height, &mut layers);
@@ -317,29 +313,6 @@ fn push_confirm_remove_overlay<'a>(
   layers.push(dialog);
 }
 
-fn push_help_overlay<'a>(state: &'a State, layers: &mut Vec<Element<'a, Message>>) {
-  if !state.search_filter.help_pop_over.visible {
-    return;
-  }
-
-  let help_el = search_filter::HelpPopOver::new(&state.search_filter.help_pop_over, &state.all_tags)
-    .render()
-    .map(search_filter::Message::HelpPopOver)
-    .map(Message::SearchFilter);
-
-  let positioned = container(help_el)
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::layout::HEADER_HEIGHT + 64.0,
-      right: spacing::SPACE_8,
-      ..Padding::ZERO
-    })
-    .align_x(Horizontal::Right);
-
-  layers.push(positioned.into());
-}
-
 fn push_tag_modal_overlay<'a>(
   state: &'a State,
   window_width: f32,
@@ -380,6 +353,7 @@ fn render_base<'a>(
   .map(Message::Header);
 
   let filter_el = SearchFilter::new(&state.search_filter)
+    .all_tags(&state.all_tags)
     .render()
     .map(Message::SearchFilter);
 

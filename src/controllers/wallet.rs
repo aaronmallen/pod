@@ -50,12 +50,24 @@ pub fn update(
     Message::DivisionSelected(div) => update_division_selected(state, div, corporations, services, icon_type_ids),
     other => {
       match &other {
-        Message::JournalLoaded(entries) => tracing::debug!("wallet: {} journal entries loaded", entries.len()),
-        Message::TransactionsLoaded(entries) => tracing::debug!("wallet: {} transactions loaded", entries.len()),
-        Message::AllCorpBalancesLoaded(b) => tracing::debug!("wallet: corp balances loaded for {} corp(s)", b.len()),
-        Message::AssetValuesLoaded(v) => tracing::debug!("wallet: asset values loaded for {} character(s)", v.len()),
-        Message::ContractsLoaded(Ok(c)) => tracing::debug!("wallet: {} contracts loaded", c.len()),
-        Message::ContractsLoaded(Err(e)) => tracing::warn!("wallet: contracts load failed — {e}"),
+        Message::JournalLoaded(entries) => {
+          tracing::debug!("wallet: {} journal entries loaded", entries.len())
+        }
+        Message::TransactionsLoaded(entries) => {
+          tracing::debug!("wallet: {} transactions loaded", entries.len())
+        }
+        Message::AllCorpBalancesLoaded(b) => {
+          tracing::debug!("wallet: corp balances loaded for {} corp(s)", b.len())
+        }
+        Message::AssetValuesLoaded(v) => {
+          tracing::debug!("wallet: asset values loaded for {} character(s)", v.len())
+        }
+        Message::ContractsLoaded(Ok(c)) => {
+          tracing::debug!("wallet: {} contracts loaded", c.len())
+        }
+        Message::ContractsLoaded(Err(e)) => {
+          tracing::warn!("wallet: contracts load failed — {e}")
+        }
         Message::CorpDataLoaded {
           divisions,
           journal,
@@ -67,7 +79,9 @@ pub fn update(
           market.len()
         ),
         Message::TabSelected(t) => tracing::info!("wallet: tab selected — {t:?}"),
-        Message::TimeframeChanged(tf) => tracing::info!("wallet: timeframe changed — {tf:?}"),
+        Message::TimeframeChanged(tf) => {
+          tracing::info!("wallet: timeframe changed — {tf:?}")
+        }
         Message::JournalTab(pod_ui::views::wallet::journal_tab::Message::SignFilterChanged(sign)) => {
           tracing::info!("wallet: sign filter changed — {sign:?}");
         }
@@ -915,8 +929,12 @@ fn update_character_picker(
   if let pod_ui::components::character_picker::Message::Select(sel) = &msg {
     match sel {
       PickerSelection::All => tracing::info!("wallet: all wallets selected"),
-      PickerSelection::Character(id) => tracing::info!("wallet: character selected — character_id: {id}"),
-      PickerSelection::Corporation(id) => tracing::info!("wallet: corporation selected — corp_id: {id}"),
+      PickerSelection::Character(id) => {
+        tracing::info!("wallet: character selected — character_id: {id}")
+      }
+      PickerSelection::Corporation(id) => {
+        tracing::info!("wallet: corporation selected — corp_id: {id}")
+      }
     }
   }
   if let pod_ui::components::character_picker::Message::Select(PickerSelection::Corporation(corp_id)) = &msg

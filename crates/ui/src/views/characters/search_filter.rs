@@ -5,12 +5,12 @@ pub mod search_icon;
 
 pub use help_button::Component as HelpButton;
 pub use help_pop_over::Component as HelpPopOver;
-use iced::{Background, Element, Length, Padding, Task, widget::container};
+use iced::{Background, Element, Length, Padding, Task, alignment::Horizontal, widget::container};
 pub use input::Component as Input;
 pub use search_icon::Component as SearchIcon;
 
 use crate::{
-  components::SearchBox,
+  components::{Popover, SearchBox},
   style::{color, spacing},
 };
 
@@ -73,20 +73,28 @@ pub enum Message {
 }
 
 pub struct Component<'a> {
+  all_tags: &'a [(i32, String, Option<String>)],
   state: &'a State,
 }
 
 impl<'a> Component<'a> {
   pub fn new(state: &'a State) -> Self {
     Self {
+      all_tags: &[],
       state,
     }
   }
 
+  /// Sets the available tags used to populate the help pop-over.
+  pub fn all_tags(mut self, all_tags: &'a [(i32, String, Option<String>)]) -> Self {
+    self.all_tags = all_tags;
+    self
+  }
+
   pub fn render(self) -> Element<'a, Message> {
-    let help_btn = HelpButton::new(self.state.help_pop_over.visible)
-      .render()
-      .map(|_| Message::HelpToggle);
+    let is_open = self.state.help_pop_over.visible;
+
+    let help_btn = HelpButton::new(is_open).render().map(|_| Message::HelpToggle);
 
     let search_box = SearchBox::new(
       "Search… try tag:pvp or corp:caldari",
@@ -101,7 +109,7 @@ impl<'a> Component<'a> {
     .background(color::surface::BASE)
     .render();
 
-    container(
+    let anchor = container(
       container(search_box)
         .padding(Padding {
           top: 14.0,
@@ -115,7 +123,22 @@ impl<'a> Component<'a> {
       background: Some(Background::Color(color::surface::SUNKEN)),
       ..container::Style::default()
     })
-    .width(Length::Fill)
-    .into()
+    .width(Length::Fill);
+
+    let help_content = HelpPopOver::new(&self.state.help_pop_over, self.all_tags)
+      .render()
+      .map(Message::HelpPopOver);
+
+    let overlay = container(help_content)
+      .height(Length::Fill)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: 64.0,
+        right: spacing::SPACE_8,
+        ..Padding::ZERO
+      })
+      .align_x(Horizontal::Right);
+
+    Popover::new(anchor, overlay, is_open).render()
   }
 }

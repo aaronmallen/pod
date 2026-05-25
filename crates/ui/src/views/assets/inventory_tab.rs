@@ -6,12 +6,13 @@ use std::collections::{HashMap, HashSet};
 
 use iced::{
   Background, Border, Color, ContentFit, Element, Length, Padding, Theme,
+  alignment::Horizontal,
   widget::{Space, button, column, container, image, row, scrollable, text},
 };
 
 use super::{AssetRecord, Category, SortCol, State, asset_value, asset_volume, fmt_qty, fmt_vol};
 use crate::{
-  components::{self, PillFilter, SearchBox},
+  components::{self, PillFilter, Popover, SearchBox},
   format,
   style::{
     color,
@@ -540,9 +541,20 @@ impl<'a> Component<'a> {
         .into()
     };
 
-    column([filter_bar_el, table])
-      .width(Length::Fill)
+    let anchor = column([filter_bar_el, table]).width(Length::Fill).height(Length::Fill);
+
+    let help_el = help_pop_over::Component::new().render().map(Message::HelpPopOver);
+
+    let overlay = container(help_el)
       .height(Length::Fill)
-      .into()
+      .width(Length::Fill)
+      .align_x(Horizontal::Right)
+      .padding(Padding {
+        top: 60.0,
+        right: 20.0,
+        ..Padding::ZERO
+      });
+
+    Popover::new(anchor, overlay, state.help_pop_over.visible).render()
   }
 }

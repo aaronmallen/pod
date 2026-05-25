@@ -263,7 +263,9 @@ async fn sync_neural_attributes(
         willpower: esi_attrs.willpower,
       });
     }
-    Err(e) => tracing::debug!("sync: failed to fetch neural attributes for character {char_id}: {e}"),
+    Err(e) => {
+      tracing::debug!("sync: failed to fetch neural attributes for character {char_id}: {e}")
+    }
   }
 }
 
@@ -282,7 +284,9 @@ async fn sync_wallet(
       }
       character.set_isk_balance(Some(balance.0));
     }
-    Err(e) => tracing::warn!("sync: failed to fetch wallet balance for character {char_id}: {e}"),
+    Err(e) => {
+      tracing::warn!("sync: failed to fetch wallet balance for character {char_id}: {e}")
+    }
   }
 }
 

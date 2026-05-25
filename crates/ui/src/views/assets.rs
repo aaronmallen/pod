@@ -1002,27 +1002,6 @@ fn render_drag_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
   )
 }
 
-fn render_help_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
-  if !state.help_pop_over.visible || state.active_tab != Tab::Inventory {
-    return None;
-  }
-  let help_el = inventory_tab::help_pop_over::Component::new()
-    .render()
-    .map(|m| Message::InventoryTab(inventory_tab::Message::HelpPopOver(m)));
-  Some(
-    container(help_el)
-      .height(Length::Fill)
-      .width(Length::Fill)
-      .align_x(iced::alignment::Horizontal::Right)
-      .padding(Padding {
-        top: spacing::layout::HEADER_HEIGHT + 100.0,
-        right: 20.0,
-        ..Padding::ZERO
-      })
-      .into(),
-  )
-}
-
 fn render_picker_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
   if !state.picker.is_open {
     return None;
@@ -1079,9 +1058,6 @@ impl<'a> Component<'a> {
     let mut layers: Vec<Element<'_, Message>> = vec![base];
     if let Some(d) = render_drag_overlay(state) {
       layers.push(d);
-    }
-    if let Some(h) = render_help_overlay(state) {
-      layers.push(h);
     }
     if let Some(p) = render_picker_overlay(state) {
       layers.push(p);

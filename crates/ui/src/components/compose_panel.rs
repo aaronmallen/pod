@@ -259,33 +259,47 @@ impl Component {
   }
 
   fn apply_cursor_move(&mut self, delta: i32) {
-    let to_active = !self.to_suggestions.is_empty() && !self.to_search.is_empty();
-    let cc_active = self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty();
-    if to_active {
-      let len = self.to_suggestions.len();
-      let cur = self.to_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
-      self.to_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
-    } else if cc_active {
-      let len = self.cc_suggestions.len();
-      let cur = self.cc_suggestion_cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
-      self.cc_suggestion_cursor = Some((cur as i32 + delta).rem_euclid(len as i32) as usize);
+    if self.to_cursor_active() {
+      self.to_suggestion_cursor = advance_cursor(self.to_suggestion_cursor, delta, self.to_suggestions.len());
+    } else if self.cc_cursor_active() {
+      self.cc_suggestion_cursor = advance_cursor(self.cc_suggestion_cursor, delta, self.cc_suggestions.len());
     }
+  }
+
+  fn to_cursor_active(&self) -> bool {
+    !self.to_suggestions.is_empty() && !self.to_search.is_empty()
+  }
+
+  fn cc_cursor_active(&self) -> bool {
+    self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty()
   }
 
   fn apply_field_message(&mut self, msg: Message) {
     match msg {
       Message::ToAdd => self.apply_to_add(),
-      Message::ToRemove(idx) if idx < self.to.len() => {
-        self.to.remove(idx);
-      }
+      Message::ToRemove(idx) => self.apply_to_remove(idx),
       Message::ToSearchChanged(val) => self.apply_to_search_changed(val),
-      Message::ToSearchResults(results) => {
-        self.to_suggestion_cursor = None;
-        self.to_suggestions = results;
-      }
+      msg => self.apply_to_results_or_cc(msg),
+    }
+  }
+
+  fn apply_to_results_or_cc(&mut self, msg: Message) {
+    match msg {
+      Message::ToSearchResults(results) => self.apply_to_search_results(results),
       Message::ToSearchSelect(id, name) => self.apply_to_select(id, name),
       msg => self.apply_cc_or_send_message(msg),
     }
+  }
+
+  fn apply_to_remove(&mut self, idx: usize) {
+    if idx < self.to.len() {
+      self.to.remove(idx);
+    }
+  }
+
+  fn apply_to_search_results(&mut self, results: Vec<(i64, String)>) {
+    self.to_suggestion_cursor = None;
+    self.to_suggestions = results;
   }
 
   fn apply_send_message(&mut self, msg: Message) {
@@ -498,4 +512,9 @@ pub(super) fn compose_field_row<'a>(label: &'static str, content: Element<'a, Me
       .into(),
   ])
   .into()
+}
+
+fn advance_cursor(cursor: Option<usize>, delta: i32, len: usize) -> Option<usize> {
+  let cur = cursor.unwrap_or(if delta > 0 { len - 1 } else { 0 });
+  Some((cur as i32 + delta).rem_euclid(len as i32) as usize)
 }

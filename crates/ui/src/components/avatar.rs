@@ -46,18 +46,24 @@ impl Component {
 
   pub fn render<'a, MSG: 'a>(self) -> Element<'a, MSG> {
     if let Some(handle) = self.portrait_handle {
-      let radius = match self.kind {
-        AvatarKind::Person => self.size / 2.0,
-        AvatarKind::Corp => self.size * 0.12,
-        AvatarKind::System => self.size * 0.12,
-      };
-      return portrait_image(handle, self.size, radius);
+      return portrait_image(handle, self.size, portrait_radius(self.kind, self.size));
     }
-    match self.kind {
-      AvatarKind::System => system_avatar(self.size),
-      AvatarKind::Person => gradient_avatar(&self.name, self.tone, self.size, self.size / 2.0),
-      AvatarKind::Corp => gradient_avatar(&self.name, self.tone, self.size, self.size * 0.12),
-    }
+    fallback_avatar(&self.name, self.tone, self.size, self.kind)
+  }
+}
+
+fn portrait_radius(kind: AvatarKind, size: f32) -> f32 {
+  match kind {
+    AvatarKind::Person => size / 2.0,
+    _ => size * 0.12,
+  }
+}
+
+fn fallback_avatar<'a, MSG: 'a>(name: &str, tone: u16, size: f32, kind: AvatarKind) -> Element<'a, MSG> {
+  match kind {
+    AvatarKind::System => system_avatar(size),
+    AvatarKind::Person => gradient_avatar(name, tone, size, size / 2.0),
+    AvatarKind::Corp => gradient_avatar(name, tone, size, size * 0.12),
   }
 }
 

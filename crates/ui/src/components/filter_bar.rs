@@ -152,6 +152,56 @@ impl<'a, MSG: Clone + 'static> SearchBox<'a, MSG> {
   }
 }
 
+fn pill_button<'a, T, MSG>(label: &'a str, value: T, is_active: bool, on_select: fn(T) -> MSG) -> Element<'a, MSG>
+where
+  T: Clone + 'static,
+  MSG: Clone + 'static,
+{
+  let v = value.clone();
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(10.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(pill_text_color(is_active)),
+      }),
+  )
+  .padding(Padding {
+    top: 6.0,
+    bottom: 6.0,
+    left: 12.0,
+    right: 12.0,
+  })
+  .on_press(on_select(v))
+  .style(move |_, _| pill_button_style(is_active))
+  .into()
+}
+
+fn pill_text_color(is_active: bool) -> Color {
+  if is_active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  }
+}
+
+fn pill_button_style(is_active: bool) -> button::Style {
+  button::Style {
+    background: if is_active {
+      Some(Background::Color(color::accent::PLASMA_SUBTLE))
+    } else {
+      None
+    },
+    border: Border {
+      color: Color::TRANSPARENT,
+      radius: 0.0.into(),
+      width: 0.0,
+    },
+    text_color: pill_text_color(is_active),
+    ..button::Style::default()
+  }
+}
+
 /// Row of pill buttons. `T: PartialEq + Clone`, options as `(label, value)` pairs.
 pub struct PillFilter<'a, T, MSG> {
   on_select: fn(T) -> MSG,
@@ -177,50 +227,13 @@ where
     MSG: 'a,
   {
     let on_select = self.on_select;
+    let selected = self.selected;
     let btns: Vec<Element<'_, MSG>> = self
       .options
       .into_iter()
       .map(|(label, value)| {
-        let is_active = &value == self.selected;
-        let v = value.clone();
-        button(
-          text(label)
-            .font(typography::mono::REGULAR)
-            .size(10.0)
-            .style(move |_: &Theme| iced::widget::text::Style {
-              color: Some(if is_active {
-                color::accent::PLASMA
-              } else {
-                color::text::SECONDARY
-              }),
-            }),
-        )
-        .padding(Padding {
-          top: 6.0,
-          bottom: 6.0,
-          left: 12.0,
-          right: 12.0,
-        })
-        .on_press(on_select(v))
-        .style(move |_, _| button::Style {
-          background: if is_active {
-            Some(Background::Color(color::accent::PLASMA_SUBTLE))
-          } else {
-            None
-          },
-          border: Border {
-            color: Color::TRANSPARENT,
-            radius: 0.0.into(),
-            width: 0.0,
-          },
-          text_color: if is_active {
-            color::accent::PLASMA
-          } else {
-            color::text::SECONDARY
-          },
-          ..button::Style::default()
-        })
-        .into()
+        let is_active = &value == selected;
+        pill_button(label, value, is_active, on_select)
       })
       .collect();
     container(row(btns))

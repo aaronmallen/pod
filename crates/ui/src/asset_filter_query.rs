@@ -222,30 +222,35 @@ fn tokenize(input: &str) -> Vec<String> {
 
   while let Some(&ch) = chars.peek() {
     if ch.is_whitespace() {
-      if !current.is_empty() {
-        tokens.push(current.clone());
-        current.clear();
-      }
+      flush_token(&mut tokens, &mut current);
       chars.next();
     } else if ch == '"' {
       chars.next();
-      for c in chars.by_ref() {
-        if c == '"' {
-          break;
-        }
-        current.push(c);
-      }
+      collect_quoted(&mut chars, &mut current);
     } else {
       current.push(ch);
       chars.next();
     }
   }
 
-  if !current.is_empty() {
-    tokens.push(current);
-  }
-
+  flush_token(&mut tokens, &mut current);
   tokens
+}
+
+fn flush_token(tokens: &mut Vec<String>, current: &mut String) {
+  if !current.is_empty() {
+    tokens.push(current.clone());
+    current.clear();
+  }
+}
+
+fn collect_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, current: &mut String) {
+  for c in chars.by_ref() {
+    if c == '"' {
+      break;
+    }
+    current.push(c);
+  }
 }
 
 #[cfg(test)]

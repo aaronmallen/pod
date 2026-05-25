@@ -97,40 +97,12 @@ impl<M: Clone + 'static> canvas::Program<M> for Component<M> {
     if self.data.len() < 2 {
       return None;
     }
-    let n = self.data.len();
     let chart_w = bounds.width - self.pad_left - self.pad_right;
-
     match event {
       canvas::Event::Mouse(mouse::Event::CursorMoved {
         ..
-      }) => {
-        if let Some(pos) = cursor.position_in(bounds) {
-          let raw_x = pos.x - self.pad_left;
-          let frac = (raw_x / chart_w).clamp(0.0, 1.0);
-          let raw_idx = (frac * (n - 1) as f32).round() as usize;
-          let index = raw_idx.clamp(0, n - 1);
-          let x_frac = pos.x / bounds.width;
-          let value = self.data[index];
-          let hover = HoverData {
-            index,
-            value,
-            x_frac,
-          };
-          *state = Some(hover.clone());
-          if let Some(cb) = &self.on_hover {
-            return Some(Action::publish(cb(Some(hover))));
-          }
-          return Some(Action::request_redraw());
-        }
-        None
-      }
-      canvas::Event::Mouse(mouse::Event::CursorLeft) => {
-        *state = None;
-        if let Some(cb) = &self.on_hover {
-          return Some(Action::publish(cb(None)));
-        }
-        Some(Action::request_redraw())
-      }
+      }) => self.handle_cursor_moved(state, bounds, cursor, chart_w),
+      canvas::Event::Mouse(mouse::Event::CursorLeft) => self.handle_cursor_left(state),
       _ => None,
     }
   }
@@ -171,6 +143,38 @@ impl<M: Clone + 'static> canvas::Program<M> for Component<M> {
 }
 
 impl<M: Clone + 'static> Component<M> {
+  fn handle_cursor_moved(
+    &self,
+    state: &mut Option<HoverData>,
+    bounds: iced::Rectangle,
+    cursor: mouse::Cursor,
+    chart_w: f32,
+  ) -> Option<Action<M>> {
+    let pos = cursor.position_in(bounds)?;
+    let n = self.data.len();
+    let raw_x = pos.x - self.pad_left;
+    let frac = (raw_x / chart_w).clamp(0.0, 1.0);
+    let index = ((frac * (n - 1) as f32).round() as usize).clamp(0, n - 1);
+    let hover = HoverData {
+      index,
+      value: self.data[index],
+      x_frac: pos.x / bounds.width,
+    };
+    *state = Some(hover.clone());
+    if let Some(cb) = &self.on_hover {
+      return Some(Action::publish(cb(Some(hover))));
+    }
+    Some(Action::request_redraw())
+  }
+
+  fn handle_cursor_left(&self, state: &mut Option<HoverData>) -> Option<Action<M>> {
+    *state = None;
+    if let Some(cb) = &self.on_hover {
+      return Some(Action::publish(cb(None)));
+    }
+    Some(Action::request_redraw())
+  }
+
   fn build_fill_path(&self, bottom_y: f32, x_at: &impl Fn(usize) -> f32, y_at: &impl Fn(f64) -> f32) -> Path {
     Path::new(|p| {
       for (i, &v) in self.data.iter().enumerate() {

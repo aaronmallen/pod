@@ -18,6 +18,57 @@ pub struct Component<'a, Message> {
   y: f32,
 }
 
+fn build_parts<'a, Message: 'static>(
+  header: Option<Element<'a, Message>>,
+  body: Element<'a, Message>,
+  footer: Option<Element<'a, Message>>,
+) -> Vec<Element<'a, Message>> {
+  let mut parts: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(h) = header {
+    parts.push(h);
+    parts.push(Separator::horizontal().render());
+  }
+  parts.push(body);
+  if let Some(f) = footer {
+    parts.push(Separator::horizontal().render());
+    parts.push(f);
+  }
+  parts
+}
+
+fn size_panel<'a, Message: 'static>(
+  mut panel: container::Container<'a, Message>,
+  width: Option<Length>,
+  max_height: Option<Length>,
+) -> container::Container<'a, Message> {
+  if let Some(w) = width {
+    panel = panel.width(w);
+  }
+  if let Some(Length::Fixed(h)) = max_height {
+    panel = panel.max_height(h);
+  }
+  panel
+}
+
+fn wrap_position<'a, Message: 'static>(
+  panel: container::Container<'a, Message>,
+  x: f32,
+  y: f32,
+) -> Element<'a, Message> {
+  if x == 0.0 && y == 0.0 {
+    return panel.into();
+  }
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top: y,
+      left: x,
+      ..Padding::ZERO
+    })
+    .into()
+}
+
 impl<'a, Message: 'static> Component<'a, Message> {
   pub fn new(body: impl Into<Element<'a, Message>>) -> Self {
     Self {
@@ -58,51 +109,21 @@ impl<'a, Message: 'static> Component<'a, Message> {
   }
 
   pub fn render(self) -> Element<'a, Message> {
-    let mut parts: Vec<Element<'a, Message>> = Vec::new();
-
-    if let Some(header) = self.header {
-      parts.push(header);
-      parts.push(Separator::horizontal().render());
-    }
-
-    parts.push(self.body);
-
-    if let Some(footer) = self.footer {
-      parts.push(Separator::horizontal().render());
-      parts.push(footer);
-    }
-
-    let mut panel = container(column(parts)).style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::border::DEFAULT,
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
-      shadow: shadow::POPOVER,
-      ..container::Style::default()
-    });
-
-    if let Some(w) = self.width {
-      panel = panel.width(w);
-    }
-
-    if let Some(Length::Fixed(h)) = self.max_height {
-      panel = panel.max_height(h);
-    }
-
-    if self.x == 0.0 && self.y == 0.0 {
-      return panel.into();
-    }
-
-    container(panel)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .padding(Padding {
-        top: self.y,
-        left: self.x,
-        ..Padding::ZERO
-      })
-      .into()
+    let parts = build_parts(self.header, self.body, self.footer);
+    let panel = size_panel(
+      container(column(parts)).style(|_| container::Style {
+        background: Some(Background::Color(color::surface::RAISED)),
+        border: Border {
+          color: color::border::DEFAULT,
+          radius: radius::PANEL.into(),
+          width: 1.0,
+        },
+        shadow: shadow::POPOVER,
+        ..container::Style::default()
+      }),
+      self.width,
+      self.max_height,
+    );
+    wrap_position(panel, self.x, self.y)
   }
 }

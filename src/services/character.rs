@@ -265,6 +265,14 @@ pub async fn fetch_portrait(character_id: i64, esi: &pod_esi::Client) -> Option<
   esi.images().character_portrait(character_id, 256).await.ok()
 }
 
+fn apply_name_map(skills: &mut Vec<CharacterSkill>, map: std::collections::HashMap<i32, String>) {
+  for skill in skills {
+    if let Some(name) = map.get(&skill.skill_id) {
+      skill.skill_name = Some(name.clone());
+    }
+  }
+}
+
 /// Resolves skill names by querying the ESI universe endpoint and annotates each skill in place.
 pub async fn inject_skill_names(mut skills: Vec<CharacterSkill>, esi: &pod_esi::Client) -> Vec<CharacterSkill> {
   let ids: Vec<i64> = skills.iter().map(|s| s.skill_id as i64).collect();
@@ -272,12 +280,8 @@ pub async fn inject_skill_names(mut skills: Vec<CharacterSkill>, esi: &pod_esi::
     return skills;
   }
   if let Ok(names) = esi.universe().names(&ids).await {
-    let map: std::collections::HashMap<i32, String> = names.into_iter().map(|n| (n.id as i32, n.name)).collect();
-    for skill in &mut skills {
-      if let Some(name) = map.get(&skill.skill_id) {
-        skill.skill_name = Some(name.clone());
-      }
-    }
+    let map = names.into_iter().map(|n| (n.id as i32, n.name)).collect();
+    apply_name_map(&mut skills, map);
   }
   skills
 }

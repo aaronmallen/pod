@@ -531,28 +531,25 @@ async fn seed_abyssal_module_stats(db: &pod_db::Repo, path: &Path) -> Result<(),
     .map_err(|e| e.to_string())
 }
 
+fn build_dogma_attr(id: i32, e: SdeDogmaAttrEntry) -> models::DogmaAttr {
+  let display_name = e.display_name.map(|d| d.en()).filter(|s| !s.is_empty());
+  let description = e.description.filter(|s| !s.is_empty());
+  let mut m = models::DogmaAttr::new(id, e.name);
+  m.set_default_value(e.default_value)
+    .set_description(description)
+    .set_display_name(display_name)
+    .set_high_is_good(e.high_is_good)
+    .set_icon_id(e.icon_id)
+    .set_published(e.published)
+    .set_stackable(e.stackable)
+    .set_unit_id(e.unit_id);
+  m
+}
+
 #[tracing::instrument(skip(db))]
 async fn seed_dogma_attributes(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeDogmaAttrEntry> = read_yaml(path).await?;
-
-  let records: Vec<models::DogmaAttr> = entries
-    .into_iter()
-    .map(|(id, e)| {
-      let display_name = e.display_name.map(|d| d.en()).filter(|s| !s.is_empty());
-      let description = e.description.filter(|s| !s.is_empty());
-      let mut m = models::DogmaAttr::new(id, e.name);
-      m.set_default_value(e.default_value)
-        .set_description(description)
-        .set_display_name(display_name)
-        .set_high_is_good(e.high_is_good)
-        .set_icon_id(e.icon_id)
-        .set_published(e.published)
-        .set_stackable(e.stackable)
-        .set_unit_id(e.unit_id);
-      m
-    })
-    .collect();
-
+  let records: Vec<models::DogmaAttr> = entries.into_iter().map(|(id, e)| build_dogma_attr(id, e)).collect();
   db.universe()
     .dogma_attrs()
     .upsert_many(&records)
@@ -760,32 +757,28 @@ async fn seed_planets(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+fn build_stargate(id: i32, e: SdeStargateMap) -> models::Stargate {
+  let mut m = models::Stargate::new(id, format!("Stargate {id}"));
+  m.set_solar_system_id(e.solar_system_id);
+  m.set_item_type_id(e.type_id);
+  if let Some(pos) = e.position {
+    m.set_position(pos.x, pos.y, pos.z);
+  }
+  if let Some(dest) = e.destination {
+    m.set_destination(dest.stargate_id, dest.solar_system_id);
+  }
+  m
+}
+
 #[tracing::instrument(skip(db))]
 async fn seed_stargates(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeStargateMap> = read_yaml(path).await?;
-
-  let records: Vec<_> = entries
-    .into_iter()
-    .map(|(id, e)| {
-      let mut m = models::Stargate::new(id, format!("Stargate {id}"));
-      m.set_solar_system_id(e.solar_system_id);
-      m.set_item_type_id(e.type_id);
-      if let Some(pos) = e.position {
-        m.set_position(pos.x, pos.y, pos.z);
-      }
-      if let Some(dest) = e.destination {
-        m.set_destination(dest.stargate_id, dest.solar_system_id);
-      }
-      m
-    })
-    .collect();
-
+  let records: Vec<_> = entries.into_iter().map(|(id, e)| build_stargate(id, e)).collect();
   db.universe()
     .stargates()
     .upsert_many(&records)
     .await
-    .map_err(|e| e.to_string())?;
-  Ok(())
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Deserialize)]
@@ -1062,39 +1055,39 @@ struct SdeCertEntry {
   skill_types: HashMap<i32, CertSkillLevel>,
 }
 
+fn clamp_skill_level(v: i32) -> u8 {
+  v.clamp(0, 5) as u8
+}
+
+fn build_cert_skill_levels(lvl: CertSkillLevel) -> [u8; 4] {
+  [
+    clamp_skill_level(lvl.basic),
+    clamp_skill_level(lvl.improved),
+    clamp_skill_level(lvl.advanced),
+    clamp_skill_level(lvl.elite),
+  ]
+}
+
+fn build_cert_record(id: i32, e: SdeCertEntry) -> models::Certificate {
+  let grade = e.grade.unwrap_or(1).clamp(1, 5);
+  let skills = e
+    .skill_types
+    .into_iter()
+    .map(|(type_id, lvl)| (type_id, build_cert_skill_levels(lvl)))
+    .collect();
+  models::Certificate {
+    id,
+    name: e.name.en(),
+    description: e.description.map(|d| d.en()),
+    grade: grade as u8,
+    skills,
+  }
+}
+
 #[tracing::instrument(skip(db))]
 async fn seed_certificates(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
   let entries: HashMap<i32, SdeCertEntry> = read_yaml(path).await?;
-
-  let records: Vec<models::Certificate> = entries
-    .into_iter()
-    .map(|(id, e)| {
-      let grade = e.grade.unwrap_or(1).clamp(1, 5);
-      models::Certificate {
-        id,
-        name: e.name.en(),
-        description: e.description.map(|d| d.en()),
-        grade: grade as u8,
-        skills: e
-          .skill_types
-          .into_iter()
-          .map(|(type_id, lvl)| {
-            let clamp = |v: i32| v.clamp(0, 5) as u8;
-            (
-              type_id,
-              [
-                clamp(lvl.basic),
-                clamp(lvl.improved),
-                clamp(lvl.advanced),
-                clamp(lvl.elite),
-              ],
-            )
-          })
-          .collect(),
-      }
-    })
-    .collect();
-
+  let records: Vec<models::Certificate> = entries.into_iter().map(|(id, e)| build_cert_record(id, e)).collect();
   db.universe()
     .certificates()
     .upsert_many(&records)

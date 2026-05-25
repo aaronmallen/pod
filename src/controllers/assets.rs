@@ -878,15 +878,17 @@ fn resolve_container_for_row(row: &RawAssetRow, maps: &AssetMaps) -> (String, i6
   )
 }
 
-/// Maps one `RawAssetRow` to an `AssetRecord` using the resolved lookup maps.
-fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> AssetRecord {
-  let type_name = row
+fn resolve_type_name(row: &RawAssetRow, maps: &AssetMaps) -> String {
+  row
     .ship_name
     .clone()
     .filter(|_| row.is_active_ship)
     .or_else(|| maps.type_name_map.get(&row.type_id).cloned())
-    .expect("item type must exist in SDE");
-  let group_id = maps.type_group_map.get(&row.type_id).copied();
+    .expect("item type must exist in SDE")
+}
+
+fn resolve_group_and_cat(type_id: i32, maps: &AssetMaps) -> (Option<i32>, String, &'static str) {
+  let group_id = maps.type_group_map.get(&type_id).copied();
   let group_name = group_id
     .and_then(|g| maps.group_name_map.get(&g))
     .cloned()
@@ -895,12 +897,23 @@ fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> Asset
     .and_then(|g| maps.type_cat_map.get(&g).copied())
     .and_then(|c| maps.cat_key_map.get(&c).copied())
     .unwrap_or("commodity");
-  let volume = maps.type_volume_map.get(&row.type_id).copied().unwrap_or(0.0);
-  let unit_price = if row.is_blueprint_copy == Some(true) {
+  (group_id, group_name, cat_key)
+}
+
+fn resolve_unit_price(row: &RawAssetRow, maps: &AssetMaps) -> f64 {
+  if row.is_blueprint_copy == Some(true) {
     0.0
   } else {
     maps.price_cache.get(&row.type_id).copied().unwrap_or(0.0)
-  };
+  }
+}
+
+/// Maps one `RawAssetRow` to an `AssetRecord` using the resolved lookup maps.
+fn map_row_to_record(row: RawAssetRow, owner_id: i64, maps: &AssetMaps) -> AssetRecord {
+  let type_name = resolve_type_name(&row, maps);
+  let (_, group_name, cat_key) = resolve_group_and_cat(row.type_id, maps);
+  let volume = maps.type_volume_map.get(&row.type_id).copied().unwrap_or(0.0);
+  let unit_price = resolve_unit_price(&row, maps);
   let (location_name, system_name) = resolve_location(&row, maps);
   let (container_path, container_id) = resolve_container_for_row(&row, maps);
   let depth = compute_depth(row.item_id, &maps.item_index);
@@ -1032,6 +1045,20 @@ async fn load_char_asset_rows(db: &pod_db::Repo, char_ids: &[i64]) -> Vec<RawAss
     .collect()
 }
 
+fn collect_type_ids(rows: &[RawAssetRow]) -> Vec<i32> {
+  unique_ids(rows.iter().map(|a| a.type_id))
+}
+
+fn rows_to_records(rows: Vec<RawAssetRow>, maps: &AssetMaps) -> Vec<AssetRecord> {
+  rows
+    .into_iter()
+    .map(|a| {
+      let owner_id = a.character_id;
+      map_row_to_record(a, owner_id, maps)
+    })
+    .collect()
+}
+
 /// Loads all character and corporation assets from DB and returns combined records.
 async fn load_all_assets_from_db(
   db: pod_db::Repo,
@@ -1051,7 +1078,7 @@ async fn load_all_assets_from_db(
   if rows.is_empty() {
     return Ok(Vec::new());
   }
-  let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
+  let type_ids = collect_type_ids(&rows);
   let station_ids = station_location_ids(&rows);
   let space_sys_ids = space_system_location_ids(&rows);
   let mut station_map = load_station_map(&db, &station_ids).await;
@@ -1073,15 +1100,7 @@ async fn load_all_assets_from_db(
     is_container_set,
   )
   .await?;
-  Ok(
-    rows
-      .into_iter()
-      .map(|a| {
-        let owner_id = a.character_id;
-        map_row_to_record(a, owner_id, &maps)
-      })
-      .collect(),
-  )
+  Ok(rows_to_records(rows, &maps))
 }
 
 /// Loads corporation asset rows from DB for all corps linked to the given characters.

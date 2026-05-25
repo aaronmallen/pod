@@ -85,18 +85,21 @@ fn categorize_late_groups(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Handles explicit type-string overrides that must win before any prefix rule.
 fn categorize_override(notif_type: &str) -> Option<NotificationCategory> {
-  match notif_type {
-    "AllianceCapitalChanged" => Some(NotificationCategory::Alliance),
-    "AllWarCorpJoinedAllianceMsg" => Some(NotificationCategory::War),
-    "BattlePunishFriendlyFire" => Some(NotificationCategory::Combat),
-    "CombatOperationFinished" => Some(NotificationCategory::Combat),
-    "ContainerPasswordMsg" => Some(NotificationCategory::System),
-    "OldLscMessages" => Some(NotificationCategory::System),
-    "OperationFinished" => Some(NotificationCategory::Combat),
-    "StructureCourierContractChanged" => Some(NotificationCategory::Contract),
-    "TutorialMsg" => Some(NotificationCategory::System),
-    _ => None,
-  }
+  const OVERRIDES: &[(&str, NotificationCategory)] = &[
+    ("AllianceCapitalChanged", NotificationCategory::Alliance),
+    ("AllWarCorpJoinedAllianceMsg", NotificationCategory::War),
+    ("BattlePunishFriendlyFire", NotificationCategory::Combat),
+    ("CombatOperationFinished", NotificationCategory::Combat),
+    ("ContainerPasswordMsg", NotificationCategory::System),
+    ("OldLscMessages", NotificationCategory::System),
+    ("OperationFinished", NotificationCategory::Combat),
+    ("StructureCourierContractChanged", NotificationCategory::Contract),
+    ("TutorialMsg", NotificationCategory::System),
+  ];
+  OVERRIDES
+    .iter()
+    .find(|(key, _)| *key == notif_type)
+    .map(|(_, cat)| cat.clone())
 }
 
 /// Classifies structure-courier contract notifications.

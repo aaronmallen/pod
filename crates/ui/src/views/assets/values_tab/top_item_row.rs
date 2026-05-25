@@ -79,18 +79,22 @@ impl<'a> TopItemRow<'a> {
 }
 
 fn category_display_name(key: &str) -> &'static str {
-  match key {
-    "ship" => "Ships",
-    "module" => "Modules",
-    "drone" => "Drones",
-    "charge" => "Charges",
-    "implant" => "Implants",
-    "blueprint" => "Blueprints",
-    "material" => "Materials",
-    "book" => "Skill Books",
-    "commodity" => "Commodities",
-    _ => "Other",
-  }
+  const NAMES: &[(&str, &str)] = &[
+    ("ship", "Ships"),
+    ("module", "Modules"),
+    ("drone", "Drones"),
+    ("charge", "Charges"),
+    ("implant", "Implants"),
+    ("blueprint", "Blueprints"),
+    ("material", "Materials"),
+    ("book", "Skill Books"),
+    ("commodity", "Commodities"),
+  ];
+  NAMES
+    .iter()
+    .find(|(k, _)| *k == key)
+    .map(|(_, v)| *v)
+    .unwrap_or("Other")
 }
 
 fn top_item_icon(item: &TopItem, icons: &HashMap<(i32, String), image::Handle>) -> Element<'static, Message> {

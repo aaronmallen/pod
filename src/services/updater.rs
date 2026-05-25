@@ -67,28 +67,32 @@ pub fn restart() {
 }
 
 async fn apply_inner() -> Result<(), String> {
-  tokio::task::spawn_blocking(|| {
-    let updater = build_updater().map_err(|e| e.to_string())?;
-    let update = updater
-      .check()
-      .map_err(|e| e.to_string())?
-      .ok_or_else(|| "no update available".to_string())?;
-    update.download_and_install().map_err(|e| e.to_string())
-  })
-  .await
-  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+  tokio::task::spawn_blocking(apply_blocking)
+    .await
+    .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+}
+
+fn apply_blocking() -> Result<(), String> {
+  let updater = build_updater().map_err(|e| e.to_string())?;
+  let update = updater
+    .check()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "no update available".to_string())?;
+  update.download_and_install().map_err(|e| e.to_string())
 }
 
 async fn check_inner() -> Result<Option<String>, String> {
-  tokio::task::spawn_blocking(|| {
-    let updater = build_updater().map_err(|e| e.to_string())?;
-    updater
-      .check()
-      .map(|opt| opt.map(|u| u.version))
-      .map_err(|e| e.to_string())
-  })
-  .await
-  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+  tokio::task::spawn_blocking(check_blocking)
+    .await
+    .unwrap_or_else(|e| Err(format!("task join error: {e}")))
+}
+
+fn check_blocking() -> Result<Option<String>, String> {
+  let updater = build_updater().map_err(|e| e.to_string())?;
+  updater
+    .check()
+    .map(|opt| opt.map(|u| u.version))
+    .map_err(|e| e.to_string())
 }
 
 fn handle_apply_result(result: Result<(), String>) -> Message {

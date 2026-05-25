@@ -63,23 +63,29 @@ pub fn subscription() -> Subscription<MenuMessage> {
   Subscription::run(stream)
 }
 
+fn event_to_message(event: &muda::MenuEvent) -> Option<MenuMessage> {
+  match event.id().0.as_str() {
+    ABOUT_ID => Some(MenuMessage::AboutRequested),
+    CHECK_UPDATES_ID => Some(MenuMessage::CheckForUpdatesRequested),
+    CLEAR_CACHE_ID => Some(MenuMessage::ClearCacheRequested),
+    QUIT_ID => Some(MenuMessage::QuitRequested),
+    _ => None,
+  }
+}
+
+async fn drain_menu_events(tx: &mut iced::futures::channel::mpsc::Sender<MenuMessage>) {
+  use iced::futures::SinkExt as _;
+  while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
+    if let Some(m) = event_to_message(&event) {
+      let _ = tx.send(m).await;
+    }
+  }
+}
+
 fn stream() -> impl iced::futures::Stream<Item = MenuMessage> {
   iced::stream::channel(16, async |mut tx| {
-    use iced::futures::SinkExt as _;
-
     loop {
-      while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-        let msg = match event.id().0.as_str() {
-          ABOUT_ID => Some(MenuMessage::AboutRequested),
-          CHECK_UPDATES_ID => Some(MenuMessage::CheckForUpdatesRequested),
-          CLEAR_CACHE_ID => Some(MenuMessage::ClearCacheRequested),
-          QUIT_ID => Some(MenuMessage::QuitRequested),
-          _ => None,
-        };
-        if let Some(m) = msg {
-          let _ = tx.send(m).await;
-        }
-      }
+      drain_menu_events(&mut tx).await;
       tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
   })

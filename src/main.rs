@@ -782,37 +782,51 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
   Task::none()
 }
 
+fn view_plan_window<'a>(app: &'a App, window_id: window::Id) -> Option<Element<'a, Message>> {
+  app
+    .plan_windows
+    .get(&window_id)
+    .map(|s| skill_plan_window::view(s).map(move |m| Message::SkillPlan(window_id, m)))
+}
+
+fn view_about_window<'a>(app: &'a App, window_id: window::Id) -> Option<Element<'a, Message>> {
+  let (about_id, about_state) = app.about_window.as_ref()?;
+  if window_id == *about_id {
+    Some(about_window::view(about_state).map(Message::AboutWindow))
+  } else {
+    None
+  }
+}
+
+fn view_main_phase<'a>(app: &'a App, state: &'a main_ctrl::State) -> Element<'a, Message> {
+  let content = main_window::Component::new(state)
+    .window_size(app.window_size.width, app.window_size.height)
+    .render()
+    .map(|m| Message::Main(Box::new(m)));
+  match banner_state(&app.update_state, &app.update_dismissed_for) {
+    Some(bs) => iced::widget::column([
+      update_banner::Component::new(bs).render().map(Message::UpdateBanner),
+      content,
+    ])
+    .into(),
+    None => content,
+  }
+}
+
 fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
-  if let Some(plan_state) = app.plan_windows.get(&window_id) {
-    return skill_plan_window::view(plan_state).map(move |m| Message::SkillPlan(window_id, m));
+  if let Some(el) = view_plan_window(app, window_id) {
+    return el;
   }
-
-  if let Some((about_id, about_state)) = &app.about_window
-    && window_id == *about_id
-  {
-    return about_window::view(about_state).map(Message::AboutWindow);
+  if let Some(el) = view_about_window(app, window_id) {
+    return el;
   }
-
   match &app.phase {
     AppPhase::Splash(state) => splash::Component::new(state)
       .step_label(&app.step_label)
       .version(env!("CARGO_PKG_VERSION"))
       .render()
       .map(Message::Splash),
-    AppPhase::Main(state) => {
-      let content = main_window::Component::new(state)
-        .window_size(app.window_size.width, app.window_size.height)
-        .render()
-        .map(|m| Message::Main(Box::new(m)));
-      match banner_state(&app.update_state, &app.update_dismissed_for) {
-        Some(state) => iced::widget::column([
-          update_banner::Component::new(state).render().map(Message::UpdateBanner),
-          content,
-        ])
-        .into(),
-        None => content,
-      }
-    }
+    AppPhase::Main(state) => view_main_phase(app, state),
   }
 }
 

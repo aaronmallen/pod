@@ -25,27 +25,26 @@ pub use system_row::Component as SystemRow;
 use super::{Message, State, asset_value};
 use crate::{asset_filter_query::AssetFilterQuery, style::color};
 
+fn is_container_asset(a: &super::AssetRecord, loc_name: &str, char_id: Option<i64>) -> bool {
+  is_owned_by(a, char_id) && a.container_id != 0 && a.location_name.as_str() == loc_name
+}
+
+fn insert_container_entry<'a>(map: &mut BTreeMap<i64, &'a str>, a: &'a super::AssetRecord) {
+  if let Some(path) = a.container_path.rsplit(" · ").next() {
+    map.entry(a.container_id).or_insert(path);
+  }
+}
+
 fn collect_containers<'a>(
   source: &'a [super::AssetRecord],
   loc_name: &str,
   char_id: Option<i64>,
 ) -> BTreeMap<i64, &'a str> {
-  source
-    .iter()
-    .filter(|a| {
-      if let Some(id) = char_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      a.container_id != 0 && a.location_name.as_str() == loc_name
-    })
-    .fold(BTreeMap::new(), |mut map, a| {
-      if let Some(path) = a.container_path.rsplit(" · ").next() {
-        map.entry(a.container_id).or_insert(path);
-      }
-      map
-    })
+  let mut map = BTreeMap::new();
+  for a in source.iter().filter(|a| is_container_asset(a, loc_name, char_id)) {
+    insert_container_entry(&mut map, a);
+  }
+  map
 }
 
 fn push_constellation_rows<'a>(
@@ -105,6 +104,18 @@ fn push_location_rows<'a>(
   }
 }
 
+fn collect_system_locations<'a>(
+  source: &'a [super::AssetRecord],
+  sys_name: &str,
+  char_id: Option<i64>,
+) -> BTreeSet<&'a str> {
+  source
+    .iter()
+    .filter(|a| is_owned_by(a, char_id) && a.system_name.as_str() == sys_name)
+    .map(|a| a.location_name.as_str())
+    .collect()
+}
+
 fn push_system_rows<'a>(
   items: &mut Vec<Element<'a, Message>>,
   source: &'a [super::AssetRecord],
@@ -122,40 +133,25 @@ fn push_system_rows<'a>(
 
   items.push(SystemRow::new(sys_name, sys_filter, sys_active, sys_value).render());
 
-  let locs: BTreeSet<&str> = source
-    .iter()
-    .filter(|a| {
-      if let Some(id) = char_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      a.system_name.as_str() == sys_name
-    })
-    .map(|a| a.location_name.as_str())
-    .collect();
-
-  for loc_name in &locs {
+  for loc_name in &collect_system_locations(source, sys_name, char_id) {
     push_location_rows(items, source, loc_name, char_id, selected_loc);
   }
 }
 
+fn is_owned_by(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
+  char_id.is_none_or(|id| a.character_id == id)
+}
+
+fn has_location_only(a: &super::AssetRecord) -> bool {
+  a.system_name.is_empty() && a.region_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
+}
+
 fn is_system_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
-  if let Some(id) = char_id
-    && a.character_id != id
-  {
-    return false;
-  }
-  !a.system_name.is_empty()
+  is_owned_by(a, char_id) && !a.system_name.is_empty()
 }
 
 fn is_structure_loc_asset(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
-  if let Some(id) = char_id
-    && a.character_id != id
-  {
-    return false;
-  }
-  a.system_name.is_empty() && a.region_name.is_empty() && !a.location_name.is_empty() && a.container_id == 0
+  is_owned_by(a, char_id) && has_location_only(a)
 }
 
 fn collect_structure_locs(source: &[super::AssetRecord], char_id: Option<i64>) -> BTreeSet<&str> {
@@ -166,20 +162,16 @@ fn collect_structure_locs(source: &[super::AssetRecord], char_id: Option<i64>) -
     .collect()
 }
 
+fn asset_in_region_tree(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
+  !a.region_name.is_empty() && !a.system_name.is_empty() && is_owned_by(a, char_id)
+}
+
 fn build_region_tree<'a>(
   source: &'a [super::AssetRecord],
   char_id: Option<i64>,
 ) -> BTreeMap<&'a str, BTreeMap<&'a str, BTreeSet<&'a str>>> {
   let mut tree: BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
-  for a in source {
-    if a.region_name.is_empty() || a.system_name.is_empty() {
-      continue;
-    }
-    if let Some(id) = char_id
-      && a.character_id != id
-    {
-      continue;
-    }
+  for a in source.iter().filter(|a| asset_in_region_tree(a, char_id)) {
     tree
       .entry(a.region_name.as_str())
       .or_default()
@@ -240,6 +232,15 @@ fn push_region_tree<'a>(
   }
 }
 
+fn asset_passes_count_filter(
+  a: &super::AssetRecord,
+  char_id: Option<i64>,
+  query: &AssetFilterQuery,
+  group_filter: &impl Fn(&super::AssetRecord) -> bool,
+) -> bool {
+  is_owned_by(a, char_id) && group_filter(a) && query.matches(a)
+}
+
 fn count_filtered(
   source: &[super::AssetRecord],
   char_id: Option<i64>,
@@ -248,35 +249,19 @@ fn count_filtered(
 ) -> u64 {
   source
     .iter()
-    .filter(|a| {
-      if let Some(id) = char_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      if !group_filter(a) {
-        return false;
-      }
-      if !query.matches(a) {
-        return false;
-      }
-      true
-    })
+    .filter(|a| asset_passes_count_filter(a, char_id, query, &group_filter))
     .map(|a| a.quantity as u64)
     .sum()
+}
+
+fn is_ungrouped_system(a: &super::AssetRecord, owner_id: Option<i64>) -> bool {
+  is_system_asset(a, owner_id) && a.region_name.is_empty()
 }
 
 fn collect_ungrouped_systems<'a>(source: &'a [super::AssetRecord], owner_id: Option<i64>) -> BTreeSet<&'a str> {
   source
     .iter()
-    .filter(|a| {
-      if let Some(id) = owner_id
-        && a.character_id != id
-      {
-        return false;
-      }
-      is_system_asset(a, owner_id) && a.region_name.is_empty()
-    })
+    .filter(|a| is_ungrouped_system(a, owner_id))
     .map(|a| a.system_name.as_str())
     .collect()
 }

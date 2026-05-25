@@ -87,16 +87,11 @@ impl ValuesStatCell {
   }
 }
 
-fn render_data_cell(kind: ValuesStatCellKind) -> Element<'static, Message> {
+fn render_total_cell(kind: ValuesStatCellKind) -> Element<'static, Message> {
   match kind {
-    ValuesStatCellKind::Value {
-      value,
-      row_total,
-    } => render_value(value, row_total),
     ValuesStatCellKind::RowTotal {
       value,
     } => render_row_total(value),
-    ValuesStatCellKind::TotalsLabel => render_totals_label(),
     ValuesStatCellKind::ColTotal {
       value,
     } => render_col_total(value),
@@ -104,6 +99,16 @@ fn render_data_cell(kind: ValuesStatCellKind) -> Element<'static, Message> {
       value,
     } => render_grand_total(value),
     _ => render_totals_label(),
+  }
+}
+
+fn render_data_cell(kind: ValuesStatCellKind) -> Element<'static, Message> {
+  match kind {
+    ValuesStatCellKind::Value {
+      value,
+      row_total,
+    } => render_value(value, row_total),
+    other => render_total_cell(other),
   }
 }
 
@@ -158,23 +163,34 @@ fn render_total_header() -> Element<'static, Message> {
   .into()
 }
 
-fn render_value(v: f64, row_total: f64) -> Element<'static, Message> {
+fn value_heat_bg(v: f64, row_total: f64) -> Option<Background> {
+  if v <= 0.0 {
+    return None;
+  }
   let intensity = if row_total > 0.0 { (v / row_total) as f32 } else { 0.0 };
-  let bg = if v > 0.0 {
-    Some(Background::Color(color::plasma_heat(intensity)))
-  } else {
-    None
-  };
-  let label = if v == 0.0 {
+  Some(Background::Color(color::plasma_heat(intensity)))
+}
+
+fn value_label(v: f64) -> String {
+  if v == 0.0 {
     "\u{2014}".to_string()
   } else {
     format::fmt_isk(v)
-  };
-  let text_color = if v == 0.0 {
+  }
+}
+
+fn value_text_color(v: f64) -> iced::Color {
+  if v == 0.0 {
     color::text::TERTIARY
   } else {
     color::text::PRIMARY
-  };
+  }
+}
+
+fn render_value(v: f64, row_total: f64) -> Element<'static, Message> {
+  let bg = value_heat_bg(v, row_total);
+  let label = value_label(v);
+  let text_color = value_text_color(v);
 
   container(
     text(label)

@@ -119,26 +119,42 @@ fn tier_badge(tier: &str) -> Element<'static, Message> {
   .into()
 }
 
-/// Renders the type icon tile (monogram fallback used since icons come from ESI).
-fn type_icon_tile(base_type_name: &str, type_id: i32) -> Element<'static, Message> {
+fn word_initial(w: &str) -> char {
+  w.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?')
+}
+
+fn is_alphabetic_word(w: &&str) -> bool {
+  w.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+}
+
+fn type_monogram(base_type_name: &str, type_id: i32) -> String {
   let letters: String = base_type_name
     .split_whitespace()
-    .filter(|w| w.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false))
+    .filter(is_alphabetic_word)
     .take(2)
-    .map(|w| w.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?'))
+    .map(word_initial)
     .collect();
-  let letters = if letters.is_empty() {
+  if letters.is_empty() {
     format!("{}", type_id % 100)
   } else {
     letters
-  };
-  let hue = (type_id % 360) as f32;
-  let col = Color::from([
-    0.5 + 0.3 * (hue.to_radians()).cos(),
-    0.5 + 0.3 * (hue.to_radians() + 2.094).cos(),
-    0.5 + 0.3 * (hue.to_radians() + 4.189).cos(),
+  }
+}
+
+fn hue_to_color(hue: f32, lightness: f32, saturation: f32) -> Color {
+  Color::from([
+    lightness + saturation * (hue.to_radians()).cos(),
+    lightness + saturation * (hue.to_radians() + 2.094).cos(),
+    lightness + saturation * (hue.to_radians() + 4.189).cos(),
     1.0,
-  ]);
+  ])
+}
+
+/// Renders the type icon tile (monogram fallback used since icons come from ESI).
+fn type_icon_tile(base_type_name: &str, type_id: i32) -> Element<'static, Message> {
+  let letters = type_monogram(base_type_name, type_id);
+  let hue = (type_id % 360) as f32;
+  let col = hue_to_color(hue, 0.5, 0.3);
   container(
     text(letters)
       .font(mono::REGULAR)
@@ -212,25 +228,23 @@ fn stat_intensity_bar(intensity: f32, fill_col: Color) -> Element<'static, Messa
   .into()
 }
 
-fn stat_row_inner(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
-  let delta = stat.rolled_value - stat.base_value;
-  let stat_color = stat_direction_color(stat_roll_direction(stat));
-  let intensity = stat_delta_intensity(stat, delta);
-  let delta_sign = if delta >= 0.0 { "+" } else { "" };
-  let delta_str = format!("{}{}", delta_sign, format_stat_value(delta, &stat.unit_suffix));
-  let name_color = if highlighted {
+fn stat_name_color(highlighted: bool) -> iced::Color {
+  if highlighted {
     color::text::ACCENT
   } else {
     color::text::SECONDARY
-  };
-  let name_el: Element<'static, Message> = text(stat.display_name.clone())
-    .font(body::REGULAR)
-    .size(11.0)
-    .style(move |_: &Theme| iced::widget::text::Style {
-      color: Some(name_color),
-    })
-    .into();
-  let value_row: Element<'static, Message> = row([
+  }
+}
+
+fn stat_delta_str(delta: f64, unit_suffix: &str) -> String {
+  let sign = if delta >= 0.0 { "+" } else { "" };
+  format!("{}{}", sign, format_stat_value(delta, unit_suffix))
+}
+
+fn stat_value_row(stat: &AbyssalStatViewModel, stat_color: iced::Color) -> Element<'static, Message> {
+  let delta = stat.rolled_value - stat.base_value;
+  let delta_str = stat_delta_str(delta, &stat.unit_suffix);
+  row([
     text(format_stat_value(stat.rolled_value, &stat.unit_suffix))
       .font(mono::MEDIUM)
       .size(14.0)
@@ -248,7 +262,22 @@ fn stat_row_inner(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'st
       .into(),
   ])
   .align_y(iced::alignment::Vertical::Center)
-  .into();
+  .into()
+}
+
+fn stat_row_inner(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
+  let delta = stat.rolled_value - stat.base_value;
+  let stat_color = stat_direction_color(stat_roll_direction(stat));
+  let intensity = stat_delta_intensity(stat, delta);
+  let name_color = stat_name_color(highlighted);
+  let name_el: Element<'static, Message> = text(stat.display_name.clone())
+    .font(body::REGULAR)
+    .size(11.0)
+    .style(move |_: &Theme| iced::widget::text::Style {
+      color: Some(name_color),
+    })
+    .into();
+  let value_row = stat_value_row(stat, stat_color);
   row([
     stat_icon_tile(&stat.display_name, stat.icon_id),
     Space::new().width(10.0).into(),
@@ -295,27 +324,21 @@ fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, 
   }
 }
 
+fn stat_monogram(display_name: &str) -> String {
+  let label: String = display_name
+    .split_whitespace()
+    .filter(is_alphabetic_word)
+    .take(3)
+    .map(word_initial)
+    .collect();
+  if label.is_empty() { "?".to_string() } else { label }
+}
+
 /// Renders the stat icon tile for a dogma attribute.
 fn stat_icon_tile(display_name: &str, icon_id: Option<i32>) -> Element<'static, Message> {
-  let mono_label: String = display_name
-    .split_whitespace()
-    .filter(|w| w.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false))
-    .take(3)
-    .map(|w| w.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?'))
-    .collect();
-  let mono_label = if mono_label.is_empty() {
-    "?".to_string()
-  } else {
-    mono_label
-  };
-  let hue = icon_id.unwrap_or(220) % 360;
-  let hue_f = hue as f32;
-  let col = Color::from([
-    0.35 + 0.25 * (hue_f.to_radians()).cos(),
-    0.35 + 0.25 * (hue_f.to_radians() + 2.094).cos(),
-    0.35 + 0.25 * (hue_f.to_radians() + 4.189).cos(),
-    1.0,
-  ]);
+  let mono_label = stat_monogram(display_name);
+  let hue_f = (icon_id.unwrap_or(220) % 360) as f32;
+  let col = hue_to_color(hue_f, 0.35, 0.25);
   container(
     text(mono_label)
       .font(mono::REGULAR)
@@ -383,6 +406,19 @@ fn char_initials_tile(char_name: &str) -> Element<'static, Message> {
   .into()
 }
 
+fn stat_roll_contribution(s: &AbyssalStatViewModel) -> Option<f64> {
+  let delta = s.rolled_value - s.base_value;
+  if delta.abs() < 1e-9 {
+    return None;
+  }
+  let pct = if s.base_value.abs() > 1e-9 {
+    delta / s.base_value * 100.0
+  } else {
+    0.0
+  };
+  Some(if s.high_is_good { pct } else { -pct })
+}
+
 /// Computes the net-positive roll score for an abyssal item.
 ///
 /// Returns the average signed delta weighted by stat direction. Positive = net good.
@@ -390,22 +426,7 @@ pub fn roll_score(item: &AbyssalViewModel) -> f64 {
   if item.stats.is_empty() {
     return 0.0;
   }
-  let sum: f64 = item
-    .stats
-    .iter()
-    .filter_map(|s| {
-      let delta = s.rolled_value - s.base_value;
-      if delta.abs() < 1e-9 {
-        return None;
-      }
-      let pct = if s.base_value.abs() > 1e-9 {
-        delta / s.base_value * 100.0
-      } else {
-        0.0
-      };
-      Some(if s.high_is_good { pct } else { -pct })
-    })
-    .sum();
+  let sum: f64 = item.stats.iter().filter_map(stat_roll_contribution).sum();
   sum / item.stats.len() as f64
 }
 
@@ -433,20 +454,22 @@ fn highlighted_stat_names(query: &str, item: &AbyssalViewModel) -> Vec<String> {
     .collect()
 }
 
+fn token_matches_item(token: &str, item: &AbyssalViewModel, char_name: &str) -> bool {
+  let lc = token.to_lowercase();
+  item.base_type_name.to_lowercase().contains(&lc)
+    || item.mutaplasmid_tier.to_lowercase().contains(&lc)
+    || char_name.to_lowercase().contains(&lc)
+    || item.location.to_lowercase().contains(&lc)
+    || token_matches_stat(token, item)
+}
+
 /// Returns true if the item matches the search query (all tokens must match at least one field).
 fn item_matches_query(query: &str, item: &AbyssalViewModel, char_name: &str) -> bool {
   if query.trim().is_empty() {
     return true;
   }
   let tokens: Vec<&str> = query.split_whitespace().collect();
-  tokens.iter().all(|token| {
-    let lc = token.to_lowercase();
-    item.base_type_name.to_lowercase().contains(&lc)
-      || item.mutaplasmid_tier.to_lowercase().contains(&lc)
-      || char_name.to_lowercase().contains(&lc)
-      || item.location.to_lowercase().contains(&lc)
-      || token_matches_stat(token, item)
-  })
+  tokens.iter().all(|token| token_matches_item(token, item, char_name))
 }
 
 /// Renders the header section of an abyssal card (icon, name, tier badge, price).
@@ -1050,22 +1073,33 @@ fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
   .into()
 }
 
+struct AllButtonStyle {
+  text_color: iced::Color,
+  bg: Option<Background>,
+  border_color: iced::Color,
+}
+
+fn all_button_style(active: bool) -> AllButtonStyle {
+  if active {
+    AllButtonStyle {
+      text_color: color::text::ACCENT,
+      bg: Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.10))),
+      border_color: color::text::ACCENT,
+    }
+  } else {
+    AllButtonStyle {
+      text_color: color::text::PRIMARY,
+      bg: None,
+      border_color: color::border::SUBTLE,
+    }
+  }
+}
+
 fn sidebar_all_button(active: bool) -> Element<'static, Message> {
-  let text_color = if active {
-    color::text::ACCENT
-  } else {
-    color::text::PRIMARY
-  };
-  let bg = if active {
-    Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.10)))
-  } else {
-    None
-  };
-  let border_color = if active {
-    color::text::ACCENT
-  } else {
-    color::border::SUBTLE
-  };
+  let s = all_button_style(active);
+  let text_color = s.text_color;
+  let bg = s.bg;
+  let border_color = s.border_color;
   button(
     text("All module types")
       .font(body::REGULAR)
@@ -1095,22 +1129,33 @@ fn sidebar_all_button(active: bool) -> Element<'static, Message> {
   .into()
 }
 
+struct TypeButtonStyle {
+  label_color: iced::Color,
+  bg: Option<Background>,
+  border_color: iced::Color,
+}
+
+fn type_button_style(active: bool) -> TypeButtonStyle {
+  if active {
+    TypeButtonStyle {
+      label_color: color::text::ACCENT,
+      bg: Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08))),
+      border_color: color::with_alpha(color::text::ACCENT, 0.3),
+    }
+  } else {
+    TypeButtonStyle {
+      label_color: color::text::SECONDARY,
+      bg: None,
+      border_color: Color::TRANSPARENT,
+    }
+  }
+}
+
 fn sidebar_type_button(type_name: &str, tid: i32, active: bool) -> Element<'static, Message> {
-  let label_color = if active {
-    color::text::ACCENT
-  } else {
-    color::text::SECONDARY
-  };
-  let bg = if active {
-    Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08)))
-  } else {
-    None
-  };
-  let border_color = if active {
-    color::with_alpha(color::text::ACCENT, 0.3)
-  } else {
-    Color::TRANSPARENT
-  };
+  let s = type_button_style(active);
+  let label_color = s.label_color;
+  let bg = s.bg;
+  let border_color = s.border_color;
   button(
     text(type_name.to_string())
       .font(body::REGULAR)

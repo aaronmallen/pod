@@ -79,48 +79,12 @@ impl Component {
 
     let example_rows: Vec<Element<'static, Message>> = HELP_EXAMPLES
       .iter()
-      .map(|&(q, note)| {
-        components::Button::row(
-          row([
-            code_chip(q, true),
-            text(note)
-              .font(typography::body::REGULAR)
-              .size(12.0)
-              .style(|_| iced::widget::text::Style {
-                color: Some(color::text::SECONDARY),
-              })
-              .into(),
-          ])
-          .spacing(12.0)
-          .align_y(iced::alignment::Vertical::Center),
-        )
-        .width(Length::Fill)
-        .on_press(Message::QueryInserted(q.to_string()))
-        .into()
-      })
+      .map(|&(q, note)| build_example_row(q, note))
       .collect();
 
     let key_rows: Vec<Element<'static, Message>> = KEY_ENTRIES
       .iter()
-      .map(|&(key, alias, desc)| {
-        let mut chips: Vec<Element<'static, Message>> = vec![code_chip(key, false)];
-        if !alias.is_empty() {
-          chips.push(code_chip(alias, false));
-        }
-        row([
-          row(chips).spacing(4.0).width(Length::Fixed(130.0)).into(),
-          text(desc)
-            .font(typography::body::REGULAR)
-            .size(12.0)
-            .style(|_| iced::widget::text::Style {
-              color: Some(color::text::SECONDARY),
-            })
-            .into(),
-        ])
-        .spacing(8.0)
-        .align_y(iced::alignment::Vertical::Center)
-        .into()
-      })
+      .map(|&(key, alias, desc)| build_key_row(key, alias, desc))
       .collect();
 
     let mut body_items: Vec<Element<'static, Message>> = Vec::new();
@@ -152,6 +116,46 @@ impl Default for Component {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn build_example_row(q: &'static str, note: &'static str) -> Element<'static, Message> {
+  components::Button::row(
+    row([
+      code_chip(q, true),
+      text(note)
+        .font(typography::body::REGULAR)
+        .size(12.0)
+        .style(|_| iced::widget::text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+    ])
+    .spacing(12.0)
+    .align_y(iced::alignment::Vertical::Center),
+  )
+  .width(Length::Fill)
+  .on_press(Message::QueryInserted(q.to_string()))
+  .into()
+}
+
+fn build_key_row(key: &'static str, alias: &'static str, desc: &'static str) -> Element<'static, Message> {
+  let mut chips: Vec<Element<'static, Message>> = vec![code_chip(key, false)];
+  if !alias.is_empty() {
+    chips.push(code_chip(alias, false));
+  }
+  row([
+    row(chips).spacing(4.0).width(Length::Fixed(130.0)).into(),
+    text(desc)
+      .font(typography::body::REGULAR)
+      .size(12.0)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .spacing(8.0)
+  .align_y(iced::alignment::Vertical::Center)
+  .into()
 }
 
 fn code_chip(label: &str, plasma: bool) -> Element<'static, Message> {

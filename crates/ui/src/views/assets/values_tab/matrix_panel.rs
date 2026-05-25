@@ -94,16 +94,28 @@ impl<'a> Component<'a> {
   }
 }
 
-fn sorted_structures(cells: &[CharacterStructureCell]) -> Vec<String> {
-  let mut structures: Vec<String> = cells
+fn structure_total_value(cells: &[CharacterStructureCell], structure_name: &str) -> f64 {
+  cells
+    .iter()
+    .filter(|c| c.structure_name == structure_name)
+    .map(|c| c.value)
+    .sum()
+}
+
+fn unique_structure_names(cells: &[CharacterStructureCell]) -> Vec<String> {
+  cells
     .iter()
     .map(|c| c.structure_name.clone())
     .collect::<std::collections::HashSet<_>>()
     .into_iter()
-    .collect();
+    .collect()
+}
+
+fn sorted_structures(cells: &[CharacterStructureCell]) -> Vec<String> {
+  let mut structures = unique_structure_names(cells);
   structures.sort_by(|a, b| {
-    let a_total: f64 = cells.iter().filter(|c| &c.structure_name == a).map(|c| c.value).sum();
-    let b_total: f64 = cells.iter().filter(|c| &c.structure_name == b).map(|c| c.value).sum();
+    let a_total = structure_total_value(cells, a);
+    let b_total = structure_total_value(cells, b);
     b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
   });
   structures

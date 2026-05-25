@@ -58,14 +58,22 @@ pub fn save(settings: &Settings) {
     tracing::warn!("config: could not determine config directory — settings not saved");
     return;
   };
+  ensure_config_dir(&path);
+  write_config_file(&path, settings);
+}
+
+fn ensure_config_dir(path: &std::path::Path) {
   if let Some(parent) = path.parent()
     && let Err(e) = std::fs::create_dir_all(parent)
   {
     tracing::warn!("config: failed to create config directory: {e}");
   }
+}
+
+fn write_config_file(path: &std::path::Path, settings: &Settings) {
   match toml::to_string_pretty(settings) {
     Ok(content) => {
-      if let Err(e) = std::fs::write(&path, content) {
+      if let Err(e) = std::fs::write(path, content) {
         tracing::warn!("config: failed to write config file: {e}");
       }
     }

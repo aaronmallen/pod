@@ -250,19 +250,15 @@ fn resolve_container_path(
   let mut last_type_id = 0i32;
   loop {
     let Some((loc_id, loc_type, loc_flag, type_id)) = item_index.get(&cursor_id) else {
-      if cursor_id == parent_item_id {
-        break;
-      }
-      let loc_name = structure_name_map
-        .get(&cursor_id)
-        .cloned()
-        .expect("structure name must be present after ESI resolution");
-      let flag = humanize_flag(&last_flag);
-      let ctype = type_name_map
-        .get(&last_type_id)
-        .map(|n| n.as_str())
-        .unwrap_or("Container");
-      return (format!("{} · {} · {}", loc_name, flag, ctype), last_container_id);
+      return container_path_unknown_terminus(
+        cursor_id,
+        parent_item_id,
+        last_container_id,
+        &last_flag,
+        last_type_id,
+        type_name_map,
+        structure_name_map,
+      );
     };
     if loc_type != "item" || depth > 20 {
       let loc_name = resolve_terminus_name(loc_id, loc_type, station_map, system_name_map, structure_name_map);
@@ -276,7 +272,31 @@ fn resolve_container_path(
     cursor_id = *loc_id;
     depth += 1;
   }
-  (String::new(), 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn container_path_unknown_terminus(
+  cursor_id: i64,
+  parent_item_id: i64,
+  last_container_id: i64,
+  last_flag: &str,
+  last_type_id: i32,
+  type_name_map: &HashMap<i32, String>,
+  structure_name_map: &HashMap<i64, String>,
+) -> (String, i64) {
+  if cursor_id == parent_item_id {
+    return (String::new(), 0);
+  }
+  let loc_name = structure_name_map
+    .get(&cursor_id)
+    .cloned()
+    .expect("structure name must be present after ESI resolution");
+  let flag = humanize_flag(last_flag);
+  let ctype = type_name_map
+    .get(&last_type_id)
+    .map(|n| n.as_str())
+    .unwrap_or("Container");
+  (format!("{} · {} · {}", loc_name, flag, ctype), last_container_id)
 }
 
 fn humanize_flag(flag: &str) -> &'static str {
@@ -344,26 +364,37 @@ async fn resolve_structure_names(
   if locs.is_empty() {
     return Ok(HashMap::new());
   }
-
   let unique_struct_ids: Vec<i64> = unique_ids(locs.iter().map(|(id, _)| *id));
   let mut result = load_structures_from_db(db, &unique_struct_ids).await;
+  let missing = missing_structure_ids(&unique_struct_ids, &result);
+  fill_missing_from_esi(&missing, locs, characters, esi, db, &mut result).await;
+  check_all_resolved(unique_struct_ids, result)
+}
 
-  let missing: Vec<i64> = unique_struct_ids
+fn missing_structure_ids(unique_struct_ids: &[i64], result: &HashMap<i64, (String, i64)>) -> Vec<i64> {
+  unique_struct_ids
     .iter()
     .filter(|id| !result.contains_key(*id))
     .copied()
-    .collect();
+    .collect()
+}
 
-  if !missing.is_empty()
-    && let Some(esi) = esi
-  {
-    let newly_resolved = esi_resolve_missing_structures(&missing, locs, characters, esi, db, &mut result).await;
-    if !newly_resolved.is_empty() {
-      let _ = db.universe().structure_cache().upsert_many(&newly_resolved).await;
-    }
+async fn fill_missing_from_esi(
+  missing: &[i64],
+  locs: &[(i64, i64)],
+  characters: &[Character],
+  esi: Option<&pod_esi::Client>,
+  db: &pod_db::Repo,
+  result: &mut HashMap<i64, (String, i64)>,
+) {
+  let Some(esi) = esi else { return };
+  if missing.is_empty() {
+    return;
   }
-
-  check_all_resolved(unique_struct_ids, result)
+  let newly_resolved = esi_resolve_missing_structures(missing, locs, characters, esi, db, result).await;
+  if !newly_resolved.is_empty() {
+    let _ = db.universe().structure_cache().upsert_many(&newly_resolved).await;
+  }
 }
 
 /// Queries ESI for each missing structure, trying available characters in turn.
@@ -798,15 +829,34 @@ fn is_space_location(location_type: &str) -> bool {
 
 /// Returns the solar system ID for a row's top-level location, if resolvable.
 fn resolve_solar_system_id(row: &RawAssetRow, maps: &AssetMaps) -> Option<i32> {
-  if row.location_type == "station" && is_npc_location(row.location_id) {
-    return solar_system_id_for_station(row.location_id, &maps.station_map);
+  if row.location_type == "station" {
+    return solar_system_id_npc_station(row.location_id, maps);
   }
-  if is_space_location(&row.location_type) && is_npc_location(row.location_id) {
-    return solar_system_id_for_space(row.location_id);
+  if is_space_location(&row.location_type) {
+    return solar_system_id_space(row.location_id);
   }
-  let is_at_structure = !is_npc_location(row.location_id) && !maps.item_index.contains_key(&row.location_id);
-  if is_at_structure {
-    solar_system_id_for_structure(row.location_id, &maps.structure_name_map)
+  solar_system_id_player_structure(row.location_id, maps)
+}
+
+fn solar_system_id_npc_station(location_id: i64, maps: &AssetMaps) -> Option<i32> {
+  if is_npc_location(location_id) {
+    solar_system_id_for_station(location_id, &maps.station_map)
+  } else {
+    None
+  }
+}
+
+fn solar_system_id_space(location_id: i64) -> Option<i32> {
+  if is_npc_location(location_id) {
+    solar_system_id_for_space(location_id)
+  } else {
+    None
+  }
+}
+
+fn solar_system_id_player_structure(location_id: i64, maps: &AssetMaps) -> Option<i32> {
+  if !is_npc_location(location_id) && !maps.item_index.contains_key(&location_id) {
+    solar_system_id_for_structure(location_id, &maps.structure_name_map)
   } else {
     None
   }

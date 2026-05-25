@@ -582,10 +582,19 @@ async fn get_or_create_snoozed_label(
   if let Some(id) = find_snoozed_label_id(&all_labels) {
     return Ok(Some(id));
   }
+  create_snoozed_label_if_needed(esi, grant, add_label).await
+}
+
+async fn create_snoozed_label_if_needed(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+  add_label: bool,
+) -> Result<Option<i64>, String> {
   if !add_label {
     return Ok(None);
   }
-  let id = char_client
+  let id = esi
+    .character(grant)
     .create_mail_label(NewMailLabel {
       color: Some("#ffaa00".into()),
       name: "Snoozed".into(),
@@ -1207,9 +1216,18 @@ fn update_reading_pane(state: &mut State, msg: reading_pane::Message, services: 
   match msg {
     reading_pane::Message::ArchivePressed => update_archive(state),
     reading_pane::Message::ForwardPressed => update_forward(state),
-    reading_pane::Message::ReplyAllPressed => update_reply(state),
-    reading_pane::Message::ReplyPressed => update_reply(state),
     reading_pane::Message::StarToggle => update_star_toggle(state),
+    msg => update_reading_pane_reply_or_snooze(state, msg, services),
+  }
+}
+
+fn update_reading_pane_reply_or_snooze(
+  state: &mut State,
+  msg: reading_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::ReplyAllPressed | reading_pane::Message::ReplyPressed => update_reply(state),
     msg => update_snooze_message(state, msg, services),
   }
 }

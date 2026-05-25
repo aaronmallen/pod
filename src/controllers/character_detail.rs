@@ -646,38 +646,52 @@ async fn resolve_location_names(
   db: &pod_db::Repo,
   esi: &pod_esi::Client,
 ) -> (HashMap<i64, String>, HashMap<i64, String>) {
-  let station_ids: Vec<i32> = all_loc_ids
+  let station_ids = npc_station_ids(all_loc_ids);
+  let db_station_map = load_station_name_map(db, &station_ids).await;
+  let unresolved_ids = unresolved_location_ids(all_loc_ids, &db_station_map);
+  let esi_name_map = resolve_via_esi_names(esi, &unresolved_ids).await;
+  (db_station_map, esi_name_map)
+}
+
+fn npc_station_ids(loc_ids: &[i64]) -> Vec<i32> {
+  loc_ids
     .iter()
     .filter(|&&id| id < 100_000_000i64)
     .filter_map(|&id| i32::try_from(id).ok())
-    .collect();
-  let db_station_map: HashMap<i64, String> = db
-    .universe()
+    .collect()
+}
+
+async fn load_station_name_map(db: &pod_db::Repo, station_ids: &[i32]) -> HashMap<i64, String> {
+  db.universe()
     .stations()
-    .find_by_ids(&station_ids)
+    .find_by_ids(station_ids)
     .await
     .unwrap_or_default()
     .into_iter()
     .map(|s| (*s.id() as i64, s.name().clone()))
-    .collect();
-  let unresolved_ids: Vec<i64> = all_loc_ids
+    .collect()
+}
+
+fn unresolved_location_ids(all_loc_ids: &[i64], station_map: &HashMap<i64, String>) -> Vec<i64> {
+  all_loc_ids
     .iter()
     .copied()
-    .filter(|id| !db_station_map.contains_key(id))
-    .collect();
-  let esi_name_map: HashMap<i64, String> = if unresolved_ids.is_empty() {
-    HashMap::new()
-  } else {
-    esi
-      .universe()
-      .names(&unresolved_ids)
-      .await
-      .unwrap_or_default()
-      .into_iter()
-      .map(|n| (n.id, n.name))
-      .collect()
-  };
-  (db_station_map, esi_name_map)
+    .filter(|id| !station_map.contains_key(id))
+    .collect()
+}
+
+async fn resolve_via_esi_names(esi: &pod_esi::Client, unresolved_ids: &[i64]) -> HashMap<i64, String> {
+  if unresolved_ids.is_empty() {
+    return HashMap::new();
+  }
+  esi
+    .universe()
+    .names(unresolved_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|n| (n.id, n.name))
+    .collect()
 }
 
 async fn load_contacts(
@@ -1002,8 +1016,6 @@ fn notification_category_label_a(cat: &pod_model::NotificationCategory) -> Optio
     NotificationCategory::Alliance => Some("alliance"),
     NotificationCategory::Clone => Some("clone"),
     NotificationCategory::Combat => Some("combat"),
-    NotificationCategory::Contact => Some("contact"),
-    NotificationCategory::Contract => Some("contract"),
     cat => notification_category_label_a_ext(cat),
   }
 }
@@ -1011,7 +1023,16 @@ fn notification_category_label_a(cat: &pod_model::NotificationCategory) -> Optio
 fn notification_category_label_a_ext(cat: &pod_model::NotificationCategory) -> Option<&'static str> {
   use pod_model::NotificationCategory;
   match cat {
+    NotificationCategory::Contact => Some("contact"),
+    NotificationCategory::Contract => Some("contract"),
     NotificationCategory::Corp => Some("corp"),
+    cat => notification_category_label_a_ext2(cat),
+  }
+}
+
+fn notification_category_label_a_ext2(cat: &pod_model::NotificationCategory) -> Option<&'static str> {
+  use pod_model::NotificationCategory;
+  match cat {
     NotificationCategory::Fw => Some("fw"),
     NotificationCategory::Incursion => Some("incursion"),
     NotificationCategory::Industry => Some("industry"),

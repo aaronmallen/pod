@@ -1,18 +1,17 @@
 //! Middle pane: scrollable message list grouped by day.
 
 pub mod day_header;
+pub mod empty_state;
 pub mod message_row;
+pub mod search_bar;
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
-  widget::{column, container, mouse_area, row, scrollable, text, text_input},
+  Background, Element, Length,
+  widget::{column, container, mouse_area, scrollable},
 };
 
 use super::{Folder, MailMessage, State};
-use crate::{
-  components::{Icon, Separator},
-  style::{color, typography::body},
-};
+use crate::style::color;
 
 /// Messages produced by the message list pane.
 #[derive(Clone, Debug)]
@@ -68,56 +67,6 @@ fn filter_folder_messages(state: &State) -> Vec<&MailMessage> {
     .collect()
 }
 
-fn list_search_bar<'a>(query: &'a str) -> Element<'a, Message> {
-  let inner = container(
-    row([
-      Icon::search()
-        .size(16.0)
-        .color(color::text::SECONDARY)
-        .render::<Message>(),
-      text_input("Search mail", query)
-        .on_input(Message::SearchChanged)
-        .font(body::REGULAR)
-        .size(13.0)
-        .style(|_, _| text_input::Style {
-          background: iced::Background::Color(Color::TRANSPARENT),
-          border: Border::default(),
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          value: color::text::PRIMARY,
-          selection: color::state::SELECTION,
-        })
-        .width(Length::Fill)
-        .into(),
-    ])
-    .spacing(10.0)
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 14.0,
-    bottom: 14.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .width(Length::Fill);
-  column([inner.into(), Separator::horizontal().render()]).into()
-}
-
-fn list_empty_state(query: &str) -> Element<'_, Message> {
-  container(
-    text(format!("No messages match \"{}\".", query))
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(32.0)
-  .width(Length::Fill)
-  .center_x(Length::Fill)
-  .into()
-}
-
 /// Builder for the message list middle pane.
 pub struct Component<'a> {
   state: &'a State,
@@ -165,18 +114,19 @@ impl<'a> Component<'a> {
     }
 
     if visible.is_empty() && !state.search_query.is_empty() {
-      list_rows.push(list_empty_state(&state.search_query));
+      list_rows.push(empty_state::Component::new(&state.search_query).render());
     }
 
     let list = scrollable(column(list_rows).width(Length::Fill)).height(Length::Fill);
 
-    let pane = container(column([list_search_bar(&state.search_query), list.into()]).width(Length::Fill))
-      .width(Length::Fixed(self.width))
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::BASE)),
-        ..container::Style::default()
-      });
+    let pane =
+      container(column([search_bar::Component::new(&state.search_query).render(), list.into()]).width(Length::Fill))
+        .width(Length::Fixed(self.width))
+        .height(Length::Fill)
+        .style(|_| container::Style {
+          background: Some(Background::Color(color::surface::BASE)),
+          ..container::Style::default()
+        });
 
     mouse_area(pane).on_move(|pt| Message::CursorMoved(pt.x, pt.y)).into()
   }

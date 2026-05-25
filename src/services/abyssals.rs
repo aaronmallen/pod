@@ -56,48 +56,49 @@ pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta
 }
 
 async fn find_abyssal_pairs(character_id: i64, db: &pod_db::Repo) -> Option<Vec<(i32, i64)>> {
-  let assets = match db.characters().assets_for_character_ids(&[character_id]).await {
-    Ok(rows) => rows,
-    Err(e) => {
-      tracing::warn!("abyssals: failed to load assets for character {character_id}: {e}");
-      return None;
-    }
-  };
-
-  let singleton_pairs: Vec<(i32, i64)> = assets
-    .iter()
-    .filter(|a| a.is_singleton)
-    .map(|a| (a.type_id, a.item_id))
-    .collect();
-
+  let singleton_pairs = load_singleton_pairs(character_id, db).await?;
   if singleton_pairs.is_empty() {
     return Some(vec![]);
   }
-
-  let type_ids_deduped: Vec<i32> = {
-    let mut ids: Vec<i32> = singleton_pairs.iter().map(|(tid, _)| *tid).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-  };
-
-  let item_type_rows = match db.universe().item_types().find_by_ids(&type_ids_deduped).await {
-    Ok(rows) => rows,
-    Err(e) => {
-      tracing::warn!("abyssals: failed to look up item types: {e}");
-      return None;
-    }
-  };
-
-  let abyssal_type_ids: std::collections::HashSet<i32> =
-    item_type_rows.iter().filter(|t| t.is_abyssal).map(|t| t.id).collect();
-
+  let abyssal_type_ids = resolve_abyssal_type_ids(&singleton_pairs, db).await?;
   Some(
     singleton_pairs
       .into_iter()
       .filter(|(tid, _)| abyssal_type_ids.contains(tid))
       .collect(),
   )
+}
+
+async fn load_singleton_pairs(character_id: i64, db: &pod_db::Repo) -> Option<Vec<(i32, i64)>> {
+  match db.characters().assets_for_character_ids(&[character_id]).await {
+    Ok(rows) => Some(
+      rows
+        .iter()
+        .filter(|a| a.is_singleton)
+        .map(|a| (a.type_id, a.item_id))
+        .collect(),
+    ),
+    Err(e) => {
+      tracing::warn!("abyssals: failed to load assets for character {character_id}: {e}");
+      None
+    }
+  }
+}
+
+async fn resolve_abyssal_type_ids(pairs: &[(i32, i64)], db: &pod_db::Repo) -> Option<std::collections::HashSet<i32>> {
+  let type_ids: Vec<i32> = {
+    let mut ids: Vec<i32> = pairs.iter().map(|(tid, _)| *tid).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+  };
+  match db.universe().item_types().find_by_ids(&type_ids).await {
+    Ok(rows) => Some(rows.iter().filter(|t| t.is_abyssal).map(|t| t.id).collect()),
+    Err(e) => {
+      tracing::warn!("abyssals: failed to look up item types: {e}");
+      None
+    }
+  }
 }
 
 async fn load_existing_sync_times(character_id: i64, db: &pod_db::Repo) -> Option<std::collections::HashMap<i64, i64>> {

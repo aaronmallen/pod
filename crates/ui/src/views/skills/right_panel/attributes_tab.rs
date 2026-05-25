@@ -3,6 +3,7 @@
 pub mod attr_row;
 pub mod rate_grid;
 pub mod remap_card;
+pub mod section_header;
 
 pub use attr_row::Component as AttrRow;
 use iced::{
@@ -11,6 +12,7 @@ use iced::{
 };
 pub use rate_grid::RateGrid;
 pub use remap_card::RemapCard;
+pub use section_header::SectionHeader;
 
 use super::super::{State, skill_data::AttrKey};
 use crate::{
@@ -74,7 +76,7 @@ fn bar_items<'a>(
   active_primary: Option<AttrKey>,
   active_secondary: Option<AttrKey>,
 ) -> Vec<Element<'a, Message>> {
-  let mut bars: Vec<Element<'_, Message>> = vec![section_header(total_pts)];
+  let mut bars: Vec<Element<'_, Message>> = vec![SectionHeader::new(total_pts).render()];
   for (i, key) in AttrKey::ALL.iter().enumerate() {
     let is_primary = active_primary == Some(*key);
     let is_secondary = active_secondary == Some(*key);
@@ -91,35 +93,4 @@ fn bar_items<'a>(
     bars.push(AttrRow::new(*key, state.attr_value(*key), accent, is_primary, is_secondary).render());
   }
   bars
-}
-
-fn section_header<'a>(total_pts: u32) -> Element<'a, Message> {
-  container(
-    column([
-      text("Neural attributes")
-        .font(mono::REGULAR)
-        .size(9.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      Space::new().height(4.0).into(),
-      text(format!("{} pts allocated", total_pts))
-        .font(mono::REGULAR)
-        .size(11.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-    ])
-    .width(Length::Fill),
-  )
-  .padding(Padding {
-    top: 14.0,
-    bottom: spacing::SPACE_3,
-    left: spacing::SPACE_4,
-    right: spacing::SPACE_4,
-  })
-  .width(Length::Fill)
-  .into()
 }

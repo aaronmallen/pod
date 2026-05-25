@@ -189,15 +189,10 @@ fn drag_placeholder<'a>() -> Element<'a, Message> {
 
 fn identity_row<'a>(character: &'a Character) -> Element<'a, Message> {
   let id = *character.id();
-  mouse_area(
-    container(CharacterDetail::new(character).render::<Message>()).padding(iced::Padding {
-      right: spacing::SPACE_4,
-      ..iced::Padding::ZERO
-    }),
-  )
-  .on_press(Message::NamePressed(id))
-  .interaction(iced::mouse::Interaction::Pointer)
-  .into()
+  mouse_area(CharacterDetail::new(character).render::<Message>())
+    .on_press(Message::NamePressed(id))
+    .interaction(iced::mouse::Interaction::Pointer)
+    .into()
 }
 
 fn stat_divider<'a>() -> Element<'a, Message> {

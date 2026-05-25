@@ -117,17 +117,45 @@ fn create_input_pill<'a>(state: &'a State) -> Element<'a, Message> {
   .into()
 }
 
+fn add_button_style(can_create: bool) -> button::Style {
+  let (bg, border_color, text_color) = if can_create {
+    (
+      Some(Background::Color(color::accent::PLASMA)),
+      color::accent::PLASMA,
+      color::surface::SUNKEN,
+    )
+  } else {
+    (
+      Some(Background::Color(color::state::HOVER_OVERLAY)),
+      color::border::SUBTLE,
+      color::text::TERTIARY,
+    )
+  };
+  button::Style {
+    background: bg,
+    border: Border {
+      color: border_color,
+      radius: radius::CHIP.into(),
+      width: 1.0,
+    },
+    snap: false,
+    text_color,
+    shadow: iced::Shadow::default(),
+  }
+}
+
 fn add_button(can_create: bool) -> Element<'static, Message> {
+  let label_color = if can_create {
+    Some(color::surface::SUNKEN)
+  } else {
+    Some(color::text::TERTIARY)
+  };
   let b = button(
     text("Add")
       .font(typography::body::MEDIUM)
       .size(13.0)
       .style(move |_| iced::widget::text::Style {
-        color: if can_create {
-          Some(color::surface::SUNKEN)
-        } else {
-          Some(color::text::TERTIARY)
-        },
+        color: label_color,
       }),
   )
   .padding(Padding {
@@ -136,29 +164,7 @@ fn add_button(can_create: bool) -> Element<'static, Message> {
     left: spacing::SPACE_3_5,
     right: spacing::SPACE_3_5,
   })
-  .style(move |_, _| button::Style {
-    background: if can_create {
-      Some(Background::Color(color::accent::PLASMA))
-    } else {
-      Some(Background::Color(color::state::HOVER_OVERLAY))
-    },
-    border: Border {
-      color: if can_create {
-        color::accent::PLASMA
-      } else {
-        color::border::SUBTLE
-      },
-      radius: radius::CHIP.into(),
-      width: 1.0,
-    },
-    snap: false,
-    text_color: if can_create {
-      color::surface::SUNKEN
-    } else {
-      color::text::TERTIARY
-    },
-    shadow: iced::Shadow::default(),
-  });
+  .style(move |_, _| add_button_style(can_create));
   if can_create { b.on_press(Message::Create) } else { b }.into()
 }
 

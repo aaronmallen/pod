@@ -180,27 +180,47 @@ fn render_rail(state: &State) -> Element<'_, Message> {
 fn render_active_view(state: &State, window_width: f32, window_height: f32) -> Element<'_, Message> {
   match &state.active_view {
     ActiveView::Assets(s) => assets::Component::new(s).render().map(Message::Assets),
-    ActiveView::CharacterDetail(s) => character_detail::Component::new(s)
-      .render()
-      .map(Message::CharacterDetail),
-    ActiveView::Characters(s) => characters::Component::new(s)
-      .window_size(window_width, window_height)
-      .render()
-      .map(Message::Characters),
-    ActiveView::Mail(s) => mail::Component::new(s)
-      .window_width(window_width)
-      .render()
-      .map(Message::Mail),
+    ActiveView::CharacterDetail(s) => render_character_detail(s),
+    ActiveView::Characters(s) => render_characters(s, window_width, window_height),
+    ActiveView::Mail(s) => render_mail(s, window_width),
     ActiveView::Settings(s) => settings::Component::new(s).render().map(Message::Settings),
-    ActiveView::Skills(s) => skills::Component::new(s)
-      .window_width(window_width)
-      .render()
-      .map(Message::Skills),
-    ActiveView::Wallet(s) => wallet::Component::new(s)
-      .window_width(window_width)
-      .render()
-      .map(Message::Wallet),
+    ActiveView::Skills(s) => render_skills(s, window_width),
+    ActiveView::Wallet(s) => render_wallet(s, window_width),
   }
+}
+
+fn render_character_detail(s: &character_detail::State) -> Element<'_, Message> {
+  character_detail::Component::new(s)
+    .render()
+    .map(Message::CharacterDetail)
+}
+
+fn render_characters(s: &characters::State, window_width: f32, window_height: f32) -> Element<'_, Message> {
+  characters::Component::new(s)
+    .window_size(window_width, window_height)
+    .render()
+    .map(Message::Characters)
+}
+
+fn render_mail(s: &mail::State, window_width: f32) -> Element<'_, Message> {
+  mail::Component::new(s)
+    .window_width(window_width)
+    .render()
+    .map(Message::Mail)
+}
+
+fn render_skills(s: &skills::State, window_width: f32) -> Element<'_, Message> {
+  skills::Component::new(s)
+    .window_width(window_width)
+    .render()
+    .map(Message::Skills)
+}
+
+fn render_wallet(s: &wallet::State, window_width: f32) -> Element<'_, Message> {
+  wallet::Component::new(s)
+    .window_width(window_width)
+    .render()
+    .map(Message::Wallet)
 }
 
 fn render_content<'a>(state: &'a State, view: Element<'a, Message>) -> Element<'a, Message> {

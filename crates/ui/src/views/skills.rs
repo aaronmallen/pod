@@ -22,7 +22,7 @@ use iced::{
 pub use layout_shell::Component as LayoutShell;
 pub use pane_drag_handle::Component as PaneDragHandle;
 pub use picker_dropdown_overlay::Component as PickerDropdownOverlay;
-use pod_model::{AttrKey, Character, SkillGroupDef, SkillPlan, missing_scopes};
+use pod_model::{AttrKey, Character, CharacterAttributes, SkillGroupDef, SkillPlan, missing_scopes};
 pub use right_panel::Component as RightPanel;
 pub use warning_strip::Component as WarningStrip;
 
@@ -81,16 +81,20 @@ impl State {
 
   /// Returns the effective value for the given neural attribute key.
   pub fn attr_value(&self, key: AttrKey) -> u32 {
-    if let Some(attrs) = self.active_character().and_then(|c| c.attributes().as_ref()) {
-      return match key {
-        AttrKey::Perception => attrs.perception as u32,
-        AttrKey::Willpower => attrs.willpower as u32,
-        AttrKey::Intelligence => attrs.intelligence as u32,
-        AttrKey::Memory => attrs.memory as u32,
-        AttrKey::Charisma => attrs.charisma as u32,
-      };
-    }
-    key.value()
+    self
+      .active_character()
+      .and_then(|c| c.attributes().as_ref())
+      .map_or_else(|| key.value(), |attrs| attr_value_from_attrs(attrs, key))
+  }
+}
+
+fn attr_value_from_attrs(attrs: &CharacterAttributes, key: AttrKey) -> u32 {
+  match key {
+    AttrKey::Perception => attrs.perception as u32,
+    AttrKey::Willpower => attrs.willpower as u32,
+    AttrKey::Intelligence => attrs.intelligence as u32,
+    AttrKey::Memory => attrs.memory as u32,
+    AttrKey::Charisma => attrs.charisma as u32,
   }
 }
 
@@ -298,25 +302,32 @@ impl<'a> Component<'a> {
 
   /// Consume the builder and return the finished [`Element`].
   pub fn render(self) -> Element<'a, Message> {
-    if let Some(char_id) = self.state.selected_char_id().checked_sub(0).filter(|&id| id != 0)
-      && let Some(character) = self.state.characters.iter().find(|c| *c.id() == char_id)
-    {
-      let granted = character.granted_scopes_list();
-      if !missing_scopes(
-        &granted,
-        &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
-      )
-      .is_empty()
-      {
-        return ScopeMissing::new(char_id, "skill monitoring")
-          .render()
-          .map(|m| match m {
-            scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-          });
-      }
+    if let Some(el) = scope_missing_guard(self.state) {
+      return el;
     }
     view(self.state, self.window_width)
   }
+}
+
+fn scope_missing_guard(state: &State) -> Option<Element<'_, Message>> {
+  let char_id = state.selected_char_id().checked_sub(0).filter(|&id| id != 0)?;
+  let character = state.characters.iter().find(|c| *c.id() == char_id)?;
+  let granted = character.granted_scopes_list();
+  if missing_scopes(
+    &granted,
+    &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
+  )
+  .is_empty()
+  {
+    return None;
+  }
+  Some(
+    ScopeMissing::new(char_id, "skill monitoring")
+      .render()
+      .map(|m| match m {
+        scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+      }),
+  )
 }
 
 fn view(state: &State, window_width: f32) -> Element<'_, Message> {

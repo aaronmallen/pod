@@ -188,8 +188,8 @@ fn entry_row<'a>(entry: &'a MarketEntry, icon: Option<image::Handle>) -> Element
   .padding(Padding {
     top: 10.0,
     bottom: 10.0,
-    left: spacing::SPACE_7,
-    right: spacing::SPACE_7,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
   });
 
   container(inner)

@@ -1,7 +1,9 @@
-//! Stat cell helper and header SP/queue stat components.
+//! Header SP/queue stat components.
+
+mod stat_cell;
 
 use iced::{
-  Color, Element, Length,
+  Element, Length,
   widget::{Space, column, text},
 };
 
@@ -10,26 +12,6 @@ use crate::{
   format::{fmt_dur, fmt_eta},
   style::{color, typography::mono},
 };
-
-fn stat_cell<'a>(label: &str, value: &str, value_color: Color) -> Element<'a, super::super::Message> {
-  let label_el = text(label.to_uppercase())
-    .font(mono::REGULAR)
-    .size(9.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
-  let value_el = text(value.to_string())
-    .font(mono::MEDIUM)
-    .size(15.0)
-    .style(move |_| iced::widget::text::Style {
-      color: Some(value_color),
-    });
-
-  column([label_el.into(), Space::new().height(4.0).into(), value_el.into()])
-    .width(Length::Shrink)
-    .into()
-}
 
 pub struct SpStat {
   total_sp: u64,
@@ -44,7 +26,7 @@ impl SpStat {
 
   pub fn render(self) -> Element<'static, super::super::Message> {
     let sp_value = fmt_sp(self.total_sp) + " SP";
-    stat_cell("Total skill points", &sp_value, color::text::PRIMARY)
+    stat_cell::StatCell::new("Total skill points", sp_value, color::text::PRIMARY).render()
   }
 }
 
@@ -79,7 +61,7 @@ impl QueueStat {
     } else {
       color::text::PRIMARY
     };
-    stat_cell(&label, &value, color)
+    stat_cell::StatCell::new(label, value, color).render()
   }
 }
 

@@ -202,27 +202,8 @@ impl Component {
     if self.show_all {
       rows.push(AllPickerEntry::new(&self.all_label, matches!(self.selected, PickerSelection::All)).render());
     }
-    for entry in &self.entries {
-      if entry.id.is_none() {
-        continue;
-      }
-      let is_selected = match &self.selected {
-        PickerSelection::Character(id) => entry.id == Some(*id),
-        _ => false,
-      };
-      rows.push(CharacterPickerEntry::new(entry, is_selected).render());
-    }
-
-    if !self.corp_entries.is_empty() {
-      rows.push(CorpSectionHeader::new().render());
-      for entry in &self.corp_entries {
-        let is_selected = match &self.selected {
-          PickerSelection::Corporation(id) => *id == entry.id,
-          _ => false,
-        };
-        rows.push(CorporationPickerEntry::new(entry, is_selected).render());
-      }
-    }
+    rows.extend(character_rows(&self.entries, &self.selected));
+    rows.extend(corporation_rows(&self.corp_entries, &self.selected));
 
     let list = scrollable(column(rows).width(Length::Fill)).height(Length::Shrink);
 
@@ -239,6 +220,29 @@ impl Component {
       })
       .into()
   }
+}
+
+fn character_rows<'a>(entries: &'a [CharacterEntry], selected: &PickerSelection) -> Vec<Element<'a, Message>> {
+  entries
+    .iter()
+    .filter(|e| e.id.is_some())
+    .map(|entry| {
+      let is_selected = matches!(selected, PickerSelection::Character(id) if entry.id == Some(*id));
+      CharacterPickerEntry::new(entry, is_selected).render()
+    })
+    .collect()
+}
+
+fn corporation_rows<'a>(entries: &'a [CorporationEntry], selected: &PickerSelection) -> Vec<Element<'a, Message>> {
+  if entries.is_empty() {
+    return Vec::new();
+  }
+  let mut rows: Vec<Element<'a, Message>> = vec![CorpSectionHeader::new().render()];
+  for entry in entries {
+    let is_selected = matches!(selected, PickerSelection::Corporation(id) if *id == entry.id);
+    rows.push(CorporationPickerEntry::new(entry, is_selected).render());
+  }
+  rows
 }
 
 impl Default for Component {

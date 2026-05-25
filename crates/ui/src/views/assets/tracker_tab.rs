@@ -133,7 +133,7 @@ fn chart_card<'a>(dated: &'a [(NaiveDate, f64)], active_range: &'a TrackerRange)
   let chart = LineChart::new(series, color::accent::PLASMA)
     .with_padding(60.0, 24.0, 24.0, 36.0)
     .with_labels(x_labels, format::fmt_isk)
-    .render::<Message>(Length::Fill, 280.0);
+    .render(Length::Fill, 280.0);
   container(
     column([chart_header, Space::new().height(10.0).into(), chart]).padding(Padding {
       top: 18.0,

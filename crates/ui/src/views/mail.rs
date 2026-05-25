@@ -106,19 +106,22 @@ pub struct State {
   pub characters: Vec<pod_model::Character>,
   pub portrait_handles: HashMap<i64, image::Handle>,
   pub account_picker: CharacterPicker,
-  pub messages: Vec<MailMessage>,
-  pub selected_folder: Folder,
-  pub selected_message_id: Option<String>,
-  pub search_query: String,
-  pub compose_open: bool,
   pub compose: ComposePanel,
-  pub snooze_popover_open: bool,
+  pub compose_open: bool,
+  pub context_menu: Option<(String, f32, f32)>,
+  pub cursor_pos: (f32, f32),
+  pub dragging_pane: Option<DraggingPane>,
   pub folder_pane_width: f32,
   pub last_drag_x: f32,
   pub message_list_width: f32,
-  pub dragging_pane: Option<DraggingPane>,
-  pub context_menu: Option<(String, f32, f32)>,
-  pub cursor_pos: (f32, f32),
+  pub messages: Vec<MailMessage>,
+  pub search_query: String,
+  pub selected_folder: Folder,
+  pub selected_message_id: Option<String>,
+  /// When `Some`, the calendar date/time picker is open.
+  pub snooze_calendar: Option<snooze_picker::CalendarState>,
+  /// Whether the snooze preset dropdown is open.
+  pub snooze_popover_open: bool,
 }
 
 impl State {

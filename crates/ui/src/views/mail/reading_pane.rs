@@ -23,6 +23,33 @@ pub enum Message {
   ReplyAllPressed,
   ReplyPressed,
   SnoozeFailed(String),
+  /// Closes the calendar widget and returns to the preset list.
+  SnoozeCalendarClose,
+  /// Confirms the calendar selection and emits its ISO timestamp via `SnoozeSet`.
+  SnoozeCalendarConfirm,
+  /// Sets the time stepper to the "downtime" preset (11:00 UTC).
+  SnoozeCalendarChipDowntime,
+  /// Sets the time stepper to the "evening" preset (19:00 UTC).
+  SnoozeCalendarChipEvening,
+  /// Sets the time stepper to the "morning" preset (09:00 UTC).
+  SnoozeCalendarChipMorning,
+  /// Steps the hour field down by one.
+  SnoozeCalendarHourDown,
+  /// Steps the hour field up by one.
+  SnoozeCalendarHourUp,
+  /// Steps the minute field down by five.
+  SnoozeCalendarMinuteDown,
+  /// Steps the minute field up by five.
+  SnoozeCalendarMinuteUp,
+  /// Advances the calendar grid to the next month.
+  SnoozeCalendarNextMonth,
+  /// Opens the calendar widget in place of the preset list.
+  SnoozeCalendarOpen,
+  /// Moves the calendar grid to the previous month.
+  SnoozeCalendarPrevMonth,
+  /// Selects the given day in the calendar (year, month 0-based, day).
+  SnoozeCalendarSelectDay(i32, u32, u32),
+  /// Emits the ISO 8601 UTC snooze timestamp, or empty string to unsnooze.
   SnoozeSet(String),
   SnoozedExpired(Vec<(i64, i64)>),
   SnoozeToggle,
@@ -100,7 +127,8 @@ fn reading_pane_content<'a>(
     })
     .into();
   if snooze_open {
-    stack([base, super::snooze_picker::Component::new(msg).render()]).into()
+    let calendar = state.snooze_calendar.as_ref();
+    stack([base, super::snooze_picker::Component::new(msg, calendar).render()]).into()
   } else {
     base
   }

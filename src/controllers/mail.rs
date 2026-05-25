@@ -1,6 +1,6 @@
 //! Mail controller: three-pane EVE mail client.
 
-use chrono::{Datelike, Utc, Weekday};
+use chrono::{Datelike, Utc};
 use iced::widget::image;
 use pod_esi::models::character::{MailRecipient, NewMail, NewMailLabel, UpdateMail};
 use pod_model::{Character, MailHeader};
@@ -12,7 +12,7 @@ use pod_ui::{
   },
   views::mail::{
     ComposeRecipient, DraggingPane, Folder, MailAccount, MailMessage, Message, State, folder_pane, message_list_pane,
-    reading_pane,
+    reading_pane, snooze_picker,
   },
 };
 
@@ -28,7 +28,7 @@ pub fn new(
   let state = build_initial_mail_state(&characters, folder_pane_width, message_list_width);
   let task = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
     iced::Task::perform(
-      async move { fetch_mail_headers(characters, esi, db).await },
+      async move { fetch_mail_headers_and_prefetch(characters, esi, db).await },
       Message::MailHeadersLoaded,
     )
   } else {
@@ -178,13 +178,14 @@ fn build_initial_mail_state(characters: &[Character], folder_pane_width: f32, me
     search_query: String::new(),
     compose_open: false,
     compose,
-    snooze_popover_open: false,
+    context_menu: None,
+    cursor_pos: (0.0, 0.0),
+    dragging_pane: None,
     folder_pane_width,
     last_drag_x: 0.0,
     message_list_width,
-    dragging_pane: None,
-    context_menu: None,
-    cursor_pos: (0.0, 0.0),
+    snooze_calendar: None,
+    snooze_popover_open: false,
   }
 }
 
@@ -204,30 +205,42 @@ fn build_mail_message(
       .unwrap_or_default()
   };
   let snoozed = snoozed_lookup.get(&(row.character_id, row.mail_id)).cloned();
+  let preview = row.preview.unwrap_or_default();
+  let (body, body_loaded) = match row.body {
+    Some(ref stored) => (
+      stored
+        .lines()
+        .map(str::to_string)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>(),
+      true,
+    ),
+    None => (Vec::new(), false),
+  };
   MailMessage {
+    body,
+    body_loaded,
     character_id: row.character_id,
-    mail_id: row.mail_id,
-    from_id: row.from_id,
-    id: format!("{}-{}", row.character_id, row.mail_id),
-    folder: if is_sent { "sent" } else { "inbox" }.to_string(),
-    from_name,
-    from_tone: 0,
-    from_corp: false,
-    from_system: false,
-    subject: row.subject,
-    preview: String::new(),
-    body: Vec::new(),
-    body_loaded: false,
-    time: format_timestamp_label(&row.timestamp),
     date_label: date_bucket_label(&row.timestamp),
-    unread: !row.is_read && !is_sent,
-    starred: false,
-    pinned: false,
+    folder: if is_sent { "sent" } else { "inbox" }.to_string(),
+    from_corp: false,
+    from_id: row.from_id,
+    from_name,
+    from_system: false,
+    from_tone: 0,
     has_attachment: false,
-    labels: Vec::new(),
+    id: format!("{}-{}", row.character_id, row.mail_id),
     important: false,
-    snoozed,
+    labels: Vec::new(),
+    mail_id: row.mail_id,
+    pinned: false,
+    preview,
     recipients_display: row.recipients_display,
+    snoozed,
+    starred: false,
+    subject: row.subject,
+    time: format_timestamp_label(&row.timestamp),
+    unread: !row.is_read && !is_sent,
   }
 }
 
@@ -331,6 +344,18 @@ fn date_bucket_label(ts: &str) -> String {
   }
 }
 
+fn derive_preview(paragraphs: &[String], max_chars: usize) -> String {
+  let joined = paragraphs.join(" ");
+  if joined.len() <= max_chars {
+    return joined;
+  }
+  let trimmed = &joined[..max_chars];
+  match trimmed.rfind(|c: char| c.is_whitespace()) {
+    Some(pos) => trimmed[..pos].to_string(),
+    None => trimmed.to_string(),
+  }
+}
+
 #[tracing::instrument(skip(characters, esi, db))]
 async fn fetch_mail_body(
   msg_id: String,
@@ -351,12 +376,65 @@ async fn fetch_mail_body(
   match char_client.mail_message(mail_id).await {
     Ok(esi_msg) => {
       let html = esi_msg.body.unwrap_or_default();
-      (msg_id, strip_html(&html))
+      let paragraphs = strip_html(&html);
+      let body_text = paragraphs.join("\n");
+      let preview = derive_preview(&paragraphs, 250);
+      // best-effort; body will be refetched on next interaction if this fails
+      let _ = db
+        .characters()
+        .upsert_mail_body(character_id, mail_id, &body_text, &preview)
+        .await;
+      (msg_id, paragraphs)
     }
     Err(e) => {
       tracing::warn!("mail: failed to fetch body for mail {mail_id}: {e}");
       (msg_id, Vec::new())
     }
+  }
+}
+
+#[tracing::instrument(skip(characters, esi, db))]
+async fn prefetch_mail_bodies(character_id: i64, characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) {
+  let mail_ids = match db.characters().mail_ids_without_body(character_id).await {
+    Ok(ids) => ids,
+    Err(e) => {
+      tracing::warn!("mail: failed to query uncached mail IDs for {character_id}: {e}");
+      return;
+    }
+  };
+  if mail_ids.is_empty() {
+    return;
+  }
+  tracing::debug!(
+    "mail: prefetching {} uncached body(ies) for character {character_id}",
+    mail_ids.len()
+  );
+  let Some(character) = characters.iter().find(|c| *c.id() == character_id) else {
+    return;
+  };
+  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+    return;
+  };
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  for mail_id in mail_ids {
+    match char_client.mail_message(mail_id).await {
+      Ok(esi_msg) => {
+        let html = esi_msg.body.unwrap_or_default();
+        let paragraphs = strip_html(&html);
+        let body_text = paragraphs.join("\n");
+        let preview = derive_preview(&paragraphs, 250);
+        // best-effort
+        let _ = db
+          .characters()
+          .upsert_mail_body(character_id, mail_id, &body_text, &preview)
+          .await;
+      }
+      Err(e) => {
+        tracing::warn!("mail: background prefetch failed for mail {mail_id}: {e}");
+      }
+    }
+    tokio::task::yield_now().await;
   }
 }
 
@@ -394,7 +472,7 @@ async fn fetch_character_mail(
 }
 
 #[tracing::instrument(skip_all)]
-async fn fetch_mail_headers(
+async fn fetch_mail_headers_and_prefetch(
   characters: Vec<Character>,
   esi: pod_esi::Client,
   db: pod_db::Repo,
@@ -408,6 +486,13 @@ async fn fetch_mail_headers(
   for character in &characters {
     let mut messages = fetch_character_mail(character, &esi, &db, &snoozed_lookup).await?;
     all.append(&mut messages);
+    let char_id = *character.id();
+    let chars = characters.clone();
+    let esi_bg = esi.clone();
+    let db_bg = db.clone();
+    tokio::spawn(async move {
+      prefetch_mail_bodies(char_id, chars, esi_bg, db_bg).await;
+    });
   }
   Ok(all)
 }
@@ -666,38 +751,6 @@ async fn send_composed_mail(
     })
     .await
     .map_err(|e| format!("Send failed: {e}"))
-}
-
-fn snooze_after_downtime(now: chrono::DateTime<Utc>, today: chrono::NaiveDate) -> Option<chrono::DateTime<Utc>> {
-  let downtime = today.and_hms_opt(11, 0, 0)?.and_utc();
-  if now >= downtime {
-    Some(today.succ_opt()?.and_hms_opt(11, 0, 0)?.and_utc())
-  } else {
-    Some(downtime)
-  }
-}
-
-fn snooze_next_monday(today: chrono::NaiveDate) -> Option<chrono::DateTime<Utc>> {
-  let days_until_mon = match today.weekday() {
-    Weekday::Mon => 7,
-    d => (8 - d.number_from_monday() as i64).rem_euclid(7).max(1),
-  };
-  (today + chrono::Duration::days(days_until_mon))
-    .and_hms_opt(9, 0, 0)
-    .map(|dt| dt.and_utc())
-}
-
-fn snooze_label_to_iso(label: &str) -> Option<String> {
-  let now = Utc::now();
-  let today = now.date_naive();
-  let target = match label {
-    "Later today" => today.and_hms_opt(18, 0, 0)?.and_utc(),
-    "Tomorrow" => today.succ_opt()?.and_hms_opt(9, 0, 0)?.and_utc(),
-    "After downtime" => snooze_after_downtime(now, today)?,
-    "Next week" => snooze_next_monday(today)?,
-    _ => return None,
-  };
-  Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
 fn strip_html(html: &str) -> Vec<String> {
@@ -1104,12 +1157,157 @@ fn update_reply(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn update_snooze_calendar_chip_downtime(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    let now = Utc::now();
+    let today = now.date_naive();
+    let downtime = today.and_hms_opt(11, 0, 0).map(|d| d.and_utc());
+    let use_tomorrow = downtime.map(|dt| now >= dt).unwrap_or(false);
+    if use_tomorrow {
+      let tomorrow = today.succ_opt().unwrap_or(today);
+      cal.sel_year = tomorrow.year();
+      cal.sel_month = tomorrow.month0();
+      cal.sel_day = tomorrow.day();
+      cal.view_year = tomorrow.year();
+      cal.view_month = tomorrow.month0();
+    }
+    cal.hour = 11;
+    cal.minute = 0;
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_chip_evening(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    cal.hour = 19;
+    cal.minute = 0;
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_chip_morning(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    cal.hour = 9;
+    cal.minute = 0;
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_close(state: &mut State) -> iced::Task<Message> {
+  state.snooze_calendar = None;
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_confirm(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let iso = state
+    .snooze_calendar
+    .as_ref()
+    .and_then(|c| c.to_iso())
+    .unwrap_or_default();
+  state.snooze_calendar = None;
+  if iso.is_empty() {
+    return iced::Task::none();
+  }
+  update_snooze_set(state, iso, services)
+}
+
+fn update_snooze_calendar_hour_down(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    cal.hour = (cal.hour + 23) % 24;
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_hour_up(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    cal.hour = (cal.hour + 1) % 24;
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_minute_down(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    let new_min = cal.minute as i32 - 5;
+    if new_min < 0 {
+      cal.minute = (60 + new_min) as u32;
+      cal.hour = (cal.hour + 23) % 24;
+    } else {
+      cal.minute = new_min as u32;
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_minute_up(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    let new_min = cal.minute + 5;
+    if new_min >= 60 {
+      cal.minute = new_min - 60;
+      cal.hour = (cal.hour + 1) % 24;
+    } else {
+      cal.minute = new_min;
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_next_month(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    if cal.view_month == 11 {
+      cal.view_month = 0;
+      cal.view_year += 1;
+    } else {
+      cal.view_month += 1;
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_open(state: &mut State) -> iced::Task<Message> {
+  state.snooze_calendar = Some(snooze_picker::CalendarState::new());
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_prev_month(state: &mut State) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    if cal.view_month == 0 {
+      cal.view_month = 11;
+      cal.view_year -= 1;
+    } else {
+      cal.view_month -= 1;
+    }
+  }
+  iced::Task::none()
+}
+
+fn update_snooze_calendar_select_day(state: &mut State, year: i32, month: u32, day: u32) -> iced::Task<Message> {
+  if let Some(cal) = state.snooze_calendar.as_mut() {
+    cal.sel_year = year;
+    cal.sel_month = month;
+    cal.sel_day = day;
+  }
+  iced::Task::none()
+}
+
 fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
   match msg {
     reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
     reading_pane::Message::DeletePressed => update_delete(state, services),
     reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
-    reading_pane::Message::SnoozeSet(label) => update_snooze_set(state, label, services),
+    reading_pane::Message::SnoozeCalendarChipDowntime => update_snooze_calendar_chip_downtime(state),
+    reading_pane::Message::SnoozeCalendarChipEvening => update_snooze_calendar_chip_evening(state),
+    reading_pane::Message::SnoozeCalendarChipMorning => update_snooze_calendar_chip_morning(state),
+    reading_pane::Message::SnoozeCalendarClose => update_snooze_calendar_close(state),
+    reading_pane::Message::SnoozeCalendarConfirm => update_snooze_calendar_confirm(state, services),
+    reading_pane::Message::SnoozeCalendarHourDown => update_snooze_calendar_hour_down(state),
+    reading_pane::Message::SnoozeCalendarHourUp => update_snooze_calendar_hour_up(state),
+    reading_pane::Message::SnoozeCalendarMinuteDown => update_snooze_calendar_minute_down(state),
+    reading_pane::Message::SnoozeCalendarMinuteUp => update_snooze_calendar_minute_up(state),
+    reading_pane::Message::SnoozeCalendarNextMonth => update_snooze_calendar_next_month(state),
+    reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_open(state),
+    reading_pane::Message::SnoozeCalendarPrevMonth => update_snooze_calendar_prev_month(state),
+    reading_pane::Message::SnoozeCalendarSelectDay(y, m, d) => update_snooze_calendar_select_day(state, y, m, d),
+    reading_pane::Message::SnoozeSet(iso) => update_snooze_set(state, iso, services),
     reading_pane::Message::SnoozeFailed(e) => {
       tracing::warn!("mail: snooze operation failed — {e}");
       iced::Task::none()
@@ -1119,7 +1317,7 @@ fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services
   }
 }
 
-fn update_snooze_set(state: &mut State, label: String, services: &Services) -> iced::Task<Message> {
+fn update_snooze_set(state: &mut State, iso: String, services: &Services) -> iced::Task<Message> {
   state.context_menu = None;
   state.snooze_popover_open = false;
   let Some(id) = state.selected_message_id.clone() else {
@@ -1130,15 +1328,15 @@ fn update_snooze_set(state: &mut State, label: String, services: &Services) -> i
   };
   let character_id = msg.character_id;
   let mail_id = msg.mail_id;
-  let adding = !label.is_empty();
+  let adding = !iso.is_empty();
   if adding {
-    tracing::info!("mail: snooze set — character_id: {character_id}, mail_id: {mail_id}, label: {label}");
+    tracing::info!("mail: snooze set — character_id: {character_id}, mail_id: {mail_id}, until: {iso}");
   } else {
     tracing::info!("mail: snooze removed — character_id: {character_id}, mail_id: {mail_id}");
   }
-  let snooze_until = if adding { snooze_label_to_iso(&label) } else { None };
+  let snooze_until = if adding { Some(iso.clone()) } else { None };
   if adding {
-    msg.snoozed = Some(label);
+    msg.snoozed = Some(iso);
   } else {
     msg.snoozed = None;
   }
@@ -1168,6 +1366,7 @@ fn update_snooze_set(state: &mut State, label: String, services: &Services) -> i
 
 fn update_snooze_toggle(state: &mut State) -> iced::Task<Message> {
   state.context_menu = None;
+  state.snooze_calendar = None;
   state.snooze_popover_open = !state.snooze_popover_open;
   iced::Task::none()
 }

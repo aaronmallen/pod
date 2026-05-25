@@ -309,6 +309,7 @@ fn build_wallet_state(characters: &[Character], corporations: &[Corporation], ri
     active_division: 1,
     active_tab: Tab::Market,
     all_corp_balances: Vec::new(),
+    chart_hover: None,
     characters: wallet_chars,
     chart_series: Vec::new(),
     contracts: Vec::new(),

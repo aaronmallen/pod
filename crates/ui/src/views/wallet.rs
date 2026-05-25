@@ -22,6 +22,7 @@ pub use net_worth_hero::Component as NetWorthHero;
 use pod_model::missing_scopes;
 pub use right_rail::Component as RightRail;
 
+pub use crate::components::HoverData;
 use crate::{
   components::{CharacterPicker, ScopeMissing, character_picker, scope_missing},
   format,
@@ -173,6 +174,7 @@ pub enum Message {
     market: Vec<MarketEntry>,
   },
   DivisionSelected(u8),
+  HoverChanged(Option<HoverData>),
   ItemIconsLoaded(Vec<(i32, Vec<u8>)>),
   JournalLoaded(Vec<JournalEntry>),
   JournalTab(journal_tab::Message),
@@ -192,6 +194,7 @@ pub struct State {
   pub active_tab: Tab,
   pub all_corp_balances: Vec<(i64, f64)>,
   pub characters: Vec<WalletCharacter>,
+  pub chart_hover: Option<HoverData>,
   pub chart_series: Vec<f64>,
   pub contracts: Vec<ContractEntry>,
   pub corp_divisions: Vec<(u8, f64)>,
@@ -530,10 +533,15 @@ fn update_simple_data(state: &mut State, msg: Message) {
   }
 }
 
+fn update_hover_changed(state: &mut State, hover: Option<HoverData>) {
+  state.chart_hover = hover;
+}
+
 fn update_simple_display(state: &mut State, msg: Message) {
   match msg {
     Message::ContractsTab(_) | Message::ReauthorizeCharacter(_) => {}
     Message::DivisionSelected(d) => update_division_selected(state, d),
+    Message::HoverChanged(h) => update_hover_changed(state, h),
     Message::SearchChanged(q) => update_search_changed(state, q),
     Message::TabSelected(t) => update_tab_selected(state, t),
     Message::TimeframeChanged(tf) => update_timeframe_changed(state, tf),

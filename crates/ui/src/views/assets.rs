@@ -1,5 +1,6 @@
 //! Assets window view — multi-character asset inventory.
 
+pub mod abyssals_tab;
 pub mod header;
 pub mod inventory_tab;
 pub mod main_panel;
@@ -128,10 +129,11 @@ impl Category {
 /// Active assets tab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tab {
+  Abyssals,
   Inventory,
   Stockpiles,
-  Values,
   Tracker,
+  Values,
 }
 
 /// Sort column for the inventory table.
@@ -285,6 +287,8 @@ pub struct AssetValuesData {
 /// Messages produced by the assets controller.
 #[derive(Clone, Debug)]
 pub enum Message {
+  AbyssalsLoaded(Vec<pod_model::AbyssalViewModel>),
+  AbyssalsTab(abyssals_tab::Message),
   AssetsLoaded(Result<Vec<AssetRecord>, String>),
   InventoryTab(inventory_tab::Message),
   ItemIconsLoaded(Vec<(i32, String, Vec<u8>)>),
@@ -308,6 +312,7 @@ pub enum Message {
 
 /// Runtime state for the assets controller.
 pub struct State {
+  pub abyssals: abyssals_tab::AbyssalsState,
   pub active_tab: Tab,
   pub asset_values_data: Option<AssetValuesData>,
   pub assets: Vec<AssetRecord>,
@@ -423,6 +428,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_w
     .corp_entries(corp_entries)
     .show_all(true);
   State {
+    abyssals: abyssals_tab::AbyssalsState::default(),
     active_tab: Tab::Inventory,
     asset_values_data: None,
     assets: Vec::new(),
@@ -727,6 +733,9 @@ fn apply_assets_loaded(state: &mut State, assets: Vec<AssetRecord>) {
 
 fn apply_data_loaded(state: &mut State, message: Message) {
   match message {
+    Message::AbyssalsLoaded(items) => {
+      state.abyssals.abyssals = items;
+    }
     Message::AssetsLoaded(Ok(assets)) => apply_assets_loaded(state, assets),
     Message::AssetsLoaded(Err(e)) => {
       eprintln!("assets: failed to load: {e}");
@@ -793,8 +802,28 @@ fn maybe_collapse_region(state: &mut State, a: &AssetRecord, known_keys: &HashSe
   }
 }
 
+fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
+  match msg {
+    abyssals_tab::Message::FilterReset => {
+      state.abyssals.search_query = String::new();
+      state.abyssals.only_positive = false;
+      state.abyssals.selected_type_id = None;
+    }
+    abyssals_tab::Message::OnlyPositiveToggled => {
+      state.abyssals.only_positive = !state.abyssals.only_positive;
+    }
+    abyssals_tab::Message::SearchChanged(q) => {
+      state.abyssals.search_query = q;
+    }
+    abyssals_tab::Message::TypeSelected(tid) => {
+      state.abyssals.selected_type_id = tid;
+    }
+  }
+}
+
 fn update_assets_secondary(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
+    Message::AbyssalsTab(msg) => update_abyssals_tab(state, msg),
     Message::LoadMoreAssets => update_load_more_assets(state),
     Message::LocationSelected(loc) => update_location_selected(state, loc),
     Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}

@@ -44,7 +44,7 @@ pub use data_table::DataTable;
 pub use filter_bar::{PillFilter, SearchBox};
 pub use head_stat::Component as HeadStat;
 pub use icon::Component as Icon;
-pub use line_chart::Component as LineChart;
+pub use line_chart::{Component as LineChart, HoverData};
 pub use load_state::Component as LoadState;
 pub use nav_button::NavButton;
 pub use panel_header::Component as PanelHeader;

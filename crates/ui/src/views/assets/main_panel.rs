@@ -6,13 +6,14 @@ use iced::{
 };
 
 use super::{
-  Message, State, Tab, inventory_tab::Component as Inventory, stockpiles_tab::Component as Stockpiles,
-  tracker_tab::Component as Tracker, values_tab::Component as Values,
+  Message, State, Tab, abyssals_tab::Component as Abyssals, inventory_tab::Component as Inventory,
+  stockpiles_tab::Component as Stockpiles, tracker_tab::Component as Tracker, values_tab::Component as Values,
 };
 use crate::components::{TabStrip, tab_strip::TabItem};
 
 fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
   let inv_count = state.visible_assets().count();
+  let abyssals_count = state.abyssals.abyssals.len();
   let tabs = vec![
     TabItem {
       label: "Inventory".to_string(),
@@ -30,19 +31,25 @@ fn tab_strip_el<'a>(state: &'a State) -> Element<'a, Message> {
       label: "Tracker".to_string(),
       count: None,
     },
+    TabItem {
+      label: "Abyssals".to_string(),
+      count: Some(abyssals_count),
+    },
   ];
   let active_index = match state.active_tab {
     Tab::Inventory => 0,
     Tab::Stockpiles => 1,
     Tab::Values => 2,
     Tab::Tracker => 3,
+    Tab::Abyssals => 4,
   };
   TabStrip::new(tabs).active(active_index).render(|i| {
     Message::TabSelected(match i {
       0 => Tab::Inventory,
       1 => Tab::Stockpiles,
       2 => Tab::Values,
-      _ => Tab::Tracker,
+      3 => Tab::Tracker,
+      _ => Tab::Abyssals,
     })
   })
 }
@@ -80,6 +87,7 @@ impl<'a> Component<'a> {
     let state = self.state;
     let tabs_el = tab_strip_el(state);
     let body: Element<'_, Message> = match state.active_tab {
+      Tab::Abyssals => Abyssals::new(state).render().map(Message::AbyssalsTab),
       Tab::Inventory => row([
         super::sidebar::Component::new(state).render(),
         pane_drag_handle(),
@@ -89,8 +97,8 @@ impl<'a> Component<'a> {
       .height(Length::Fill)
       .into(),
       Tab::Stockpiles => Stockpiles::new(state).render().map(Message::StockpilesTab),
-      Tab::Values => Values::new(state).render().map(Message::ValuesTab),
       Tab::Tracker => Tracker::new(state).render().map(Message::TrackerTab),
+      Tab::Values => Values::new(state).render().map(Message::ValuesTab),
     };
 
     column([tabs_el, body]).width(Length::Fill).height(Length::Fill).into()

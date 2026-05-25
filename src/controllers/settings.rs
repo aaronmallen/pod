@@ -220,33 +220,39 @@ fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Servi
   }
 }
 
+fn dispatch_create_tag(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let name = state.tags.new_name.trim().to_string();
+  if name.is_empty() {
+    return iced::Task::none();
+  }
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  state.tags.new_name.clear();
+  iced::Task::perform(
+    async move {
+      db.tags()
+        .create(&name)
+        .await
+        .map(|t| (t.id, t.name, t.color))
+        .map_err(|e| e.to_string())
+    },
+    |result| Message::TagsTab(tags_tab::Message::Created(result)),
+  )
+}
+
+fn apply_tag_created(state: &mut State, result: Result<(i32, String, Option<String>), String>) {
+  match result {
+    Ok(tag) => state.tags.tags.push(tag),
+    Err(e) => tracing::error!("settings: tag create failed — {e}"),
+  }
+}
+
 fn update_tags_create(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    tags_tab::Message::Create => {
-      let name = state.tags.new_name.trim().to_string();
-      if name.is_empty() {
-        return iced::Task::none();
-      }
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      state.tags.new_name.clear();
-      iced::Task::perform(
-        async move {
-          db.tags()
-            .create(&name)
-            .await
-            .map(|t| (t.id, t.name, t.color))
-            .map_err(|e| e.to_string())
-        },
-        |result| Message::TagsTab(tags_tab::Message::Created(result)),
-      )
-    }
+    tags_tab::Message::Create => dispatch_create_tag(state, services),
     tags_tab::Message::Created(result) => {
-      match result {
-        Ok(tag) => state.tags.tags.push(tag),
-        Err(e) => tracing::error!("settings: tag create failed — {e}"),
-      }
+      apply_tag_created(state, result);
       iced::Task::none()
     }
     _ => iced::Task::none(),

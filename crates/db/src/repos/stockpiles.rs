@@ -53,6 +53,20 @@ pub struct StockpileItemStatus {
   pub type_name: String,
 }
 
+fn pile_items_to_models(
+  items: sea_orm::prelude::HasMany<crate::entities::stockpile_item::Entity>,
+) -> Vec<crate::entities::stockpile_item::Model> {
+  items
+    .into_iter()
+    .map(|i| crate::entities::stockpile_item::Model {
+      id: i.id,
+      stockpile_id: i.stockpile_id,
+      target_quantity: i.target_quantity,
+      type_id: i.type_id,
+    })
+    .collect()
+}
+
 fn build_fill_statuses(
   items: &[crate::entities::stockpile_item::Model],
   assets: Vec<crate::entities::character_asset::Model>,
@@ -194,42 +208,43 @@ impl<'a> Repo<'a> {
     else {
       return Ok(Vec::new());
     };
-
     if pile.items.is_empty() {
       return Ok(Vec::new());
     }
-
     let type_ids: Vec<i32> = pile.items.iter().map(|i| i.type_id).collect();
+    let assets = self
+      .load_assets_for_pile(pile.location_id, pile.character_id, &type_ids)
+      .await?;
+    let type_name_map = self.load_type_names(&type_ids).await?;
+    let items = pile_items_to_models(pile.items);
+    Ok(build_fill_statuses(&items, assets, type_name_map))
+  }
 
-    let mut asset_query = AssetEntity::find().filter(AssetColumn::TypeId.is_in(type_ids.clone()));
-    if let Some(loc) = pile.location_id {
-      asset_query = asset_query.filter(AssetColumn::LocationId.eq(loc));
+  async fn load_assets_for_pile(
+    &self,
+    location_id: Option<i64>,
+    character_id: Option<i64>,
+    type_ids: &[i32],
+  ) -> Result<Vec<crate::entities::character_asset::Model>, Error> {
+    let mut q = AssetEntity::find().filter(AssetColumn::TypeId.is_in(type_ids.to_vec()));
+    if let Some(loc) = location_id {
+      q = q.filter(AssetColumn::LocationId.eq(loc));
     }
-    if let Some(char_id) = pile.character_id {
-      asset_query = asset_query.filter(AssetColumn::CharacterId.eq(char_id));
+    if let Some(char_id) = character_id {
+      q = q.filter(AssetColumn::CharacterId.eq(char_id));
     }
-    let assets = asset_query.all(self.db).await?;
+    Ok(q.all(self.db).await?)
+  }
 
-    let type_name_map: HashMap<i32, String> = TypeEntity::find()
-      .filter(TypeColumn::Id.is_in(type_ids))
+  async fn load_type_names(&self, type_ids: &[i32]) -> Result<HashMap<i32, String>, Error> {
+    let map = TypeEntity::find()
+      .filter(TypeColumn::Id.is_in(type_ids.to_vec()))
       .all(self.db)
       .await?
       .into_iter()
       .map(|t| (t.id, t.name))
       .collect();
-
-    let items: Vec<_> = pile
-      .items
-      .into_iter()
-      .map(|i| stockpile_item::Model {
-        id: i.id,
-        stockpile_id: i.stockpile_id,
-        target_quantity: i.target_quantity,
-        type_id: i.type_id,
-      })
-      .collect();
-
-    Ok(build_fill_statuses(&items, assets, type_name_map))
+    Ok(map)
   }
 
   async fn insert_items(&self, stockpile_id: i64, items: &[(i32, i32)]) -> Result<(), Error> {

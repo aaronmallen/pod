@@ -162,30 +162,39 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   }
 }
 
-/// Returns background subscriptions for the skill plan window.
-pub fn subscription(state: &State) -> iced::Subscription<Message> {
+fn pane_drag_subscription() -> iced::Subscription<Message> {
   use iced::{
     event::{self, Event},
     mouse,
   };
+  event::listen_with(|event, _status, _id| match event {
+    Event::Mouse(mouse::Event::CursorMoved {
+      position,
+    }) => Some(Message::PaneDrag(position.x)),
+    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
+    _ => None,
+  })
+}
 
+fn entry_drag_subscription() -> iced::Subscription<Message> {
+  use iced::{
+    event::{self, Event},
+    mouse,
+  };
+  event::listen_with(|event, _status, _id| match event {
+    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::EntryDragEnd),
+    _ => None,
+  })
+}
+
+/// Returns background subscriptions for the skill plan window.
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.dragging_pane.is_some() {
-    return event::listen_with(|event, _status, _id| match event {
-      Event::Mouse(mouse::Event::CursorMoved {
-        position,
-      }) => Some(Message::PaneDrag(position.x)),
-      Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
-      _ => None,
-    });
+    return pane_drag_subscription();
   }
-
   if state.dragging_entry_id.is_some() {
-    return event::listen_with(|event, _status, _id| match event {
-      Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::EntryDragEnd),
-      _ => None,
-    });
+    return entry_drag_subscription();
   }
-
   iced::Subscription::none()
 }
 
@@ -976,28 +985,36 @@ fn update_entry_removed(state: &mut State, id: String) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn level_to_roman(level: u8) -> String {
+  match level {
+    1 => "I".to_string(),
+    2 => "II".to_string(),
+    3 => "III".to_string(),
+    4 => "IV".to_string(),
+    5 => "V".to_string(),
+    n => n.to_string(),
+  }
+}
+
+fn format_plan_line(skill_name: &str, to_level: u8) -> String {
+  format!("{} {}", skill_name, level_to_roman(to_level))
+}
+
 fn update_export_clipboard(state: &mut State) -> iced::Task<Message> {
   tracing::info!("skill_plan: export to clipboard — plan: {}", state.plan_name);
   state.export_dropdown_open = false;
-  let lines: Vec<String> = state
-    .entries
-    .iter()
-    .filter(|e| !e.auto)
-    .map(|e| {
-      let level_str = match e.to_level {
-        1 => "I",
-        2 => "II",
-        3 => "III",
-        4 => "IV",
-        5 => "V",
-        n => return format!("{} {}", e.skill_name, n),
-      };
-      format!("{} {}", e.skill_name, level_str)
-    })
-    .collect();
-  let content = lines.join("\n");
+  let content = plan_lines_text(&state.entries);
   let _ = arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content));
   iced::Task::none()
+}
+
+fn plan_lines_text(entries: &[PlanEntry]) -> String {
+  entries
+    .iter()
+    .filter(|e| !e.auto)
+    .map(|e| format_plan_line(&e.skill_name, e.to_level))
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn update_export_dropdown_toggled(state: &mut State) -> iced::Task<Message> {
@@ -1028,23 +1045,7 @@ fn update_export_file(state: &mut State) -> iced::Task<Message> {
 
 fn update_export_path_chosen(state: &State, path: std::path::PathBuf) -> iced::Task<Message> {
   tracing::info!("skill_plan: export to file — plan: {}, path: {path:?}", state.plan_name);
-  let lines: Vec<String> = state
-    .entries
-    .iter()
-    .filter(|e| !e.auto)
-    .map(|e| {
-      let level_str = match e.to_level {
-        1 => "I",
-        2 => "II",
-        3 => "III",
-        4 => "IV",
-        5 => "V",
-        n => return format!("{} {}", e.skill_name, n),
-      };
-      format!("{} {}", e.skill_name, level_str)
-    })
-    .collect();
-  let content = lines.join("\n");
+  let content = plan_lines_text(&state.entries);
   let _ = std::fs::write(&path, content);
   iced::Task::none()
 }
@@ -1257,6 +1258,18 @@ fn update_picker_ship_module_messages(state: &mut State, message: Message, servi
   }
 }
 
+fn update_picker_misc_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
+    Message::PickerGroupToggled(name) => update_picker_group_toggled(state, name),
+    Message::PickerSearchChanged(q) => update_picker_search(state, q),
+    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
+    Message::PickerToggled => update_picker_toggled(state),
+    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
+    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
+    _ => iced::Task::none(),
+  }
+}
+
 fn update_picker_messages(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
     Message::AllCertsLoaded(_)
@@ -1268,13 +1281,7 @@ fn update_picker_messages(state: &mut State, message: Message, services: &Servic
     | Message::ShipMasteryChanged(_, _)
     | Message::ShipSelected(_, _, _)
     | Message::ShipsLoaded(_) => update_picker_ship_module_messages(state, message, services),
-    Message::PickerGroupToggled(name) => update_picker_group_toggled(state, name),
-    Message::PickerSearchChanged(q) => update_picker_search(state, q),
-    Message::PickerTabChanged(tab) => update_picker_tab(state, tab, services),
-    Message::PickerToggled => update_picker_toggled(state),
-    Message::SkillGroupsLoaded(groups) => update_skill_groups_loaded(state, groups),
-    Message::SkillPicked(skill_name, level) => update_skill_picked(state, skill_name, level),
-    _ => iced::Task::none(),
+    msg => update_picker_misc_messages(state, msg, services),
   }
 }
 
@@ -1324,11 +1331,20 @@ fn update_picker_toggled(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
-fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+fn update_plan_entry_drag_messages(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::EntryDragEnd => update_entry_drag_end(state),
     Message::EntryDragHover(id) => update_entry_drag_hover(state, id),
     Message::EntryDragStart(id) => update_entry_drag_start(state, id),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_plan_entry_messages(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::EntryDragEnd | Message::EntryDragHover(_) | Message::EntryDragStart(_) => {
+      update_plan_entry_drag_messages(state, message)
+    }
     Message::EntryNoteChanged(id, note) => update_entry_note(state, id, note),
     Message::EntryPriorityChanged(id, priority) => update_entry_priority_changed(state, id, priority),
     Message::EntryRemoved(id) => update_entry_removed(state, id),

@@ -106,18 +106,21 @@ pub fn reauth(services: &Services) -> iced::Task<Message> {
   trigger_reauth(services)
 }
 
-/// Returns background subscriptions for the currently active view plus
-/// a global snooze-expiry timer.
-pub fn subscription(state: &State) -> Subscription<Message> {
-  let view_sub = match &state.active_view {
+fn view_subscription(state: &State) -> Subscription<Message> {
+  match &state.active_view {
     ActiveView::Assets(s) => assets::subscription(s).map(Message::Assets),
     ActiveView::Characters(chars_state) => characters_ctrl::subscription(chars_state).map(Message::Characters),
     ActiveView::Mail(s) => mail::subscription(s).map(Message::Mail),
-    ActiveView::Settings(_) => Subscription::none(),
     ActiveView::Skills(s) => skills_ctrl::subscription(s).map(Message::Skills),
     ActiveView::Wallet(s) => wallet::subscription(s).map(Message::Wallet),
     _ => Subscription::none(),
-  };
+  }
+}
+
+/// Returns background subscriptions for the currently active view plus
+/// a global snooze-expiry timer.
+pub fn subscription(state: &State) -> Subscription<Message> {
+  let view_sub = view_subscription(state);
   if state.feat_mail {
     let snooze_sub = iced::time::every(std::time::Duration::from_secs(60)).map(|_| Message::SnoozeTick);
     Subscription::batch([view_sub, snooze_sub])
@@ -146,23 +149,33 @@ pub fn update(
   }
 }
 
+fn handle_nav_utility_message(
+  state: &mut State,
+  msg: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  match msg {
+    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
+    Message::RefreshAll | Message::StatusBar(status_bar::Message::RefreshPressed) => {
+      (update_refresh_all(state, services), None)
+    }
+    Message::ShowToast(msg) => (show_toast(state, msg), None),
+    Message::SnoozeTick => (update_snooze_tick(state, services), None),
+    _ => (iced::Task::none(), None),
+  }
+}
+
 fn handle_other_message(
   state: &mut State,
   msg: Message,
   services: &Services,
 ) -> (iced::Task<Message>, Option<crate::config::Settings>) {
   match msg {
-    Message::CharacterDetail(msg) => (update_character_detail(state, msg, services), None),
-    Message::Mail(msg) => (update_mail(state, msg, services), None),
-    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
-    Message::RefreshAll | Message::StatusBar(status_bar::Message::RefreshPressed) => {
-      (update_refresh_all(state, services), None)
-    }
-    Message::ShowToast(msg) => (show_toast(state, msg), None),
-    Message::Skills(msg) => (update_skills(state, msg, services), None),
-    Message::SnoozeTick => (update_snooze_tick(state, services), None),
-    Message::Wallet(msg) => (update_wallet(state, msg, services), None),
-    _ => (iced::Task::none(), None),
+    Message::CharacterDetail(m) => (update_character_detail(state, m, services), None),
+    Message::Mail(m) => (update_mail(state, m, services), None),
+    Message::Skills(m) => (update_skills(state, m, services), None),
+    Message::Wallet(m) => (update_wallet(state, m, services), None),
+    msg => handle_nav_utility_message(state, msg, services),
   }
 }
 

@@ -1086,6 +1086,34 @@ async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatu
   result
 }
 
+async fn resolve_station_names_for_ids(db: &pod_db::Repo, station_ids: &[i32]) -> HashMap<i64, String> {
+  if station_ids.is_empty() {
+    return HashMap::new();
+  }
+  db.universe()
+    .stations()
+    .find_by_ids(station_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|s| (*s.id() as i64, s.name().clone()))
+    .collect()
+}
+
+async fn resolve_structure_names_for_ids(db: &pod_db::Repo, structure_ids: &[i64]) -> HashMap<i64, String> {
+  if structure_ids.is_empty() {
+    return HashMap::new();
+  }
+  db.universe()
+    .structure_cache()
+    .find_by_ids(structure_ids)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, name, _)| (id, name))
+    .collect()
+}
+
 async fn resolve_stockpile_location_names(
   db: &pod_db::Repo,
   piles: &[pod_db::StockpileWithItems],
@@ -1094,35 +1122,14 @@ async fn resolve_stockpile_location_names(
   if location_ids.is_empty() {
     return HashMap::new();
   }
-  let mut names: HashMap<i64, String> = HashMap::new();
   let station_ids: Vec<i32> = location_ids.iter().filter_map(|&id| i32::try_from(id).ok()).collect();
-  if !station_ids.is_empty() {
-    let stations = db
-      .universe()
-      .stations()
-      .find_by_ids(&station_ids)
-      .await
-      .unwrap_or_default();
-    for s in stations {
-      names.insert(*s.id() as i64, s.name().clone());
-    }
-  }
+  let mut names = resolve_station_names_for_ids(db, &station_ids).await;
   let structure_ids: Vec<i64> = location_ids
     .iter()
     .copied()
-    .filter(|&id| i32::try_from(id).is_err() && !names.contains_key(&id))
+    .filter(|id| !names.contains_key(id))
     .collect();
-  if !structure_ids.is_empty() {
-    let cached = db
-      .universe()
-      .structure_cache()
-      .find_by_ids(&structure_ids)
-      .await
-      .unwrap_or_default();
-    for (id, name, _) in cached {
-      names.insert(id, name);
-    }
-  }
+  names.extend(resolve_structure_names_for_ids(db, &structure_ids).await);
   names
 }
 

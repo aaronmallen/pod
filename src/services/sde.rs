@@ -1157,21 +1157,29 @@ fn parse_yaml_i32(v: &serde_yaml::Value) -> Option<i32> {
 
 #[tracing::instrument(skip(db))]
 async fn seed_masteries(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
+  let entries = parse_mastery_entries(path).await?;
+  if entries.is_empty() {
+    return Ok(());
+  }
+  upsert_masteries(db, &entries).await
+}
+
+async fn parse_mastery_entries(path: &Path) -> Result<Vec<(i32, i32, Vec<i32>)>, String> {
   let raw_bytes = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
   let raw: serde_yaml::Value =
     serde_yaml::from_slice(&raw_bytes).map_err(|e| format!("parse {}: {}", path.display(), e))?;
   let serde_yaml::Value::Mapping(outer) = raw else {
-    return Ok(());
+    return Ok(vec![]);
   };
-  let mastery_entries = build_mastery_entries(outer);
-  if !mastery_entries.is_empty() {
-    db.universe()
-      .certificates()
-      .upsert_ship_masteries(&mastery_entries)
-      .await
-      .map_err(|e| e.to_string())?;
-  }
-  Ok(())
+  Ok(build_mastery_entries(outer))
+}
+
+async fn upsert_masteries(db: &pod_db::Repo, entries: &[(i32, i32, Vec<i32>)]) -> Result<(), String> {
+  db.universe()
+    .certificates()
+    .upsert_ship_masteries(entries)
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -16,53 +16,63 @@ pub fn subscription() -> Subscription<(String, String)> {
 
 fn stream() -> impl iced::futures::Stream<Item = (String, String)> {
   iced::stream::channel(4, async |mut tx| {
-    use iced::futures::SinkExt as _;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let std_listener = match std::net::TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}")) {
-      Ok(l) => l,
-      Err(e) => {
-        tracing::error!("OAuth callback port {CALLBACK_PORT} unavailable: {e}");
-        return;
-      }
-    };
-    if let Err(e) = std_listener.set_nonblocking(true) {
-      tracing::error!("OAuth callback listener set_nonblocking failed: {e}");
-      return;
-    }
-    let listener = match tokio::net::TcpListener::from_std(std_listener) {
-      Ok(l) => l,
-      Err(e) => {
-        tracing::error!("OAuth callback listener failed: {e}");
-        return;
-      }
-    };
-
-    loop {
-      let Ok((mut stream, _)) = listener.accept().await else {
-        tracing::warn!("auth: failed to accept OAuth callback connection");
-        continue;
-      };
-
-      let mut buf = vec![0u8; 32768];
-      let Ok(n) = stream.read(&mut buf).await else {
-        tracing::warn!("auth: failed to read OAuth callback request");
-        continue;
-      };
-
-      let request = String::from_utf8_lossy(&buf[..n]);
-      let Ok((code, state)) = parse_callback(&request) else {
-        tracing::warn!("auth: received malformed OAuth callback request");
-        continue;
-      };
-
-      tracing::info!("auth: OAuth callback received, code and state parsed");
-
-      let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAuthorized. You may close this tab.";
-      let _ = stream.write_all(response.as_bytes()).await;
-      let _ = tx.send((code, state)).await;
-    }
+    let Some(listener) = bind_listener() else { return };
+    accept_loop(listener, &mut tx).await;
   })
+}
+
+fn bind_listener() -> Option<tokio::net::TcpListener> {
+  let std_listener = match std::net::TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}")) {
+    Ok(l) => l,
+    Err(e) => {
+      tracing::error!("OAuth callback port {CALLBACK_PORT} unavailable: {e}");
+      return None;
+    }
+  };
+  if let Err(e) = std_listener.set_nonblocking(true) {
+    tracing::error!("OAuth callback listener set_nonblocking failed: {e}");
+    return None;
+  }
+  match tokio::net::TcpListener::from_std(std_listener) {
+    Ok(l) => Some(l),
+    Err(e) => {
+      tracing::error!("OAuth callback listener failed: {e}");
+      None
+    }
+  }
+}
+
+async fn accept_loop(
+  listener: tokio::net::TcpListener,
+  tx: &mut iced::futures::channel::mpsc::Sender<(String, String)>,
+) {
+  use iced::futures::SinkExt as _;
+  use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+  loop {
+    let Ok((mut stream, _)) = listener.accept().await else {
+      tracing::warn!("auth: failed to accept OAuth callback connection");
+      continue;
+    };
+
+    let mut buf = vec![0u8; 32768];
+    let Ok(n) = stream.read(&mut buf).await else {
+      tracing::warn!("auth: failed to read OAuth callback request");
+      continue;
+    };
+
+    let request = String::from_utf8_lossy(&buf[..n]);
+    let Ok((code, state)) = parse_callback(&request) else {
+      tracing::warn!("auth: received malformed OAuth callback request");
+      continue;
+    };
+
+    tracing::info!("auth: OAuth callback received, code and state parsed");
+
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAuthorized. You may close this tab.";
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = tx.send((code, state)).await;
+  }
 }
 
 fn parse_callback(request: &str) -> Result<(String, String), ()> {

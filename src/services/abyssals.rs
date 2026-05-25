@@ -25,9 +25,8 @@ fn now_unix() -> i64 {
 /// 4. Prunes items no longer present in character assets.
 /// 5. Refreshes MutaMarket prices for items older than 24 hours.
 pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta_market::Client, db: &pod_db::Repo) {
-  let abyssal_pairs = match find_abyssal_pairs(character_id, db).await {
-    Some(pairs) => pairs,
-    None => return,
+  let Some(abyssal_pairs) = find_abyssal_pairs(character_id, db).await else {
+    return;
   };
 
   if abyssal_pairs.is_empty() {
@@ -35,16 +34,24 @@ pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta
     return;
   }
 
+  sync_abyssal_pairs(character_id, &abyssal_pairs, esi, muta, db).await;
+}
+
+async fn sync_abyssal_pairs(
+  character_id: i64,
+  abyssal_pairs: &[(i32, i64)],
+  esi: &pod_esi::Client,
+  muta: &muta_market::Client,
+  db: &pod_db::Repo,
+) {
   let current_item_ids: Vec<i64> = abyssal_pairs.iter().map(|(_, iid)| *iid).collect();
-  let existing_synced = load_existing_sync_times(character_id, db).await;
-  if existing_synced.is_none() {
+  let Some(existing_synced) = load_existing_sync_times(character_id, db).await else {
     return;
-  }
-  let existing_synced = existing_synced.unwrap();
+  };
   let now = now_unix();
   let stale_threshold = now - 12 * 3600;
 
-  for (type_id, item_id) in &abyssal_pairs {
+  for (type_id, item_id) in abyssal_pairs {
     let last_synced = existing_synced.get(item_id).copied().unwrap_or(0);
     if last_synced < stale_threshold {
       sync_single_item(character_id, *type_id, *item_id, now, esi, db).await;

@@ -73,12 +73,16 @@ async fn apply_inner() -> Result<(), String> {
 }
 
 fn apply_blocking() -> Result<(), String> {
-  let updater = build_updater().map_err(|e| e.to_string())?;
-  let update = updater
+  let update = fetch_pending_update()?;
+  update.download_and_install().map_err(|e| e.to_string())
+}
+
+fn fetch_pending_update() -> Result<cargo_packager_updater::Update, String> {
+  build_updater()
+    .map_err(|e| e.to_string())?
     .check()
     .map_err(|e| e.to_string())?
-    .ok_or_else(|| "no update available".to_string())?;
-  update.download_and_install().map_err(|e| e.to_string())
+    .ok_or_else(|| "no update available".to_string())
 }
 
 async fn check_inner() -> Result<Option<String>, String> {

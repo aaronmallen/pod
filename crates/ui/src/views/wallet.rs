@@ -1,6 +1,7 @@
 //! Wallet controller and view: multi-character ISK ledger.
 
 pub mod contracts_tab;
+pub mod drag_handle;
 pub mod header;
 pub mod journal_tab;
 pub mod main_panel;
@@ -11,6 +12,7 @@ pub mod right_rail;
 
 use std::collections::HashMap;
 
+pub use drag_handle::DragHandle;
 pub use header::Component as Header;
 use iced::{
   Background, Element, Event, Length, Padding, Subscription, mouse,
@@ -316,7 +318,7 @@ fn wallet_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> 
   let right = RightRail::new(state).width(right_w).render();
   let body: Element<'_, Message> = column([
     hero,
-    row([main, right_rail_drag_handle(), right])
+    row([main, DragHandle::new().render(), right])
       .width(Length::Fill)
       .height(Length::Fill)
       .into(),
@@ -357,31 +359,6 @@ fn drag_capture_layer() -> Element<'static, Message> {
   mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
     .on_move(|pt| Message::PaneDrag(pt.x))
     .on_release(Message::PaneDragEnd)
-    .interaction(iced::mouse::Interaction::ResizingHorizontally)
-    .into()
-}
-
-fn drag_handle_inner() -> Element<'static, Message> {
-  row([
-    Space::new().width(1.5).height(Length::Fill).into(),
-    container(Space::new().width(1.0).height(Length::Fill))
-      .width(1.0)
-      .height(Length::Fill)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into(),
-    Space::new().width(1.5).height(Length::Fill).into(),
-  ])
-  .width(4.0)
-  .height(Length::Fill)
-  .into()
-}
-
-fn right_rail_drag_handle() -> Element<'static, Message> {
-  mouse_area(drag_handle_inner())
-    .on_press(Message::PaneDragStart(DraggingPane::RightRail))
     .interaction(iced::mouse::Interaction::ResizingHorizontally)
     .into()
 }

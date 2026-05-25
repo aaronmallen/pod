@@ -1,123 +1,31 @@
 //! Summary stats panel on the right side of the wallet view.
 
+pub mod divider;
+pub mod recent_activity_row;
+pub mod section_label;
+pub mod summary_stat_row;
+
+pub use divider::Component as Divider;
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
-  widget::{Space, column, container, row, scrollable, text},
+  Background, Border, Element, Length,
+  widget::{Space, column, container, scrollable},
 };
+pub use recent_activity_row::Component as RecentActivityRow;
+pub use section_label::Component as SectionLabel;
+pub use summary_stat_row::Component as SummaryStatRow;
 
 use crate::{
   format,
-  style::{
-    color,
-    typography::{body, mono},
-  },
-  views::wallet::{Message, State, journal_type_glyph},
+  style::color,
+  views::wallet::{Message, State},
 };
-
-fn section_label(title: &'static str) -> Element<'static, Message> {
-  container(
-    text(title)
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(Padding {
-    top: 20.0,
-    bottom: 12.0,
-    left: 20.0,
-    right: 20.0,
-  })
-  .width(Length::Fill)
-  .into()
-}
-
-fn divider() -> Element<'static, Message> {
-  container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn summary_stat_row(label: &'static str, value: String, value_color: Color) -> Element<'static, Message> {
-  container(
-    row([
-      text(label.to_uppercase())
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .width(Length::Fill)
-        .into(),
-      text(value)
-        .font(mono::MEDIUM)
-        .size(10.0)
-        .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(value_color),
-        })
-        .into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 6.0,
-    bottom: 6.0,
-    left: 20.0,
-    right: 20.0,
-  })
-  .width(Length::Fill)
-  .into()
-}
 
 fn recent_activity_rows<'a>(state: &'a State) -> Vec<Element<'a, Message>> {
   state
     .filtered_journal
     .iter()
     .take(8)
-    .map(|j| {
-      let (_, is_in) = journal_type_glyph(&j.entry_type);
-      let delta_color = if is_in {
-        color::status::ONLINE
-      } else {
-        color::status::DANGER
-      };
-      let delta_str = format!("{}{}", if is_in { "+" } else { "−" }, format::fmt_isk(j.delta.abs()));
-      container(
-        row([
-          text(&j.reference)
-            .font(body::REGULAR)
-            .size(11.0)
-            .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(color::text::SECONDARY),
-            })
-            .width(Length::Fill)
-            .into(),
-          text(delta_str)
-            .font(mono::REGULAR)
-            .size(10.0)
-            .style(move |_: &Theme| iced::widget::text::Style {
-              color: Some(delta_color),
-            })
-            .into(),
-        ])
-        .spacing(8.0)
-        .align_y(iced::alignment::Vertical::Center),
-      )
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 20.0,
-        right: 20.0,
-      })
-      .width(Length::Fill)
-      .into()
-    })
+    .map(|j| RecentActivityRow::new(j).render())
     .collect()
 }
 
@@ -157,12 +65,12 @@ impl<'a> Component<'a> {
     };
     let content = scrollable(
       column([
-        section_label("30-Day Summary"),
-        summary_stat_row("Income", format::fmt_isk(income), color::status::ONLINE),
-        summary_stat_row("Spend", format!("−{}", format::fmt_isk(spend)), color::status::DANGER),
-        summary_stat_row("Net", net_str, net_color),
-        divider(),
-        section_label("Recent Activity"),
+        SectionLabel::new("30-Day Summary").render(),
+        SummaryStatRow::new("Income", format::fmt_isk(income), color::status::ONLINE).render(),
+        SummaryStatRow::new("Spend", format!("−{}", format::fmt_isk(spend)), color::status::DANGER).render(),
+        SummaryStatRow::new("Net", net_str, net_color).render(),
+        Divider::new().render(),
+        SectionLabel::new("Recent Activity").render(),
         column(recent_activity_rows(state)).width(Length::Fill).into(),
         Space::new().height(Length::Fill).into(),
       ])

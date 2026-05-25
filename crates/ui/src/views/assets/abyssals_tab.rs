@@ -57,21 +57,35 @@ pub enum Message {
   FilterReset,
 }
 
-/// Mutaplasmid tier badge color, derived from the tier name.
-fn tier_badge_color(tier: &str) -> Color {
-  let lower = tier.to_lowercase();
-  if lower.contains("glorified") && lower.contains("unstable") {
-    Color::from_rgb(0.741, 0.490, 0.133)
-  } else if lower.contains("glorified") && lower.contains("gravid") {
-    Color::from_rgb(0.588, 0.349, 0.792)
-  } else if lower.contains("glorified") && lower.contains("decayed") {
-    Color::from_rgb(0.247, 0.557, 0.859)
-  } else if lower.contains("unstable") {
+fn glorified_tier_color(lower: &str) -> Option<Color> {
+  if lower.contains("unstable") {
+    Some(Color::from_rgb(0.741, 0.490, 0.133))
+  } else if lower.contains("gravid") {
+    Some(Color::from_rgb(0.588, 0.349, 0.792))
+  } else if lower.contains("decayed") {
+    Some(Color::from_rgb(0.247, 0.557, 0.859))
+  } else {
+    None
+  }
+}
+
+fn base_tier_color(lower: &str) -> Color {
+  if lower.contains("unstable") {
     Color::from_rgb(0.878, 0.459, 0.349)
   } else if lower.contains("gravid") {
     Color::from_rgb(0.612, 0.408, 0.839)
   } else {
     Color::from_rgb(0.247, 0.600, 0.780)
+  }
+}
+
+/// Mutaplasmid tier badge color, derived from the tier name.
+fn tier_badge_color(tier: &str) -> Color {
+  let lower = tier.to_lowercase();
+  if lower.contains("glorified") {
+    glorified_tier_color(&lower).unwrap_or_else(|| base_tier_color(&lower))
+  } else {
+    base_tier_color(&lower)
   }
 }
 
@@ -702,32 +716,41 @@ fn filter_search_box(query: &str) -> Element<'_, Message> {
   .into()
 }
 
+struct OnlyPositiveStyle {
+  check_bg: Option<Background>,
+  check_border_color: Color,
+  label_color: Color,
+  btn_bg: Option<Background>,
+  btn_border_color: Color,
+}
+
+fn only_positive_style(active: bool) -> OnlyPositiveStyle {
+  if active {
+    OnlyPositiveStyle {
+      check_bg: Some(Background::Color(color::text::SUCCESS)),
+      check_border_color: color::text::SUCCESS,
+      label_color: color::text::SUCCESS,
+      btn_bg: Some(Background::Color(color::with_alpha(color::text::SUCCESS, 0.10))),
+      btn_border_color: color::with_alpha(color::text::SUCCESS, 0.45),
+    }
+  } else {
+    OnlyPositiveStyle {
+      check_bg: None,
+      check_border_color: color::border::DEFAULT,
+      label_color: color::text::SECONDARY,
+      btn_bg: None,
+      btn_border_color: color::border::SUBTLE,
+    }
+  }
+}
+
 fn only_positive_button(active: bool) -> Element<'static, Message> {
-  let check_bg = if active {
-    Some(Background::Color(color::text::SUCCESS))
-  } else {
-    None
-  };
-  let check_border_color = if active {
-    color::text::SUCCESS
-  } else {
-    color::border::DEFAULT
-  };
-  let label_color = if active {
-    color::text::SUCCESS
-  } else {
-    color::text::SECONDARY
-  };
-  let btn_bg = if active {
-    Some(Background::Color(color::with_alpha(color::text::SUCCESS, 0.10)))
-  } else {
-    None
-  };
-  let btn_border_color = if active {
-    color::with_alpha(color::text::SUCCESS, 0.45)
-  } else {
-    color::border::SUBTLE
-  };
+  let s = only_positive_style(active);
+  let check_bg = s.check_bg;
+  let check_border_color = s.check_border_color;
+  let label_color = s.label_color;
+  let btn_bg = s.btn_bg;
+  let btn_border_color = s.btn_border_color;
   button(
     row([
       container(Space::new().width(12.0).height(12.0))

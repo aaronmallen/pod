@@ -174,23 +174,43 @@ fn tooltip_date_label(series_len: usize, index: usize) -> String {
   }
 }
 
-fn hover_tooltip(hover: &HoverData, series_len: usize, prev_value: Option<f64>) -> Element<'static, Message> {
-  let x_frac = hover.x_frac.clamp(0.0, 1.0);
-  let x_left_raw = (x_frac * 100.0).round() as u16;
-  let x_left = x_left_raw.min(80);
+fn tooltip_delta_row(value: f64, prev: f64) -> Vec<Element<'static, Message>> {
+  let delta = value - prev;
+  let pct = if prev.abs() > 0.01 { delta / prev * 100.0 } else { 0.0 };
+  let sign = if delta >= 0.0 { "+" } else { "" };
+  let delta_str = format!("{}{}  ({}{:.1}%)  day", sign, format::fmt_isk(delta), sign, pct.abs());
+  let delta_color = if delta >= 0.0 {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
+  let delta_el: Element<'static, Message> = text(delta_str)
+    .font(mono::REGULAR)
+    .size(10.0)
+    .style(move |_: &Theme| iced::widget::text::Style {
+      color: Some(delta_color),
+    })
+    .into();
+  vec![Space::new().height(4.0).into(), delta_el]
+}
+
+fn tooltip_x_portions(x_frac: f32) -> (u16, u16) {
+  let x_left = ((x_frac.clamp(0.0, 1.0) * 100.0).round() as u16).min(80);
   let x_right = 100u16.saturating_sub(x_left);
+  (x_left, x_right)
+}
 
-  let date_str = tooltip_date_label(series_len, hover.index);
-  let value_str = format!("{} ISK", format::fmt_isk_full(hover.value));
+fn hover_tooltip(hover: &HoverData, series_len: usize, prev_value: Option<f64>) -> Element<'static, Message> {
+  let (x_left, x_right) = tooltip_x_portions(hover.x_frac);
 
-  let date_el: Element<'_, Message> = text(date_str)
+  let date_el: Element<'_, Message> = text(tooltip_date_label(series_len, hover.index))
     .font(mono::REGULAR)
     .size(9.0)
     .style(|_: &Theme| iced::widget::text::Style {
       color: Some(color::text::SECONDARY),
     })
     .into();
-  let value_el: Element<'_, Message> = text(value_str)
+  let value_el: Element<'_, Message> = text(format!("{} ISK", format::fmt_isk_full(hover.value)))
     .font(mono::MEDIUM)
     .size(14.0)
     .style(|_: &Theme| iced::widget::text::Style {
@@ -199,26 +219,8 @@ fn hover_tooltip(hover: &HoverData, series_len: usize, prev_value: Option<f64>) 
     .into();
 
   let mut card_children: Vec<Element<'_, Message>> = vec![date_el, Space::new().height(4.0).into(), value_el];
-
   if let Some(prev) = prev_value {
-    let delta = hover.value - prev;
-    let pct = if prev.abs() > 0.01 { delta / prev * 100.0 } else { 0.0 };
-    let sign = if delta >= 0.0 { "+" } else { "" };
-    let delta_str = format!("{}{}  ({}{:.1}%)  day", sign, format::fmt_isk(delta), sign, pct.abs());
-    let delta_color = if delta >= 0.0 {
-      color::status::ONLINE
-    } else {
-      color::status::DANGER
-    };
-    let delta_el: Element<'_, Message> = text(delta_str)
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(delta_color),
-      })
-      .into();
-    card_children.push(Space::new().height(4.0).into());
-    card_children.push(delta_el);
+    card_children.extend(tooltip_delta_row(hover.value, prev));
   }
 
   let card = container(column([

@@ -476,6 +476,39 @@ pub fn optimize_remap(
   Some(best)
 }
 
+fn boost_implant(implant: &ImplantBonus, attr: AttrKey) -> ImplantBonus {
+  let mut boosted = implant.clone();
+  match attr {
+    AttrKey::Perception => boosted.perception += 1,
+    AttrKey::Memory => boosted.memory += 1,
+    AttrKey::Willpower => boosted.willpower += 1,
+    AttrKey::Intelligence => boosted.intelligence += 1,
+    AttrKey::Charisma => boosted.charisma += 1,
+  }
+  boosted
+}
+
+fn saving_for_attr(
+  weights: &[PairWeight],
+  base: &BaseAttrs,
+  implant: &ImplantBonus,
+  current_total_sec: f64,
+  attr: AttrKey,
+) -> Option<ImplantSaving> {
+  let boosted = boost_implant(implant, attr);
+  let eff = effective_attrs(base, &boosted);
+  let new_time = plan_time_with_attrs(weights, &eff);
+  let saved = current_total_sec - new_time;
+  if saved > 0.0 {
+    Some(ImplantSaving {
+      attr,
+      saved_sec: saved,
+    })
+  } else {
+    None
+  }
+}
+
 /// For each attribute, compute how many seconds would be saved by adding +1
 /// to that attribute's implant. Returns results sorted by savings descending.
 pub fn compute_implant_savings(
@@ -486,27 +519,7 @@ pub fn compute_implant_savings(
 ) -> Vec<ImplantSaving> {
   let mut savings: Vec<ImplantSaving> = AttrKey::ALL
     .iter()
-    .filter_map(|&attr| {
-      let mut boosted = implant.clone();
-      match attr {
-        AttrKey::Perception => boosted.perception += 1,
-        AttrKey::Memory => boosted.memory += 1,
-        AttrKey::Willpower => boosted.willpower += 1,
-        AttrKey::Intelligence => boosted.intelligence += 1,
-        AttrKey::Charisma => boosted.charisma += 1,
-      }
-      let eff = effective_attrs(base, &boosted);
-      let new_time = plan_time_with_attrs(weights, &eff);
-      let saved = current_total_sec - new_time;
-      if saved > 0.0 {
-        Some(ImplantSaving {
-          attr,
-          saved_sec: saved,
-        })
-      } else {
-        None
-      }
-    })
+    .filter_map(|&attr| saving_for_attr(weights, base, implant, current_total_sec, attr))
     .collect();
 
   savings.sort_by(|a, b| {

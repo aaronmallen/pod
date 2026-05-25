@@ -32,44 +32,9 @@ impl AssetFilterQuery {
   pub fn parse(input: &str) -> Self {
     let raw = tokenize(input.trim());
     let mut tokens = Vec::new();
-
     for raw_tok in raw {
-      let (negated, rest) = if let Some(s) = raw_tok.strip_prefix('-') {
-        (true, s.to_string())
-      } else {
-        (false, raw_tok)
-      };
-
-      if let Some(colon_pos) = rest.find(':') {
-        let key_part = &rest[..colon_pos];
-        let value_part = &rest[colon_pos + 1..];
-
-        if is_recognized_key(key_part) {
-          let key = normalize_key(key_part);
-          let values: Vec<String> = value_part
-            .split(',')
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_lowercase())
-            .collect();
-
-          if !values.is_empty() {
-            tokens.push(AssetFilterToken::KeyValue {
-              key,
-              negated,
-              values,
-            });
-            continue;
-          }
-        }
-      }
-
-      if negated {
-        tokens.push(AssetFilterToken::FreeText(format!("-{rest}")));
-      } else {
-        tokens.push(AssetFilterToken::FreeText(rest));
-      }
+      tokens.push(parse_raw_token(raw_tok));
     }
-
     Self {
       me_id: None,
       tokens,
@@ -100,6 +65,43 @@ enum AssetFilterToken {
 
 fn is_recognized_key(key: &str) -> bool {
   RECOGNIZED_KEYS.contains(&key.to_lowercase().as_str())
+}
+
+fn try_parse_key_value(negated: bool, rest: &str) -> Option<AssetFilterToken> {
+  let colon_pos = rest.find(':')?;
+  let key_part = &rest[..colon_pos];
+  if !is_recognized_key(key_part) {
+    return None;
+  }
+  let value_part = &rest[colon_pos + 1..];
+  let values: Vec<String> = value_part
+    .split(',')
+    .filter(|v| !v.is_empty())
+    .map(|v| v.to_lowercase())
+    .collect();
+  if values.is_empty() {
+    return None;
+  }
+  Some(AssetFilterToken::KeyValue {
+    key: normalize_key(key_part),
+    negated,
+    values,
+  })
+}
+
+fn parse_raw_token(raw_tok: String) -> AssetFilterToken {
+  let (negated, rest) = match raw_tok.strip_prefix('-') {
+    Some(s) => (true, s.to_string()),
+    None => (false, raw_tok),
+  };
+  if let Some(tok) = try_parse_key_value(negated, &rest) {
+    return tok;
+  }
+  if negated {
+    AssetFilterToken::FreeText(format!("-{rest}"))
+  } else {
+    AssetFilterToken::FreeText(rest)
+  }
 }
 
 fn match_category(values: &[String], asset: &AssetRecord) -> bool {
@@ -194,17 +196,23 @@ fn match_type(values: &[String], asset: &AssetRecord) -> bool {
   })
 }
 
+const KEY_ALIASES: &[(&str, &str)] = &[
+  ("c", "constellation"),
+  ("cat", "category"),
+  ("g", "group"),
+  ("loc", "location"),
+  ("n", "name"),
+  ("r", "region"),
+  ("s", "system"),
+];
+
 fn normalize_key(key: &str) -> String {
-  match key.to_lowercase().as_str() {
-    "c" => "constellation".to_string(),
-    "cat" => "category".to_string(),
-    "g" => "group".to_string(),
-    "loc" => "location".to_string(),
-    "n" => "name".to_string(),
-    "r" => "region".to_string(),
-    "s" => "system".to_string(),
-    k => k.to_string(),
-  }
+  let lower = key.to_lowercase();
+  KEY_ALIASES
+    .iter()
+    .find(|&&(alias, _)| alias == lower.as_str())
+    .map(|&(_, canonical)| canonical.to_string())
+    .unwrap_or(lower)
 }
 
 fn tokenize(input: &str) -> Vec<String> {

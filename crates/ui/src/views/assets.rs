@@ -83,35 +83,41 @@ pub enum Category {
   Commodity,
 }
 
+const CATEGORY_TABLE: &[(&str, &str)] = &[
+  ("all", "All"),
+  ("ship", "Ships"),
+  ("module", "Modules"),
+  ("drone", "Drones"),
+  ("charge", "Charges"),
+  ("implant", "Implants"),
+  ("blueprint", "Blueprints"),
+  ("material", "Materials"),
+  ("book", "Skill Books"),
+  ("commodity", "Commodities"),
+];
+
 impl Category {
-  pub fn key(&self) -> &'static str {
+  fn index(&self) -> usize {
     match self {
-      Self::All => "all",
-      Self::Ship => "ship",
-      Self::Module => "module",
-      Self::Drone => "drone",
-      Self::Charge => "charge",
-      Self::Implant => "implant",
-      Self::Blueprint => "blueprint",
-      Self::Material => "material",
-      Self::Book => "book",
-      Self::Commodity => "commodity",
+      Self::All => 0,
+      Self::Ship => 1,
+      Self::Module => 2,
+      Self::Drone => 3,
+      Self::Charge => 4,
+      Self::Implant => 5,
+      Self::Blueprint => 6,
+      Self::Material => 7,
+      Self::Book => 8,
+      Self::Commodity => 9,
     }
   }
 
+  pub fn key(&self) -> &'static str {
+    CATEGORY_TABLE[self.index()].0
+  }
+
   pub fn label(&self) -> &'static str {
-    match self {
-      Self::All => "All",
-      Self::Ship => "Ships",
-      Self::Module => "Modules",
-      Self::Drone => "Drones",
-      Self::Charge => "Charges",
-      Self::Implant => "Implants",
-      Self::Blueprint => "Blueprints",
-      Self::Material => "Materials",
-      Self::Book => "Skill Books",
-      Self::Commodity => "Commodities",
-    }
+    CATEGORY_TABLE[self.index()].1
   }
 
   pub fn all() -> &'static [Category] {
@@ -825,18 +831,22 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
   }
 }
 
+fn update_assets_state_messages(state: &mut State, message: Message) {
+  match message {
+    Message::LoadMoreAssets => update_load_more_assets(state),
+    Message::LocationSelected(loc) => update_location_selected(state, loc),
+    Message::TabSelected(tab) => update_tab_selected(state, tab),
+    Message::ToggleSidebarGroup(key) => update_toggle_sidebar_group(state, key),
+    msg => apply_data_loaded(state, msg),
+  }
+}
+
 fn update_assets_secondary(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::AbyssalsTab(msg) => update_abyssals_tab(state, msg),
-    Message::LoadMoreAssets => update_load_more_assets(state),
-    Message::LocationSelected(loc) => update_location_selected(state, loc),
-    Message::ReauthorizeCharacter(_) | Message::RefreshNavHistory => {}
     Message::StockpilesTab(msg) => update_stockpiles_tab(state, msg),
-    Message::TabSelected(tab) => update_tab_selected(state, tab),
-    Message::ToggleSidebarGroup(key) => update_toggle_sidebar_group(state, key),
     Message::TrackerTab(msg) => update_tracker_tab(state, msg),
-    Message::ValuesTab(_) => {}
-    msg => apply_data_loaded(state, msg),
+    msg => update_assets_state_messages(state, msg),
   }
   iced::Task::none()
 }

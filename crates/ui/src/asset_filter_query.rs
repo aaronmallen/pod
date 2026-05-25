@@ -117,19 +117,26 @@ fn match_group(values: &[String], asset: &AssetRecord) -> bool {
   values.iter().any(|v| g.contains(v.as_str()))
 }
 
+type MatchFn = fn(&[String], &AssetRecord, Option<i64>) -> bool;
+
+const KEY_MATCHERS: &[(&str, MatchFn)] = &[
+  ("category", |v, a, _| match_category(v, a)),
+  ("constellation", |v, a, _| match_constellation(v, a)),
+  ("group", |v, a, _| match_group(v, a)),
+  ("location", |v, a, _| match_location(v, a)),
+  ("name", |v, a, _| match_name(v, a)),
+  ("owner", match_owner),
+  ("region", |v, a, _| match_region(v, a)),
+  ("system", |v, a, _| match_system(v, a)),
+  ("type", |v, a, _| match_type(v, a)),
+];
+
 fn match_key_value(key: &str, values: &[String], asset: &AssetRecord, me_id: Option<i64>) -> bool {
-  match key {
-    "category" => match_category(values, asset),
-    "constellation" => match_constellation(values, asset),
-    "group" => match_group(values, asset),
-    "location" => match_location(values, asset),
-    "name" => match_name(values, asset),
-    "owner" => match_owner(values, asset, me_id),
-    "region" => match_region(values, asset),
-    "system" => match_system(values, asset),
-    "type" => match_type(values, asset),
-    _ => false,
-  }
+  KEY_MATCHERS
+    .iter()
+    .find(|&&(k, _)| k == key)
+    .map(|&(_, f)| f(values, asset, me_id))
+    .unwrap_or(false)
 }
 
 fn match_location(values: &[String], asset: &AssetRecord) -> bool {

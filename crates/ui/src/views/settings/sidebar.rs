@@ -95,55 +95,40 @@ fn categories_active_indicator() -> Element<'static, Message> {
   .into()
 }
 
-fn categories_item_row(
-  label: impl ToString,
-  badge: Option<String>,
-  is_active: bool,
-  msg: Message,
-) -> Element<'static, Message> {
-  let label_color = if is_active {
+fn item_label_el(label: impl ToString, is_active: bool) -> Element<'static, Message> {
+  let col = if is_active {
     color::text::PRIMARY
   } else {
     color::text::SECONDARY
   };
-  let badge_color = if is_active {
+  text(label.to_string())
+    .size(13.0)
+    .style(move |_| iced::widget::text::Style {
+      color: Some(col),
+    })
+    .into()
+}
+
+fn item_badge_el(badge: Option<String>, is_active: bool) -> Element<'static, Message> {
+  let col = if is_active {
     color::accent::PLASMA
   } else {
     color::text::SECONDARY
   };
-
-  let badge_el: Element<'static, Message> = match badge {
+  match badge {
     Some(b) => text(b)
       .font(typography::mono::REGULAR)
       .size(10.0)
       .style(move |_| iced::widget::text::Style {
-        color: Some(badge_color),
+        color: Some(col),
       })
       .into(),
     None => Space::new().into(),
-  };
+  }
+}
 
-  let inner = container(
-    row([
-      text(label.to_string())
-        .size(13.0)
-        .style(move |_| iced::widget::text::Style {
-          color: Some(label_color),
-        })
-        .into(),
-      Space::new().width(Length::Fill).into(),
-      badge_el,
-    ])
-    .align_y(Vertical::Center)
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    }),
-  )
-  .width(Length::Fill)
-  .style(move |_| container::Style {
+fn item_container_style(is_active: bool) -> impl Fn(&iced::Theme) -> container::Style {
+  move |_| container::Style {
     background: if is_active {
       Some(Background::Color(color::accent::PLASMA_SUBTLE))
     } else {
@@ -154,7 +139,31 @@ fn categories_item_row(
       ..Border::default()
     },
     ..container::Style::default()
-  });
+  }
+}
+
+fn categories_item_row(
+  label: impl ToString,
+  badge: Option<String>,
+  is_active: bool,
+  msg: Message,
+) -> Element<'static, Message> {
+  let inner = container(
+    row([
+      item_label_el(label, is_active),
+      Space::new().width(Length::Fill).into(),
+      item_badge_el(badge, is_active),
+    ])
+    .align_y(Vertical::Center)
+    .padding(Padding {
+      top: 10.0,
+      bottom: 10.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    }),
+  )
+  .width(Length::Fill)
+  .style(item_container_style(is_active));
 
   let indicator: Element<'static, Message> = if is_active {
     categories_active_indicator()

@@ -140,24 +140,30 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   if state.dragging_pane.is_some() {
     return pane_drag_subscription();
   }
+  let subs = build_active_subs(state);
+  if subs.is_empty() {
+    Subscription::none()
+  } else {
+    Subscription::batch(subs)
+  }
+}
 
+fn build_active_subs(state: &State) -> Vec<Subscription<Message>> {
   let mut subs: Vec<Subscription<Message>> = Vec::new();
-
   if state.context_menu.is_some() {
     subs.push(context_menu_dismiss_subscription());
   }
   if let Some(s) = compose_keyboard_subscription(state) {
     subs.push(s);
   }
-  if state.messages.iter().any(|m| m.snoozed.is_some()) {
+  if has_snoozed_messages(state) {
     subs.push(snooze_timer_subscription());
   }
+  subs
+}
 
-  if subs.is_empty() {
-    Subscription::none()
-  } else {
-    Subscription::batch(subs)
-  }
+fn has_snoozed_messages(state: &State) -> bool {
+  state.messages.iter().any(|m| m.snoozed.is_some())
 }
 
 fn pane_drag_subscription() -> Subscription<Message> {
@@ -272,6 +278,12 @@ impl<'a> Component<'a> {
   }
 }
 
+fn map_scope_missing_message(m: scope_missing::Message) -> Message {
+  match m {
+    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+  }
+}
+
 fn mail_scope_gate(state: &State) -> Option<Element<'_, Message>> {
   let account_id = state.current_account_id();
   if account_id == 0 {
@@ -282,9 +294,11 @@ fn mail_scope_gate(state: &State) -> Option<Element<'_, Message>> {
   if missing_scopes(&granted, &["esi-mail.read_mail.v1"]).is_empty() {
     return None;
   }
-  Some(ScopeMissing::new(account_id, "mail").render().map(|m| match m {
-    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-  }))
+  Some(
+    ScopeMissing::new(account_id, "mail")
+      .render()
+      .map(map_scope_missing_message),
+  )
 }
 
 fn mail_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
@@ -409,13 +423,16 @@ fn compose_panel_overlay(state: &State) -> Option<Element<'_, Message>> {
   Some(compose_overlay::Component::new(&state.compose, state.compose.expanded).render())
 }
 
+fn context_menu_labels(msg: &MailMessage) -> (&'static str, &'static str) {
+  let star_label = if msg.starred { "Unstar" } else { "Star" };
+  let snooze_label = if msg.snoozed.is_some() { "Unsnooze" } else { "Snooze" };
+  (star_label, snooze_label)
+}
+
 fn context_menu_overlay(state: &State) -> Option<Element<'_, Message>> {
   let (msg_id, x, y) = state.context_menu.as_ref()?;
   let msg = state.messages.iter().find(|m| &m.id == msg_id)?;
-  let starred = msg.starred;
-  let snoozed = msg.snoozed.is_some();
-  let star_label = if starred { "Unstar" } else { "Star" };
-  let snooze_label = if snoozed { "Unsnooze" } else { "Snooze" };
+  let (star_label, snooze_label) = context_menu_labels(msg);
 
   let items: Vec<Element<'_, Message>> = vec![
     context_menu_btn("Reply", Message::ReadingPane(reading_pane::Message::ReplyPressed)),
@@ -512,15 +529,25 @@ const FOLDER_LABELS: &[(u8, &str)] = &[
   (7, "Trash"),
 ];
 
-fn folder_discriminant_low(folder: &Folder) -> Option<u8> {
+fn folder_discriminant_low_ab(folder: &Folder) -> Option<u8> {
   match folder {
     Folder::All => Some(0),
     Folder::Inbox => Some(1),
+    _ => None,
+  }
+}
+
+fn folder_discriminant_low_cd(folder: &Folder) -> Option<u8> {
+  match folder {
     Folder::Starred => Some(2),
     Folder::Snoozed => Some(3),
     Folder::Sent => Some(4),
     _ => None,
   }
+}
+
+fn folder_discriminant_low(folder: &Folder) -> Option<u8> {
+  folder_discriminant_low_ab(folder).or_else(|| folder_discriminant_low_cd(folder))
 }
 
 fn folder_discriminant_high(folder: &Folder) -> u8 {
@@ -545,23 +572,42 @@ fn folder_display_label(folder: &Folder) -> &'static str {
     .unwrap_or("Label")
 }
 
-fn message_matches_folder_kind_ext(m: &MailMessage, folder: &Folder) -> bool {
+fn message_matches_folder_kind_ext_ab(m: &MailMessage, folder: &Folder) -> Option<bool> {
   match folder {
-    Folder::Sent => m.folder == "sent",
-    Folder::Snoozed => m.snoozed.is_some(),
+    Folder::Sent => Some(m.folder == "sent"),
+    Folder::Snoozed => Some(m.snoozed.is_some()),
+    _ => None,
+  }
+}
+
+fn message_matches_folder_kind_ext(m: &MailMessage, folder: &Folder) -> bool {
+  if let Some(r) = message_matches_folder_kind_ext_ab(m, folder) {
+    return r;
+  }
+  match folder {
     Folder::Starred => m.starred,
     Folder::Trash => m.folder == "trash",
     _ => false,
   }
 }
 
+fn is_inbox_visible(m: &MailMessage) -> bool {
+  m.folder == "inbox" && m.snoozed.is_none()
+}
+
+fn message_matches_folder_str(m: &MailMessage, folder: &Folder) -> Option<bool> {
+  match folder {
+    Folder::Archive => Some(m.folder == "archive"),
+    Folder::Drafts => Some(m.folder == "drafts"),
+    _ => None,
+  }
+}
+
 fn message_matches_folder_kind(m: &MailMessage, folder: &Folder) -> bool {
   match folder {
-    Folder::All | Folder::Inbox => m.folder == "inbox" && m.snoozed.is_none(),
-    Folder::Archive => m.folder == "archive",
-    Folder::Drafts => m.folder == "drafts",
+    Folder::All | Folder::Inbox => is_inbox_visible(m),
     Folder::Label(l) => m.labels.contains(l),
-    _ => message_matches_folder_kind_ext(m, folder),
+    _ => message_matches_folder_str(m, folder).unwrap_or_else(|| message_matches_folder_kind_ext(m, folder)),
   }
 }
 

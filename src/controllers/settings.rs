@@ -135,21 +135,59 @@ fn toggle_feature(features: &mut features_tab::State, feature: &features_tab::Fe
 
 fn toggle_feature_tracking(features: &mut features_tab::State, feature: &features_tab::Feature) -> bool {
   match feature {
-    features_tab::Feature::AssetTracking => features.asset_tracking = !features.asset_tracking,
-    features_tab::Feature::CloneMonitoring => features.clone_monitoring = !features.clone_monitoring,
-    features_tab::Feature::CombatLog => features.combat_log = !features.combat_log,
-    features_tab::Feature::LocationTracking => features.location_tracking = !features.location_tracking,
-    features_tab::Feature::SkillMonitoring => features.skill_monitoring = !features.skill_monitoring,
+    features_tab::Feature::AssetTracking | features_tab::Feature::CloneMonitoring => {
+      toggle_tracking_movement(features, feature);
+    }
+    features_tab::Feature::CombatLog
+    | features_tab::Feature::LocationTracking
+    | features_tab::Feature::SkillMonitoring => {
+      toggle_tracking_activity(features, feature);
+    }
     _ => return false,
   }
   true
 }
 
+fn toggle_tracking_movement(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  match feature {
+    features_tab::Feature::AssetTracking => features.asset_tracking = !features.asset_tracking,
+    features_tab::Feature::CloneMonitoring => features.clone_monitoring = !features.clone_monitoring,
+    _ => {}
+  }
+}
+
+fn toggle_tracking_activity(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  match feature {
+    features_tab::Feature::CombatLog => features.combat_log = !features.combat_log,
+    features_tab::Feature::LocationTracking => features.location_tracking = !features.location_tracking,
+    features_tab::Feature::SkillMonitoring => features.skill_monitoring = !features.skill_monitoring,
+    _ => {}
+  }
+}
+
 fn toggle_feature_social(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  match feature {
+    features_tab::Feature::Contacts | features_tab::Feature::EveNotifications | features_tab::Feature::Mail => {
+      toggle_social_communications(features, feature);
+    }
+    features_tab::Feature::Standings | features_tab::Feature::Wallet => {
+      toggle_social_economy(features, feature);
+    }
+    _ => {}
+  }
+}
+
+fn toggle_social_communications(features: &mut features_tab::State, feature: &features_tab::Feature) {
   match feature {
     features_tab::Feature::Contacts => features.contacts = !features.contacts,
     features_tab::Feature::EveNotifications => features.eve_notifications = !features.eve_notifications,
     features_tab::Feature::Mail => features.mail = !features.mail,
+    _ => {}
+  }
+}
+
+fn toggle_social_economy(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  match feature {
     features_tab::Feature::Standings => features.standings = !features.standings,
     features_tab::Feature::Wallet => features.wallet = !features.wallet,
     _ => {}
@@ -162,21 +200,33 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
     | tags_tab::Message::ColorOpen(_)
     | tags_tab::Message::ColorSet(_)
     | tags_tab::Message::SetColor(_, _) => update_tags_color(state, msg, services),
-    tags_tab::Message::Create | tags_tab::Message::Created(_) => update_tags_create(state, msg, services),
-    tags_tab::Message::Delete(_) | tags_tab::Message::Deleted(_) => update_tags_delete(state, msg, services),
+    tags_tab::Message::Create
+    | tags_tab::Message::Created(_)
+    | tags_tab::Message::Delete(_)
+    | tags_tab::Message::Deleted(_) => update_tags_crud(state, msg, services),
     tags_tab::Message::DragEnd
     | tags_tab::Message::DragStart(_)
     | tags_tab::Message::Drop
     | tags_tab::Message::SlotEntered(_) => update_tags_drag(state, msg, services),
+    _ => update_tags_interaction(state, msg, services),
+  }
+}
+
+fn update_tags_crud(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    tags_tab::Message::Create | tags_tab::Message::Created(_) => update_tags_create(state, msg, services),
+    tags_tab::Message::Delete(_) | tags_tab::Message::Deleted(_) => update_tags_delete(state, msg, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_tags_interaction(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::DraftChanged(_)
     | tags_tab::Message::EditStart(_)
     | tags_tab::Message::Rename
     | tags_tab::Message::Renamed(_) => update_tags_edit(state, msg, services),
-    tags_tab::Message::Loaded(_)
-    | tags_tab::Message::NewNameChanged(_)
-    | tags_tab::Message::Reordered(_)
-    | tags_tab::Message::SearchChanged(_)
-    | tags_tab::Message::SortModeChanged(_) => update_tags_misc(state, msg),
+    _ => update_tags_misc(state, msg),
   }
 }
 
@@ -305,27 +355,31 @@ fn update_tags_delete(state: &mut State, msg: tags_tab::Message, services: &Serv
 }
 
 fn update_tags_drag(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  apply_drag_state(state, &msg);
+  match msg {
+    tags_tab::Message::Drop => apply_tag_drop(state, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn apply_drag_state(state: &mut State, msg: &tags_tab::Message) {
   match msg {
     tags_tab::Message::DragEnd => {
       state.tags.dragging = None;
       state.tags.drag_over = None;
-      iced::Task::none()
     }
     tags_tab::Message::DragStart(id) => {
-      state.tags.dragging = Some(id);
+      state.tags.dragging = Some(*id);
       state.tags.drag_over = None;
       state.tags.color_open = None;
       state.tags.editing = None;
-      iced::Task::none()
     }
-    tags_tab::Message::Drop => apply_tag_drop(state, services),
     tags_tab::Message::SlotEntered(id) => {
       if state.tags.dragging.is_some() {
-        state.tags.drag_over = Some(id);
+        state.tags.drag_over = Some(*id);
       }
-      iced::Task::none()
     }
-    _ => iced::Task::none(),
+    _ => {}
   }
 }
 

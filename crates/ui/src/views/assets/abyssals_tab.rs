@@ -615,6 +615,28 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     .into()
 }
 
+/// Returns true when an item passes all active filter conditions.
+fn item_passes_filter(
+  item: &AbyssalViewModel,
+  char_name: &str,
+  query: &str,
+  selected_type_id: Option<i32>,
+  only_positive: bool,
+) -> bool {
+  let passes_query = item_matches_query(query, item, char_name);
+  let passes_type = selected_type_id.is_none_or(|tid| item.type_id == tid);
+  let passes_score = !only_positive || roll_score(item) >= 0.0;
+  passes_query && passes_type && passes_score
+}
+
+/// Computes the mean roll score across a slice of items, returning 0.0 when empty.
+fn avg_roll_score(items: &[&AbyssalViewModel]) -> f64 {
+  if items.is_empty() {
+    return 0.0;
+  }
+  items.iter().map(|i| roll_score(i)).sum::<f64>() / items.len() as f64
+}
+
 fn filter_bar_stats(state: &State) -> (usize, f64, f64) {
   let abyssals_state = &state.abyssals;
   let visible: Vec<&AbyssalViewModel> = state
@@ -628,20 +650,18 @@ fn filter_bar_stats(state: &State) -> (usize, f64, f64) {
         .find(|c| *c.id() == item.character_id)
         .map(|c| c.name().as_str())
         .unwrap_or("");
-      let passes_query = item_matches_query(&abyssals_state.search_query, item, char_name);
-      let passes_type = abyssals_state.selected_type_id.is_none_or(|tid| item.type_id == tid);
-      let passes_score = !abyssals_state.only_positive || roll_score(item) >= 0.0;
-      passes_query && passes_type && passes_score
+      item_passes_filter(
+        item,
+        char_name,
+        &abyssals_state.search_query,
+        abyssals_state.selected_type_id,
+        abyssals_state.only_positive,
+      )
     })
     .collect();
   let total_count = visible.len();
   let total_value: f64 = visible.iter().filter_map(|i| i.muta_price_isk).sum();
-  let avg_score = if visible.is_empty() {
-    0.0
-  } else {
-    visible.iter().map(|i| roll_score(i)).sum::<f64>() / visible.len() as f64
-  };
-  (total_count, total_value, avg_score)
+  (total_count, total_value, avg_roll_score(&visible))
 }
 
 fn filter_search_box(query: &str) -> Element<'_, Message> {
@@ -834,6 +854,35 @@ fn summary_stat(label: &str, value: &str) -> Element<'static, Message> {
   .into()
 }
 
+/// Renders the "no results" placeholder for the card grid.
+fn empty_abyssals_element() -> Element<'static, Message> {
+  container(
+    text("No abyssal modules found.")
+      .font(body::REGULAR)
+      .size(13.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .center(Length::Fill)
+  .into()
+}
+
+/// Wraps a single abyssal card in a bottom-padded full-width container.
+fn padded_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, query: &'a str) -> Element<'a, Message> {
+  container(abyssal_card(item, char_name, query))
+    .padding(Padding {
+      top: 0.0,
+      bottom: 16.0,
+      left: 0.0,
+      right: 0.0,
+    })
+    .width(Length::Fill)
+    .into()
+}
+
 /// Renders the card grid body.
 fn card_grid<'a>(state: &'a State, search_query: &'a str, only_positive: bool) -> Element<'a, Message> {
   let char_name_map: std::collections::HashMap<i64, &str> =
@@ -845,41 +894,25 @@ fn card_grid<'a>(state: &'a State, search_query: &'a str, only_positive: bool) -
     .iter()
     .filter(|item| {
       let char_name = char_name_map.get(&item.character_id).copied().unwrap_or("");
-      let passes_query = item_matches_query(search_query, item, char_name);
-      let passes_type = state.abyssals.selected_type_id.is_none_or(|tid| item.type_id == tid);
-      let passes_score = !only_positive || roll_score(item) >= 0.0;
-      passes_query && passes_type && passes_score
+      item_passes_filter(
+        item,
+        char_name,
+        search_query,
+        state.abyssals.selected_type_id,
+        only_positive,
+      )
     })
     .collect();
 
   if items.is_empty() {
-    return container(
-      text("No abyssal modules found.")
-        .font(body::REGULAR)
-        .size(13.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center(Length::Fill)
-    .into();
+    return empty_abyssals_element();
   }
 
   let cards: Vec<Element<'_, Message>> = items
     .iter()
     .map(|item| {
       let char_name = char_name_map.get(&item.character_id).copied().unwrap_or("");
-      container(abyssal_card(item, char_name, search_query))
-        .padding(Padding {
-          top: 0.0,
-          bottom: 16.0,
-          left: 0.0,
-          right: 0.0,
-        })
-        .width(Length::Fill)
-        .into()
+      padded_card(item, char_name, search_query)
     })
     .collect();
 

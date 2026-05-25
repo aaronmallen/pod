@@ -339,8 +339,8 @@ fn render_tag_row<'a>(
     .padding(Padding {
       top: 10.0,
       bottom: 10.0,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
+      left: 4.0,
+      right: 4.0,
     }),
   )
   .width(Length::Fill)
@@ -521,10 +521,10 @@ fn tag_list_body(state: &State) -> Element<'_, Message> {
   }
 
   scrollable(column(items).width(Length::Fill).padding(Padding {
-    top: 0.0,
+    top: 8.0,
     bottom: 60.0,
-    left: 0.0,
-    right: 0.0,
+    left: 36.0,
+    right: 36.0,
   }))
   .width(Length::Fill)
   .height(Length::Fill)

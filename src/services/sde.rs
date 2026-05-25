@@ -298,16 +298,24 @@ async fn find_sde_root(extract_dir: &Path) -> PathBuf {
   extract_dir.to_owned()
 }
 
-async fn read_sde_build_version(root: &Path) -> Option<String> {
-  let data = tokio::fs::read_to_string(root.join("_sde.yaml")).await.ok()?;
-  let map: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&data).ok()?;
+fn extract_build_number(build: &serde_yaml::Value) -> Option<String> {
+  match build {
+    serde_yaml::Value::String(s) => Some(s.clone()),
+    serde_yaml::Value::Number(n) => Some(n.to_string()),
+    other => serde_yaml::to_string(other).ok().map(|s| s.trim().to_string()),
+  }
+}
+
+fn parse_sde_build_from_yaml(data: &str) -> Option<String> {
+  let map: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(data).ok()?;
   let sde = map.get("sde")?.as_mapping()?;
   let build = sde.get("buildNumber")?;
-  Some(match build {
-    serde_yaml::Value::String(s) => s.clone(),
-    serde_yaml::Value::Number(n) => n.to_string(),
-    other => serde_yaml::to_string(other).ok()?.trim().to_string(),
-  })
+  extract_build_number(build)
+}
+
+async fn read_sde_build_version(root: &Path) -> Option<String> {
+  let data = tokio::fs::read_to_string(root.join("_sde.yaml")).await.ok()?;
+  parse_sde_build_from_yaml(&data)
 }
 
 fn composite_version(sde_build: &str) -> String {

@@ -815,6 +815,18 @@ fn recompute_derived(state: &mut State) {
   recompute_series(state);
 }
 
+fn contract_matches_filter(c: &ContractEntry, who: Option<i64>, q: &str) -> bool {
+  if let Some(id) = who
+    && c.who != id
+  {
+    return false;
+  }
+  if !q.is_empty() && !c.title.to_lowercase().contains(q) {
+    return false;
+  }
+  true
+}
+
 fn recompute_filters(state: &mut State) {
   let who = state.selected_character();
   let q = state.search_query.to_lowercase();
@@ -844,17 +856,7 @@ fn recompute_filters(state: &mut State) {
   state.filtered_contracts = state
     .contracts
     .iter()
-    .filter(|c| {
-      if let Some(id) = who
-        && c.who != id
-      {
-        return false;
-      }
-      if !q.is_empty() && !c.title.to_lowercase().contains(&q) {
-        return false;
-      }
-      true
-    })
+    .filter(|c| contract_matches_filter(c, who, &q))
     .cloned()
     .collect();
   update_journal_totals(state);

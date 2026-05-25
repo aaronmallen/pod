@@ -803,22 +803,25 @@ fn strip_html(html: &str) -> Vec<String> {
     .collect()
 }
 
-async fn supplement_name_map(
+fn collect_missing_sender_ids(
   rows: &[MailHeader],
-  name_map: &mut std::collections::HashMap<i64, String>,
+  name_map: &std::collections::HashMap<i64, String>,
   character_id: i64,
-  esi: &pod_esi::Client,
-) -> Result<(), String> {
-  let extra_ids: Vec<i64> = rows
+) -> Vec<i64> {
+  rows
     .iter()
     .filter_map(|r| r.from_id)
     .filter(|id| *id != character_id && !name_map.contains_key(id))
     .collect::<std::collections::HashSet<_>>()
     .into_iter()
-    .collect();
-  if extra_ids.is_empty() {
-    return Ok(());
-  }
+    .collect()
+}
+
+async fn resolve_missing_names(
+  extra_ids: Vec<i64>,
+  name_map: &mut std::collections::HashMap<i64, String>,
+  esi: &pod_esi::Client,
+) -> Result<Vec<i64>, String> {
   let ns = esi
     .universe()
     .names(&extra_ids)
@@ -827,7 +830,20 @@ async fn supplement_name_map(
   for n in ns {
     name_map.insert(n.id, n.name);
   }
-  let still_missing: Vec<i64> = extra_ids.into_iter().filter(|id| !name_map.contains_key(id)).collect();
+  Ok(extra_ids.into_iter().filter(|id| !name_map.contains_key(id)).collect())
+}
+
+async fn supplement_name_map(
+  rows: &[MailHeader],
+  name_map: &mut std::collections::HashMap<i64, String>,
+  character_id: i64,
+  esi: &pod_esi::Client,
+) -> Result<(), String> {
+  let extra_ids = collect_missing_sender_ids(rows, name_map, character_id);
+  if extra_ids.is_empty() {
+    return Ok(());
+  }
+  let still_missing = resolve_missing_names(extra_ids, name_map, esi).await?;
   if still_missing.is_empty() {
     Ok(())
   } else {

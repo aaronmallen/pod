@@ -988,6 +988,13 @@ fn notification_category_label_b(cat: &pod_model::NotificationCategory) -> &'sta
     NotificationCategory::Market => "market",
     NotificationCategory::Mission => "mission",
     NotificationCategory::Reward => "reward",
+    cat => notification_category_label_b_ext(cat),
+  }
+}
+
+fn notification_category_label_b_ext(cat: &pod_model::NotificationCategory) -> &'static str {
+  use pod_model::NotificationCategory;
+  match cat {
     NotificationCategory::Standing => "standing",
     NotificationCategory::Structure => "structure",
     NotificationCategory::System => "system",

@@ -1105,6 +1105,39 @@ pub async fn reauthorize_character(
   add_character(esi, oauth_callback_tx, verifier, oauth_state, db).await
 }
 
+async fn fetch_corp_esi_data(
+  esi: &pod_esi::Client,
+  auth_character_id: i64,
+) -> Result<
+  (
+    i64,
+    pod_esi::models::corporation::CorporationDetail,
+    Option<Vec<u8>>,
+    Option<String>,
+    Option<String>,
+  ),
+  String,
+> {
+  let char_detail = esi
+    .character_public(auth_character_id)
+    .detail()
+    .await
+    .map_err(|e| e.to_string())?;
+  let corp_id = char_detail.corporation_id;
+  let detail = esi.corporation(corp_id).detail().await.map_err(|e| e.to_string())?;
+  let icon_data = esi.images().corporation_logo(corp_id, 128).await.ok();
+  let alliance_name = resolve_alliance_name(detail.alliance_id, esi).await;
+  let hq_name = resolve_hq_name(detail.home_station_id, esi).await;
+  Ok((corp_id, detail, icon_data, alliance_name, hq_name))
+}
+
+async fn persist_corporation_if_db(corp: &Corporation, db: Option<pod_db::Repo>) -> Result<(), String> {
+  if let Some(db) = db {
+    db.corporations().upsert(corp).await.map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 async fn add_corporation(
   esi: pod_esi::Client,
   oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
@@ -1113,7 +1146,6 @@ async fn add_corporation(
   db: Option<pod_db::Repo>,
 ) -> Result<Corporation, String> {
   let grant = exchange_oauth_grant(&esi, oauth_callback_tx, verifier, oauth_state).await?;
-
   let auth_character_id = *grant.character_id();
   let access_token = grant.access_token().clone();
   let expires_at = grant
@@ -1123,18 +1155,7 @@ async fn add_corporation(
     .unwrap_or(0);
   let refresh_token = grant.refresh_token().clone();
   let scopes = grant.scopes().clone();
-
-  let char_detail = esi
-    .character_public(auth_character_id)
-    .detail()
-    .await
-    .map_err(|e| e.to_string())?;
-  let corp_id = char_detail.corporation_id;
-  let detail = esi.corporation(corp_id).detail().await.map_err(|e| e.to_string())?;
-  let icon_data = esi.images().corporation_logo(corp_id, 128).await.ok();
-  let alliance_name = resolve_alliance_name(detail.alliance_id, &esi).await;
-  let hq_name = resolve_hq_name(detail.home_station_id, &esi).await;
-
+  let (corp_id, detail, icon_data, alliance_name, hq_name) = fetch_corp_esi_data(&esi, auth_character_id).await?;
   let corp = build_corporation(
     corp_id,
     detail,
@@ -1147,10 +1168,7 @@ async fn add_corporation(
     hq_name,
     icon_data,
   );
-
-  if let Some(db) = db {
-    db.corporations().upsert(&corp).await.map_err(|e| e.to_string())?;
-  }
+  persist_corporation_if_db(&corp, db).await?;
   tracing::info!("auth: corporation added — {} ({})", corp.name(), corp.id());
   Ok(corp)
 }
@@ -1499,6 +1517,16 @@ fn handle_corporation_event(
     corporations_tab::Message::CorpPublicRefreshed(updated) => handle_corp_public_refreshed(state, updated),
     corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
     corporations_tab::Message::CorporationAdded(corp) => handle_corporation_added(state, corp),
+    msg => handle_corporation_event_ext(state, msg, services),
+  }
+}
+
+fn handle_corporation_event_ext(
+  state: &mut State,
+  msg: corporations_tab::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     corporations_tab::Message::CorporationRemoved(id) => handle_corporation_removed(state, id),
     corporations_tab::Message::CorporationTagsLoaded(id, tags) => handle_corporation_tags_loaded(state, id, tags),
     corporations_tab::Message::HqNamesLoaded(resolved) => handle_hq_names_loaded(state, resolved),

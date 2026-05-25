@@ -257,21 +257,30 @@ impl State {
 
   pub fn total_liquid(&self) -> f64 {
     if self.is_corp_selected() {
-      return self
-        .corp_divisions
-        .iter()
-        .find(|(d, _)| *d == self.active_division)
-        .map_or(0.0, |(_, bal)| *bal);
+      return corp_division_balance(&self.corp_divisions, self.active_division);
     }
     match self.selected_character() {
-      None => {
-        let char_total: f64 = self.characters.iter().map(|c| c.liquid).sum();
-        let corp_total: f64 = self.all_corp_balances.iter().map(|(_, bal)| bal).sum();
-        char_total + corp_total
-      }
-      Some(id) => self.characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.liquid),
+      None => all_characters_liquid(&self.characters, &self.all_corp_balances),
+      Some(id) => character_liquid(&self.characters, id),
     }
   }
+}
+
+fn corp_division_balance(divisions: &[(u8, f64)], active: u8) -> f64 {
+  divisions
+    .iter()
+    .find(|(d, _)| *d == active)
+    .map_or(0.0, |(_, bal)| *bal)
+}
+
+fn all_characters_liquid(characters: &[WalletCharacter], corp_balances: &[(i64, f64)]) -> f64 {
+  let char_total: f64 = characters.iter().map(|c| c.liquid).sum();
+  let corp_total: f64 = corp_balances.iter().map(|(_, bal)| bal).sum();
+  char_total + corp_total
+}
+
+fn character_liquid(characters: &[WalletCharacter], id: i64) -> f64 {
+  characters.iter().find(|c| c.id == id).map_or(0.0, |c| c.liquid)
 }
 
 /// View title for the wallet section.

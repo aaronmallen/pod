@@ -13,7 +13,10 @@ pub use tag_color_swatch::TagColorSwatch;
 pub use tag_empty_state::Component as TagEmptyState;
 pub use tag_list_row::TagListRow;
 
-use crate::style::{color, spacing};
+use crate::{
+  components::color_picker,
+  style::{color, spacing},
+};
 
 /// Builder for the tags settings panel.
 pub struct Component<'a> {
@@ -61,6 +64,10 @@ pub enum Message {
   Drop,
   /// Inline editing of a tag name was initiated.
   EditStart(i32),
+  /// The hex input field in the color picker changed.
+  HexChanged(String),
+  /// The user pressed Enter in the hex input field.
+  HexSubmit,
   /// The full tag list was loaded from the database.
   Loaded(Vec<(i32, String, Option<String>)>),
   /// The new-tag name input changed.
@@ -94,6 +101,8 @@ pub struct State {
   pub dragging: Option<i32>,
   /// Id of the tag currently being renamed inline, if any.
   pub editing: Option<i32>,
+  /// Local state for the hex input field in the color picker popover.
+  pub hex_picker: color_picker::State,
   /// Text in the "Create a tag" input.
   pub new_name: String,
   /// Filter query for the tag list.
@@ -238,13 +247,19 @@ fn build_tag_row_elements<'a>(
   is_dragging_this: bool,
 ) -> Vec<Element<'a, Message>> {
   let is_drop_above = is_active_drag && !is_dragging_this && state.drag_over == Some(id);
+  let color_open = state.color_open == Some(id);
   let mut row_builder = TagListRow::new(id, name)
+    .color_open(color_open)
+    .draft(&state.draft)
     .draggable(draggable)
     .editing(state.editing == Some(id))
-    .draft(&state.draft)
-    .color_open(state.color_open == Some(id))
     .is_dragging(is_dragging_this)
     .is_drop_above(is_drop_above);
+  if color_open {
+    row_builder = row_builder
+      .hex_draft(&state.hex_picker.hex_draft)
+      .hex_error(state.hex_picker.hex_error);
+  }
   if let Some(hex) = color_hex.as_deref() {
     row_builder = row_builder.color_hex(hex);
   }

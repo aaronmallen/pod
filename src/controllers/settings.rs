@@ -1,6 +1,9 @@
 //! Settings controller: manages feature flag state and config persistence.
 
-use pod_ui::views::settings::{Category, Message, State, features_tab, tags_tab};
+use pod_ui::{
+  components::color_picker::normalize_hex,
+  views::settings::{Category, Message, State, features_tab, tags_tab},
+};
 
 use crate::services::Services;
 
@@ -208,6 +211,7 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
     | tags_tab::Message::DragStart(_)
     | tags_tab::Message::Drop
     | tags_tab::Message::SlotEntered(_) => update_tags_drag(state, msg, services),
+    tags_tab::Message::HexChanged(_) | tags_tab::Message::HexSubmit => update_tags_hex(state, msg, services),
     _ => update_tags_interaction(state, msg, services),
   }
 }
@@ -216,6 +220,32 @@ fn update_tags_crud(state: &mut State, msg: tags_tab::Message, services: &Servic
   match msg {
     tags_tab::Message::Create | tags_tab::Message::Created(_) => update_tags_create(state, msg, services),
     tags_tab::Message::Delete(_) | tags_tab::Message::Deleted(_) => update_tags_delete(state, msg, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_tags_hex(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    tags_tab::Message::HexChanged(s) => {
+      state.tags.hex_picker.hex_draft = s;
+      state.tags.hex_picker.hex_error = false;
+      iced::Task::none()
+    }
+    tags_tab::Message::HexSubmit => {
+      let Some(id) = state.tags.color_open else {
+        return iced::Task::none();
+      };
+      match normalize_hex(&state.tags.hex_picker.hex_draft) {
+        Some(hex) => {
+          state.tags.hex_picker.set_from_selection(&hex);
+          dispatch_set_color(id, Some(hex), services)
+        }
+        None => {
+          state.tags.hex_picker.hex_error = true;
+          iced::Task::none()
+        }
+      }
+    }
     _ => iced::Task::none(),
   }
 }
@@ -262,6 +292,14 @@ fn update_tags_color_state(state: &mut State, msg: tags_tab::Message) -> iced::T
   match msg {
     tags_tab::Message::ColorClose => state.tags.color_open = None,
     tags_tab::Message::ColorOpen(id) => {
+      let current_color = state
+        .tags
+        .tags
+        .iter()
+        .find(|(tid, _, _)| *tid == id)
+        .and_then(|(_, _, c)| c.as_deref())
+        .unwrap_or("");
+      state.tags.hex_picker.open(current_color);
       state.tags.color_open = Some(id);
       state.tags.editing = None;
     }
@@ -276,7 +314,13 @@ fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Servi
       apply_color_set(state, result);
       iced::Task::none()
     }
-    tags_tab::Message::SetColor(id, color) => dispatch_set_color(id, color, services),
+    tags_tab::Message::SetColor(id, color) => {
+      match &color {
+        Some(hex) => state.tags.hex_picker.set_from_selection(hex),
+        None => state.tags.hex_picker.clear(),
+      }
+      dispatch_set_color(id, color, services)
+    }
     msg => update_tags_color_state(state, msg),
   }
 }

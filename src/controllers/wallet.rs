@@ -883,7 +883,7 @@ fn contract_matches_filter(c: &ContractEntry, who: Option<i64>, q: &str) -> bool
   true
 }
 
-fn select_journal_source<'a>(state: &'a State, corp_selected: bool) -> &'a Vec<JournalEntry> {
+fn select_journal_source(state: &State, corp_selected: bool) -> &Vec<JournalEntry> {
   if corp_selected {
     &state.corp_journal
   } else {
@@ -891,7 +891,7 @@ fn select_journal_source<'a>(state: &'a State, corp_selected: bool) -> &'a Vec<J
   }
 }
 
-fn select_market_source<'a>(state: &'a State, corp_selected: bool) -> &'a Vec<MarketEntry> {
+fn select_market_source(state: &State, corp_selected: bool) -> &Vec<MarketEntry> {
   if corp_selected {
     &state.corp_market
   } else {

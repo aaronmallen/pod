@@ -28,6 +28,10 @@ pub struct TagListRow<'a> {
   pub draggable: bool,
   /// Whether this tag row is in inline-rename mode.
   pub editing: bool,
+  /// Draft text in the hex input field of the color picker popover.
+  pub hex_draft: &'a str,
+  /// Whether the hex input should render with an error border.
+  pub hex_error: bool,
   /// The database ID of the tag.
   pub id: i32,
   /// Whether this tag is the one currently being dragged.
@@ -47,6 +51,8 @@ impl<'a> TagListRow<'a> {
       draft: "",
       draggable: false,
       editing: false,
+      hex_draft: "",
+      hex_error: false,
       id,
       is_dragging: false,
       is_drop_above: false,
@@ -84,6 +90,18 @@ impl<'a> TagListRow<'a> {
     self
   }
 
+  /// Set the draft text shown in the hex input field of the color picker.
+  pub fn hex_draft(mut self, draft: &'a str) -> Self {
+    self.hex_draft = draft;
+    self
+  }
+
+  /// Set whether the hex input should render with an error border.
+  pub fn hex_error(mut self, error: bool) -> Self {
+    self.hex_error = error;
+    self
+  }
+
   /// Set whether this tag is the one currently being dragged.
   pub fn is_dragging(mut self, dragging: bool) -> Self {
     self.is_dragging = dragging;
@@ -104,7 +122,7 @@ impl<'a> TagListRow<'a> {
     let id = self.id;
 
     let drag_handle_el = build_drag_handle_el(id, self.draggable);
-    let color_picker = build_color_picker(id, self.color_hex, self.color_open);
+    let color_picker = build_color_picker(id, self.color_hex, self.color_open, self.hex_draft, self.hex_error);
     let name_el = build_name_el(id, self.name, self.draft, self.editing);
     let preview = tag_preview_chip(self.name, self.color_hex);
     let delete_btn = build_delete_button(id);
@@ -137,13 +155,19 @@ fn build_drag_handle_el(id: i32, draggable: bool) -> Element<'static, Message> {
   }
 }
 
-fn build_color_picker(id: i32, color_hex: Option<&str>, color_open: bool) -> Element<'_, Message> {
+fn build_color_picker<'a>(
+  id: i32,
+  color_hex: Option<&'a str>,
+  color_open: bool,
+  hex_draft: &'a str,
+  hex_error: bool,
+) -> Element<'a, Message> {
   let on_toggle = if color_open {
     Message::ColorClose
   } else {
     Message::ColorOpen(id)
   };
-  ColorPicker::new(
+  let mut picker = ColorPicker::new(
     color_hex.unwrap_or(""),
     color_open,
     move |hex: String| {
@@ -154,8 +178,15 @@ fn build_color_picker(id: i32, color_hex: Option<&str>, color_open: bool) -> Ele
       }
     },
     on_toggle,
-  )
-  .render()
+  );
+  if color_open {
+    picker = picker
+      .hex_draft(hex_draft)
+      .hex_error(hex_error)
+      .on_hex_changed(|s| Message::HexChanged(s))
+      .on_hex_submit(Message::HexSubmit);
+  }
+  picker.render()
 }
 
 fn build_name_el<'a>(id: i32, name: &'a str, draft: &'a str, editing: bool) -> Element<'a, Message> {

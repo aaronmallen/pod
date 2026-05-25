@@ -89,47 +89,52 @@ fn tokenize(input: &str) -> Vec<String> {
   tokens
 }
 
-pub fn parse(input: &str) -> ParsedQuery {
-  let raw_tokens = tokenize(input.trim());
-  let mut tokens = Vec::new();
+fn parse_key_value(negated: bool, key_part: &str, value_part: &str) -> Option<FilterToken> {
+  if !is_recognized_key(key_part) {
+    return None;
+  }
+  let key = normalize_key(key_part);
+  let values: Vec<String> = value_part
+    .split(',')
+    .filter(|v| !v.is_empty())
+    .map(|v| v.to_lowercase())
+    .collect();
+  if values.is_empty() {
+    return None;
+  }
+  Some(FilterToken::KeyValue {
+    key,
+    negated,
+    values,
+  })
+}
 
-  for raw in raw_tokens {
-    let (negated, rest) = if let Some(stripped) = raw.strip_prefix('-') {
-      (true, stripped)
-    } else {
-      (false, raw.as_str())
-    };
+fn free_text(negated: bool, rest: &str) -> FilterToken {
+  if negated {
+    FilterToken::FreeText(format!("-{rest}"))
+  } else {
+    FilterToken::FreeText(rest.to_string())
+  }
+}
 
-    if let Some(colon_pos) = rest.find(':') {
-      let key_part = &rest[..colon_pos];
-      let value_part = &rest[colon_pos + 1..];
-
-      if is_recognized_key(key_part) {
-        let key = normalize_key(key_part);
-        let values: Vec<String> = value_part
-          .split(',')
-          .filter(|v| !v.is_empty())
-          .map(|v| v.to_lowercase())
-          .collect();
-
-        if !values.is_empty() {
-          tokens.push(FilterToken::KeyValue {
-            key,
-            negated,
-            values,
-          });
-          continue;
-        }
-      }
-    }
-
-    if negated {
-      tokens.push(FilterToken::FreeText(format!("-{rest}")));
-    } else {
-      tokens.push(FilterToken::FreeText(rest.to_string()));
+fn parse_raw_token(raw: &str) -> FilterToken {
+  let (negated, rest) = match raw.strip_prefix('-') {
+    Some(stripped) => (true, stripped),
+    None => (false, raw),
+  };
+  if let Some(colon_pos) = rest.find(':') {
+    if let Some(token) = parse_key_value(negated, &rest[..colon_pos], &rest[colon_pos + 1..]) {
+      return token;
     }
   }
+  free_text(negated, rest)
+}
 
+pub fn parse(input: &str) -> ParsedQuery {
+  let tokens = tokenize(input.trim())
+    .into_iter()
+    .map(|raw| parse_raw_token(&raw))
+    .collect();
   ParsedQuery {
     tokens,
   }
@@ -161,6 +166,24 @@ impl ParsedQuery {
   }
 }
 
+fn match_free_text(needle: &str, character: &Character) -> bool {
+  let needle = needle.to_lowercase();
+  let mut parts: Vec<String> = vec![
+    character.name().to_lowercase(),
+    character.corp_name().to_lowercase(),
+    character.location_name().as_deref().unwrap_or("").to_lowercase(),
+  ];
+  if let Some(active) = character.skills().iter().find(|s| s.is_active_training)
+    && let Some(ref skill_name) = active.skill_name
+  {
+    parts.push(skill_name.to_lowercase());
+  }
+  for (_, tag_name, _) in character.tags() {
+    parts.push(tag_name.to_lowercase());
+  }
+  parts.iter().any(|part| part.contains(needle.as_str()))
+}
+
 fn match_token(token: &FilterToken, character: &Character) -> bool {
   match token {
     FilterToken::KeyValue {
@@ -171,23 +194,7 @@ fn match_token(token: &FilterToken, character: &Character) -> bool {
       let matches = match_key_value(key, values, character);
       if *negated { !matches } else { matches }
     }
-    FilterToken::FreeText(s) => {
-      let needle = s.to_lowercase();
-      let mut haystack_parts: Vec<String> = vec![
-        character.name().to_lowercase(),
-        character.corp_name().to_lowercase(),
-        character.location_name().as_deref().unwrap_or("").to_lowercase(),
-      ];
-      if let Some(active) = character.skills().iter().find(|s| s.is_active_training)
-        && let Some(ref skill_name) = active.skill_name
-      {
-        haystack_parts.push(skill_name.to_lowercase());
-      }
-      for (_, tag_name, _) in character.tags() {
-        haystack_parts.push(tag_name.to_lowercase());
-      }
-      haystack_parts.iter().any(|part| part.contains(needle.as_str()))
-    }
+    FilterToken::FreeText(s) => match_free_text(s, character),
   }
 }
 

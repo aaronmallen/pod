@@ -1,9 +1,16 @@
-use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme, gradient,
-  widget::{button, column, container, image, row, scrollable, text},
-};
+pub mod entry;
+pub mod header;
+pub mod portrait;
 
-use crate::style::{color, spacing, typography as font};
+use entry::{AllPickerEntry, CharacterPickerEntry, CorporationPickerEntry};
+use header::{CorpSectionHeader, DropdownHeader};
+use iced::{
+  Background, Border, Color, Element, Length, Padding,
+  widget::{button, column, container, row, scrollable, text},
+};
+use portrait::{portrait_swatch, selected_display, trigger_label_col};
+
+use crate::style::{color, spacing};
 
 /// A single selectable character (or "All" sentinel).
 #[derive(Clone, Debug)]
@@ -16,14 +23,14 @@ pub struct CharacterEntry {
   pub tone: u16,
   /// Pre-loaded portrait image. When `Some`, renders the actual
   /// portrait instead of initials.
-  pub portrait_handle: Option<image::Handle>,
+  pub portrait_handle: Option<iced::widget::image::Handle>,
 }
 
 /// A single selectable corporation.
 #[derive(Clone, Debug)]
 pub struct CorporationEntry {
   /// Corporation icon PNG pre-loaded as an image handle.
-  pub icon_handle: Option<image::Handle>,
+  pub icon_handle: Option<iced::widget::image::Handle>,
   /// EVE corporation ID.
   pub id: i64,
   pub name: String,
@@ -190,13 +197,10 @@ impl Component {
 
   /// Render the dropdown popover panel.
   pub fn dropdown(&self) -> Element<'_, Message> {
-    let mut rows: Vec<Element<'_, Message>> = vec![dropdown_header()];
+    let mut rows: Vec<Element<'_, Message>> = vec![DropdownHeader::new().render()];
 
     if self.show_all {
-      rows.push(picker_row_all(
-        &self.all_label,
-        matches!(self.selected, PickerSelection::All),
-      ));
+      rows.push(AllPickerEntry::new(&self.all_label, matches!(self.selected, PickerSelection::All)).render());
     }
     for entry in &self.entries {
       if entry.id.is_none() {
@@ -206,17 +210,17 @@ impl Component {
         PickerSelection::Character(id) => entry.id == Some(*id),
         _ => false,
       };
-      rows.push(picker_row(entry, is_selected));
+      rows.push(CharacterPickerEntry::new(entry, is_selected).render());
     }
 
     if !self.corp_entries.is_empty() {
-      rows.push(corp_section_header());
+      rows.push(CorpSectionHeader::new().render());
       for entry in &self.corp_entries {
         let is_selected = match &self.selected {
           PickerSelection::Corporation(id) => *id == entry.id,
           _ => false,
         };
-        rows.push(picker_row_corp(entry, is_selected));
+        rows.push(CorporationPickerEntry::new(entry, is_selected).render());
       }
     }
 
@@ -241,383 +245,4 @@ impl Default for Component {
   fn default() -> Self {
     Self::new()
   }
-}
-
-fn trigger_label_col(name: String, subtitle: String) -> Element<'static, Message> {
-  column([
-    text(name)
-      .font(font::body::MEDIUM)
-      .size(17.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    text(subtitle.to_uppercase())
-      .font(font::mono::REGULAR)
-      .size(9.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-  ])
-  .spacing(3.0)
-  .into()
-}
-
-fn display_for_all(entries: &[CharacterEntry]) -> (String, String, u16, Option<image::Handle>) {
-  let e = entries.iter().find(|e| e.id.is_none()).or_else(|| entries.first());
-  e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
-    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-}
-
-fn display_for_character(entries: &[CharacterEntry], id: i64) -> (String, String, u16, Option<image::Handle>) {
-  let e = entries.iter().find(|e| e.id == Some(id)).or_else(|| entries.first());
-  e.map(|e| (e.name.clone(), e.corp_name.clone(), e.tone, e.portrait_handle.clone()))
-    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-}
-
-fn display_for_corporation(corp_entries: &[CorporationEntry], id: i64) -> (String, String, u16, Option<image::Handle>) {
-  let e = corp_entries.iter().find(|e| e.id == id);
-  e.map(|e| (e.name.clone(), e.ticker.clone(), 220, e.icon_handle.clone()))
-    .unwrap_or_else(|| ("—".to_string(), String::new(), 220, None))
-}
-
-fn selected_display(
-  entries: &[CharacterEntry],
-  corp_entries: &[CorporationEntry],
-  selected: &PickerSelection,
-) -> (String, String, u16, Option<image::Handle>) {
-  match selected {
-    PickerSelection::All => display_for_all(entries),
-    PickerSelection::Character(id) => display_for_character(entries, *id),
-    PickerSelection::Corporation(id) => display_for_corporation(corp_entries, *id),
-  }
-}
-
-fn dropdown_header() -> Element<'static, Message> {
-  container(
-    row([
-      text("Switch character")
-        .font(font::mono::REGULAR)
-        .size(9.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      iced::widget::Space::new().width(Length::Fill).into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 10.0,
-    bottom: 10.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .width(Length::Fill)
-  .style(|_| container::Style {
-    border: Border {
-      color: color::border::SUBTLE,
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn corp_section_header() -> Element<'static, Message> {
-  container(
-    row([
-      text("Corporations")
-        .font(font::mono::REGULAR)
-        .size(9.0)
-        .style(|_| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      iced::widget::Space::new().width(Length::Fill).into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 10.0,
-    bottom: 10.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .width(Length::Fill)
-  .style(|_| container::Style {
-    border: Border {
-      color: color::border::SUBTLE,
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn picker_row(entry: &CharacterEntry, selected: bool) -> Element<'static, Message> {
-  let swatch = portrait_swatch(&entry.name, entry.tone, 30.0, 6.0, entry.portrait_handle.clone());
-
-  let label_col: Element<'static, Message> = column([
-    text(entry.name.clone())
-      .font(font::body::MEDIUM)
-      .size(14.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    text(entry.corp_name.to_uppercase())
-      .font(font::mono::REGULAR)
-      .size(10.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-  ])
-  .spacing(2.0)
-  .width(Length::Fill)
-  .into();
-
-  let inner: Element<'static, Message> = row([swatch, label_col])
-    .spacing(spacing::SPACE_3)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Length::Fill)
-    .into();
-
-  let id = entry.id.unwrap_or(0);
-  button(inner)
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: if selected { 12.0 } else { 14.0 },
-      right: 14.0,
-    })
-    .width(Length::Fill)
-    .style(picker_row_style(selected))
-    .on_press(Message::Select(PickerSelection::Character(id)))
-    .into()
-}
-
-fn picker_row_corp(entry: &CorporationEntry, selected: bool) -> Element<'static, Message> {
-  let swatch = portrait_swatch(&entry.ticker, 220, 30.0, 6.0, entry.icon_handle.clone());
-
-  let label_col: Element<'static, Message> = column([
-    text(entry.name.clone())
-      .font(font::body::MEDIUM)
-      .size(14.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    text(entry.ticker.to_uppercase())
-      .font(font::mono::REGULAR)
-      .size(10.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-  ])
-  .spacing(2.0)
-  .width(Length::Fill)
-  .into();
-
-  let inner: Element<'static, Message> = row([swatch, label_col])
-    .spacing(spacing::SPACE_3)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Length::Fill)
-    .into();
-
-  let id = entry.id;
-  button(inner)
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: if selected { 12.0 } else { 14.0 },
-      right: 14.0,
-    })
-    .width(Length::Fill)
-    .style(picker_row_style(selected))
-    .on_press(Message::Select(PickerSelection::Corporation(id)))
-    .into()
-}
-
-fn picker_row_all(label_str: &str, selected: bool) -> Element<'static, Message> {
-  let label: Element<'_, Message> = text(label_str.to_string())
-    .font(font::body::MEDIUM)
-    .size(14.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::PRIMARY),
-    })
-    .into();
-
-  let inner: Element<'_, Message> = row([all_wallets_swatch(), label])
-    .spacing(spacing::SPACE_3)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Length::Fill)
-    .into();
-
-  button(inner)
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: if selected { 12.0 } else { 14.0 },
-      right: 14.0,
-    })
-    .width(Length::Fill)
-    .style(picker_row_style(selected))
-    .on_press(Message::Select(PickerSelection::All))
-    .into()
-}
-
-fn all_wallets_swatch() -> Element<'static, Message> {
-  container(
-    text("∑")
-      .font(font::mono::REGULAR)
-      .size(16.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fixed(30.0))
-  .height(Length::Fixed(30.0))
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::state::SUBTLE_FILL)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .align_x(iced::alignment::Horizontal::Center)
-  .align_y(iced::alignment::Vertical::Center)
-  .into()
-}
-
-fn picker_row_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-  move |_, status| {
-    let bg = match (selected, status) {
-      (true, _) => Some(color::accent::PLASMA_SELECTED),
-      (false, button::Status::Hovered | button::Status::Pressed) => Some(color::state::HOVER_OVERLAY),
-      _ => None,
-    };
-    button::Style {
-      background: bg.map(Background::Color),
-      border: Border {
-        color: if selected {
-          color::accent::PLASMA
-        } else {
-          Color::TRANSPARENT
-        },
-        radius: 0.0.into(),
-        width: if selected { 2.0 } else { 0.0 },
-      },
-      text_color: color::text::PRIMARY,
-      ..button::Style::default()
-    }
-  }
-}
-
-fn portrait_image_swatch<MSG: 'static>(handle: image::Handle, size: f32, radius: f32) -> Element<'static, MSG> {
-  container(
-    image(handle)
-      .width(Length::Fixed(size))
-      .height(Length::Fixed(size))
-      .content_fit(iced::ContentFit::Cover),
-  )
-  .width(Length::Fixed(size))
-  .height(Length::Fixed(size))
-  .clip(true)
-  .style(move |_| container::Style {
-    border: Border {
-      radius: radius.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn initials_swatch<MSG: 'static>(name: &str, tone: u16, size: f32, radius: f32) -> Element<'static, MSG> {
-  let initials = name
-    .split_whitespace()
-    .filter_map(|w| w.chars().next())
-    .take(2)
-    .map(|c| c.to_uppercase().next().unwrap_or(c))
-    .collect::<String>();
-  let h = tone as f32 / 360.0;
-  let (r0, g0, b0) = hsl_to_rgb(h, 0.28, 0.28);
-  let (r1, g1, b1) = hsl_to_rgb(h, 0.18, 0.16);
-  let grad = gradient::Linear::new(std::f32::consts::PI * 0.75)
-    .add_stop(0.0, Color::from_rgb(r0, g0, b0))
-    .add_stop(1.0, Color::from_rgb(r1, g1, b1));
-  container(
-    text(initials)
-      .font(font::body::MEDIUM)
-      .size(size * 0.40)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::MEDIUM),
-      }),
-  )
-  .width(Length::Fixed(size))
-  .height(Length::Fixed(size))
-  .align_x(iced::alignment::Horizontal::Center)
-  .align_y(iced::alignment::Vertical::Center)
-  .style(move |_| container::Style {
-    background: Some(Background::Gradient(grad.into())),
-    border: Border {
-      radius: radius.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn portrait_swatch<MSG: 'static>(
-  name: &str,
-  tone: u16,
-  size: f32,
-  radius: f32,
-  portrait_handle: Option<image::Handle>,
-) -> Element<'static, MSG> {
-  if let Some(handle) = portrait_handle {
-    return portrait_image_swatch(handle, size, radius);
-  }
-  initials_swatch(name, tone, size, radius)
-}
-
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
-  if s == 0.0 {
-    return (l, l, l);
-  }
-  let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-  let p = 2.0 * l - q;
-  (
-    hue_to_channel(p, q, h + 1.0 / 3.0),
-    hue_to_channel(p, q, h),
-    hue_to_channel(p, q, h - 1.0 / 3.0),
-  )
-}
-
-fn hue_to_channel(p: f32, q: f32, mut t: f32) -> f32 {
-  if t < 0.0 {
-    t += 1.0;
-  }
-  if t > 1.0 {
-    t -= 1.0;
-  }
-  if t < 1.0 / 6.0 {
-    return p + (q - p) * 6.0 * t;
-  }
-  if t < 1.0 / 2.0 {
-    return q;
-  }
-  if t < 2.0 / 3.0 {
-    return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-  }
-  p
 }

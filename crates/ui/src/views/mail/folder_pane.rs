@@ -1,17 +1,16 @@
 //! Left sidebar: account picker + folder list.
 
 pub mod folder_row;
+pub mod group_header;
+pub mod unified_section;
 
 use iced::{
-  Background, Element, Length, Padding, Theme,
-  widget::{Space, column, container, scrollable, text},
+  Background, Element, Length,
+  widget::{Space, column, container, scrollable},
 };
 
 use super::{Folder, MailMessage, State};
-use crate::{
-  components::{self, section_label},
-  style::{color, typography::mono},
-};
+use crate::style::color;
 
 /// Messages produced by the folder pane.
 #[derive(Clone, Debug)]
@@ -19,54 +18,12 @@ pub enum Message {
   FolderSelected(Folder),
 }
 
-fn folder_unified_section<'a>(all_inboxes_btn: Element<'a, Message>, account_count: usize) -> Element<'a, Message> {
-  let mailbox_label = text(format!("{account_count} mailboxes combined"))
-    .font(mono::REGULAR)
-    .size(9.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::TERTIARY),
-    });
-  let inner = container(
-    column([
-      section_label("Unified"),
-      all_inboxes_btn,
-      Space::new().height(8.0).into(),
-      mailbox_label.into(),
-    ])
-    .spacing(0.0),
-  )
-  .padding(Padding {
-    top: 16.0,
-    bottom: 14.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .width(Length::Fill);
-  column([inner.into(), components::Separator::horizontal().render()]).into()
-}
-
-fn folder_named_section<'a>(title: &'static str, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-  container(column([
-    section_label(title),
-    Space::new().height(10.0).into(),
-    column(rows).spacing(1.0).into(),
-  ]))
-  .padding(Padding {
-    top: 20.0,
-    bottom: 8.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .width(Length::Fill)
-  .into()
-}
-
 fn folder_labels_opt_section<'a>(messages: &'a [MailMessage], selected: &'a Folder) -> Option<Element<'a, Message>> {
   let rows = folder_row::label_rows(messages, selected);
   if rows.is_empty() {
     None
   } else {
-    Some(folder_named_section("Labels", rows))
+    Some(group_header::Component::new("Labels", rows).render())
   }
 }
 
@@ -121,8 +78,8 @@ impl<'a> Component<'a> {
       .all_inboxes(total_unread)
       .render();
 
-    let unified_section = folder_unified_section(all_inboxes_btn, state.accounts.len());
-    let folders_section = folder_named_section("Folders", standard_folder_rows(state));
+    let unified_section = unified_section::Component::new(all_inboxes_btn, state.accounts.len()).render();
+    let folders_section = group_header::Component::new("Folders", standard_folder_rows(state)).render();
     let labels_section = folder_labels_opt_section(&state.messages, &state.selected_folder);
 
     let mut sidebar_children: Vec<Element<'_, Message>> = vec![unified_section, folders_section];

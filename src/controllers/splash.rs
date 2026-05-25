@@ -41,13 +41,27 @@ pub fn handle_bootstrap(
       HandleResult::Bootstrap(bootstrap::continue_after_db(db_val))
     }
     bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
-    bootstrap::Message::StepChanged(label) => {
-      *step_label = label;
-      if state.progress_target >= 0.50 {
-        state.progress_target = (state.progress_target + 0.25).min(1.0);
-      }
-      HandleResult::None
-    }
+    bootstrap::Message::StepChanged(label) => apply_step_progress(state, step_label, label),
+    msg => handle_bootstrap_ext(state, db, characters, esi_client, msg),
+  }
+}
+
+fn apply_step_progress(state: &mut State, step_label: &mut String, label: String) -> HandleResult {
+  *step_label = label;
+  if state.progress_target >= 0.50 {
+    state.progress_target = (state.progress_target + 0.25).min(1.0);
+  }
+  HandleResult::None
+}
+
+fn handle_bootstrap_ext(
+  state: &mut State,
+  db: &mut Option<pod_db::Repo>,
+  characters: &mut Vec<Character>,
+  esi_client: &mut Option<pod_esi::Client>,
+  msg: bootstrap::Message,
+) -> HandleResult {
+  match msg {
     bootstrap::Message::Complete(db_val, chars, esi) => {
       *db = Some(db_val);
       *characters = chars;
@@ -64,5 +78,6 @@ pub fn handle_bootstrap(
       tracing::error!("fatal bootstrap error: {e}");
       HandleResult::Fatal(e)
     }
+    _ => HandleResult::None,
   }
 }

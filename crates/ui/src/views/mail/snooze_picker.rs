@@ -108,14 +108,21 @@ impl Default for CalendarState {
 pub fn preset_to_iso(label: &str) -> Option<String> {
   let now = Utc::now();
   let today = now.date_naive();
-  let target = match label {
-    "Later today" => preset_later_today_target(today)?,
-    "Tomorrow" => preset_tomorrow_target(today)?,
-    "After downtime" => preset_after_downtime_target(today, &now)?,
-    "Next week" => preset_next_week_target(today)?,
-    _ => return None,
-  };
-  Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+  Some(
+    preset_target_time(label, today, &now)?
+      .format("%Y-%m-%dT%H:%M:%SZ")
+      .to_string(),
+  )
+}
+
+fn preset_target_time(label: &str, today: NaiveDate, now: &DateTime<Utc>) -> Option<DateTime<Utc>> {
+  match label {
+    "Later today" => preset_later_today_target(today),
+    "Tomorrow" => preset_tomorrow_target(today),
+    "After downtime" => preset_after_downtime_target(today, now),
+    "Next week" => preset_next_week_target(today),
+    _ => None,
+  }
 }
 
 fn preset_later_today_target(today: NaiveDate) -> Option<DateTime<Utc>> {

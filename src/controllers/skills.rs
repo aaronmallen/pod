@@ -37,30 +37,12 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
   if was_char_switch {
     apply_char_switch(state, &message);
   }
-
   match &message {
     Message::PlansTabOpened => return handle_plans_tab_opened(state, message, services),
-    Message::PlanDeleteConfirmed(_) => {
-      return handle_plan_delete_confirmed(state, message, services);
-    }
-    Message::RightPanel(right_panel::Message::PlansTab(_)) => {
-      return handle_right_panel_plans_tab(state, message);
-    }
-    Message::RightPanel(right_panel::Message::TabSelected(RightTab::Plans)) => {
-      let _ = skills::update(state, message);
-      recompute_queue(state);
-      return iced::Task::done(Message::PlansTabOpened);
-    }
+    Message::PlanDeleteConfirmed(_) => return handle_plan_delete_confirmed(state, message, services),
     _ => {}
   }
-
-  let base_task = skills::update(state, message);
-  recompute_queue(state);
-  if was_char_switch && state.right_tab == RightTab::Plans {
-    iced::Task::batch([base_task, iced::Task::done(Message::PlansTabOpened)])
-  } else {
-    base_task
-  }
+  handle_skills_other_message(state, message, services, was_char_switch)
 }
 
 /// Updates characters in the skills view and rebuilds the queue.
@@ -148,14 +130,7 @@ fn handle_plan_delete_confirmed(state: &mut State, message: Message, services: &
 
 fn handle_right_panel_plans_tab(state: &mut State, message: Message) -> iced::Task<Message> {
   let translated = if let Message::RightPanel(right_panel::Message::PlansTab(tab_msg)) = &message {
-    match tab_msg {
-      right_panel::plans_tab::Message::NewPlan => Some(Message::PlanNewRequested),
-      right_panel::plans_tab::Message::FromQueue => Some(Message::PlanFromQueueRequested),
-      right_panel::plans_tab::Message::OpenPlan(id) => Some(Message::PlanOpenRequested(id.clone())),
-      right_panel::plans_tab::Message::DeleteRequested(id) => Some(Message::PlanDeleteRequested(id.clone())),
-      right_panel::plans_tab::Message::DeleteConfirmed(id) => Some(Message::PlanDeleteConfirmed(id.clone())),
-      right_panel::plans_tab::Message::DeleteCancelled => Some(Message::PlanDeleteCancelled),
-    }
+    translate_plans_tab_msg(tab_msg)
   } else {
     None
   };
@@ -165,6 +140,52 @@ fn handle_right_panel_plans_tab(state: &mut State, message: Message) -> iced::Ta
     iced::Task::done(msg)
   } else {
     iced::Task::none()
+  }
+}
+
+fn translate_plans_tab_msg(tab_msg: &right_panel::plans_tab::Message) -> Option<Message> {
+  match tab_msg {
+    right_panel::plans_tab::Message::NewPlan => Some(Message::PlanNewRequested),
+    right_panel::plans_tab::Message::FromQueue => Some(Message::PlanFromQueueRequested),
+    right_panel::plans_tab::Message::OpenPlan(id) => Some(Message::PlanOpenRequested(id.clone())),
+    tab_msg => translate_plans_tab_msg_ext(tab_msg),
+  }
+}
+
+fn translate_plans_tab_msg_ext(tab_msg: &right_panel::plans_tab::Message) -> Option<Message> {
+  match tab_msg {
+    right_panel::plans_tab::Message::DeleteRequested(id) => Some(Message::PlanDeleteRequested(id.clone())),
+    right_panel::plans_tab::Message::DeleteConfirmed(id) => Some(Message::PlanDeleteConfirmed(id.clone())),
+    right_panel::plans_tab::Message::DeleteCancelled => Some(Message::PlanDeleteCancelled),
+    _ => None,
+  }
+}
+
+fn handle_skills_other_message(
+  state: &mut State,
+  message: Message,
+  _services: &Services,
+  was_char_switch: bool,
+) -> iced::Task<Message> {
+  match &message {
+    Message::RightPanel(right_panel::Message::PlansTab(_)) => return handle_right_panel_plans_tab(state, message),
+    Message::RightPanel(right_panel::Message::TabSelected(RightTab::Plans)) => {
+      let _ = skills::update(state, message);
+      recompute_queue(state);
+      return iced::Task::done(Message::PlansTabOpened);
+    }
+    _ => {}
+  }
+  let base_task = skills::update(state, message);
+  recompute_queue(state);
+  skills_finish_task(was_char_switch, &state.right_tab, base_task)
+}
+
+fn skills_finish_task(was_char_switch: bool, right_tab: &RightTab, base: iced::Task<Message>) -> iced::Task<Message> {
+  if was_char_switch && *right_tab == RightTab::Plans {
+    iced::Task::batch([base, iced::Task::done(Message::PlansTabOpened)])
+  } else {
+    base
   }
 }
 

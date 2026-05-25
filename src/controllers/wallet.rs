@@ -77,12 +77,14 @@ fn log_data_loaded_message(message: &Message) {
     Message::AssetValuesLoaded(v) => {
       tracing::debug!("wallet: asset values loaded for {} character(s)", v.len())
     }
-    Message::ContractsLoaded(Ok(c)) => {
-      tracing::debug!("wallet: {} contracts loaded", c.len())
-    }
-    Message::ContractsLoaded(Err(e)) => {
-      tracing::warn!("wallet: contracts load failed — {e}")
-    }
+    msg => log_data_loaded_message_ext(msg),
+  }
+}
+
+fn log_data_loaded_message_ext(message: &Message) {
+  match message {
+    Message::ContractsLoaded(Ok(c)) => tracing::debug!("wallet: {} contracts loaded", c.len()),
+    Message::ContractsLoaded(Err(e)) => tracing::warn!("wallet: contracts load failed — {e}"),
     Message::CorpDataLoaded {
       divisions,
       journal,
@@ -582,42 +584,51 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
   let mut all: Vec<MarketEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(txns) = char_client.wallet_transactions().await {
-        let db_rows: Vec<_> = txns
-          .iter()
-          .map(|t| WalletTransaction {
-            character_id: *character.id(),
-            transaction_id: t.transaction_id,
-            type_id: t.type_id,
-            quantity: t.quantity,
-            unit_price: t.unit_price,
-            is_buy: t.is_buy,
-            date: t.date.clone(),
-            location_id: t.location_id,
-            client_id: t.client_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
-      }
-    }
-    if let Ok(rows) = db.characters().transactions(*character.id()).await {
-      let type_ids: Vec<i32> = rows
-        .iter()
-        .map(|r| r.type_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-      let type_names = load_type_names(&type_ids, &db).await;
-      for row in rows {
-        all.push(map_txn_row(row, &type_names));
-      }
-    }
+    sync_char_esi_transactions(character, &esi, &db).await;
+    append_char_db_transactions(character, &db, &mut all).await;
   }
   all.sort_by_key(|e| e.ts_secs);
   all
+}
+
+async fn sync_char_esi_transactions(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    return;
+  };
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  if let Ok(txns) = char_client.wallet_transactions().await {
+    let db_rows: Vec<_> = txns
+      .iter()
+      .map(|t| WalletTransaction {
+        character_id: *character.id(),
+        transaction_id: t.transaction_id,
+        type_id: t.type_id,
+        quantity: t.quantity,
+        unit_price: t.unit_price,
+        is_buy: t.is_buy,
+        date: t.date.clone(),
+        location_id: t.location_id,
+        client_id: t.client_id,
+      })
+      .collect();
+    let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
+  }
+}
+
+async fn append_char_db_transactions(character: &Character, db: &pod_db::Repo, all: &mut Vec<MarketEntry>) {
+  if let Ok(rows) = db.characters().transactions(*character.id()).await {
+    let type_ids: Vec<i32> = rows
+      .iter()
+      .map(|r| r.type_id)
+      .collect::<HashSet<_>>()
+      .into_iter()
+      .collect();
+    let type_names = load_type_names(&type_ids, db).await;
+    for row in rows {
+      all.push(map_txn_row(row, &type_names));
+    }
+  }
 }
 
 #[tracing::instrument(skip(esi, db))]

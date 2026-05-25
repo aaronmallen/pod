@@ -446,18 +446,30 @@ fn recompute_notifications_filter(state: &mut State) {
     return;
   };
   state.unread_notification_count = notifications.iter().filter(|n| !n.is_read).count();
+  let filter = &state.notifications_filter;
   state.filtered_notifications = notifications
     .iter()
-    .filter(|n| match &state.notifications_filter {
-      NotificationsFilter::All => true,
-      NotificationsFilter::Unread => !n.is_read,
-      NotificationsFilter::Combat => n.category == "combat",
-      NotificationsFilter::Corp => n.category == "corp",
-      NotificationsFilter::Structure => n.category == "structure",
-      NotificationsFilter::War => n.category == "war",
-    })
+    .filter(|n| notification_passes_filter(n, filter))
     .cloned()
     .collect();
+}
+
+fn notification_passes_filter(n: &pod_model::CharacterNotification, filter: &NotificationsFilter) -> bool {
+  match filter {
+    NotificationsFilter::All => true,
+    NotificationsFilter::Unread => !n.is_read,
+    NotificationsFilter::Combat => n.category == "combat",
+    filter => notification_passes_filter_ext(n, filter),
+  }
+}
+
+fn notification_passes_filter_ext(n: &pod_model::CharacterNotification, filter: &NotificationsFilter) -> bool {
+  match filter {
+    NotificationsFilter::Corp => n.category == "corp",
+    NotificationsFilter::Structure => n.category == "structure",
+    NotificationsFilter::War => n.category == "war",
+    _ => false,
+  }
 }
 
 fn clones_task(character: Character, esi: pod_esi::Client, db: pod_db::Repo) -> iced::Task<Message> {

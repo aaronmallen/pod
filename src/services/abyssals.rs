@@ -159,35 +159,40 @@ async fn price_abyssals(character_id: i64, muta: &muta_market::Client, db: &pod_
       return;
     }
   };
-
   let now = now_unix();
-  let price_stale_threshold = now - 24 * 3600;
-
+  let threshold = now - 24 * 3600;
   for item in items {
-    let last_priced = item.muta_price_synced().unwrap_or(0);
-    if last_priced >= price_stale_threshold {
+    if item.muta_price_synced().unwrap_or(0) >= threshold {
       continue;
     }
+    price_one_abyssal(&item, muta, db, now).await;
+  }
+}
 
-    match muta.item_price(*item.type_id(), *item.item_id()).await {
-      Ok(Some(price)) => {
-        if let Err(e) = db
-          .abyssals()
-          .update_abyssal_price(*item.item_id(), Some(price), now)
-          .await
-        {
-          tracing::warn!("abyssals: failed to save price for item {}: {e}", item.item_id());
-        }
+async fn price_one_abyssal(
+  item: &pod_model::AbyssalItemRecord,
+  muta: &muta_market::Client,
+  db: &pod_db::Repo,
+  now: i64,
+) {
+  match muta.item_price(*item.type_id(), *item.item_id()).await {
+    Ok(Some(price)) => {
+      if let Err(e) = db
+        .abyssals()
+        .update_abyssal_price(*item.item_id(), Some(price), now)
+        .await
+      {
+        tracing::warn!("abyssals: failed to save price for item {}: {e}", item.item_id());
       }
-      Ok(None) => {
-        let _ = db.abyssals().update_abyssal_price(*item.item_id(), None, now).await;
-      }
-      Err(e) => {
-        tracing::warn!(
-          "abyssals: MutaMarket price fetch failed for item {}: {e}",
-          item.item_id()
-        );
-      }
+    }
+    Ok(None) => {
+      let _ = db.abyssals().update_abyssal_price(*item.item_id(), None, now).await;
+    }
+    Err(e) => {
+      tracing::warn!(
+        "abyssals: MutaMarket price fetch failed for item {}: {e}",
+        item.item_id()
+      );
     }
   }
 }

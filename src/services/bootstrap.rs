@@ -76,7 +76,6 @@ async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
       .await;
     return;
   }
-
   step(&mut tx, "Building ESI client\u{2026}".to_string()).await;
   let esi = match Client::builder(crate::ESI_CLIENT_ID).disk_cache(cache_path()).build() {
     Ok(c) => c,
@@ -85,27 +84,36 @@ async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
       return;
     }
   };
-
   step(&mut tx, "Loading characters\u{2026}".to_string()).await;
+  let Some(characters) = load_boot_characters(&db, &mut tx).await else {
+    return;
+  };
+  tracing::info!("boot: loaded {} characters", characters.len());
+  let _ = tx.send(Message::Complete(db, characters, Some(esi))).await;
+}
+
+async fn load_boot_characters(db: &pod_db::Repo, tx: &mut Tx) -> Option<Vec<Character>> {
   if let Err(e) = db.characters().normalize_sort_orders().await {
     let _ = tx.send(Message::Error(e.to_string())).await;
   }
-  let mut characters = match db.characters().all().await {
-    Ok(c) => c,
+  match db.characters().all().await {
+    Ok(mut chars) => {
+      enrich_characters_with_portraits(&mut chars);
+      Some(chars)
+    }
     Err(e) => {
       let _ = tx.send(Message::Error(e.to_string())).await;
-      return;
+      None
     }
-  };
+  }
+}
 
-  for character in &mut characters {
+fn enrich_characters_with_portraits(characters: &mut Vec<Character>) {
+  for character in characters.iter_mut() {
     if let Some(bytes) = crate::services::portraits::load(*character.id()) {
       *character.portrait_data_mut() = Some(bytes);
     }
   }
-
-  tracing::info!("boot: loaded {} characters", characters.len());
-  let _ = tx.send(Message::Complete(db, characters, Some(esi))).await;
 }
 
 async fn run_background_sync(db: pod_db::Repo, esi: Client, characters: Vec<Character>, mut tx: Tx) {

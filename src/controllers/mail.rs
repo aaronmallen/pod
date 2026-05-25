@@ -333,6 +333,17 @@ fn collect_name_ids(
 ) -> Vec<i64> {
   let mut seen = std::collections::HashSet::new();
   let mut ids = Vec::new();
+  collect_header_sender_ids(esi_headers, character_id, &mut seen, &mut ids);
+  collect_recipient_name_ids(recipient_map, character_id, &mut seen, &mut ids);
+  ids
+}
+
+fn collect_header_sender_ids(
+  esi_headers: &[pod_esi::models::character::MailHeader],
+  character_id: i64,
+  seen: &mut std::collections::HashSet<i64>,
+  ids: &mut Vec<i64>,
+) {
   for h in esi_headers {
     if let Some(id) = h.from
       && id != character_id
@@ -341,6 +352,14 @@ fn collect_name_ids(
       ids.push(id);
     }
   }
+}
+
+fn collect_recipient_name_ids(
+  recipient_map: &std::collections::HashMap<i64, Vec<i64>>,
+  character_id: i64,
+  seen: &mut std::collections::HashSet<i64>,
+  ids: &mut Vec<i64>,
+) {
   for recipient_ids in recipient_map.values() {
     for &id in recipient_ids {
       if id != character_id && seen.insert(id) {
@@ -348,7 +367,6 @@ fn collect_name_ids(
       }
     }
   }
-  ids
 }
 
 fn date_bucket_label(ts: &str) -> String {

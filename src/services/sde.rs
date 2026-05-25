@@ -231,9 +231,13 @@ async fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-fn extract_zip_sync(zip_path: &Path, dest: &Path) -> Result<(), String> {
+fn open_zip_archive(zip_path: &Path) -> Result<zip::ZipArchive<std::fs::File>, String> {
   let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
-  let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+  zip::ZipArchive::new(file).map_err(|e| e.to_string())
+}
+
+fn extract_zip_sync(zip_path: &Path, dest: &Path) -> Result<(), String> {
+  let mut archive = open_zip_archive(zip_path)?;
   for i in 0..archive.len() {
     let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
     let out_path = dest.join(entry.name());

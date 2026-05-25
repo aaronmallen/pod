@@ -433,6 +433,52 @@ fn unique_ids<T: Eq + std::hash::Hash>(iter: impl Iterator<Item = T>) -> Vec<T> 
   iter.collect::<HashSet<_>>().into_iter().collect()
 }
 
+async fn fetch_item_type_maps(
+  db: &pod_db::Repo,
+  type_ids: &[i32],
+) -> (HashMap<i32, String>, HashMap<i32, f64>, HashMap<i32, i32>, Vec<i32>) {
+  let rows = db
+    .universe()
+    .item_types()
+    .find_by_ids(type_ids)
+    .await
+    .unwrap_or_default();
+  let name_map = rows.iter().map(|r| (r.id, r.name.clone())).collect();
+  let volume_map = rows
+    .iter()
+    .map(|r| (r.id, r.packaged_volume.or(r.volume).unwrap_or(0.0)))
+    .collect();
+  let group_map = rows.iter().map(|r| (r.id, r.item_group_id)).collect();
+  let group_ids = unique_ids(rows.iter().map(|r| r.item_group_id));
+  (name_map, volume_map, group_map, group_ids)
+}
+
+async fn fetch_item_group_maps(
+  db: &pod_db::Repo,
+  group_ids: &[i32],
+) -> (HashMap<i32, String>, HashMap<i32, i32>, Vec<i32>) {
+  let rows = db
+    .universe()
+    .item_groups()
+    .find_by_ids(group_ids)
+    .await
+    .unwrap_or_default();
+  let name_map = rows.iter().map(|r| (r.id, r.name.clone())).collect();
+  let cat_map = rows.iter().map(|r| (r.id, r.item_category_id)).collect();
+  let cat_ids = unique_ids(rows.iter().map(|r| r.item_category_id));
+  (name_map, cat_map, cat_ids)
+}
+
+async fn fetch_item_cat_key_map(db: &pod_db::Repo, cat_ids: &[i32]) -> HashMap<i32, &'static str> {
+  let rows = db
+    .universe()
+    .item_categories()
+    .find_by_ids(cat_ids)
+    .await
+    .unwrap_or_default();
+  rows.iter().map(|r| (r.id, category_name_to_key(&r.name))).collect()
+}
+
 /// Fetches type, group, and category lookup maps from the DB and derives simpler maps.
 async fn load_type_maps(
   db: &pod_db::Repo,
@@ -445,39 +491,9 @@ async fn load_type_maps(
   HashMap<i32, i32>,
   HashMap<i32, &'static str>,
 ) {
-  let type_rows = db
-    .universe()
-    .item_types()
-    .find_by_ids(type_ids)
-    .await
-    .unwrap_or_default();
-  let type_name_map: HashMap<i32, String> = type_rows.iter().map(|r| (r.id, r.name.clone())).collect();
-  let type_volume_map: HashMap<i32, f64> = type_rows
-    .iter()
-    .map(|r| (r.id, r.packaged_volume.or(r.volume).unwrap_or(0.0)))
-    .collect();
-  let type_group_map: HashMap<i32, i32> = type_rows.iter().map(|r| (r.id, r.item_group_id)).collect();
-
-  let group_ids: Vec<i32> = unique_ids(type_rows.iter().map(|r| r.item_group_id));
-  let group_rows = db
-    .universe()
-    .item_groups()
-    .find_by_ids(&group_ids)
-    .await
-    .unwrap_or_default();
-  let group_name_map: HashMap<i32, String> = group_rows.iter().map(|r| (r.id, r.name.clone())).collect();
-  let type_cat_map: HashMap<i32, i32> = group_rows.iter().map(|r| (r.id, r.item_category_id)).collect();
-
-  let cat_ids: Vec<i32> = unique_ids(group_rows.iter().map(|r| r.item_category_id));
-  let cat_rows = db
-    .universe()
-    .item_categories()
-    .find_by_ids(&cat_ids)
-    .await
-    .unwrap_or_default();
-  let cat_key_map: HashMap<i32, &'static str> =
-    cat_rows.iter().map(|r| (r.id, category_name_to_key(&r.name))).collect();
-
+  let (type_name_map, type_volume_map, type_group_map, group_ids) = fetch_item_type_maps(db, type_ids).await;
+  let (group_name_map, type_cat_map, cat_ids) = fetch_item_group_maps(db, &group_ids).await;
+  let cat_key_map = fetch_item_cat_key_map(db, &cat_ids).await;
   (
     type_name_map,
     type_volume_map,
@@ -1050,6 +1066,41 @@ async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, String, Vec<u8>)> 
   db.universe().type_icons().find_all().await.unwrap_or_default()
 }
 
+fn compute_stockpile_overall_pct(statuses: &[pod_db::StockpileItemStatus]) -> f32 {
+  let total_target: i64 = statuses.iter().map(|s| s.target_quantity as i64).sum();
+  let total_have: i64 = statuses
+    .iter()
+    .map(|s| s.have_quantity.min(s.target_quantity as i64))
+    .sum();
+  if total_target == 0 {
+    1.0_f32
+  } else {
+    (total_have as f32 / total_target as f32).clamp(0.0, 1.0)
+  }
+}
+
+async fn build_stockpile_with_status(
+  db: &pod_db::Repo,
+  pile: pod_db::StockpileWithItems,
+  location_name_map: &HashMap<i64, String>,
+) -> StockpileWithStatus {
+  let statuses = db.stockpiles().stockpile_fill_status(pile.id).await.unwrap_or_default();
+  let overall_pct = compute_stockpile_overall_pct(&statuses);
+  let ready = statuses.iter().all(|s| s.have_quantity >= s.target_quantity as i64);
+  let items = statuses.into_iter().map(stockpile_item_status).collect();
+  let location_name = pile.location_id.and_then(|id| location_name_map.get(&id).cloned());
+  StockpileWithStatus {
+    character_id: pile.character_id,
+    id: pile.id,
+    items,
+    location_id: pile.location_id,
+    location_name,
+    name: pile.name,
+    overall_pct,
+    ready,
+  }
+}
+
 async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatus> {
   let piles = match db.stockpiles().list_stockpiles().await {
     Ok(p) => p,
@@ -1058,30 +1109,7 @@ async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatu
   let location_name_map = resolve_stockpile_location_names(&db, &piles).await;
   let mut result = Vec::with_capacity(piles.len());
   for pile in piles {
-    let statuses = db.stockpiles().stockpile_fill_status(pile.id).await.unwrap_or_default();
-    let total_target: i64 = statuses.iter().map(|s| s.target_quantity as i64).sum();
-    let total_have: i64 = statuses
-      .iter()
-      .map(|s| (s.have_quantity).min(s.target_quantity as i64))
-      .sum();
-    let overall_pct = if total_target == 0 {
-      1.0_f32
-    } else {
-      (total_have as f32 / total_target as f32).clamp(0.0, 1.0)
-    };
-    let ready = statuses.iter().all(|s| s.have_quantity >= s.target_quantity as i64);
-    let items = statuses.into_iter().map(stockpile_item_status).collect();
-    let location_name = pile.location_id.and_then(|id| location_name_map.get(&id).cloned());
-    result.push(StockpileWithStatus {
-      character_id: pile.character_id,
-      id: pile.id,
-      items,
-      location_id: pile.location_id,
-      location_name,
-      name: pile.name,
-      overall_pct,
-      ready,
-    });
+    result.push(build_stockpile_with_status(&db, pile, &location_name_map).await);
   }
   result
 }

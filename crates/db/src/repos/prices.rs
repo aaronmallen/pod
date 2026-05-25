@@ -118,6 +118,37 @@ impl<'a> Repo<'a> {
     Ok(history.map(|h| h.close))
   }
 
+  async fn fill_prices_from_intraday(&self, type_ids: &[i32]) -> Result<HashMap<i32, f64>, Error> {
+    let rows = PriceEntity::find()
+      .filter(PriceColumn::TypeId.is_in(type_ids.to_vec()))
+      .order_by(PriceColumn::FetchedAt, Order::Desc)
+      .all(self.db)
+      .await?;
+    let mut map: HashMap<i32, f64> = HashMap::new();
+    for row in rows {
+      map
+        .entry(row.type_id)
+        .or_insert_with(|| pick_best_price(row.price, row.adjusted_price));
+    }
+    Ok(map)
+  }
+
+  async fn fill_prices_from_history(&self, result: &mut HashMap<i32, f64>, type_ids: &[i32]) -> Result<(), Error> {
+    let missing: Vec<i32> = type_ids.iter().copied().filter(|id| !result.contains_key(id)).collect();
+    if missing.is_empty() {
+      return Ok(());
+    }
+    let rows = HistoryEntity::find()
+      .filter(HistoryColumn::TypeId.is_in(missing))
+      .order_by(HistoryColumn::Date, Order::Desc)
+      .all(self.db)
+      .await?;
+    for row in rows {
+      result.entry(row.type_id).or_insert(row.close);
+    }
+    Ok(())
+  }
+
   /// Returns the most recent price for each `type_id` in the input slice.
   ///
   /// Applies the canonical price waterfall per type:
@@ -131,34 +162,8 @@ impl<'a> Repo<'a> {
     if type_ids.is_empty() {
       return Ok(HashMap::new());
     }
-
-    let intraday = PriceEntity::find()
-      .filter(PriceColumn::TypeId.is_in(type_ids.to_vec()))
-      .order_by(PriceColumn::FetchedAt, Order::Desc)
-      .all(self.db)
-      .await?;
-
-    let mut result: HashMap<i32, f64> = HashMap::new();
-    for row in intraday {
-      result
-        .entry(row.type_id)
-        .or_insert_with(|| pick_best_price(row.price, row.adjusted_price));
-    }
-
-    let missing: Vec<i32> = type_ids.iter().copied().filter(|id| !result.contains_key(id)).collect();
-
-    if !missing.is_empty() {
-      let history = HistoryEntity::find()
-        .filter(HistoryColumn::TypeId.is_in(missing))
-        .order_by(HistoryColumn::Date, Order::Desc)
-        .all(self.db)
-        .await?;
-
-      for row in history {
-        result.entry(row.type_id).or_insert(row.close);
-      }
-    }
-
+    let mut result = self.fill_prices_from_intraday(type_ids).await?;
+    self.fill_prices_from_history(&mut result, type_ids).await?;
     Ok(result)
   }
 
@@ -259,6 +264,29 @@ impl<'a> Repo<'a> {
     Ok(())
   }
 
+  async fn nav_by_date_from_history(
+    &self,
+    tracked: &[i32],
+    cutoff_str: &str,
+    qty_map: &HashMap<i32, i64>,
+  ) -> Result<HashMap<NaiveDate, f64>, Error> {
+    let histories = HistoryEntity::find()
+      .filter(HistoryColumn::TypeId.is_in(tracked.to_vec()))
+      .filter(HistoryColumn::Date.gte(cutoff_str))
+      .all(self.db)
+      .await?;
+    Ok(accumulate_nav_by_date(&histories, qty_map))
+  }
+
+  async fn today_nav_from_intraday(&self, tracked: &[i32], qty_map: &HashMap<i32, i64>) -> Result<f64, Error> {
+    let intraday = PriceEntity::find()
+      .filter(PriceColumn::TypeId.is_in(tracked.to_vec()))
+      .order_by(PriceColumn::FetchedAt, Order::Desc)
+      .all(self.db)
+      .await?;
+    Ok(compute_today_nav(&collect_latest_intraday(intraday), qty_map))
+  }
+
   /// Returns NAV history for the given character IDs going back `days` calendar days,
   /// plus a synthetic data point for today using the latest intraday prices.
   ///
@@ -269,52 +297,31 @@ impl<'a> Repo<'a> {
     if char_ids.is_empty() {
       return Ok(Vec::new());
     }
-
     let assets = AssetEntity::find()
       .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
       .all(self.db)
       .await?;
-
     if assets.is_empty() {
       return Ok(Vec::new());
     }
 
     let qty_map = build_qty_map(&assets);
     let tracked: Vec<i32> = qty_map.keys().copied().collect();
-
     let cutoff_str = (Utc::now().date_naive() - Duration::days(days as i64))
       .format("%Y-%m-%d")
       .to_string();
 
-    let histories = HistoryEntity::find()
-      .filter(HistoryColumn::TypeId.is_in(tracked.clone()))
-      .filter(HistoryColumn::Date.gte(cutoff_str))
-      .all(self.db)
-      .await?;
-
-    let mut nav_by_date = accumulate_nav_by_date(&histories, &qty_map);
-
-    // Synthetic today point from latest intraday prices.
-    let intraday = PriceEntity::find()
-      .filter(PriceColumn::TypeId.is_in(tracked))
-      .order_by(PriceColumn::FetchedAt, Order::Desc)
-      .all(self.db)
-      .await?;
-
-    let latest_prices = collect_latest_intraday(intraday);
-    let today_nav = compute_today_nav(&latest_prices, &qty_map);
-
+    let mut nav_by_date = self.nav_by_date_from_history(&tracked, &cutoff_str, &qty_map).await?;
+    let today_nav = self.today_nav_from_intraday(&tracked, &qty_map).await?;
     if today_nav > 0.0 {
       nav_by_date.insert(Utc::now().date_naive(), today_nav);
     }
 
     let mut result: Vec<(NaiveDate, f64)> = nav_by_date.into_iter().collect();
     result.sort_by_key(|(d, _)| *d);
-
     if result.len() < 2 {
       result.clear();
     }
-
     Ok(result)
   }
 

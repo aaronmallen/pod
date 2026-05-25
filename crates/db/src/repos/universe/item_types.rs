@@ -16,26 +16,23 @@ use crate::{
   },
 };
 
+fn extract_skill_pair(attrs: &[dogma_attribute::Entry], type_attr_id: i32, level_attr_id: i32) -> Option<(i32, u8)> {
+  let tid = attrs
+    .iter()
+    .find(|a| a.attribute_id == type_attr_id)
+    .map(|a| a.value as i32)?;
+  let lvl = attrs
+    .iter()
+    .find(|a| a.attribute_id == level_attr_id)
+    .map(|a| a.value as u8)?;
+  if tid > 0 && lvl > 0 { Some((tid, lvl)) } else { None }
+}
+
 fn skill_reqs_from_attrs(attrs: &[dogma_attribute::Entry]) -> Vec<(i32, u8)> {
-  let skill_attr_pairs = [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)];
-  let mut result = Vec::new();
-  for (type_attr_id, level_attr_id) in skill_attr_pairs {
-    let type_id = attrs
-      .iter()
-      .find(|a| a.attribute_id == type_attr_id)
-      .map(|a| a.value as i32);
-    let level = attrs
-      .iter()
-      .find(|a| a.attribute_id == level_attr_id)
-      .map(|a| a.value as u8);
-    if let (Some(tid), Some(lvl)) = (type_id, level)
-      && tid > 0
-      && lvl > 0
-    {
-      result.push((tid, lvl));
-    }
-  }
-  result
+  [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)]
+    .into_iter()
+    .filter_map(|(ta, la)| extract_skill_pair(attrs, ta, la))
+    .collect()
 }
 
 #[cfg(test)]
@@ -208,9 +205,7 @@ impl<'a> Repo<'a> {
     }
   }
 
-  /// Returns published ships whose name matches the given search string (case-insensitive).
-  #[tracing::instrument(level = "trace", skip(self))]
-  pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
+  async fn fetch_ship_items(&self, search: &str) -> Result<Vec<crate::entities::item_type::ModelEx>, Error> {
     let group_ids: Vec<i32> = GroupEntity::find()
       .filter(GroupColumn::ItemCategoryId.eq(6))
       .all(self.db)
@@ -218,7 +213,6 @@ impl<'a> Repo<'a> {
       .into_iter()
       .map(|g| g.id)
       .collect();
-
     let mut items = Entity::load()
       .with(GroupEntity)
       .filter(Column::ItemGroupId.is_in(group_ids))
@@ -228,27 +222,34 @@ impl<'a> Repo<'a> {
       .all(self.db)
       .await?;
     items.sort_by(sort_cmp_group_name);
+    Ok(items)
+  }
 
-    let type_ids: Vec<i32> = items.iter().map(|t| t.id).collect();
-    let mastery_rows = MasteryEntity::find()
+  async fn fetch_mastery_map(&self, type_ids: Vec<i32>) -> Result<HashMap<i32, HashMap<i32, String>>, Error> {
+    let rows = MasteryEntity::find()
       .filter(MasteryColumn::ShipId.is_in(type_ids))
       .all(self.db)
       .await?;
-
-    let mut mastery_map: HashMap<i32, HashMap<i32, String>> = HashMap::new();
-    for row in mastery_rows {
-      mastery_map
+    let mut map: HashMap<i32, HashMap<i32, String>> = HashMap::new();
+    for row in rows {
+      map
         .entry(row.ship_id)
         .or_default()
         .insert(row.mastery_level, row.cert_ids_json);
     }
+    Ok(map)
+  }
+
+  /// Returns published ships whose name matches the given search string (case-insensitive).
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn find_ships(&self, search: &str) -> Result<Vec<ItemTypeSummary>, Error> {
+    let items = self.fetch_ship_items(search).await?;
+    let type_ids: Vec<i32> = items.iter().map(|t| t.id).collect();
+    let mastery_map = self.fetch_mastery_map(type_ids).await?;
 
     let raw: Vec<_> = items
       .iter()
-      .map(|item| {
-        let reqs = skill_reqs_from_attrs(&item.dogma_attributes.0);
-        (item, reqs)
-      })
+      .map(|item| (item, skill_reqs_from_attrs(&item.dogma_attributes.0)))
       .collect();
 
     let all_skill_ids = collect_raw_skill_ids(&raw);

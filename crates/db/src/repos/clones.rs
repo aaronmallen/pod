@@ -235,6 +235,17 @@ impl<'a> Repo<'a> {
   }
 }
 
+fn apply_attr_amount(bonus: &mut NeuralAttributes, attr: &str, amount: i32) {
+  match attr {
+    "charisma" => bonus.charisma += amount,
+    "intelligence" => bonus.intelligence += amount,
+    "memory" => bonus.memory += amount,
+    "perception" => bonus.perception += amount,
+    "willpower" => bonus.willpower += amount,
+    _ => {}
+  }
+}
+
 fn apply_implant_bonus(mut bonus: NeuralAttributes, attribute_bonus: &str) -> NeuralAttributes {
   let Ok(map) = serde_json::from_str::<serde_json::Value>(attribute_bonus) else {
     return bonus;
@@ -243,16 +254,8 @@ fn apply_implant_bonus(mut bonus: NeuralAttributes, attribute_bonus: &str) -> Ne
     return bonus;
   };
   for (attr, val) in obj {
-    let Some(amount) = val.as_i64().map(|v| v as i32) else {
-      continue;
-    };
-    match attr.as_str() {
-      "charisma" => bonus.charisma += amount,
-      "intelligence" => bonus.intelligence += amount,
-      "memory" => bonus.memory += amount,
-      "perception" => bonus.perception += amount,
-      "willpower" => bonus.willpower += amount,
-      _ => {}
+    if let Some(amount) = val.as_i64().map(|v| v as i32) {
+      apply_attr_amount(&mut bonus, attr.as_str(), amount);
     }
   }
   bonus

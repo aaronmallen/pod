@@ -1,18 +1,28 @@
 //! Sortable asset inventory table with search and category filter.
 
+pub mod category_row;
+pub mod empty_state;
+pub mod help_button;
 pub mod help_pop_over;
+pub mod search_box;
+pub mod stat_label;
+pub mod stats_pill;
 
 use std::collections::{HashMap, HashSet};
 
+use category_row::CategoryRow;
+use empty_state::EmptyState;
 use iced::{
   Background, Border, Color, ContentFit, Element, Length, Padding, Theme,
   alignment::Horizontal,
   widget::{Space, button, column, container, image, row, scrollable, text},
 };
+use search_box::SearchBox;
+use stats_pill::StatsPill;
 
 use super::{AssetRecord, Category, SortCol, State, asset_value, asset_volume, fmt_qty, fmt_vol};
 use crate::{
-  components::{self, PillFilter, Popover, SearchBox},
+  components::Popover,
   format,
   style::{
     color,
@@ -40,7 +50,7 @@ impl<'a> Component<'a> {
 
     let sorted = state.sorted_assets();
     let table: Element<'_, Message> = if sorted.is_empty() {
-      empty_state("No assets match the current filters.")
+      EmptyState::new("No assets match the current filters.").render()
     } else {
       let header_row = table_header(&state.sort_col, state.sort_asc);
       let all_assets = state.all_assets();
@@ -306,11 +316,6 @@ fn build_tree_rows<'a>(
   result
 }
 
-fn category_row<'a>(active_cat: &'a Category) -> Element<'a, Message> {
-  let options: Vec<(&str, Category)> = Category::all().iter().map(|c| (c.label(), c.clone())).collect();
-  PillFilter::new(options, active_cat, Message::CategoryChanged).render()
-}
-
 fn col_hdr_label_text(label: &'static str, is_active: bool, asc: bool) -> String {
   if is_active {
     format!("{} {}", label, if asc { "▲" } else { "▼" })
@@ -340,31 +345,14 @@ fn container_toggle(item_id: i64, expanded: bool) -> Element<'static, Message> {
   .into()
 }
 
-fn empty_state(msg: &str) -> Element<'_, Message> {
-  container(
-    text(msg)
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(48.0)
-  .width(Length::Fill)
-  .center_x(Length::Fill)
-  .height(Length::Fill)
-  .center_y(Length::Fill)
-  .into()
-}
-
 fn filter_bar<'a>(state: &'a State) -> Element<'a, Message> {
   container(
     column([
-      search_box(&state.search_query, state.help_pop_over.visible),
+      SearchBox::new(&state.search_query, state.help_pop_over.visible).render(),
       row([
-        category_row(&state.category),
+        CategoryRow::new(&state.category).render(),
         Space::new().width(Length::Fill).into(),
-        stats_pill(state),
+        StatsPill::new(state).render(),
       ])
       .align_y(iced::alignment::Vertical::Center)
       .into(),
@@ -383,98 +371,6 @@ fn filter_bar<'a>(state: &'a State) -> Element<'a, Message> {
       color: color::border::SUBTLE,
       width: 1.0,
       ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn help_button(open: bool) -> Element<'static, Message> {
-  let icon_color = if open {
-    color::accent::PLASMA
-  } else {
-    color::text::SECONDARY
-  };
-  components::Button::ghost(
-    container(
-      components::Icon::help()
-        .size(13.0)
-        .color(icon_color)
-        .render::<Message>(),
-    )
-    .center_x(Length::Fill)
-    .center_y(Length::Fill),
-  )
-  .width(26.0)
-  .height(24.0)
-  .padding(0)
-  .on_press(Message::HelpToggle)
-  .into()
-}
-
-fn search_box<'a>(query: &'a str, help_visible: bool) -> Element<'a, Message> {
-  SearchBox::new(
-    "Filter assets…  try name:Rifter or category:ship",
-    query,
-    Message::SearchChanged,
-  )
-  .width(Length::Fill)
-  .height(44.0)
-  .font_size(13.0)
-  .icon_size(18.0)
-  .icon_spacing(10.0)
-  .horizontal_padding(14.0)
-  .right_element(help_button(help_visible))
-  .render()
-}
-
-fn stat_label<'a>(label: &'static str, value: String) -> Element<'a, Message> {
-  column([
-    text(label)
-      .font(mono::REGULAR)
-      .size(8.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-    text(value)
-      .font(mono::MEDIUM)
-      .size(12.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-  ])
-  .spacing(1.0)
-  .into()
-}
-
-fn stats_pill<'a>(state: &'a State) -> Element<'a, Message> {
-  let total_value = state.visible_assets().map(asset_value).sum::<f64>();
-  let total_volume = state.visible_assets().map(asset_volume).sum::<f64>();
-  let total_rows = state.visible_assets().count();
-  container(
-    row([
-      stat_label("Rows", total_rows.to_string()),
-      Space::new().width(18.0).into(),
-      stat_label("Value", format::fmt_isk(total_value)),
-      Space::new().width(18.0).into(),
-      stat_label("Volume", format::fmt_vol(total_volume)),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 6.0,
-    bottom: 6.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: 6.0.into(),
-      width: 1.0,
     },
     ..container::Style::default()
   })

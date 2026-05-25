@@ -1,7 +1,10 @@
 //! Skills view: queue display, character selection, and skill browser.
 
+pub mod drag_capture_overlay;
 pub mod header;
+pub mod layout_shell;
 pub mod pane_drag_handle;
+pub mod picker_dropdown_overlay;
 pub mod queue_section;
 pub mod right_panel;
 pub mod skill_data;
@@ -10,11 +13,15 @@ pub mod warning_strip;
 
 use std::collections::{HashMap, HashSet};
 
+pub use drag_capture_overlay::Component as DragCaptureOverlay;
 pub use header::Component as Header;
 use iced::{
-  Background, Element, Event, Length, Padding, Subscription, mouse,
-  widget::{Space, column, container, mouse_area, row, scrollable},
+  Element, Event, Length, Padding, Subscription, mouse,
+  widget::{column, row, scrollable},
 };
+pub use layout_shell::Component as LayoutShell;
+pub use pane_drag_handle::Component as PaneDragHandle;
+pub use picker_dropdown_overlay::Component as PickerDropdownOverlay;
 use pod_model::{AttrKey, Character, SkillGroupDef, SkillPlan, missing_scopes};
 pub use right_panel::Component as RightPanel;
 pub use warning_strip::Component as WarningStrip;
@@ -323,7 +330,7 @@ fn view(state: &State, window_width: f32) -> Element<'_, Message> {
   let warn = WarningStrip::new(low_queue).render();
   let left = left_col(state, computed_items, sp_rate, window_width);
   let right = RightPanel::new(state).render().map(Message::RightPanel);
-  let body = row([left, pane_drag_handle::Component::new().render(), right]).height(Length::Fill);
+  let body = row([left, PaneDragHandle::new().render(), right]).height(Length::Fill);
 
   let mut col = vec![hdr];
   if let Some(w) = warn {
@@ -331,44 +338,22 @@ fn view(state: &State, window_width: f32) -> Element<'_, Message> {
   }
   col.push(body.into());
 
-  let base: Element<'_, Message> = container(column(col).width(Length::Fill).height(Length::Fill))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(crate::style::color::surface::BASE)),
-      ..container::Style::default()
-    })
-    .into();
+  let base = LayoutShell::new(column(col).width(Length::Fill).height(Length::Fill)).render();
 
   apply_overlays(state, base)
-}
-
-fn drag_capture_overlay() -> Element<'static, Message> {
-  mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-    .on_move(|pt| Message::PaneDrag(pt.x))
-    .on_release(Message::PaneDragEnd)
-    .interaction(iced::mouse::Interaction::ResizingHorizontally)
-    .into()
-}
-
-fn picker_dropdown_overlay(state: &State) -> Element<'_, Message> {
-  let dropdown = state.picker.dropdown().map(Message::Picker);
-  container(dropdown)
-    .padding(Padding {
-      top: 98.0,
-      left: 28.0,
-      right: 0.0,
-      bottom: 0.0,
-    })
-    .into()
 }
 
 fn apply_overlays<'a>(state: &'a State, base: Element<'a, Message>) -> Element<'a, Message> {
   match (state.dragging_pane, state.picker.is_open) {
     (false, false) => base,
-    (false, true) => iced::widget::stack![base, picker_dropdown_overlay(state)].into(),
-    (true, false) => iced::widget::stack![base, drag_capture_overlay()].into(),
-    (true, true) => iced::widget::stack![base, drag_capture_overlay(), picker_dropdown_overlay(state)].into(),
+    (false, true) => iced::widget::stack![base, PickerDropdownOverlay::new(state).render()].into(),
+    (true, false) => iced::widget::stack![base, DragCaptureOverlay::new().render()].into(),
+    (true, true) => iced::widget::stack![
+      base,
+      DragCaptureOverlay::new().render(),
+      PickerDropdownOverlay::new(state).render()
+    ]
+    .into(),
   }
 }
 

@@ -1,4 +1,4 @@
-//! Drag handle between the left queue pane and the right skill panel.
+//! Draggable divider handle between the left and right panes.
 
 use iced::{
   Background, Element, Length,
@@ -6,6 +6,7 @@ use iced::{
 };
 
 use super::Message;
+use crate::style::color;
 
 pub struct Component;
 
@@ -20,7 +21,7 @@ impl Component {
         .width(4.0)
         .height(Length::Fill)
         .style(|_| container::Style {
-          background: Some(Background::Color(crate::style::color::border::SUBTLE)),
+          background: Some(Background::Color(color::border::SUBTLE)),
           ..container::Style::default()
         }),
     )

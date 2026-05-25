@@ -921,38 +921,51 @@ fn update_compose_open(state: &mut State) -> iced::Task<Message> {
   iced::Task::none()
 }
 
+fn delete_remove_message(state: &mut State) -> Option<(i64, i64)> {
+  let id = state.selected_message_id.take()?;
+  let pos = state.messages.iter().position(|m| m.id == id)?;
+  let mail_id = state.messages[pos].mail_id;
+  let character_id = state.messages[pos].character_id;
+  tracing::info!("mail: delete requested — character_id: {character_id}, mail_id: {mail_id}");
+  state.messages.remove(pos);
+  state.selected_message_id = state
+    .messages
+    .get(pos)
+    .or_else(|| state.messages.last())
+    .map(|m| m.id.clone());
+  recompute_unread_counts(state);
+  Some((character_id, mail_id))
+}
+
+fn delete_backend_task(
+  character_id: i64,
+  mail_id: i64,
+  chars: Vec<Character>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      let _ = db.characters().delete_mail_header(character_id, mail_id).await;
+      if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
+        && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
+      {
+        let grant = character_service::refresh_grant(character, &token);
+        let _ = esi.character(&grant).delete_mail(mail_id).await;
+      }
+    },
+    |_| Message::MailDeleted,
+  )
+}
+
 fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> {
   state.context_menu = None;
-  if let Some(id) = state.selected_message_id.take()
-    && let Some(pos) = state.messages.iter().position(|m| m.id == id)
-  {
-    let mail_id = state.messages[pos].mail_id;
-    let character_id = state.messages[pos].character_id;
-    tracing::info!("mail: delete requested — character_id: {character_id}, mail_id: {mail_id}");
-    state.messages.remove(pos);
-    state.selected_message_id = state
-      .messages
-      .get(pos)
-      .or_else(|| state.messages.last())
-      .map(|m| m.id.clone());
-    recompute_unread_counts(state);
-    if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-      let chars = state.characters.clone();
-      return iced::Task::perform(
-        async move {
-          // best-effort; mail may reappear until next sync if either fails
-          let _ = db.characters().delete_mail_header(character_id, mail_id).await;
-          if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
-            && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
-          {
-            let grant = character_service::refresh_grant(character, &token);
-            // best-effort; mail may reappear until next sync if either fails
-            let _ = esi.character(&grant).delete_mail(mail_id).await;
-          }
-        },
-        |_| Message::MailDeleted,
-      );
-    }
+  let Some((character_id, mail_id)) = delete_remove_message(state) else {
+    return iced::Task::none();
+  };
+  if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
+    let chars = state.characters.clone();
+    return delete_backend_task(character_id, mail_id, chars, esi, db);
   }
   iced::Task::none()
 }
@@ -1304,11 +1317,12 @@ fn update_snooze_calendar_select_day(state: &mut State, year: i32, month: u32, d
   iced::Task::none()
 }
 
-fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+fn update_snooze_calendar_msg(
+  state: &mut State,
+  msg: reading_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
   match msg {
-    reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
-    reading_pane::Message::DeletePressed => update_delete(state, services),
-    reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
     reading_pane::Message::SnoozeCalendarChipDowntime => update_snooze_calendar_chip_downtime(state),
     reading_pane::Message::SnoozeCalendarChipEvening => update_snooze_calendar_chip_evening(state),
     reading_pane::Message::SnoozeCalendarChipMorning => update_snooze_calendar_chip_morning(state),
@@ -1322,14 +1336,65 @@ fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services
     reading_pane::Message::SnoozeCalendarOpen => update_snooze_calendar_open(state),
     reading_pane::Message::SnoozeCalendarPrevMonth => update_snooze_calendar_prev_month(state),
     reading_pane::Message::SnoozeCalendarSelectDay(y, m, d) => update_snooze_calendar_select_day(state, y, m, d),
-    reading_pane::Message::SnoozeSet(iso) => update_snooze_set(state, iso, services),
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
+    reading_pane::Message::DeletePressed => update_delete(state, services),
+    reading_pane::Message::SnoozedExpired(pairs) => update_snoozed_expired(state, pairs),
     reading_pane::Message::SnoozeFailed(e) => {
       tracing::warn!("mail: snooze operation failed — {e}");
       iced::Task::none()
     }
+    reading_pane::Message::SnoozeSet(iso) => update_snooze_set(state, iso, services),
     reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
-    _ => iced::Task::none(),
+    msg => update_snooze_calendar_msg(state, msg, services),
   }
+}
+
+fn snooze_apply_state(state: &mut State, id: &str, iso: &str) -> Option<(i64, i64, bool)> {
+  let msg = state.messages.iter_mut().find(|m| m.id == id)?;
+  let character_id = msg.character_id;
+  let mail_id = msg.mail_id;
+  let adding = !iso.is_empty();
+  if adding {
+    tracing::info!("mail: snooze set — character_id: {character_id}, mail_id: {mail_id}, until: {iso}");
+    msg.snoozed = Some(iso.to_string());
+  } else {
+    tracing::info!("mail: snooze removed — character_id: {character_id}, mail_id: {mail_id}");
+    msg.snoozed = None;
+  }
+  Some((character_id, mail_id, adding))
+}
+
+fn snooze_backend_task(
+  character_id: i64,
+  mail_id: i64,
+  adding: bool,
+  snooze_until: Option<String>,
+  chars: Vec<Character>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> iced::Task<Message> {
+  iced::Task::perform(
+    async move {
+      if adding {
+        if let Some(until) = &snooze_until {
+          let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
+        }
+      } else {
+        let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
+      }
+      apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await
+    },
+    |res| match res {
+      Ok(()) => Message::MailDeleted,
+      Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
+    },
+  )
 }
 
 fn update_snooze_set(state: &mut State, iso: String, services: &Services) -> iced::Task<Message> {
@@ -1338,47 +1403,16 @@ fn update_snooze_set(state: &mut State, iso: String, services: &Services) -> ice
   let Some(id) = state.selected_message_id.clone() else {
     return iced::Task::none();
   };
-  let Some(msg) = state.messages.iter_mut().find(|m| m.id == id) else {
+  let Some((character_id, mail_id, adding)) = snooze_apply_state(state, &id, &iso) else {
     return iced::Task::none();
   };
-  let character_id = msg.character_id;
-  let mail_id = msg.mail_id;
-  let adding = !iso.is_empty();
-  if adding {
-    tracing::info!("mail: snooze set — character_id: {character_id}, mail_id: {mail_id}, until: {iso}");
-  } else {
-    tracing::info!("mail: snooze removed — character_id: {character_id}, mail_id: {mail_id}");
+  if adding && matches!(state.selected_folder, Folder::Inbox | Folder::All) {
+    state.selected_message_id = None;
   }
-  let snooze_until = if adding { Some(iso.clone()) } else { None };
-  if adding {
-    msg.snoozed = Some(iso);
-    // Remove from inbox view immediately when snoozed while in inbox/all.
-    if matches!(state.selected_folder, Folder::Inbox | Folder::All) {
-      state.selected_message_id = None;
-    }
-  } else {
-    msg.snoozed = None;
-  }
+  let snooze_until = if adding { Some(iso) } else { None };
   if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
     let chars = state.characters.clone();
-    return iced::Task::perform(
-      async move {
-        if adding {
-          if let Some(until) = &snooze_until {
-            // best-effort; snooze state may be inconsistent until next launch if this fails
-            let _ = db.characters().upsert_snoozed_mail(character_id, mail_id, until).await;
-          }
-        } else {
-          // best-effort; snooze state may be inconsistent until next launch if this fails
-          let _ = db.characters().delete_snoozed_mail(character_id, mail_id).await;
-        }
-        apply_snooze_label(character_id, mail_id, adding, chars, esi, db).await
-      },
-      |res| match res {
-        Ok(()) => Message::MailDeleted,
-        Err(e) => Message::ReadingPane(reading_pane::Message::SnoozeFailed(e)),
-      },
-    );
+    return snooze_backend_task(character_id, mail_id, adding, snooze_until, chars, esi, db);
   }
   iced::Task::none()
 }

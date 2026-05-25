@@ -136,6 +136,30 @@ fn toggle_feature(features: &mut features_tab::State, feature: &features_tab::Fe
 
 fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
+    tags_tab::Message::ColorClose
+    | tags_tab::Message::ColorOpen(_)
+    | tags_tab::Message::ColorSet(_)
+    | tags_tab::Message::SetColor(_, _) => update_tags_color(state, msg, services),
+    tags_tab::Message::Create | tags_tab::Message::Created(_) => update_tags_create(state, msg, services),
+    tags_tab::Message::Delete(_) | tags_tab::Message::Deleted(_) => update_tags_delete(state, msg, services),
+    tags_tab::Message::DragEnd
+    | tags_tab::Message::DragStart(_)
+    | tags_tab::Message::Drop
+    | tags_tab::Message::SlotEntered(_) => update_tags_drag(state, msg, services),
+    tags_tab::Message::DraftChanged(_)
+    | tags_tab::Message::EditStart(_)
+    | tags_tab::Message::Rename
+    | tags_tab::Message::Renamed(_) => update_tags_edit(state, msg, services),
+    tags_tab::Message::Loaded(_)
+    | tags_tab::Message::NewNameChanged(_)
+    | tags_tab::Message::Reordered(_)
+    | tags_tab::Message::SearchChanged(_)
+    | tags_tab::Message::SortModeChanged(_) => update_tags_misc(state, msg),
+  }
+}
+
+fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::ColorClose => {
       state.tags.color_open = None;
       iced::Task::none()
@@ -157,6 +181,27 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       state.tags.color_open = None;
       iced::Task::none()
     }
+    tags_tab::Message::SetColor(id, color) => {
+      let Some(db) = services.db.clone() else {
+        return iced::Task::none();
+      };
+      iced::Task::perform(
+        async move {
+          db.tags()
+            .set_color(id, color.as_deref())
+            .await
+            .map(|t| (t.id, t.name, t.color))
+            .map_err(|e| e.to_string())
+        },
+        |result| Message::TagsTab(tags_tab::Message::ColorSet(result)),
+      )
+    }
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_tags_create(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::Create => {
       let name = state.tags.new_name.trim().to_string();
       if name.is_empty() {
@@ -184,6 +229,12 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       }
       iced::Task::none()
     }
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_tags_delete(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::Delete(id) => {
       let Some(db) = services.db.clone() else {
         return iced::Task::none();
@@ -194,21 +245,26 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       )
     }
     tags_tab::Message::Deleted(result) => {
-      match result {
-        Ok(id) => {
-          state.tags.tags.retain(|(tid, _, _)| *tid != id);
-          if state.tags.editing == Some(id) {
-            state.tags.editing = None;
-            state.tags.draft.clear();
-          }
-          if state.tags.color_open == Some(id) {
-            state.tags.color_open = None;
-          }
+      if let Ok(id) = result {
+        state.tags.tags.retain(|(tid, _, _)| *tid != id);
+        if state.tags.editing == Some(id) {
+          state.tags.editing = None;
+          state.tags.draft.clear();
         }
-        Err(e) => tracing::error!("settings: tag delete failed — {e}"),
+        if state.tags.color_open == Some(id) {
+          state.tags.color_open = None;
+        }
+      } else if let Err(e) = result {
+        tracing::error!("settings: tag delete failed — {e}");
       }
       iced::Task::none()
     }
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_tags_drag(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     tags_tab::Message::DragEnd => {
       state.tags.dragging = None;
       state.tags.drag_over = None;
@@ -221,27 +277,43 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       state.tags.editing = None;
       iced::Task::none()
     }
-    tags_tab::Message::DraftChanged(s) => {
-      state.tags.draft = s;
+    tags_tab::Message::Drop => apply_tag_drop(state, services),
+    tags_tab::Message::SlotEntered(id) => {
+      if state.tags.dragging.is_some() {
+        state.tags.drag_over = Some(id);
+      }
       iced::Task::none()
     }
-    tags_tab::Message::Drop => {
-      let Some(drag_id) = state.tags.dragging.take() else {
-        return iced::Task::none();
-      };
-      let target_id = state.tags.drag_over.take();
-      if let Some(target) = target_id
-        && drag_id != target
-      {
-        let from = state.tags.tags.iter().position(|(id, _, _)| *id == drag_id);
-        let to = state.tags.tags.iter().position(|(id, _, _)| *id == target);
-        if let (Some(from), Some(to)) = (from, to) {
-          let item = state.tags.tags.remove(from);
-          let insert_at = if from < to { to - 1 } else { to };
-          state.tags.tags.insert(insert_at.min(state.tags.tags.len()), item);
-          return reorder_task(&state.tags, services);
-        }
-      }
+    _ => iced::Task::none(),
+  }
+}
+
+fn apply_tag_drop(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(drag_id) = state.tags.dragging.take() else {
+    return iced::Task::none();
+  };
+  let target_id = state.tags.drag_over.take();
+  let Some(target) = target_id else {
+    return iced::Task::none();
+  };
+  if drag_id == target {
+    return iced::Task::none();
+  }
+  let from = state.tags.tags.iter().position(|(id, _, _)| *id == drag_id);
+  let to = state.tags.tags.iter().position(|(id, _, _)| *id == target);
+  if let (Some(from), Some(to)) = (from, to) {
+    let item = state.tags.tags.remove(from);
+    let insert_at = if from < to { to - 1 } else { to };
+    state.tags.tags.insert(insert_at.min(state.tags.tags.len()), item);
+    return reorder_task(&state.tags, services);
+  }
+  iced::Task::none()
+}
+
+fn update_tags_edit(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    tags_tab::Message::DraftChanged(s) => {
+      state.tags.draft = s;
       iced::Task::none()
     }
     tags_tab::Message::EditStart(id) => {
@@ -257,38 +329,7 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       state.tags.color_open = None;
       iced::Task::none()
     }
-    tags_tab::Message::Loaded(tags) => {
-      state.tags.tags = tags;
-      iced::Task::none()
-    }
-    tags_tab::Message::NewNameChanged(s) => {
-      state.tags.new_name = s;
-      iced::Task::none()
-    }
-    tags_tab::Message::Rename => {
-      let Some(id) = state.tags.editing else {
-        return iced::Task::none();
-      };
-      let name = state.tags.draft.trim().to_string();
-      if name.is_empty() {
-        return iced::Task::none();
-      }
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      state.tags.editing = None;
-      state.tags.draft.clear();
-      iced::Task::perform(
-        async move {
-          db.tags()
-            .rename(id, &name)
-            .await
-            .map(|t| (t.id, t.name, t.color))
-            .map_err(|e| e.to_string())
-        },
-        |result| Message::TagsTab(tags_tab::Message::Renamed(result)),
-      )
-    }
+    tags_tab::Message::Rename => submit_tag_rename(state, services),
     tags_tab::Message::Renamed(result) => {
       match result {
         Ok((id, name, color)) => {
@@ -300,40 +341,55 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
       }
       iced::Task::none()
     }
+    _ => iced::Task::none(),
+  }
+}
+
+fn submit_tag_rename(state: &mut State, services: &Services) -> iced::Task<Message> {
+  let Some(id) = state.tags.editing else {
+    return iced::Task::none();
+  };
+  let name = state.tags.draft.trim().to_string();
+  if name.is_empty() {
+    return iced::Task::none();
+  }
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  state.tags.editing = None;
+  state.tags.draft.clear();
+  iced::Task::perform(
+    async move {
+      db.tags()
+        .rename(id, &name)
+        .await
+        .map(|t| (t.id, t.name, t.color))
+        .map_err(|e| e.to_string())
+    },
+    |result| Message::TagsTab(tags_tab::Message::Renamed(result)),
+  )
+}
+
+fn update_tags_misc(state: &mut State, msg: tags_tab::Message) -> iced::Task<Message> {
+  match msg {
+    tags_tab::Message::Loaded(tags) => {
+      state.tags.tags = tags;
+    }
+    tags_tab::Message::NewNameChanged(s) => {
+      state.tags.new_name = s;
+    }
     tags_tab::Message::Reordered(result) => {
       if let Err(e) = result {
         tracing::error!("settings: tag reorder failed — {e}");
       }
-      iced::Task::none()
     }
     tags_tab::Message::SearchChanged(s) => {
       state.tags.search = s;
-      iced::Task::none()
-    }
-    tags_tab::Message::SetColor(id, color) => {
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(
-        async move {
-          db.tags()
-            .set_color(id, color.as_deref())
-            .await
-            .map(|t| (t.id, t.name, t.color))
-            .map_err(|e| e.to_string())
-        },
-        |result| Message::TagsTab(tags_tab::Message::ColorSet(result)),
-      )
-    }
-    tags_tab::Message::SlotEntered(id) => {
-      if state.tags.dragging.is_some() {
-        state.tags.drag_over = Some(id);
-      }
-      iced::Task::none()
     }
     tags_tab::Message::SortModeChanged(mode) => {
       state.tags.sort_mode = mode;
-      iced::Task::none()
     }
+    _ => {}
   }
+  iced::Task::none()
 }

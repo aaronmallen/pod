@@ -69,15 +69,7 @@ fn sort_mode_button(label: &'static str, is_active: bool, msg: Message) -> Eleme
   .into()
 }
 
-fn tag_panel_header(state: &State) -> Element<'_, Message> {
-  let title = text("Tags").size(18.0).color(color::text::PRIMARY);
-  let desc = text(
-    "Assign a color to any tag and it will render that way everywhere it appears \
-    on a character card. Drag rows to reorder; tags follow their manual order on cards.",
-  )
-  .size(13.0)
-  .color(color::text::SECONDARY);
-
+fn create_input_pill<'a>(state: &'a State) -> Element<'a, Message> {
   let plus = text("+")
     .size(14.0)
     .font(typography::body::MEDIUM)
@@ -100,7 +92,7 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
     })
     .padding(Padding::ZERO);
 
-  let input_pill = container(
+  container(
     row([plus.into(), input.into()])
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center),
@@ -121,55 +113,57 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
       width: 1.0,
     },
     ..container::Style::default()
-  });
+  })
+  .into()
+}
 
-  let can_create = !state.new_name.trim().is_empty();
-  let add_btn = {
-    let b = button(
-      text("Add")
-        .font(typography::body::MEDIUM)
-        .size(13.0)
-        .style(move |_| iced::widget::text::Style {
-          color: if can_create {
-            Some(color::surface::SUNKEN)
-          } else {
-            Some(color::text::TERTIARY)
-          },
-        }),
-    )
-    .padding(Padding {
-      top: 7.0,
-      bottom: 7.0,
-      left: spacing::SPACE_3_5,
-      right: spacing::SPACE_3_5,
-    })
-    .style(move |_, _| button::Style {
-      background: if can_create {
-        Some(Background::Color(color::accent::PLASMA))
-      } else {
-        Some(Background::Color(color::state::HOVER_OVERLAY))
-      },
-      border: Border {
+fn add_button(can_create: bool) -> Element<'static, Message> {
+  let b = button(
+    text("Add")
+      .font(typography::body::MEDIUM)
+      .size(13.0)
+      .style(move |_| iced::widget::text::Style {
         color: if can_create {
-          color::accent::PLASMA
+          Some(color::surface::SUNKEN)
         } else {
-          color::border::SUBTLE
+          Some(color::text::TERTIARY)
         },
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      snap: false,
-      text_color: if can_create {
-        color::surface::SUNKEN
+      }),
+  )
+  .padding(Padding {
+    top: 7.0,
+    bottom: 7.0,
+    left: spacing::SPACE_3_5,
+    right: spacing::SPACE_3_5,
+  })
+  .style(move |_, _| button::Style {
+    background: if can_create {
+      Some(Background::Color(color::accent::PLASMA))
+    } else {
+      Some(Background::Color(color::state::HOVER_OVERLAY))
+    },
+    border: Border {
+      color: if can_create {
+        color::accent::PLASMA
       } else {
-        color::text::TERTIARY
+        color::border::SUBTLE
       },
-      shadow: iced::Shadow::default(),
-    });
-    if can_create { b.on_press(Message::Create) } else { b }
-  };
+      radius: radius::CHIP.into(),
+      width: 1.0,
+    },
+    snap: false,
+    text_color: if can_create {
+      color::surface::SUNKEN
+    } else {
+      color::text::TERTIARY
+    },
+    shadow: iced::Shadow::default(),
+  });
+  if can_create { b.on_press(Message::Create) } else { b }.into()
+}
 
-  let sort_control = container(row([
+fn sort_control_row(state: &State) -> Element<'_, Message> {
+  container(row([
     sort_mode_button(
       "Manual",
       state.sort_mode == TagSortMode::Manual,
@@ -195,14 +189,17 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
       width: 1.0,
     },
     ..container::Style::default()
-  });
+  })
+  .into()
+}
 
+fn filter_input<'a>(state: &'a State) -> Element<'a, Message> {
   let search_icon = crate::components::Icon::search()
     .size(14.0)
     .color(color::text::SECONDARY)
     .render::<Message>();
 
-  let filter_input = container(
+  container(
     row([
       search_icon,
       text_input("Filter\u{2026}", &state.search)
@@ -236,22 +233,30 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
       width: 1.0,
     },
     ..container::Style::default()
-  });
+  })
+  .into()
+}
 
-  let create_row: Element<'_, Message> = row([
-    input_pill.into(),
-    add_btn.into(),
-    Space::new().width(Length::Fill).into(),
-    sort_control.into(),
-    filter_input.into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center)
-  .into();
+fn dot_separator<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(3.0)
+    .height(3.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::text::GHOST)),
+      border: Border {
+        radius: radius::FULL.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
 
+fn stats_row<'a>(state: &'a State) -> Element<'a, Message> {
   let colored = state.colored_count();
   let draggable = state.sort_mode == TagSortMode::Manual && state.search.trim().is_empty();
-  let mut stats_parts: Vec<Element<'_, Message>> = vec![
+
+  let mut parts: Vec<Element<'a, Message>> = vec![
     text(format!("{}", state.tags.len()))
       .font(typography::mono::REGULAR)
       .size(10.0)
@@ -267,18 +272,7 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
       })
       .into(),
     Space::new().width(10.0).into(),
-    container(Space::new())
-      .width(3.0)
-      .height(3.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::text::GHOST)),
-        border: Border {
-          radius: radius::FULL.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
+    dot_separator(),
     Space::new().width(10.0).into(),
     text(format!("{colored}"))
       .font(typography::mono::REGULAR)
@@ -295,26 +289,12 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
       })
       .into(),
   ];
+
   if !draggable {
-    let warning = if state.search.trim().is_empty() {
-      "Reorder disabled in sorted view"
-    } else {
-      "Reorder disabled while filtering"
-    };
-    stats_parts.extend([
+    let warning = reorder_warning_text(state);
+    parts.extend([
       Space::new().width(10.0).into(),
-      container(Space::new())
-        .width(3.0)
-        .height(3.0)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::text::GHOST)),
-          border: Border {
-            radius: radius::FULL.into(),
-            ..Border::default()
-          },
-          ..container::Style::default()
-        })
-        .into(),
+      dot_separator(),
       Space::new().width(10.0).into(),
       text(warning)
         .font(typography::mono::REGULAR)
@@ -325,7 +305,39 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
         .into(),
     ]);
   }
-  let stats_row: Element<'_, Message> = row(stats_parts).align_y(Vertical::Center).into();
+
+  row(parts).align_y(Vertical::Center).into()
+}
+
+fn reorder_warning_text(state: &State) -> &'static str {
+  if state.search.trim().is_empty() {
+    "Reorder disabled in sorted view"
+  } else {
+    "Reorder disabled while filtering"
+  }
+}
+
+fn tag_panel_header(state: &State) -> Element<'_, Message> {
+  let title = text("Tags").size(18.0).color(color::text::PRIMARY);
+  let desc = text(
+    "Assign a color to any tag and it will render that way everywhere it appears \
+    on a character card. Drag rows to reorder; tags follow their manual order on cards.",
+  )
+  .size(13.0)
+  .color(color::text::SECONDARY);
+
+  let can_create = !state.new_name.trim().is_empty();
+
+  let create_row: Element<'_, Message> = row([
+    create_input_pill(state),
+    add_button(can_create),
+    Space::new().width(Length::Fill).into(),
+    sort_control_row(state),
+    filter_input(state),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into();
 
   column([
     row([title.into(), Space::new().width(Length::Fill).into()])
@@ -336,7 +348,7 @@ fn tag_panel_header(state: &State) -> Element<'_, Message> {
     Space::new().height(spacing::SPACE_3_5).into(),
     create_row,
     Space::new().height(8.0).into(),
-    stats_row,
+    stats_row(state),
   ])
   .padding(Padding {
     top: 24.0,

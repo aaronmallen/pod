@@ -102,154 +102,21 @@ impl<'a> TagListRow<'a> {
   /// prepended before the row itself.
   pub fn render(self) -> Vec<Element<'a, Message>> {
     let id = self.id;
-    let handle = drag_handle(self.draggable);
 
-    let on_toggle = if self.color_open {
-      Message::ColorClose
-    } else {
-      Message::ColorOpen(id)
-    };
-    let color_picker = ColorPicker::new(
-      self.color_hex.unwrap_or(""),
-      self.color_open,
-      move |hex: String| {
-        if hex.is_empty() {
-          Message::SetColor(id, None)
-        } else {
-          Message::SetColor(id, Some(hex))
-        }
-      },
-      on_toggle,
-    )
-    .render();
-
-    let name_el: Element<'a, Message> = if self.editing {
-      text_input("", self.draft)
-        .on_input(Message::DraftChanged)
-        .on_submit(Message::Rename)
-        .font(typography::body::REGULAR)
-        .size(14.0)
-        .style(|_, _| text_input::Style {
-          background: Background::Color(color::surface::SUNKEN),
-          border: Border {
-            color: color::accent::PLASMA,
-            radius: radius::CHIP.into(),
-            width: 1.0,
-          },
-          icon: color::text::SECONDARY,
-          placeholder: color::text::TERTIARY,
-          value: color::text::PRIMARY,
-          selection: color::state::SELECTION,
-        })
-        .into()
-    } else {
-      button(
-        text(self.name)
-          .font(typography::body::REGULAR)
-          .size(14.0)
-          .style(|_| iced::widget::text::Style {
-            color: Some(color::text::PRIMARY),
-          }),
-      )
-      .padding(Padding::ZERO)
-      .on_press(Message::EditStart(id))
-      .style(|_, _| button::Style {
-        background: None,
-        border: Border::default(),
-        snap: false,
-        text_color: color::text::PRIMARY,
-        shadow: iced::Shadow::default(),
-      })
-      .into()
-    };
-
+    let drag_handle_el = build_drag_handle_el(id, self.draggable);
+    let color_picker = build_color_picker(id, self.color_hex, self.color_open);
+    let name_el = build_name_el(id, self.name, self.draft, self.editing);
     let preview = tag_preview_chip(self.name, self.color_hex);
-
-    let delete_btn = button(
-      container(text("\u{00D7}").font(typography::body::REGULAR).size(14.0))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center),
-    )
-    .width(26.0)
-    .height(26.0)
-    .padding(Padding::ZERO)
-    .on_press(Message::Delete(id))
-    .style(|_, status| button::Style {
-      background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        Some(Background::Color(color::status::DANGER_SUBTLE))
-      } else {
-        None
-      },
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      snap: false,
-      text_color: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        color::status::DANGER
-      } else {
-        color::text::SECONDARY
-      },
-      shadow: iced::Shadow::default(),
-    });
-
-    let drag_handle_el: Element<'a, Message> = if self.draggable {
-      mouse_area(handle).on_press(Message::DragStart(id)).into()
-    } else {
-      handle
-    };
-
-    let row_bg = if self.is_dragging {
-      Some(Background::Color(iced::Color {
-        a: 0.04,
-        ..color::accent::PLASMA
-      }))
-    } else {
-      None
-    };
-
-    let tag_row: Element<'a, Message> = container(
-      row([
-        drag_handle_el,
-        color_picker,
-        container(name_el)
-          .width(Length::Fill)
-          .padding(Padding {
-            left: spacing::SPACE_3,
-            right: spacing::SPACE_3,
-            ..Padding::ZERO
-          })
-          .into(),
-        preview,
-        delete_btn.into(),
-      ])
-      .spacing(10.0)
-      .align_y(Vertical::Center)
-      .padding(Padding {
-        top: 10.0,
-        bottom: 10.0,
-        left: 4.0,
-        right: 4.0,
-      }),
-    )
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: row_bg,
-      ..container::Style::default()
-    })
-    .into();
-
-    let row_border: Element<'a, Message> = container(Space::new().width(Length::Fill).height(1.0))
-      .width(Length::Fill)
-      .height(1.0)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::border::SUBTLE)),
-        ..container::Style::default()
-      })
-      .into();
+    let delete_btn = build_delete_button(id);
+    let tag_row = build_tag_row(
+      drag_handle_el,
+      color_picker,
+      name_el,
+      preview,
+      delete_btn,
+      self.is_dragging,
+    );
+    let row_border = build_row_border();
 
     let mut result: Vec<Element<'a, Message>> = Vec::new();
     if self.is_drop_above {
@@ -259,6 +126,172 @@ impl<'a> TagListRow<'a> {
     result.push(row_border);
     result
   }
+}
+
+fn build_drag_handle_el(id: i32, draggable: bool) -> Element<'static, Message> {
+  let handle = drag_handle(draggable);
+  if draggable {
+    mouse_area(handle).on_press(Message::DragStart(id)).into()
+  } else {
+    handle
+  }
+}
+
+fn build_color_picker(id: i32, color_hex: Option<&str>, color_open: bool) -> Element<'_, Message> {
+  let on_toggle = if color_open {
+    Message::ColorClose
+  } else {
+    Message::ColorOpen(id)
+  };
+  ColorPicker::new(
+    color_hex.unwrap_or(""),
+    color_open,
+    move |hex: String| {
+      if hex.is_empty() {
+        Message::SetColor(id, None)
+      } else {
+        Message::SetColor(id, Some(hex))
+      }
+    },
+    on_toggle,
+  )
+  .render()
+}
+
+fn build_name_el<'a>(id: i32, name: &'a str, draft: &'a str, editing: bool) -> Element<'a, Message> {
+  if editing {
+    text_input("", draft)
+      .on_input(Message::DraftChanged)
+      .on_submit(Message::Rename)
+      .font(typography::body::REGULAR)
+      .size(14.0)
+      .style(|_, _| text_input::Style {
+        background: Background::Color(color::surface::SUNKEN),
+        border: Border {
+          color: color::accent::PLASMA,
+          radius: radius::CHIP.into(),
+          width: 1.0,
+        },
+        icon: color::text::SECONDARY,
+        placeholder: color::text::TERTIARY,
+        value: color::text::PRIMARY,
+        selection: color::state::SELECTION,
+      })
+      .into()
+  } else {
+    button(
+      text(name)
+        .font(typography::body::REGULAR)
+        .size(14.0)
+        .style(|_| iced::widget::text::Style {
+          color: Some(color::text::PRIMARY),
+        }),
+    )
+    .padding(Padding::ZERO)
+    .on_press(Message::EditStart(id))
+    .style(|_, _| button::Style {
+      background: None,
+      border: Border::default(),
+      snap: false,
+      text_color: color::text::PRIMARY,
+      shadow: iced::Shadow::default(),
+    })
+    .into()
+  }
+}
+
+fn build_delete_button(id: i32) -> Element<'static, Message> {
+  button(
+    container(text("\u{00D7}").font(typography::body::REGULAR).size(14.0))
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .width(26.0)
+  .height(26.0)
+  .padding(Padding::ZERO)
+  .on_press(Message::Delete(id))
+  .style(|_, status| button::Style {
+    background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+      Some(Background::Color(color::status::DANGER_SUBTLE))
+    } else {
+      None
+    },
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: radius::CHIP.into(),
+      width: 1.0,
+    },
+    snap: false,
+    text_color: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+      color::status::DANGER
+    } else {
+      color::text::SECONDARY
+    },
+    shadow: iced::Shadow::default(),
+  })
+  .into()
+}
+
+fn build_tag_row<'a>(
+  drag_handle_el: Element<'a, Message>,
+  color_picker: Element<'a, Message>,
+  name_el: Element<'a, Message>,
+  preview: Element<'a, Message>,
+  delete_btn: Element<'a, Message>,
+  is_dragging: bool,
+) -> Element<'a, Message> {
+  let row_bg = if is_dragging {
+    Some(Background::Color(iced::Color {
+      a: 0.04,
+      ..color::accent::PLASMA
+    }))
+  } else {
+    None
+  };
+
+  container(
+    row([
+      drag_handle_el,
+      color_picker,
+      container(name_el)
+        .width(Length::Fill)
+        .padding(Padding {
+          left: spacing::SPACE_3,
+          right: spacing::SPACE_3,
+          ..Padding::ZERO
+        })
+        .into(),
+      preview,
+      delete_btn,
+    ])
+    .spacing(10.0)
+    .align_y(Vertical::Center)
+    .padding(Padding {
+      top: 10.0,
+      bottom: 10.0,
+      left: 4.0,
+      right: 4.0,
+    }),
+  )
+  .width(Length::Fill)
+  .style(move |_| container::Style {
+    background: row_bg,
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn build_row_border<'a>() -> Element<'a, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
+    .width(Length::Fill)
+    .height(1.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::border::SUBTLE)),
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn drag_handle<'a, MSG: 'a>(draggable: bool) -> Element<'a, MSG> {

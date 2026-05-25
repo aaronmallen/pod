@@ -969,34 +969,44 @@ pub fn fmt_vol(m3: f64) -> String {
   }
 }
 
+const CAT_COLORS: &[(&str, (f32, f32, f32))] = &[
+  ("ship", (0.247, 0.722, 0.859)),
+  ("module", (0.851, 0.698, 0.322)),
+  ("drone", (0.357, 0.725, 0.494)),
+  ("charge", (0.878, 0.459, 0.349)),
+  ("implant", (0.612, 0.408, 0.839)),
+  ("blueprint", (0.247, 0.722, 0.780)),
+  ("material", (0.600, 0.510, 0.360)),
+  ("book", (0.420, 0.420, 0.780)),
+  ("commodity", (0.247, 0.780, 0.800)),
+];
+
+const CAT_GLYPHS: &[(&str, &str)] = &[
+  ("ship", "◆"),
+  ("module", "▣"),
+  ("drone", "◇"),
+  ("charge", "▴"),
+  ("implant", "✦"),
+  ("blueprint", "▤"),
+  ("material", "◯"),
+  ("book", "◐"),
+  ("commodity", "⬟"),
+];
+
 pub fn cat_color_rgb(cat: &str) -> (f32, f32, f32) {
-  match cat {
-    "ship" => (0.247, 0.722, 0.859),
-    "module" => (0.851, 0.698, 0.322),
-    "drone" => (0.357, 0.725, 0.494),
-    "charge" => (0.878, 0.459, 0.349),
-    "implant" => (0.612, 0.408, 0.839),
-    "blueprint" => (0.247, 0.722, 0.780),
-    "material" => (0.600, 0.510, 0.360),
-    "book" => (0.420, 0.420, 0.780),
-    "commodity" => (0.247, 0.780, 0.800),
-    _ => (0.600, 0.600, 0.600),
-  }
+  CAT_COLORS
+    .iter()
+    .find(|&&(k, _)| k == cat)
+    .map(|&(_, v)| v)
+    .unwrap_or((0.600, 0.600, 0.600))
 }
 
 pub fn cat_glyph(cat: &str) -> &'static str {
-  match cat {
-    "ship" => "◆",
-    "module" => "▣",
-    "drone" => "◇",
-    "charge" => "▴",
-    "implant" => "✦",
-    "blueprint" => "▤",
-    "material" => "◯",
-    "book" => "◐",
-    "commodity" => "⬟",
-    _ => "·",
-  }
+  CAT_GLYPHS
+    .iter()
+    .find(|&&(k, _)| k == cat)
+    .map(|&(_, v)| v)
+    .unwrap_or("·")
 }
 
 pub fn struct_glyph(kind: &str) -> &'static str {

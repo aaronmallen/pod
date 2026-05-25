@@ -25,11 +25,42 @@ fn now_unix() -> i64 {
 /// 4. Prunes items no longer present in character assets.
 /// 5. Refreshes MutaMarket prices for items older than 24 hours.
 pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta_market::Client, db: &pod_db::Repo) {
+  let abyssal_pairs = match find_abyssal_pairs(character_id, db).await {
+    Some(pairs) => pairs,
+    None => return,
+  };
+
+  if abyssal_pairs.is_empty() {
+    prune_stale(character_id, &[], db).await;
+    return;
+  }
+
+  let current_item_ids: Vec<i64> = abyssal_pairs.iter().map(|(_, iid)| *iid).collect();
+  let existing_synced = load_existing_sync_times(character_id, db).await;
+  if existing_synced.is_none() {
+    return;
+  }
+  let existing_synced = existing_synced.unwrap();
+  let now = now_unix();
+  let stale_threshold = now - 12 * 3600;
+
+  for (type_id, item_id) in &abyssal_pairs {
+    let last_synced = existing_synced.get(item_id).copied().unwrap_or(0);
+    if last_synced < stale_threshold {
+      sync_single_item(character_id, *type_id, *item_id, now, esi, db).await;
+    }
+  }
+
+  prune_stale(character_id, &current_item_ids, db).await;
+  price_abyssals(character_id, muta, db).await;
+}
+
+async fn find_abyssal_pairs(character_id: i64, db: &pod_db::Repo) -> Option<Vec<(i32, i64)>> {
   let assets = match db.characters().assets_for_character_ids(&[character_id]).await {
     Ok(rows) => rows,
     Err(e) => {
       tracing::warn!("abyssals: failed to load assets for character {character_id}: {e}");
-      return;
+      return None;
     }
   };
 
@@ -40,12 +71,11 @@ pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta
     .collect();
 
   if singleton_pairs.is_empty() {
-    return;
+    return Some(vec![]);
   }
 
-  let type_ids: Vec<i32> = singleton_pairs.iter().map(|(tid, _)| *tid).collect();
   let type_ids_deduped: Vec<i32> = {
-    let mut ids = type_ids.clone();
+    let mut ids: Vec<i32> = singleton_pairs.iter().map(|(tid, _)| *tid).collect();
     ids.sort_unstable();
     ids.dedup();
     ids
@@ -55,75 +85,63 @@ pub async fn sync_abyssals(character_id: i64, esi: &pod_esi::Client, muta: &muta
     Ok(rows) => rows,
     Err(e) => {
       tracing::warn!("abyssals: failed to look up item types: {e}");
-      return;
+      return None;
     }
   };
 
   let abyssal_type_ids: std::collections::HashSet<i32> =
     item_type_rows.iter().filter(|t| t.is_abyssal).map(|t| t.id).collect();
 
-  let abyssal_pairs: Vec<(i32, i64)> = singleton_pairs
-    .into_iter()
-    .filter(|(tid, _)| abyssal_type_ids.contains(tid))
-    .collect();
+  Some(
+    singleton_pairs
+      .into_iter()
+      .filter(|(tid, _)| abyssal_type_ids.contains(tid))
+      .collect(),
+  )
+}
 
-  if abyssal_pairs.is_empty() {
-    prune_stale(character_id, &[], db).await;
-    return;
-  }
-
-  let current_item_ids: Vec<i64> = abyssal_pairs.iter().map(|(_, iid)| *iid).collect();
-
-  let existing = match db.abyssals().abyssals_for_character(character_id).await {
-    Ok(rows) => rows,
+async fn load_existing_sync_times(character_id: i64, db: &pod_db::Repo) -> Option<std::collections::HashMap<i64, i64>> {
+  match db.abyssals().abyssals_for_character(character_id).await {
+    Ok(rows) => Some(rows.iter().map(|r| (*r.item_id(), *r.synced_at())).collect()),
     Err(e) => {
       tracing::warn!("abyssals: failed to load existing records for {character_id}: {e}");
-      return;
-    }
-  };
-
-  let now = now_unix();
-  let stale_threshold = now - 12 * 3600;
-
-  let existing_synced: std::collections::HashMap<i64, i64> =
-    existing.iter().map(|r| (*r.item_id(), *r.synced_at())).collect();
-
-  for (type_id, item_id) in &abyssal_pairs {
-    let last_synced = existing_synced.get(item_id).copied().unwrap_or(0);
-    if last_synced >= stale_threshold {
-      continue;
-    }
-
-    match esi.dogma().dynamic_item(*type_id as i64, *item_id).await {
-      Ok(dynamic) => {
-        let attrs: Vec<AbyssalAttribute> = dynamic
-          .dogma_attributes
-          .iter()
-          .map(|v| AbyssalAttribute::new(v.attribute_id, v.value))
-          .collect();
-
-        let record = AbyssalItemRecord::new(
-          *item_id,
-          character_id,
-          *type_id,
-          dynamic.source_type_id,
-          dynamic.mutator_type_id,
-          attrs,
-          now,
-        );
-
-        if let Err(e) = db.abyssals().upsert_abyssal(record).await {
-          tracing::warn!("abyssals: failed to upsert item {item_id}: {e}");
-        }
-      }
-      Err(e) => {
-        tracing::warn!("abyssals: ESI fetch failed for item {item_id} type {type_id}: {e}");
-      }
+      None
     }
   }
+}
 
-  prune_stale(character_id, &current_item_ids, db).await;
-  price_abyssals(character_id, muta, db).await;
+async fn sync_single_item(
+  character_id: i64,
+  type_id: i32,
+  item_id: i64,
+  now: i64,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) {
+  match esi.dogma().dynamic_item(type_id as i64, item_id).await {
+    Ok(dynamic) => {
+      let attrs: Vec<AbyssalAttribute> = dynamic
+        .dogma_attributes
+        .iter()
+        .map(|v| AbyssalAttribute::new(v.attribute_id, v.value))
+        .collect();
+      let record = AbyssalItemRecord::new(
+        item_id,
+        character_id,
+        type_id,
+        dynamic.source_type_id,
+        dynamic.mutator_type_id,
+        attrs,
+        now,
+      );
+      if let Err(e) = db.abyssals().upsert_abyssal(record).await {
+        tracing::warn!("abyssals: failed to upsert item {item_id}: {e}");
+      }
+    }
+    Err(e) => {
+      tracing::warn!("abyssals: ESI fetch failed for item {item_id} type {type_id}: {e}");
+    }
+  }
 }
 
 async fn prune_stale(character_id: i64, keep_ids: &[i64], db: &pod_db::Repo) {

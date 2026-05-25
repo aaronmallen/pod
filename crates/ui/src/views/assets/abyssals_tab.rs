@@ -18,20 +18,23 @@ use crate::{
 /// Unit ID → suffix string mapping for abyssal stat display.
 ///
 /// Covers the ~10 unit IDs that appear in abyssal module stats.
+const UNIT_SUFFIX_TABLE: &[(i32, &str)] = &[
+  (71, " GJ"),
+  (101, " m/s"),
+  (105, " HP"),
+  (108, " s"),
+  (114, " kg"),
+  (115, " tf"),
+  (116, " MW"),
+  (117, " km"),
+  (121, " m\u{00b3}"),
+  (124, "%"),
+];
+
 fn unit_suffix_for_id(unit_id: Option<i32>) -> &'static str {
-  match unit_id {
-    Some(71) => " GJ",
-    Some(101) => " m/s",
-    Some(105) => " HP",
-    Some(108) => " s",
-    Some(114) => " kg",
-    Some(115) => " tf",
-    Some(116) => " MW",
-    Some(117) => " km",
-    Some(121) => " m\u{00b3}",
-    Some(124) => "%",
-    _ => "",
-  }
+  unit_id
+    .and_then(|id| UNIT_SUFFIX_TABLE.iter().find(|&&(k, _)| k == id).map(|&(_, v)| v))
+    .unwrap_or("")
 }
 
 /// Extracts the unit suffix for display from the unit_id stored on a stat view model.
@@ -145,50 +148,78 @@ fn type_icon_tile(base_type_name: &str, type_id: i32) -> Element<'static, Messag
 }
 
 /// Renders a single stat row within an abyssal card.
-fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
+fn stat_roll_direction(stat: &AbyssalStatViewModel) -> Option<bool> {
   let delta = stat.rolled_value - stat.base_value;
-  let is_good = if delta.abs() < 1e-9 {
+  if delta.abs() < 1e-9 {
     None
   } else if stat.high_is_good {
     Some(delta > 0.0)
   } else {
     Some(delta < 0.0)
-  };
-  let stat_color = match is_good {
+  }
+}
+
+fn stat_direction_color(dir: Option<bool>) -> Color {
+  match dir {
     Some(true) => color::text::SUCCESS,
     Some(false) => color::text::DANGER,
     None => color::text::TERTIARY,
-  };
+  }
+}
 
+fn stat_delta_intensity(stat: &AbyssalStatViewModel, delta: f64) -> f32 {
   let range_span = (stat.max_mult - 1.0).abs().max(1e-9);
   let delta_pct = if stat.base_value.abs() > 1e-9 {
     (delta / stat.base_value).abs()
   } else {
     0.0
   };
-  let intensity = (delta_pct / range_span).clamp(0.0, 1.0) as f32;
+  (delta_pct / range_span).clamp(0.0, 1.0) as f32
+}
 
-  let stat_name = stat.display_name.clone();
-  let rolled_str = format_stat_value(stat.rolled_value, &stat.unit_suffix);
+fn stat_intensity_bar(intensity: f32, fill_col: Color) -> Element<'static, Message> {
+  let bg_col = color::border::SUBTLE;
+  container(
+    container(Space::new().width(Length::Fixed(intensity * 110.0)).height(4.0)).style(move |_| container::Style {
+      background: Some(Background::Color(color::with_alpha(fill_col, 0.9))),
+      ..container::Style::default()
+    }),
+  )
+  .width(110.0)
+  .height(4.0)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(bg_col)),
+    border: Border {
+      radius: 2.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .clip(true)
+  .into()
+}
+
+fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
+  let delta = stat.rolled_value - stat.base_value;
+  let stat_color = stat_direction_color(stat_roll_direction(stat));
+  let intensity = stat_delta_intensity(stat, delta);
   let delta_sign = if delta >= 0.0 { "+" } else { "" };
   let delta_str = format!("{}{}", delta_sign, format_stat_value(delta, &stat.unit_suffix));
+  let name_color = if highlighted {
+    color::text::ACCENT
+  } else {
+    color::text::SECONDARY
+  };
 
-  let stat_icon = stat_icon_tile(&stat.display_name, stat.icon_id);
-
-  let name_el: Element<'static, Message> = text(stat_name)
+  let name_el: Element<'static, Message> = text(stat.display_name.clone())
     .font(body::REGULAR)
     .size(11.0)
     .style(move |_: &Theme| iced::widget::text::Style {
-      color: Some(if highlighted {
-        color::text::ACCENT
-      } else {
-        color::text::SECONDARY
-      }),
+      color: Some(name_color),
     })
     .into();
-
   let value_row: Element<'static, Message> = row([
-    text(rolled_str)
+    text(format_stat_value(stat.rolled_value, &stat.unit_suffix))
       .font(mono::MEDIUM)
       .size(14.0)
       .style(|_: &Theme| iced::widget::text::Style {
@@ -206,34 +237,11 @@ fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, 
   ])
   .align_y(iced::alignment::Vertical::Center)
   .into();
-
-  let bar_bg_col = color::border::SUBTLE;
-  let bar_fill_col = stat_color;
-
-  let intensity_bar: Element<'static, Message> = container(
-    container(Space::new().width(Length::Fixed(intensity * 110.0)).height(4.0)).style(move |_| container::Style {
-      background: Some(Background::Color(color::with_alpha(bar_fill_col, 0.9))),
-      ..container::Style::default()
-    }),
-  )
-  .width(110.0)
-  .height(4.0)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(bar_bg_col)),
-    border: Border {
-      radius: 2.0.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .clip(true)
-  .into();
-
   let inner: Element<'static, Message> = row([
-    stat_icon,
+    stat_icon_tile(&stat.display_name, stat.icon_id),
     Space::new().width(10.0).into(),
     column([name_el, value_row]).width(Length::Fill).into(),
-    intensity_bar,
+    stat_intensity_bar(intensity, stat_color),
   ])
   .align_y(iced::alignment::Vertical::Center)
   .into();
@@ -422,11 +430,13 @@ fn item_matches_query(query: &str, item: &AbyssalViewModel, char_name: &str) -> 
   })
 }
 
-/// Renders a single abyssal card.
-fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query: &'a str) -> Element<'a, Message> {
-  let hi_stats = highlighted_stat_names(search_query, item);
-
-  let header: Element<'a, Message> = container(
+/// Renders the header section of an abyssal card (icon, name, tier badge, price).
+fn abyssal_card_header(item: &AbyssalViewModel) -> Element<'_, Message> {
+  let price_label = item
+    .muta_price_isk
+    .map(format::fmt_isk)
+    .unwrap_or_else(|| "\u{2014}".to_string());
+  container(
     row([
       type_icon_tile(&item.base_type_name, item.type_id),
       Space::new().width(12.0).into(),
@@ -456,18 +466,13 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
       ])
       .width(Length::Fill)
       .into(),
-      column([text(
-        item
-          .muta_price_isk
-          .map(format::fmt_isk)
-          .unwrap_or_else(|| "\u{2014}".to_string()),
-      )
-      .font(mono::MEDIUM)
-      .size(14.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::ACCENT),
-      })
-      .into()])
+      column([text(price_label)
+        .font(mono::MEDIUM)
+        .size(14.0)
+        .style(|_: &Theme| iced::widget::text::Style {
+          color: Some(color::text::ACCENT),
+        })
+        .into()])
       .align_x(iced::alignment::Horizontal::Right)
       .into(),
     ])
@@ -480,8 +485,11 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
     right: 16.0,
   })
   .width(Length::Fill)
-  .into();
+  .into()
+}
 
+/// Renders the stats section of an abyssal card.
+fn abyssal_card_stats<'a>(item: &'a AbyssalViewModel, hi_stats: &[String]) -> Element<'a, Message> {
   let mut sorted_stats: Vec<&AbyssalStatViewModel> = item.stats.iter().collect();
   sorted_stats.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
@@ -493,7 +501,7 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
     })
     .collect();
 
-  let stats_area: Element<'a, Message> = container(column(stat_rows).spacing(0.0))
+  container(column(stat_rows).spacing(0.0))
     .padding(Padding {
       top: 6.0,
       bottom: 14.0,
@@ -501,9 +509,12 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
       right: 16.0,
     })
     .width(Length::Fill)
-    .into();
+    .into()
+}
 
-  let footer: Element<'a, Message> = container(
+/// Renders the footer section of an abyssal card (character name and location).
+fn abyssal_card_footer<'a>(item: &'a AbyssalViewModel, char_name: &'a str) -> Element<'a, Message> {
+  container(
     row([
       char_initials_tile(char_name),
       Space::new().width(8.0).into(),
@@ -549,7 +560,15 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
     },
     ..container::Style::default()
   })
-  .into();
+  .into()
+}
+
+/// Renders a single abyssal card.
+fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query: &'a str) -> Element<'a, Message> {
+  let hi_stats = highlighted_stat_names(search_query, item);
+  let header = abyssal_card_header(item);
+  let stats_area = abyssal_card_stats(item, &hi_stats);
+  let footer = abyssal_card_footer(item, char_name);
 
   container(column([header, stats_area, footer]))
     .width(Length::Fill)
@@ -568,7 +587,36 @@ fn abyssal_card<'a>(item: &'a AbyssalViewModel, char_name: &'a str, search_query
 /// Renders the filter bar (search, toggle, summary strip).
 fn filter_bar(state: &State) -> Element<'_, Message> {
   let abyssals_state = &state.abyssals;
+  let (total_count, total_value, avg_score) = filter_bar_stats(state);
+  let search_box = filter_search_box(&abyssals_state.search_query);
+  let toggle_el = only_positive_button(abyssals_state.only_positive);
+  let summary_strip = filter_summary_strip(total_count, total_value, avg_score);
+  let controls_row: Element<'_, Message> = container(
+    row([toggle_el, Space::new().width(Length::Fill).into(), summary_strip]).align_y(iced::alignment::Vertical::Center),
+  )
+  .padding(Padding {
+    top: 0.0,
+    bottom: 14.0,
+    left: 28.0,
+    right: 28.0,
+  })
+  .width(Length::Fill)
+  .into();
+  container(column([search_box, controls_row]))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      border: Border {
+        color: color::border::SUBTLE,
+        width: 1.0,
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
 
+fn filter_bar_stats(state: &State) -> (usize, f64, f64) {
+  let abyssals_state = &state.abyssals;
   let visible: Vec<&AbyssalViewModel> = state
     .abyssals
     .abyssals
@@ -586,7 +634,6 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
       passes_query && passes_type && passes_score
     })
     .collect();
-
   let total_count = visible.len();
   let total_value: f64 = visible.iter().filter_map(|i| i.muta_price_isk).sum();
   let avg_score = if visible.is_empty() {
@@ -594,34 +641,35 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
   } else {
     visible.iter().map(|i| roll_score(i)).sum::<f64>() / visible.len() as f64
   };
+  (total_count, total_value, avg_score)
+}
 
-  let search_box: Element<'_, Message> = container(
-    row([
-      text_input("Search by item or stat\u{2026}", &abyssals_state.search_query)
-        .on_input(Message::SearchChanged)
-        .font(body::REGULAR)
-        .size(14.0)
-        .padding(Padding {
-          top: 10.0,
-          bottom: 10.0,
-          left: 14.0,
-          right: 14.0,
-        })
-        .style(|_, _| iced::widget::text_input::Style {
-          background: Background::Color(color::surface::SUNKEN),
-          border: Border {
-            color: color::border::SUBTLE,
-            radius: 10.0.into(),
-            width: 1.0,
-          },
-          icon: color::text::TERTIARY,
-          placeholder: color::text::TERTIARY,
-          selection: color::with_alpha(color::text::ACCENT, 0.3),
-          value: color::text::PRIMARY,
-        })
-        .width(Length::Fill)
-        .into(),
-    ])
+fn filter_search_box(query: &str) -> Element<'_, Message> {
+  container(
+    row([text_input("Search by item or stat\u{2026}", query)
+      .on_input(Message::SearchChanged)
+      .font(body::REGULAR)
+      .size(14.0)
+      .padding(Padding {
+        top: 10.0,
+        bottom: 10.0,
+        left: 14.0,
+        right: 14.0,
+      })
+      .style(|_, _| iced::widget::text_input::Style {
+        background: Background::Color(color::surface::SUNKEN),
+        border: Border {
+          color: color::border::SUBTLE,
+          radius: 10.0.into(),
+          width: 1.0,
+        },
+        icon: color::text::TERTIARY,
+        placeholder: color::text::TERTIARY,
+        selection: color::with_alpha(color::text::ACCENT, 0.3),
+        value: color::text::PRIMARY,
+      })
+      .width(Length::Fill)
+      .into()])
     .align_y(iced::alignment::Vertical::Center),
   )
   .padding(Padding {
@@ -631,24 +679,42 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     right: 28.0,
   })
   .width(Length::Fill)
-  .into();
+  .into()
+}
 
-  let only_positive_active = abyssals_state.only_positive;
-  let toggle_el: Element<'_, Message> = button(
+fn only_positive_button(active: bool) -> Element<'static, Message> {
+  let check_bg = if active {
+    Some(Background::Color(color::text::SUCCESS))
+  } else {
+    None
+  };
+  let check_border_color = if active {
+    color::text::SUCCESS
+  } else {
+    color::border::DEFAULT
+  };
+  let label_color = if active {
+    color::text::SUCCESS
+  } else {
+    color::text::SECONDARY
+  };
+  let btn_bg = if active {
+    Some(Background::Color(color::with_alpha(color::text::SUCCESS, 0.10)))
+  } else {
+    None
+  };
+  let btn_border_color = if active {
+    color::with_alpha(color::text::SUCCESS, 0.45)
+  } else {
+    color::border::SUBTLE
+  };
+  button(
     row([
       container(Space::new().width(12.0).height(12.0))
         .style(move |_| container::Style {
-          background: if only_positive_active {
-            Some(Background::Color(color::text::SUCCESS))
-          } else {
-            None
-          },
+          background: check_bg,
           border: Border {
-            color: if only_positive_active {
-              color::text::SUCCESS
-            } else {
-              color::border::DEFAULT
-            },
+            color: check_border_color,
             radius: 3.0.into(),
             width: 1.0,
           },
@@ -660,11 +726,7 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
         .font(body::REGULAR)
         .size(11.0)
         .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(if only_positive_active {
-            color::text::SUCCESS
-          } else {
-            color::text::SECONDARY
-          }),
+          color: Some(label_color),
         })
         .into(),
     ])
@@ -678,59 +740,56 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     right: 12.0,
   })
   .style(move |_, _| button::Style {
-    background: if only_positive_active {
-      Some(Background::Color(color::with_alpha(color::text::SUCCESS, 0.10)))
-    } else {
-      None
-    },
+    background: btn_bg,
     border: Border {
-      color: if only_positive_active {
-        color::with_alpha(color::text::SUCCESS, 0.45)
-      } else {
-        color::border::SUBTLE
-      },
+      color: btn_border_color,
       radius: 6.0.into(),
       width: 1.0,
     },
     text_color: color::text::PRIMARY,
     ..button::Style::default()
   })
-  .into();
+  .into()
+}
 
+fn filter_avg_roll_stat(avg_score: f64) -> Element<'static, Message> {
   let avg_color = if avg_score >= 0.0 {
     color::text::SUCCESS
   } else {
     color::text::DANGER
   };
   let avg_sign = if avg_score >= 0.0 { "+" } else { "" };
+  container(
+    row([
+      text("Avg roll")
+        .font(mono::REGULAR)
+        .size(9.0)
+        .style(|_: &Theme| iced::widget::text::Style {
+          color: Some(color::text::TERTIARY),
+        })
+        .into(),
+      Space::new().width(6.0).into(),
+      text(format!("{}{:.2}%", avg_sign, avg_score))
+        .font(mono::MEDIUM)
+        .size(11.0)
+        .style(move |_: &Theme| iced::widget::text::Style {
+          color: Some(avg_color),
+        })
+        .into(),
+    ])
+    .align_y(iced::alignment::Vertical::Center),
+  )
+  .into()
+}
 
-  let summary_strip: Element<'_, Message> = container(
+fn filter_summary_strip(total_count: usize, total_value: f64, avg_score: f64) -> Element<'static, Message> {
+  container(
     row([
       summary_stat("Modules", &total_count.to_string()),
       Space::new().width(18.0).into(),
       summary_stat("Est. value", &format::fmt_isk(total_value)),
       Space::new().width(18.0).into(),
-      container(
-        row([
-          text("Avg roll")
-            .font(mono::REGULAR)
-            .size(9.0)
-            .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(color::text::TERTIARY),
-            })
-            .into(),
-          Space::new().width(6.0).into(),
-          text(format!("{}{:.2}%", avg_sign, avg_score))
-            .font(mono::MEDIUM)
-            .size(11.0)
-            .style(move |_: &Theme| iced::widget::text::Style {
-              color: Some(avg_color),
-            })
-            .into(),
-        ])
-        .align_y(iced::alignment::Vertical::Center),
-      )
-      .into(),
+      filter_avg_roll_stat(avg_score),
     ])
     .align_y(iced::alignment::Vertical::Center),
   )
@@ -749,31 +808,7 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     },
     ..container::Style::default()
   })
-  .into();
-
-  let controls_row: Element<'_, Message> = container(
-    row([toggle_el, Space::new().width(Length::Fill).into(), summary_strip]).align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 0.0,
-    bottom: 14.0,
-    left: 28.0,
-    right: 28.0,
-  })
-  .width(Length::Fill)
-  .into();
-
-  container(column([search_box, controls_row]))
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      border: Border {
-        color: color::border::SUBTLE,
-        width: 1.0,
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into()
+  .into()
 }
 
 /// Renders a small label + value stat for the summary strip.
@@ -865,44 +900,7 @@ fn card_grid<'a>(state: &'a State, search_query: &'a str, only_positive: bool) -
 /// Renders the filter sidebar with module type picker.
 fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
   let abyssals_state = &state.abyssals;
-
-  let all_btn_active = abyssals_state.selected_type_id.is_none();
-  let all_btn: Element<'_, Message> = button(text("All module types").font(body::REGULAR).size(11.0).style(
-    move |_: &Theme| iced::widget::text::Style {
-      color: Some(if all_btn_active {
-        color::text::ACCENT
-      } else {
-        color::text::PRIMARY
-      }),
-    },
-  ))
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: 10.0,
-    right: 10.0,
-  })
-  .on_press(Message::TypeSelected(None))
-  .style(move |_, _| button::Style {
-    background: if all_btn_active {
-      Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.10)))
-    } else {
-      None
-    },
-    border: Border {
-      color: if all_btn_active {
-        color::text::ACCENT
-      } else {
-        color::border::SUBTLE
-      },
-      radius: 5.0.into(),
-      width: 1.0,
-    },
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
-  .into();
+  let all_btn = sidebar_all_button(abyssals_state.selected_type_id.is_none());
 
   let mut type_ids: Vec<i32> = abyssals_state
     .abyssals
@@ -923,45 +921,7 @@ fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
         .find(|i| i.type_id == tid)
         .map(|i| i.base_type_name.as_str())
         .unwrap_or("Unknown");
-      button(
-        text(type_name.to_string())
-          .font(body::REGULAR)
-          .size(11.0)
-          .style(move |_: &Theme| iced::widget::text::Style {
-            color: Some(if is_active {
-              color::text::ACCENT
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
-      )
-      .width(Length::Fill)
-      .padding(Padding {
-        top: 6.0,
-        bottom: 6.0,
-        left: 10.0,
-        right: 10.0,
-      })
-      .on_press(Message::TypeSelected(Some(tid)))
-      .style(move |_, _| button::Style {
-        background: if is_active {
-          Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08)))
-        } else {
-          None
-        },
-        border: Border {
-          color: if is_active {
-            color::with_alpha(color::text::ACCENT, 0.3)
-          } else {
-            Color::TRANSPARENT
-          },
-          radius: 5.0.into(),
-          width: 1.0,
-        },
-        text_color: color::text::PRIMARY,
-        ..button::Style::default()
-      })
-      .into()
+      sidebar_type_button(type_name, tid, is_active)
     })
     .collect();
 
@@ -1017,6 +977,96 @@ fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
       ..Border::default()
     },
     ..container::Style::default()
+  })
+  .into()
+}
+
+fn sidebar_all_button(active: bool) -> Element<'static, Message> {
+  let text_color = if active {
+    color::text::ACCENT
+  } else {
+    color::text::PRIMARY
+  };
+  let bg = if active {
+    Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.10)))
+  } else {
+    None
+  };
+  let border_color = if active {
+    color::text::ACCENT
+  } else {
+    color::border::SUBTLE
+  };
+  button(
+    text("All module types")
+      .font(body::REGULAR)
+      .size(11.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(text_color),
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 7.0,
+    bottom: 7.0,
+    left: 10.0,
+    right: 10.0,
+  })
+  .on_press(Message::TypeSelected(None))
+  .style(move |_, _| button::Style {
+    background: bg,
+    border: Border {
+      color: border_color,
+      radius: 5.0.into(),
+      width: 1.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn sidebar_type_button(type_name: &str, tid: i32, active: bool) -> Element<'static, Message> {
+  let label_color = if active {
+    color::text::ACCENT
+  } else {
+    color::text::SECONDARY
+  };
+  let bg = if active {
+    Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08)))
+  } else {
+    None
+  };
+  let border_color = if active {
+    color::with_alpha(color::text::ACCENT, 0.3)
+  } else {
+    Color::TRANSPARENT
+  };
+  button(
+    text(type_name.to_string())
+      .font(body::REGULAR)
+      .size(11.0)
+      .style(move |_: &Theme| iced::widget::text::Style {
+        color: Some(label_color),
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 6.0,
+    bottom: 6.0,
+    left: 10.0,
+    right: 10.0,
+  })
+  .on_press(Message::TypeSelected(Some(tid)))
+  .style(move |_, _| button::Style {
+    background: bg,
+    border: Border {
+      color: border_color,
+      radius: 5.0.into(),
+      width: 1.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
   })
   .into()
 }

@@ -1,6 +1,6 @@
 //! Snooze dropdown overlay: preset buttons and a custom date/time calendar.
 
-use chrono::{Datelike, NaiveDate, Timelike, Utc, Weekday};
+use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc, Weekday};
 use iced::{
   Background, Border, Color, Element, Length, Padding, Theme,
   alignment::Vertical,
@@ -82,15 +82,7 @@ impl CalendarState {
   /// Returns a human-readable summary of the selected date and time.
   pub fn display_label(&self) -> String {
     let day_name = NaiveDate::from_ymd_opt(self.sel_year, self.sel_month + 1, self.sel_day)
-      .map(|d| match d.weekday() {
-        Weekday::Mon => "Mon",
-        Weekday::Tue => "Tue",
-        Weekday::Wed => "Wed",
-        Weekday::Thu => "Thu",
-        Weekday::Fri => "Fri",
-        Weekday::Sat => "Sat",
-        Weekday::Sun => "Sun",
-      })
+      .map(|d| weekday_abbr(d.weekday()))
       .unwrap_or("?");
     format!(
       "{} {:02} {} · {:02}:{:02}",
@@ -119,29 +111,67 @@ pub fn preset_to_iso(label: &str) -> Option<String> {
   let target = match label {
     "Later today" => today.and_hms_opt(18, 0, 0)?.and_utc(),
     "Tomorrow" => today.succ_opt()?.and_hms_opt(9, 0, 0)?.and_utc(),
-    "After downtime" => {
-      let downtime = today.and_hms_opt(DOWNTIME_HOUR, DOWNTIME_MINUTE, 0)?.and_utc();
-      if now >= downtime {
-        today
-          .succ_opt()?
-          .and_hms_opt(DOWNTIME_HOUR, DOWNTIME_MINUTE, 0)?
-          .and_utc()
-      } else {
-        downtime
-      }
-    }
-    "Next week" => {
-      let days_until_mon = match today.weekday() {
-        Weekday::Mon => 7,
-        d => (8 - d.number_from_monday() as i64).rem_euclid(7).max(1),
-      };
-      (today + chrono::Duration::days(days_until_mon))
-        .and_hms_opt(9, 0, 0)?
-        .and_utc()
-    }
+    "After downtime" => preset_after_downtime_target(today, &now)?,
+    "Next week" => preset_next_week_target(today)?,
     _ => return None,
   };
   Some(target.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+fn preset_after_downtime_target(today: chrono::NaiveDate, now: &DateTime<Utc>) -> Option<DateTime<Utc>> {
+  let downtime = today.and_hms_opt(DOWNTIME_HOUR, DOWNTIME_MINUTE, 0)?.and_utc();
+  if *now >= downtime {
+    today
+      .succ_opt()?
+      .and_hms_opt(DOWNTIME_HOUR, DOWNTIME_MINUTE, 0)?
+      .and_utc()
+      .into()
+  } else {
+    downtime.into()
+  }
+}
+
+fn preset_next_week_target(today: chrono::NaiveDate) -> Option<DateTime<Utc>> {
+  let days_until_mon = match today.weekday() {
+    Weekday::Mon => 7,
+    d => (8 - d.number_from_monday() as i64).rem_euclid(7).max(1),
+  };
+  (today + chrono::Duration::days(days_until_mon))
+    .and_hms_opt(9, 0, 0)?
+    .and_utc()
+    .into()
+}
+
+/// Maps a `Weekday` to its 3-letter abbreviation.
+fn weekday_abbr(weekday: Weekday) -> &'static str {
+  match weekday {
+    Weekday::Mon => "Mon",
+    Weekday::Tue => "Tue",
+    Weekday::Wed => "Wed",
+    Weekday::Thu => "Thu",
+    Weekday::Fri => "Fri",
+    Weekday::Sat => "Sat",
+    Weekday::Sun => "Sun",
+  }
+}
+
+/// Formats a snooze date relative to today: "Today", "Tomorrow", or
+/// "Mon DD MMM".
+fn format_snooze_date_part(
+  snooze_date: chrono::NaiveDate,
+  today: chrono::NaiveDate,
+  day_name: &str,
+  day: u32,
+  month_abbr: &str,
+) -> String {
+  let tomorrow = today.succ_opt().unwrap_or(today);
+  if snooze_date == today {
+    "Today".to_string()
+  } else if snooze_date == tomorrow {
+    "Tomorrow".to_string()
+  } else {
+    format!("{} {} {}", day_name, day, month_abbr)
+  }
 }
 
 /// Format an ISO 8601 UTC snooze timestamp into a human-readable label.
@@ -157,28 +187,13 @@ pub fn format_snooze_expiry(iso: &str) -> String {
   let Ok(dt) = iso.parse::<DateTime<Utc>>() else {
     return iso.to_string();
   };
-  let now = Utc::now();
-  let today = now.date_naive();
-  let tomorrow = today.succ_opt().unwrap_or(today);
+  let today = Utc::now().date_naive();
   let snooze_date = dt.date_naive();
-  let day_name = match dt.weekday() {
-    Weekday::Mon => "Mon",
-    Weekday::Tue => "Tue",
-    Weekday::Wed => "Wed",
-    Weekday::Thu => "Thu",
-    Weekday::Fri => "Fri",
-    Weekday::Sat => "Sat",
-    Weekday::Sun => "Sun",
-  };
+  let day_name = weekday_abbr(dt.weekday());
+  let month_abbr = &MONTH_NAMES[dt.month0() as usize][..3];
   let time_str = format!("{:02}:{:02}", dt.hour(), dt.minute());
-  if snooze_date == today {
-    format!("Today at {time_str}")
-  } else if snooze_date == tomorrow {
-    format!("Tomorrow at {time_str}")
-  } else {
-    let month_abbr = &MONTH_NAMES[dt.month0() as usize][..3];
-    format!("{} {} {} at {}", day_name, dt.day(), month_abbr, time_str)
-  }
+  let date_part = format_snooze_date_part(snooze_date, today, day_name, dt.day(), month_abbr);
+  format!("{date_part} at {time_str}")
 }
 
 fn preset_button(label: &'static str, hint: &'static str) -> Element<'static, Message> {
@@ -429,39 +444,43 @@ fn calendar_day_cell(
   .into()
 }
 
+fn stepper_arrow_button(arrow: &'static str, msg: Message, top_pad: f32, bot_pad: f32) -> Element<'static, Message> {
+  button(
+    container(
+      text(arrow)
+        .font(mono::REGULAR)
+        .size(9.0)
+        .style(|_: &Theme| iced::widget::text::Style {
+          color: Some(color::text::SECONDARY),
+        }),
+    )
+    .center_x(Length::Fill),
+  )
+  .width(Length::Fixed(32.0))
+  .padding(Padding {
+    top: top_pad,
+    bottom: bot_pad,
+    left: 0.0,
+    right: 0.0,
+  })
+  .on_press(msg)
+  .style(|_, status| button::Style {
+    background: match status {
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+      _ => None,
+    },
+    border: Border {
+      radius: 3.0.into(),
+      ..Border::default()
+    },
+    ..button::Style::default()
+  })
+  .into()
+}
+
 fn time_stepper(label: &'static str, value: u32, up_msg: Message, down_msg: Message) -> Element<'static, Message> {
   column([
-    button(
-      container(
-        text("▲")
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .center_x(Length::Fill),
-    )
-    .width(Length::Fixed(32.0))
-    .padding(Padding {
-      top: 3.0,
-      bottom: 2.0,
-      left: 0.0,
-      right: 0.0,
-    })
-    .on_press(up_msg)
-    .style(|_, status| button::Style {
-      background: match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-        _ => None,
-      },
-      border: Border {
-        radius: 3.0.into(),
-        ..Border::default()
-      },
-      ..button::Style::default()
-    })
-    .into(),
+    stepper_arrow_button("▲", up_msg, 3.0, 2.0),
     container(
       text(format!("{value:02}"))
         .font(mono::REGULAR)
@@ -472,37 +491,7 @@ fn time_stepper(label: &'static str, value: u32, up_msg: Message, down_msg: Mess
     )
     .center_x(Length::Fixed(32.0))
     .into(),
-    button(
-      container(
-        text("▼")
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .center_x(Length::Fill),
-    )
-    .width(Length::Fixed(32.0))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 3.0,
-      left: 0.0,
-      right: 0.0,
-    })
-    .on_press(down_msg)
-    .style(|_, status| button::Style {
-      background: match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-        _ => None,
-      },
-      border: Border {
-        radius: 3.0.into(),
-        ..Border::default()
-      },
-      ..button::Style::default()
-    })
-    .into(),
+    stepper_arrow_button("▼", down_msg, 2.0, 3.0),
     text(label)
       .font(mono::REGULAR)
       .size(8.0)
@@ -560,30 +549,31 @@ fn quick_chip(label: &'static str, hint: &'static str, msg: Message) -> Element<
   .into()
 }
 
-fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> {
-  let now = Utc::now();
-  let today = now.date_naive();
-  let year = state.view_year;
-  let month = state.view_month;
-
-  let first_of_month =
-    NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
-  let first_dow = first_of_month.weekday().number_from_monday() as i64 - 1;
-  let month_days = days_in_month(year, month);
-  let prev_month_days = if month == 0 {
-    days_in_month(year - 1, 11)
+fn prev_month_info(month: u32, year: i32) -> (u32, i32) {
+  if month == 0 {
+    (11u32, year - 1)
   } else {
-    days_in_month(year, month - 1)
-  };
+    (month - 1, year)
+  }
+}
+
+fn next_month_info(month: u32, year: i32) -> (u32, i32) {
+  if month == 11 {
+    (0u32, year + 1)
+  } else {
+    (month + 1, year)
+  }
+}
+
+fn build_month_cells(month: u32, year: i32, first_dow: i64) -> Vec<(u32, u32, i32, bool)> {
+  let month_days = days_in_month(year, month);
+  let (pm, py) = prev_month_info(month, year);
+  let prev_days = days_in_month(py, pm);
+  let (nm, ny) = next_month_info(month, year);
 
   let mut cells: Vec<(u32, u32, i32, bool)> = Vec::new();
   for i in 0..first_dow {
-    let d = (prev_month_days as i64 - first_dow + i + 1) as u32;
-    let (pm, py) = if month == 0 {
-      (11u32, year - 1)
-    } else {
-      (month - 1, year)
-    };
+    let d = (prev_days as i64 - first_dow + i + 1) as u32;
     cells.push((d, pm, py, false));
   }
   for d in 1..=month_days {
@@ -591,13 +581,20 @@ fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> 
   }
   let remaining = 42 - cells.len();
   for d in 1..=remaining as u32 {
-    let (nm, ny) = if month == 11 {
-      (0u32, year + 1)
-    } else {
-      (month + 1, year)
-    };
     cells.push((d, nm, ny, false));
   }
+  cells
+}
+
+fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> {
+  let today = Utc::now().date_naive();
+  let year = state.view_year;
+  let month = state.view_month;
+
+  let first_of_month =
+    NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap_or_else(|| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+  let first_dow = first_of_month.weekday().number_from_monday() as i64 - 1;
+  let cells = build_month_cells(month, year, first_dow);
 
   cells
     .chunks(7)
@@ -605,8 +602,7 @@ fn build_day_grid(state: &CalendarState) -> Vec<Vec<Element<'static, Message>>> 
       week
         .iter()
         .map(|&(d, m, y, in_month)| {
-          let date = NaiveDate::from_ymd_opt(y, m + 1, d);
-          let is_today = date == Some(today);
+          let is_today = NaiveDate::from_ymd_opt(y, m + 1, d) == Some(today);
           let selected = y == state.sel_year && m == state.sel_month && d == state.sel_day;
           calendar_day_cell(d, m, y, in_month, selected, is_today)
         })
@@ -622,6 +618,96 @@ fn days_in_month(year: i32, month: u32) -> u32 {
     NaiveDate::from_ymd_opt(year, month + 2, 1)
   };
   next_month.and_then(|d| d.pred_opt()).map(|d| d.day()).unwrap_or(28)
+}
+
+fn calendar_back_button() -> Element<'static, Message> {
+  button(
+    text("Back")
+      .font(body::REGULAR)
+      .size(12.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: 6.0,
+    bottom: 6.0,
+    left: 10.0,
+    right: 10.0,
+  })
+  .on_press(Message::SnoozeCalendarClose)
+  .style(|_, status| button::Style {
+    background: match status {
+      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
+      _ => None,
+    },
+    border: Border {
+      color: color::border::SUBTLE,
+      radius: 6.0.into(),
+      width: 1.0,
+    },
+    text_color: color::text::SECONDARY,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn calendar_confirm_button() -> Element<'static, Message> {
+  button(
+    text("Snooze")
+      .font(body::MEDIUM)
+      .size(12.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(Color::WHITE),
+      }),
+  )
+  .padding(Padding {
+    top: 6.0,
+    bottom: 6.0,
+    left: 12.0,
+    right: 12.0,
+  })
+  .on_press(Message::SnoozeCalendarConfirm)
+  .style(|_, status| button::Style {
+    background: Some(Background::Color(match status {
+      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_ACTIVE,
+      _ => color::accent::PLASMA,
+    })),
+    border: Border {
+      radius: 6.0.into(),
+      ..Border::default()
+    },
+    text_color: Color::WHITE,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn calendar_eve_badge() -> Element<'static, Message> {
+  container(
+    text("EVE")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    bottom: 3.0,
+    left: 6.0,
+    right: 6.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
+    border: Border {
+      color: color::accent::PLASMA_BORDER,
+      radius: 4.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
@@ -640,30 +726,7 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
         })
         .into(),
       Space::new().width(Length::Fill).into(),
-      container(
-        text("EVE")
-          .font(mono::REGULAR)
-          .size(9.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::accent::PLASMA),
-          }),
-      )
-      .padding(Padding {
-        top: 3.0,
-        bottom: 3.0,
-        left: 6.0,
-        right: 6.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-        border: Border {
-          color: color::accent::PLASMA_BORDER,
-          radius: 4.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into(),
+      calendar_eve_badge(),
       calendar_nav_button("▶", Message::SnoozeCalendarNextMonth),
     ])
     .align_y(Vertical::Center)
@@ -783,63 +846,8 @@ fn calendar_widget(state: &CalendarState) -> Element<'_, Message> {
         })
         .width(Length::Fill)
         .into(),
-      button(
-        text("Back")
-          .font(body::REGULAR)
-          .size(12.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(Padding {
-        top: 6.0,
-        bottom: 6.0,
-        left: 10.0,
-        right: 10.0,
-      })
-      .on_press(Message::SnoozeCalendarClose)
-      .style(|_, status| button::Style {
-        background: match status {
-          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-          _ => None,
-        },
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: 6.0.into(),
-          width: 1.0,
-        },
-        text_color: color::text::SECONDARY,
-        ..button::Style::default()
-      })
-      .into(),
-      button(
-        text("Snooze")
-          .font(body::MEDIUM)
-          .size(12.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(Color::WHITE),
-          }),
-      )
-      .padding(Padding {
-        top: 6.0,
-        bottom: 6.0,
-        left: 12.0,
-        right: 12.0,
-      })
-      .on_press(Message::SnoozeCalendarConfirm)
-      .style(|_, status| button::Style {
-        background: Some(Background::Color(match status {
-          button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_ACTIVE,
-          _ => color::accent::PLASMA,
-        })),
-        border: Border {
-          radius: 6.0.into(),
-          ..Border::default()
-        },
-        text_color: Color::WHITE,
-        ..button::Style::default()
-      })
-      .into(),
+      calendar_back_button(),
+      calendar_confirm_button(),
     ])
     .spacing(8.0)
     .align_y(Vertical::Center),

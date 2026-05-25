@@ -149,13 +149,6 @@ fn palette_body<'a, Message: Clone + 'static>(
   on_select: Box<dyn Fn(String) -> Message + 'a>,
   current_hex: &'a str,
 ) -> Element<'a, Message> {
-  let header = text("PICK A COLOR")
-    .font(typography::mono::REGULAR)
-    .size(9.0)
-    .style(|_| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
   let swatches: Vec<Element<'static, Message>> = PALETTE
     .iter()
     .map(|&(_name, hex)| {
@@ -163,63 +156,97 @@ fn palette_body<'a, Message: Clone + 'static>(
         return Space::new().width(30.0).height(30.0).into();
       };
       let is_selected = current_hex == hex;
-      let hex_owned = hex.to_string();
-      let msg = on_select(hex_owned);
-      button(Space::new().width(Length::Fill).height(Length::Fill))
-        .padding(Padding::ZERO)
-        .width(30.0)
-        .height(30.0)
-        .on_press(msg)
-        .style(move |_, status| button::Style {
-          background: Some(Background::Color(swatch_color)),
-          border: Border {
-            color: if is_selected {
-              color::accent::PLASMA
-            } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-              iced::Color {
-                a: 0.8,
-                ..swatch_color
-              }
-            } else {
-              iced::Color {
-                a: 0.5,
-                ..swatch_color
-              }
-            },
-            radius: Radius::from(5.0),
-            width: if is_selected { 2.0 } else { 1.0 },
-          },
-          shadow: if is_selected {
-            iced::Shadow {
-              color: iced::Color {
-                a: 0.3,
-                ..color::accent::PLASMA
-              },
-              offset: iced::Vector::ZERO,
-              blur_radius: 4.0,
-            }
-          } else {
-            iced::Shadow::default()
-          },
-          snap: false,
-          text_color: iced::Color::TRANSPARENT,
-        })
-        .into()
+      let msg = on_select(hex.to_string());
+      swatch_button(swatch_color, is_selected, msg)
     })
     .collect();
 
-  let palette_row = row(swatches).spacing(6.0).wrap();
+  let clear_msg = on_select(String::new());
+  container(
+    column([
+      palette_header().into(),
+      Space::new().height(10.0).into(),
+      row(swatches).spacing(6.0).wrap().into(),
+      Space::new().height(12.0).into(),
+      palette_divider().into(),
+      Space::new().height(10.0).into(),
+      clear_button(clear_msg).into(),
+    ])
+    .spacing(0.0),
+  )
+  .padding(12.0)
+  .into()
+}
 
-  let divider = container(Space::new().width(Length::Fill).height(1.0))
+fn palette_header() -> iced::widget::Text<'static, iced::Theme> {
+  text("PICK A COLOR")
+    .font(typography::mono::REGULAR)
+    .size(9.0)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    })
+}
+
+fn palette_divider<'a, Message: 'a>() -> Element<'a, Message> {
+  container(Space::new().width(Length::Fill).height(1.0))
     .width(Length::Fill)
     .height(1.0)
     .style(|_| container::Style {
       background: Some(Background::Color(color::border::SUBTLE)),
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
-  let clear_msg = on_select(String::new());
-  let clear_btn = button(
+fn swatch_button<Message: Clone + 'static>(
+  swatch_color: iced::Color,
+  is_selected: bool,
+  msg: Message,
+) -> Element<'static, Message> {
+  button(Space::new().width(Length::Fill).height(Length::Fill))
+    .padding(Padding::ZERO)
+    .width(30.0)
+    .height(30.0)
+    .on_press(msg)
+    .style(move |_, status| button::Style {
+      background: Some(Background::Color(swatch_color)),
+      border: Border {
+        color: if is_selected {
+          color::accent::PLASMA
+        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+          iced::Color {
+            a: 0.8,
+            ..swatch_color
+          }
+        } else {
+          iced::Color {
+            a: 0.5,
+            ..swatch_color
+          }
+        },
+        radius: Radius::from(5.0),
+        width: if is_selected { 2.0 } else { 1.0 },
+      },
+      shadow: if is_selected {
+        iced::Shadow {
+          color: iced::Color {
+            a: 0.3,
+            ..color::accent::PLASMA
+          },
+          offset: iced::Vector::ZERO,
+          blur_radius: 4.0,
+        }
+      } else {
+        iced::Shadow::default()
+      },
+      snap: false,
+      text_color: iced::Color::TRANSPARENT,
+    })
+    .into()
+}
+
+fn clear_button<Message: Clone + 'static>(msg: Message) -> Element<'static, Message> {
+  button(
     text("Clear color")
       .font(typography::body::REGULAR)
       .size(12.0)
@@ -234,7 +261,7 @@ fn palette_body<'a, Message: Clone + 'static>(
     left: spacing::SPACE_3,
     right: spacing::SPACE_3,
   })
-  .on_press(clear_msg)
+  .on_press(msg)
   .style(|_, status| button::Style {
     background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
       Some(Background::Color(color::state::HOVER_OVERLAY))
@@ -249,20 +276,6 @@ fn palette_body<'a, Message: Clone + 'static>(
     snap: false,
     text_color: color::text::SECONDARY,
     shadow: iced::Shadow::default(),
-  });
-
-  container(
-    column([
-      header.into(),
-      Space::new().height(10.0).into(),
-      palette_row.into(),
-      Space::new().height(12.0).into(),
-      divider.into(),
-      Space::new().height(10.0).into(),
-      clear_btn.into(),
-    ])
-    .spacing(0.0),
-  )
-  .padding(12.0)
+  })
   .into()
 }

@@ -1,11 +1,28 @@
+//! Compose panel organism for drafting and sending EVE mail.
+
+pub mod body_area;
+pub mod cc_field;
+pub mod footer;
+pub mod header;
+pub mod subject_field;
+pub mod suggestions;
+pub mod to_field;
+
+use body_area::body_area;
+use cc_field::cc_field;
+use footer::send_footer_inner;
+use header::panel_header;
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
-  widget::{Space, button, column, container, row, stack, text, text_editor, text_input},
+  Background, Element, Length, Padding, Theme,
+  widget::{Space, column, container, row, stack, text, text_editor},
 };
+use subject_field::subject_field;
+use suggestions::Suggestions;
+use to_field::to_field;
 
 use crate::{
   components::{
-    Card, PanelHeader,
+    Card,
     character_picker::{self, CharacterEntry, Component as CharacterPicker, PickerSelection},
   },
   style::{color, component, typography as font},
@@ -14,74 +31,73 @@ use crate::{
 /// A resolved or pending compose recipient.
 #[derive(Clone, Debug)]
 pub struct ComposeRecipient {
-  pub name: String,
-  /// Known character/corp/alliance ID; `None` means resolve by name at send time.
   pub id: Option<i64>,
+  pub name: String,
 }
 
 /// Messages produced by the compose panel.
 #[derive(Clone, Debug)]
 pub enum Message {
-  Close,
-  Expand,
-  ToSearchChanged(String),
-  ToSearchSelect(i64, String),
-  ToSearchResults(Vec<(i64, String)>),
-  ToAdd,
-  ToRemove(usize),
-  CcToggle,
-  CcSearchChanged(String),
-  CcSearchSelect(i64, String),
-  CcSearchResults(Vec<(i64, String)>),
+  BodyAction(text_editor::Action),
   CcAdd,
   CcRemove(usize),
-  SubjectChanged(String),
-  BodyAction(text_editor::Action),
+  CcSearchChanged(String),
+  CcSearchResults(Vec<(i64, String)>),
+  CcSearchSelect(i64, String),
+  CcToggle,
+  Close,
+  Expand,
   FromPicker(character_picker::Message),
-  SuggestionCursorMove(i32),
-  SuggestionCursorConfirm,
   SendPressed,
   Sent(Result<i64, String>),
+  SubjectChanged(String),
+  SuggestionCursorConfirm,
+  SuggestionCursorMove(i32),
+  ToAdd,
+  ToRemove(usize),
+  ToSearchChanged(String),
+  ToSearchResults(Vec<(i64, String)>),
+  ToSearchSelect(i64, String),
 }
 
 /// Stateful compose panel organism.
 pub struct Component {
-  pub to: Vec<ComposeRecipient>,
-  pub to_search: String,
-  pub to_suggestions: Vec<(i64, String)>,
-  pub to_suggestion_cursor: Option<usize>,
+  pub body: text_editor::Content,
   pub cc: Vec<ComposeRecipient>,
   pub cc_search: String,
-  pub cc_suggestions: Vec<(i64, String)>,
   pub cc_suggestion_cursor: Option<usize>,
+  pub cc_suggestions: Vec<(i64, String)>,
   pub cc_visible: bool,
-  pub subject: String,
-  pub body: text_editor::Content,
-  pub expanded: bool,
-  pub sending: bool,
   pub error: Option<String>,
+  pub expanded: bool,
   pub from_picker: CharacterPicker,
+  pub sending: bool,
+  pub subject: String,
+  pub to: Vec<ComposeRecipient>,
+  pub to_search: String,
+  pub to_suggestion_cursor: Option<usize>,
+  pub to_suggestions: Vec<(i64, String)>,
 }
 
 impl Component {
   /// Create a new compose panel with default (empty, collapsed) state.
   pub fn new() -> Self {
     Self {
-      to: Vec::new(),
-      to_search: String::new(),
-      to_suggestions: Vec::new(),
-      to_suggestion_cursor: None,
+      body: text_editor::Content::new(),
       cc: Vec::new(),
       cc_search: String::new(),
-      cc_suggestions: Vec::new(),
       cc_suggestion_cursor: None,
+      cc_suggestions: Vec::new(),
       cc_visible: false,
-      subject: String::new(),
-      body: text_editor::Content::new(),
-      expanded: false,
-      sending: false,
       error: None,
+      expanded: false,
       from_picker: CharacterPicker::new(),
+      sending: false,
+      subject: String::new(),
+      to: Vec::new(),
+      to_search: String::new(),
+      to_suggestion_cursor: None,
+      to_suggestions: Vec::new(),
     }
   }
 
@@ -130,17 +146,29 @@ impl Component {
     if let Some(err) = &self.error {
       panel_rows.push(error_row(err.as_str()));
     }
-    panel_rows.push(send_footer(self));
+    let from_trigger = self.from_picker.render().map(Message::FromPicker);
+    let can_send = !self.to.is_empty() && !self.subject.trim().is_empty();
+    panel_rows.push(send_footer_inner(can_send, self.sending, from_trigger));
 
     let base = column(panel_rows).width(Length::Fill).height(Length::Fill);
 
-    let inner: Element<'_, Message> = stack([
-      base.into(),
-      to_suggestions_overlay(self),
-      cc_suggestions_overlay(self),
-      from_picker_overlay(self),
-    ])
-    .into();
+    let to_overlay = Suggestions::new(&self.to_suggestions, self.to_suggestion_cursor, |id, name| {
+      Message::ToSearchSelect(id, name)
+    })
+    .top_padding(82.0)
+    .visible(!self.to_suggestions.is_empty() && !self.to_search.is_empty())
+    .render();
+
+    let cc_overlay = Suggestions::new(&self.cc_suggestions, self.cc_suggestion_cursor, |id, name| {
+      Message::CcSearchSelect(id, name)
+    })
+    .top_padding(123.0)
+    .visible(self.cc_visible && !self.cc_suggestions.is_empty() && !self.cc_search.is_empty())
+    .render();
+
+    let from_picker_el = from_picker_overlay(self);
+
+    let inner: Element<'_, Message> = stack([base.into(), to_overlay, cc_overlay, from_picker_el]).into();
 
     Card::new(inner)
       .width(Length::Fixed(panel_width))
@@ -150,87 +178,34 @@ impl Component {
 
   /// Reset compose state for a fresh new message.
   pub fn reset(&mut self) {
-    self.to.clear();
-    self.to_search.clear();
-    self.to_suggestions.clear();
-    self.to_suggestion_cursor = None;
+    self.body = text_editor::Content::new();
     self.cc.clear();
     self.cc_search.clear();
-    self.cc_suggestions.clear();
     self.cc_suggestion_cursor = None;
+    self.cc_suggestions.clear();
     self.cc_visible = false;
-    self.subject.clear();
-    self.body = text_editor::Content::new();
-    self.expanded = false;
-    self.sending = false;
     self.error = None;
+    self.expanded = false;
     self.from_picker.is_open = false;
+    self.sending = false;
+    self.subject.clear();
+    self.to.clear();
+    self.to_search.clear();
+    self.to_suggestion_cursor = None;
+    self.to_suggestions.clear();
   }
 
   /// Process a panel message, mutating internal state.
   pub fn update(&mut self, msg: Message) {
     match msg {
+      Message::BodyAction(action) => self.body.perform(action),
       Message::Close => self.apply_close(),
       Message::Expand => self.expanded = !self.expanded,
-      Message::SubjectChanged(val) => self.subject = val,
-      Message::BodyAction(action) => self.body.perform(action),
       Message::FromPicker(msg) => self.from_picker.update(msg),
-      Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
+      Message::SubjectChanged(val) => self.subject = val,
       Message::SuggestionCursorConfirm => self.apply_cursor_confirm(),
+      Message::SuggestionCursorMove(delta) => self.apply_cursor_move(delta),
       msg => self.apply_field_message(msg),
-    }
-  }
-
-  fn apply_field_message(&mut self, msg: Message) {
-    match msg {
-      Message::ToSearchChanged(val) => self.apply_to_search_changed(val),
-      Message::ToSearchResults(results) => {
-        self.to_suggestion_cursor = None;
-        self.to_suggestions = results;
-      }
-      Message::ToSearchSelect(id, name) => self.apply_to_select(id, name),
-      Message::ToAdd => self.apply_to_add(),
-      Message::ToRemove(idx) if idx < self.to.len() => {
-        self.to.remove(idx);
-      }
-      msg => self.apply_cc_or_send_message(msg),
-    }
-  }
-
-  fn apply_cc_or_send_message(&mut self, msg: Message) {
-    match msg {
-      Message::CcToggle => self.cc_visible = !self.cc_visible,
-      Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
-      Message::CcSearchResults(results) => self.apply_cc_search_results(results),
-      Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
-      Message::CcAdd => self.apply_cc_add(),
-      Message::CcRemove(idx) if idx < self.cc.len() => {
-        self.cc.remove(idx);
-      }
-      msg => self.apply_send_message(msg),
-    }
-  }
-
-  fn apply_cc_search_results(&mut self, results: Vec<(i64, String)>) {
-    self.cc_suggestion_cursor = None;
-    self.cc_suggestions = results;
-  }
-
-  fn apply_send_message(&mut self, msg: Message) {
-    match msg {
-      Message::SendPressed => {
-        self.sending = true;
-        self.error = None;
-      }
-      Message::Sent(Ok(_)) => {
-        self.sending = false;
-        self.reset();
-      }
-      Message::Sent(Err(e)) => {
-        self.sending = false;
-        self.error = Some(e);
-      }
-      _ => {}
     }
   }
 
@@ -238,41 +213,60 @@ impl Component {
     let name = self.cc_search.trim().to_string();
     if !name.is_empty() {
       self.cc.push(ComposeRecipient {
-        name,
         id: None,
+        name,
       });
       self.cc_search.clear();
-      self.cc_suggestions.clear();
       self.cc_suggestion_cursor = None;
+      self.cc_suggestions.clear();
+    }
+  }
+
+  fn apply_cc_or_send_message(&mut self, msg: Message) {
+    match msg {
+      Message::CcAdd => self.apply_cc_add(),
+      Message::CcRemove(idx) if idx < self.cc.len() => {
+        self.cc.remove(idx);
+      }
+      Message::CcSearchChanged(val) => self.apply_cc_search_changed(val),
+      Message::CcSearchResults(results) => self.apply_cc_search_results(results),
+      Message::CcSearchSelect(id, name) => self.apply_cc_select(id, name),
+      Message::CcToggle => self.cc_visible = !self.cc_visible,
+      msg => self.apply_send_message(msg),
     }
   }
 
   fn apply_cc_search_changed(&mut self, val: String) {
     if val.is_empty() {
-      self.cc_suggestions.clear();
       self.cc_suggestion_cursor = None;
+      self.cc_suggestions.clear();
     }
     self.cc_search = val;
   }
 
+  fn apply_cc_search_results(&mut self, results: Vec<(i64, String)>) {
+    self.cc_suggestion_cursor = None;
+    self.cc_suggestions = results;
+  }
+
   fn apply_cc_select(&mut self, id: i64, name: String) {
     self.cc.push(ComposeRecipient {
-      name,
       id: Some(id),
+      name,
     });
     self.cc_search.clear();
-    self.cc_suggestions.clear();
     self.cc_suggestion_cursor = None;
+    self.cc_suggestions.clear();
   }
 
   fn apply_close(&mut self) {
-    self.sending = false;
+    self.cc_suggestion_cursor = None;
+    self.cc_suggestions.clear();
     self.error = None;
     self.from_picker.is_open = false;
-    self.to_suggestions.clear();
+    self.sending = false;
     self.to_suggestion_cursor = None;
-    self.cc_suggestions.clear();
-    self.cc_suggestion_cursor = None;
+    self.to_suggestions.clear();
   }
 
   fn apply_cursor_confirm(&mut self) {
@@ -299,36 +293,70 @@ impl Component {
     }
   }
 
+  fn apply_field_message(&mut self, msg: Message) {
+    match msg {
+      Message::ToAdd => self.apply_to_add(),
+      Message::ToRemove(idx) if idx < self.to.len() => {
+        self.to.remove(idx);
+      }
+      Message::ToSearchChanged(val) => self.apply_to_search_changed(val),
+      Message::ToSearchResults(results) => {
+        self.to_suggestion_cursor = None;
+        self.to_suggestions = results;
+      }
+      Message::ToSearchSelect(id, name) => self.apply_to_select(id, name),
+      msg => self.apply_cc_or_send_message(msg),
+    }
+  }
+
+  fn apply_send_message(&mut self, msg: Message) {
+    match msg {
+      Message::SendPressed => {
+        self.error = None;
+        self.sending = true;
+      }
+      Message::Sent(Ok(_)) => {
+        self.sending = false;
+        self.reset();
+      }
+      Message::Sent(Err(e)) => {
+        self.error = Some(e);
+        self.sending = false;
+      }
+      _ => {}
+    }
+  }
+
   fn apply_to_add(&mut self) {
     let name = self.to_search.trim().to_string();
     if !name.is_empty() {
       self.to.push(ComposeRecipient {
-        name,
         id: None,
+        name,
       });
       self.to_search.clear();
-      self.to_suggestions.clear();
       self.to_suggestion_cursor = None;
+      self.to_suggestions.clear();
     }
   }
 
   fn apply_to_search_changed(&mut self, val: String) {
     self.from_picker.is_open = false;
     if val.is_empty() {
-      self.to_suggestions.clear();
       self.to_suggestion_cursor = None;
+      self.to_suggestions.clear();
     }
     self.to_search = val;
   }
 
   fn apply_to_select(&mut self, id: i64, name: String) {
     self.to.push(ComposeRecipient {
-      name,
       id: Some(id),
+      name,
     });
     self.to_search.clear();
-    self.to_suggestions.clear();
     self.to_suggestion_cursor = None;
+    self.to_suggestions.clear();
   }
 
   fn confirm_cc_suggestion(&mut self) {
@@ -336,12 +364,12 @@ impl Component {
       && let Some((id, name)) = self.cc_suggestions.get(i).cloned()
     {
       self.cc.push(ComposeRecipient {
-        name,
         id: Some(id),
+        name,
       });
       self.cc_search.clear();
-      self.cc_suggestions.clear();
       self.cc_suggestion_cursor = None;
+      self.cc_suggestions.clear();
     }
   }
 
@@ -350,12 +378,12 @@ impl Component {
       && let Some((id, name)) = self.to_suggestions.get(i).cloned()
     {
       self.to.push(ComposeRecipient {
-        name,
         id: Some(id),
+        name,
       });
       self.to_search.clear();
-      self.to_suggestions.clear();
       self.to_suggestion_cursor = None;
+      self.to_suggestions.clear();
     }
   }
 }
@@ -364,160 +392,6 @@ impl Default for Component {
   fn default() -> Self {
     Self::new()
   }
-}
-
-fn panel_header(expand_sym: &'static str) -> Element<'static, Message> {
-  let close_btn = icon_btn("–", Message::Close);
-  let expand_btn = icon_btn(expand_sym, Message::Expand);
-  let dismiss_btn = icon_btn("✕", Message::Close);
-
-  PanelHeader::new("NEW MESSAGE")
-    .action(close_btn)
-    .action(expand_btn)
-    .action(dismiss_btn)
-    .render()
-}
-
-fn to_field(panel: &Component) -> Element<'_, Message> {
-  let to_chips: Vec<Element<'_, Message>> = panel
-    .to
-    .iter()
-    .enumerate()
-    .map(|(i, r)| recipient_chip(r.name.as_str(), Message::ToRemove(i)))
-    .collect();
-
-  let to_input = text_input(
-    if panel.to.is_empty() { "Add recipient…" } else { "" },
-    &panel.to_search,
-  )
-  .on_input(Message::ToSearchChanged)
-  .on_submit(Message::ToAdd)
-  .size(13.0)
-  .font(font::body::REGULAR)
-  .style(|_, _| text_input::Style {
-    background: Background::Color(Color::TRANSPARENT),
-    border: Border::default(),
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
-    value: color::text::PRIMARY,
-    selection: color::state::SELECTION,
-  });
-
-  let mut row_children: Vec<Element<'_, Message>> = to_chips;
-  row_children.push(to_input.into());
-  if !panel.cc_visible {
-    row_children.push(cc_toggle_btn());
-  }
-
-  compose_field_row(
-    "To",
-    row(row_children)
-      .spacing(6.0)
-      .align_y(iced::alignment::Vertical::Center)
-      .into(),
-  )
-}
-
-fn cc_toggle_btn() -> Element<'static, Message> {
-  button(
-    text("Cc")
-      .font(font::body::REGULAR)
-      .size(12.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(Padding::from([0.0, 0.0]))
-  .on_press(Message::CcToggle)
-  .style(|_, status| button::Style {
-    background: None,
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn cc_field(panel: &Component) -> Element<'_, Message> {
-  let cc_chips: Vec<Element<'_, Message>> = panel
-    .cc
-    .iter()
-    .enumerate()
-    .map(|(i, r)| recipient_chip(r.name.as_str(), Message::CcRemove(i)))
-    .collect();
-
-  let cc_input = text_input(
-    if panel.cc.is_empty() { "Add Cc recipient…" } else { "" },
-    &panel.cc_search,
-  )
-  .on_input(Message::CcSearchChanged)
-  .on_submit(Message::CcAdd)
-  .size(13.0)
-  .font(font::body::REGULAR)
-  .style(|_, _| text_input::Style {
-    background: Background::Color(Color::TRANSPARENT),
-    border: Border::default(),
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
-    value: color::text::PRIMARY,
-    selection: color::state::SELECTION,
-  });
-
-  let mut row_children: Vec<Element<'_, Message>> = cc_chips;
-  row_children.push(cc_input.into());
-
-  compose_field_row(
-    "Cc",
-    row(row_children)
-      .spacing(6.0)
-      .align_y(iced::alignment::Vertical::Center)
-      .into(),
-  )
-}
-
-fn subject_field(subject: &str) -> Element<'_, Message> {
-  let input = text_input("—", subject)
-    .on_input(Message::SubjectChanged)
-    .size(15.0)
-    .font(font::body::MEDIUM)
-    .style(|_, _| text_input::Style {
-      background: Background::Color(Color::TRANSPARENT),
-      border: Border::default(),
-      icon: color::text::SECONDARY,
-      placeholder: color::text::TERTIARY,
-      value: color::text::PRIMARY,
-      selection: color::state::SELECTION,
-    });
-  compose_field_row("Subject", input.into())
-}
-
-fn body_area(body: &text_editor::Content) -> Element<'_, Message> {
-  container(
-    text_editor(body)
-      .on_action(Message::BodyAction)
-      .height(Length::Fill)
-      .size(14.0)
-      .font(font::body::REGULAR)
-      .padding(Padding::ZERO)
-      .style(|_, _| text_editor::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border::default(),
-        placeholder: color::text::TERTIARY,
-        value: color::text::PRIMARY,
-        selection: color::state::SELECTION,
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .padding(Padding {
-    top: 16.0,
-    bottom: 16.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .into()
 }
 
 fn error_row(err: &str) -> Element<'_, Message> {
@@ -539,213 +413,6 @@ fn error_row(err: &str) -> Element<'_, Message> {
   .into()
 }
 
-fn send_footer(panel: &Component) -> Element<'_, Message> {
-  let can_send = !panel.to.is_empty() && !panel.subject.trim().is_empty();
-  let from_trigger = panel.from_picker.render().map(Message::FromPicker);
-
-  container(
-    row([
-      from_trigger,
-      Space::new().width(Length::Fill).into(),
-      send_button(can_send, panel.sending),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .center_y(52.0)
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 0.0,
-    bottom: 0.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::border::SUBTLE,
-      width: 1.0,
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn send_button(can_send: bool, sending: bool) -> Element<'static, Message> {
-  if can_send && !sending {
-    send_button_active()
-  } else {
-    send_button_disabled(sending)
-  }
-}
-
-fn send_button_active() -> Element<'static, Message> {
-  button(
-    text("Send")
-      .font(font::body::MEDIUM)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::surface::BASE),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .on_press(Message::SendPressed)
-  .style(|_, status| button::Style {
-    background: Some(Background::Color(match status {
-      button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA_HOVER,
-      _ => color::accent::PLASMA,
-    })),
-    border: Border {
-      radius: 6.0.into(),
-      ..Border::default()
-    },
-    text_color: color::surface::BASE,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn send_button_disabled(sending: bool) -> Element<'static, Message> {
-  let label = if sending { "Sending…" } else { "Send" };
-  button(
-    text(label)
-      .font(font::body::MEDIUM)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::DIM),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::accent::PLASMA_MUTED)),
-    border: Border {
-      radius: 6.0.into(),
-      ..Border::default()
-    },
-    text_color: color::surface::BASE,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn suggestion_row<'a>(
-  idx: usize,
-  id: i64,
-  name: &'a str,
-  cursor: Option<usize>,
-  make_msg: impl Fn(i64, String) -> Message,
-) -> Element<'a, Message> {
-  let selected = cursor == Some(idx);
-  let msg_name = name.to_string();
-  button(
-    text(name)
-      .font(font::body::MEDIUM)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .on_press(make_msg(id, msg_name))
-  .style(move |_, status| button::Style {
-    background: if selected {
-      Some(Background::Color(color::accent::PLASMA_ACTIVE))
-    } else {
-      match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::SUBTLE_FILL)),
-        _ => None,
-      }
-    },
-    border: Border::default(),
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn suggestions_box<'a>(
-  suggestions: &'a [(i64, String)],
-  cursor: Option<usize>,
-  make_msg: impl Fn(i64, String) -> Message + 'a,
-) -> Element<'a, Message> {
-  let rows: Vec<Element<'_, Message>> = suggestions
-    .iter()
-    .enumerate()
-    .map(|(idx, (id, name))| suggestion_row(idx, *id, name.as_str(), cursor, &make_msg))
-    .collect();
-  container(column(rows).width(Length::Fill))
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::border::DEFAULT,
-        radius: 8.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn to_suggestions_overlay(panel: &Component) -> Element<'_, Message> {
-  if panel.to_suggestions.is_empty() || panel.to_search.is_empty() {
-    return Space::new().into();
-  }
-  let suggestions = suggestions_box(&panel.to_suggestions, panel.to_suggestion_cursor, |id, name| {
-    Message::ToSearchSelect(id, name)
-  });
-  container(suggestions)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(iced::alignment::Horizontal::Left)
-    .align_y(iced::alignment::Vertical::Top)
-    .padding(Padding {
-      top: 82.0,
-      left: 16.0,
-      right: 16.0,
-      bottom: 0.0,
-    })
-    .into()
-}
-
-fn cc_suggestions_overlay(panel: &Component) -> Element<'_, Message> {
-  if !panel.cc_visible || panel.cc_suggestions.is_empty() || panel.cc_search.is_empty() {
-    return Space::new().into();
-  }
-  let suggestions = suggestions_box(&panel.cc_suggestions, panel.cc_suggestion_cursor, |id, name| {
-    Message::CcSearchSelect(id, name)
-  });
-  container(suggestions)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(iced::alignment::Horizontal::Left)
-    .align_y(iced::alignment::Vertical::Top)
-    .padding(Padding {
-      top: 123.0,
-      left: 16.0,
-      right: 16.0,
-      bottom: 0.0,
-    })
-    .into()
-}
-
 fn from_picker_overlay(panel: &Component) -> Element<'_, Message> {
   if !panel.from_picker.is_open {
     return Space::new().into();
@@ -765,7 +432,7 @@ fn from_picker_overlay(panel: &Component) -> Element<'_, Message> {
     .into()
 }
 
-fn compose_field_row<'a>(label: &'static str, content: Element<'a, Message>) -> Element<'a, Message> {
+pub(super) fn compose_field_row<'a>(label: &'static str, content: Element<'a, Message>) -> Element<'a, Message> {
   column([
     container(
       row([
@@ -800,98 +467,5 @@ fn compose_field_row<'a>(label: &'static str, content: Element<'a, Message>) -> 
       })
       .into(),
   ])
-  .into()
-}
-
-fn recipient_chip(name: &str, remove_msg: Message) -> Element<'_, Message> {
-  container(
-    row([
-      text(name)
-        .font(font::body::REGULAR)
-        .size(12.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      recipient_remove_btn(remove_msg),
-    ])
-    .spacing(4.0)
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 3.0,
-    bottom: 3.0,
-    left: 8.0,
-    right: 6.0,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::state::SUBTLE_FILL)),
-    border: Border {
-      color: color::border::SUBTLE,
-      radius: 999.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn recipient_remove_btn(remove_msg: Message) -> Element<'static, Message> {
-  button(
-    text("✕")
-      .font(font::mono::REGULAR)
-      .size(9.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(Padding::from([0.0, 0.0]))
-  .on_press(remove_msg)
-  .style(|_, status| button::Style {
-    background: None,
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn icon_btn(label: &'static str, msg: Message) -> Element<'static, Message> {
-  button(
-    container(
-      text(label)
-        .font(font::mono::REGULAR)
-        .size(13.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
-    )
-    .center_x(16.0)
-    .center_y(24.0),
-  )
-  .padding(Padding {
-    top: 4.0,
-    bottom: 4.0,
-    left: 6.0,
-    right: 6.0,
-  })
-  .on_press(msg)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
-    },
-    border: Border {
-      radius: 5.0.into(),
-      ..Border::default()
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
   .into()
 }

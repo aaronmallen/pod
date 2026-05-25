@@ -204,25 +204,24 @@ fn build_initial_mail_state(characters: &[Character], folder_pane_width: f32, me
   }
 }
 
-fn build_mail_message(
-  row: MailHeader,
-  name_map: &std::collections::HashMap<i64, String>,
+fn resolve_from_name(
+  is_sent: bool,
+  from_id: Option<i64>,
   character_name: &str,
-  snoozed_lookup: &std::collections::HashMap<(i64, i64), String>,
-) -> MailMessage {
-  let is_sent = row.from_id == Some(row.character_id);
-  let from_name = if is_sent {
+  name_map: &std::collections::HashMap<i64, String>,
+) -> String {
+  if is_sent {
     character_name.to_string()
   } else {
-    row
-      .from_id
+    from_id
       .map(|id| name_map.get(&id).cloned().expect("sender name must be resolved by ESI"))
       .unwrap_or_default()
-  };
-  let snoozed = snoozed_lookup.get(&(row.character_id, row.mail_id)).cloned();
-  let preview = row.preview.unwrap_or_default();
-  let (body, body_loaded) = match row.body {
-    Some(ref stored) => (
+  }
+}
+
+fn parse_stored_body(body: &Option<String>) -> (Vec<String>, bool) {
+  match body {
+    Some(stored) => (
       stored
         .lines()
         .map(str::to_string)
@@ -231,7 +230,20 @@ fn build_mail_message(
       true,
     ),
     None => (Vec::new(), false),
-  };
+  }
+}
+
+fn build_mail_message(
+  row: MailHeader,
+  name_map: &std::collections::HashMap<i64, String>,
+  character_name: &str,
+  snoozed_lookup: &std::collections::HashMap<(i64, i64), String>,
+) -> MailMessage {
+  let is_sent = row.from_id == Some(row.character_id);
+  let from_name = resolve_from_name(is_sent, row.from_id, character_name, name_map);
+  let snoozed = snoozed_lookup.get(&(row.character_id, row.mail_id)).cloned();
+  let preview = row.preview.unwrap_or_default();
+  let (body, body_loaded) = parse_stored_body(&row.body);
   MailMessage {
     body,
     body_loaded,
@@ -426,6 +438,31 @@ async fn fetch_mail_body(
   }
 }
 
+async fn prefetch_single_body(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+  character_id: i64,
+  mail_id: i64,
+  db: &pod_db::Repo,
+) {
+  match esi.character(grant).mail_message(mail_id).await {
+    Ok(esi_msg) => {
+      let html = esi_msg.body.unwrap_or_default();
+      let paragraphs = strip_html(&html);
+      let body_text = paragraphs.join("\n");
+      let preview = derive_preview(&paragraphs, 250);
+      // best-effort
+      let _ = db
+        .characters()
+        .upsert_mail_body(character_id, mail_id, &body_text, &preview)
+        .await;
+    }
+    Err(e) => {
+      tracing::warn!("mail: background prefetch failed for mail {mail_id}: {e}");
+    }
+  }
+}
+
 #[tracing::instrument(skip(characters, esi, db))]
 async fn prefetch_mail_bodies(character_id: i64, characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) {
   let mail_ids = match db.characters().mail_ids_without_body(character_id).await {
@@ -449,24 +486,8 @@ async fn prefetch_mail_bodies(character_id: i64, characters: Vec<Character>, esi
     return;
   };
   let grant = character_service::refresh_grant(character, &token);
-  let char_client = esi.character(&grant);
   for mail_id in mail_ids {
-    match char_client.mail_message(mail_id).await {
-      Ok(esi_msg) => {
-        let html = esi_msg.body.unwrap_or_default();
-        let paragraphs = strip_html(&html);
-        let body_text = paragraphs.join("\n");
-        let preview = derive_preview(&paragraphs, 250);
-        // best-effort
-        let _ = db
-          .characters()
-          .upsert_mail_body(character_id, mail_id, &body_text, &preview)
-          .await;
-      }
-      Err(e) => {
-        tracing::warn!("mail: background prefetch failed for mail {mail_id}: {e}");
-      }
-    }
+    prefetch_single_body(&esi, &grant, character_id, mail_id, &db).await;
     tokio::task::yield_now().await;
   }
 }
@@ -704,6 +725,18 @@ async fn resolve_named_recipients(names: &[&str], esi: &pod_esi::Client) -> Resu
   Ok(out)
 }
 
+async fn resolve_character_names(esi: &pod_esi::Client, ids: Vec<i64>) -> Vec<(i64, String)> {
+  let ids_limited: Vec<i64> = ids.into_iter().take(20).collect();
+  match esi.universe().names(&ids_limited).await {
+    Ok(names) => names
+      .into_iter()
+      .filter(|n| n.category == "character")
+      .map(|n| (n.id, n.name))
+      .collect(),
+    Err(_) => Vec::new(),
+  }
+}
+
 #[tracing::instrument(skip(characters, esi, db))]
 async fn search_recipients(
   query: String,
@@ -730,16 +763,23 @@ async fn search_recipients(
   if ids.is_empty() {
     return Vec::new();
   }
+  resolve_character_names(&esi, ids).await
+}
 
-  let ids_limited: Vec<i64> = ids.into_iter().take(20).collect();
-  match esi.universe().names(&ids_limited).await {
-    Ok(names) => names
-      .into_iter()
-      .filter(|n| n.category == "character")
-      .map(|n| (n.id, n.name))
-      .collect(),
-    Err(_) => Vec::new(),
+async fn resolve_send_recipients(
+  to: &[ComposeRecipient],
+  cc: &[ComposeRecipient],
+  esi: &pod_esi::Client,
+) -> Result<Vec<MailRecipient>, String> {
+  let all_recipients: Vec<&ComposeRecipient> = to.iter().chain(cc.iter()).collect();
+  if all_recipients.is_empty() {
+    return Err("No recipients specified".to_string());
   }
+  let resolved = resolve_all_recipients(&all_recipients, esi).await?;
+  if resolved.is_empty() {
+    return Err("No valid recipients found — check character/corporation names".to_string());
+  }
+  Ok(resolved)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -763,14 +803,7 @@ async fn send_composed_mail(
   };
   let grant = character_service::refresh_grant(character, &token);
   let char_client = esi.character(&grant);
-  let all_recipients: Vec<&ComposeRecipient> = to.iter().chain(cc.iter()).collect();
-  if all_recipients.is_empty() {
-    return Err("No recipients specified".to_string());
-  }
-  let resolved = resolve_all_recipients(&all_recipients, &esi).await?;
-  if resolved.is_empty() {
-    return Err("No valid recipients found — check character/corporation names".to_string());
-  }
+  let resolved = resolve_send_recipients(&to, &cc, &esi).await?;
   tracing::info!(
     "mail: sending — from_id: {from_id}, to {} recipient(s), subject: {subject}",
     resolved.len()
@@ -907,6 +940,21 @@ fn update_check_snoozed(state: &mut State, services: &Services) -> iced::Task<Me
   iced::Task::none()
 }
 
+fn update_compose_sent(state: &mut State, compose_msg: compose_panel::Message) -> iced::Task<Message> {
+  match &compose_msg {
+    compose_panel::Message::Sent(Ok(mail_id)) => {
+      tracing::info!("mail: mail sent — mail_id: {mail_id}");
+      state.compose_open = false;
+    }
+    compose_panel::Message::Sent(Err(e)) => {
+      tracing::warn!("mail: send failed — {e}");
+    }
+    _ => {}
+  }
+  state.compose.update(compose_msg);
+  iced::Task::none()
+}
+
 fn update_compose(state: &mut State, compose_msg: compose_panel::Message, services: &Services) -> iced::Task<Message> {
   match &compose_msg {
     compose_panel::Message::Close => {
@@ -928,21 +976,7 @@ fn update_compose(state: &mut State, compose_msg: compose_panel::Message, servic
       tracing::info!("mail: send pressed");
       prepare_and_send_mail(state, compose_msg, services)
     }
-    compose_panel::Message::Sent(Ok(mail_id)) => {
-      tracing::info!("mail: mail sent — mail_id: {mail_id}");
-      state.compose_open = false;
-      state.compose.update(compose_msg);
-      iced::Task::none()
-    }
-    compose_panel::Message::Sent(Err(e)) => {
-      tracing::warn!("mail: send failed — {e}");
-      state.compose.update(compose_msg);
-      iced::Task::none()
-    }
-    _ => {
-      state.compose.update(compose_msg);
-      iced::Task::none()
-    }
+    _ => update_compose_sent(state, compose_msg),
   }
 }
 
@@ -1067,17 +1101,9 @@ fn update_mail_headers_loaded(state: &mut State, result: Result<Vec<MailMessage>
     }
   };
   tracing::debug!("mail: {} header(s) loaded", messages.len());
-  let mut unread_by_char: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
-  for m in &messages {
-    if m.unread && m.folder != "sent" {
-      *unread_by_char.entry(m.character_id).or_insert(0) += 1;
-    }
-  }
-  for acct in &mut state.accounts {
-    acct.unread = *unread_by_char.get(&acct.id).unwrap_or(&0);
-  }
   state.selected_message_id = messages.first().map(|m| m.id.clone());
   state.messages = messages;
+  recompute_unread_counts(state);
   iced::Task::none()
 }
 
@@ -1415,7 +1441,11 @@ fn update_snooze_calendar_msg(
   }
 }
 
-fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+fn update_snooze_state_actions(
+  state: &mut State,
+  msg: reading_pane::Message,
+  services: &Services,
+) -> iced::Task<Message> {
   match msg {
     reading_pane::Message::CheckSnoozed => update_check_snoozed(state, services),
     reading_pane::Message::DeletePressed => update_delete(state, services),
@@ -1424,8 +1454,18 @@ fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services
       tracing::warn!("mail: snooze operation failed — {e}");
       iced::Task::none()
     }
+    _ => iced::Task::none(),
+  }
+}
+
+fn update_snooze_message(state: &mut State, msg: reading_pane::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
     reading_pane::Message::SnoozeSet(iso) => update_snooze_set(state, iso, services),
     reading_pane::Message::SnoozeToggle => update_snooze_toggle(state),
+    reading_pane::Message::CheckSnoozed
+    | reading_pane::Message::DeletePressed
+    | reading_pane::Message::SnoozedExpired(_)
+    | reading_pane::Message::SnoozeFailed(_) => update_snooze_state_actions(state, msg, services),
     msg => update_snooze_calendar_msg(state, msg, services),
   }
 }

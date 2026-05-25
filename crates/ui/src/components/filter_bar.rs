@@ -10,50 +10,50 @@ use crate::{
 
 /// Rounded search input with a leading icon and standard transparent text field.
 pub struct SearchBox<'a, MSG: Clone + 'static> {
-  placeholder: &'a str,
-  value: &'a str,
-  on_input: fn(String) -> MSG,
-  width: Length,
-  height: f32,
+  background: Color,
   font_size: f32,
+  height: f32,
   horizontal_padding: f32,
   icon_size: f32,
   icon_spacing: f32,
   input_id: Option<Id>,
+  on_input: fn(String) -> MSG,
+  placeholder: &'a str,
   right_element: Option<Element<'a, MSG>>,
-  background: Color,
+  value: &'a str,
+  width: Length,
 }
 
 impl<'a, MSG: Clone + 'static> SearchBox<'a, MSG> {
   pub fn new(placeholder: &'a str, value: &'a str, on_input: fn(String) -> MSG) -> Self {
     Self {
-      placeholder,
-      value,
-      on_input,
-      width: Length::Fill,
-      height: 32.0,
+      background: Color::TRANSPARENT,
       font_size: 13.0,
-      horizontal_padding: 10.0,
+      height: 36.0,
+      horizontal_padding: 12.0,
       icon_size: 14.0,
       icon_spacing: 8.0,
       input_id: None,
+      on_input,
+      placeholder,
       right_element: None,
-      background: color::surface::SUNKEN,
+      value,
+      width: Length::Fill,
     }
   }
 
-  pub fn width(mut self, width: Length) -> Self {
-    self.width = width;
-    self
-  }
-
-  pub fn height(mut self, height: f32) -> Self {
-    self.height = height;
+  pub fn background(mut self, color: Color) -> Self {
+    self.background = color;
     self
   }
 
   pub fn font_size(mut self, size: f32) -> Self {
     self.font_size = size;
+    self
+  }
+
+  pub fn height(mut self, height: f32) -> Self {
+    self.height = height;
     self
   }
 
@@ -82,8 +82,8 @@ impl<'a, MSG: Clone + 'static> SearchBox<'a, MSG> {
     self
   }
 
-  pub fn background(mut self, color: Color) -> Self {
-    self.background = color;
+  pub fn width(mut self, width: Length) -> Self {
+    self.width = width;
     self
   }
 
@@ -142,8 +142,8 @@ impl<'a, MSG: Clone + 'static> SearchBox<'a, MSG> {
     .style(move |_| container::Style {
       background: Some(Background::Color(bg)),
       border: Border {
-        color: color::border::SUBTLE,
-        radius: 6.0.into(),
+        color: color::border::DEFAULT,
+        radius: 8.0.into(),
         width: 1.0,
       },
       ..container::Style::default()
@@ -154,9 +154,9 @@ impl<'a, MSG: Clone + 'static> SearchBox<'a, MSG> {
 
 /// Row of pill buttons. `T: PartialEq + Clone`, options as `(label, value)` pairs.
 pub struct PillFilter<'a, T, MSG> {
+  on_select: fn(T) -> MSG,
   options: Vec<(&'a str, T)>,
   selected: &'a T,
-  on_select: fn(T) -> MSG,
 }
 
 impl<'a, T, MSG> PillFilter<'a, T, MSG>
@@ -166,9 +166,9 @@ where
 {
   pub fn new(options: Vec<(&'a str, T)>, selected: &'a T, on_select: fn(T) -> MSG) -> Self {
     Self {
+      on_select,
       options,
       selected,
-      on_select,
     }
   }
 

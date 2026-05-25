@@ -102,8 +102,8 @@ impl<'a> Component<'a> {
       Message::QueryChanged,
     )
     .height(36.0)
-    .horizontal_padding(0.0)
-    .icon_spacing(6.0)
+    .horizontal_padding(12.0)
+    .icon_spacing(10.0)
     .input_id(self.state.input_id.clone())
     .right_element(help_btn)
     .background(color::surface::BASE)

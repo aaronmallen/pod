@@ -1,8 +1,9 @@
 //! Features settings panel: feature-flag toggles with search.
 
+mod feature_row;
 pub mod feature_toggle;
 
-use feature_toggle::FeatureToggle;
+use feature_row::FeatureRow;
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
@@ -114,7 +115,7 @@ impl State {
   }
 }
 
-struct FlagData {
+pub(super) struct FlagData {
   description: &'static str,
   enabled: bool,
   feature: Feature,
@@ -174,26 +175,6 @@ fn character_flags(state: &State) -> Vec<FlagData> {
   ]
 }
 
-fn feature_esi_chip() -> Element<'static, Message> {
-  container(text("ESI").size(9.0).color(color::accent::PLASMA))
-    .padding(Padding {
-      top: 2.0,
-      bottom: 2.0,
-      left: 6.0,
-      right: 6.0,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-      border: Border {
-        color: color::state::SELECTION,
-        radius: radius::CHIP.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
 fn features_panel_header(state: &State, total_shown: usize) -> Element<'_, Message> {
   let panel_title = text("Features").size(18.0).color(color::text::PRIMARY);
   let panel_desc = text(
@@ -235,7 +216,7 @@ fn features_scroll_body<'a>(state: &'a State, flags: Vec<FlagData>) -> Element<'
       .into(),
     ]
   } else {
-    flags.into_iter().map(render_feature_row).collect()
+    flags.into_iter().map(|f| FeatureRow::new(f).render()).collect()
   };
   scrollable(column(scroll_content).width(Length::Fill).padding(Padding {
     top: 0.0,
@@ -307,44 +288,6 @@ fn features_search_row(state: &State, total_shown: usize) -> Element<'_, Message
   .into()
 }
 
-fn render_feature_row(flag: FlagData) -> Element<'static, Message> {
-  let title = text(flag.title).size(14.0).color(color::text::PRIMARY);
-  let description = text(flag.description).size(12.0).color(color::text::SECONDARY);
-  let toggle = FeatureToggle::new(flag.enabled, flag.feature).render();
-  let bottom_border = container(Space::new().width(Length::Fill).height(1.0))
-    .width(Length::Fill)
-    .height(1.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::border::SUBTLE)),
-      ..container::Style::default()
-    });
-  column([
-    row([
-      column([
-        row([title.into(), feature_esi_chip()])
-          .spacing(10.0)
-          .align_y(Vertical::Center)
-          .into(),
-        Space::new().height(4.0).into(),
-        description.into(),
-      ])
-      .into(),
-      Space::new().width(Length::Fill).into(),
-      container(toggle).align_y(Vertical::Center).height(Length::Fill).into(),
-    ])
-    .align_y(Vertical::Center)
-    .padding(Padding {
-      top: 16.0,
-      bottom: 16.0,
-      left: 4.0,
-      right: 4.0,
-    })
-    .into(),
-    bottom_border.into(),
-  ])
-  .into()
-}
-
 fn render_features_panel(state: &State) -> Element<'_, Message> {
   let flags = build_visible_flags(state);
   let panel_inner_header = features_panel_header(state, flags.len());
@@ -360,6 +303,77 @@ fn render_features_panel(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+pub(super) fn render_toggle(on: bool, feature: Feature) -> Element<'static, Message> {
+  let track = toggle_track(on);
+  button(track)
+    .padding(Padding::ZERO)
+    .style(|_, _| button::Style {
+      background: None,
+      ..button::Style::default()
+    })
+    .on_press(Message::ToggleFeature(feature))
+    .into()
+}
+
+fn toggle_thumb(on: bool) -> container::Container<'static, Message> {
+  let thumb_color = if on {
+    color::state::TOGGLE_THUMB
+  } else {
+    color::text::MEDIUM
+  };
+  container(Space::new())
+    .width(component::toggle::THUMB_SIZE)
+    .height(component::toggle::THUMB_SIZE)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(thumb_color)),
+      border: Border {
+        radius: radius::FULL.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+}
+
+fn toggle_track(on: bool) -> container::Container<'static, Message> {
+  let bg_color = if on {
+    color::accent::PLASMA
+  } else {
+    color::state::PRESSED_OVERLAY
+  };
+  let border_color = if on {
+    color::accent::PLASMA
+  } else {
+    color::border::DEFAULT
+  };
+  let thumb_offset = if on {
+    component::toggle::THUMB_ON_OFFSET
+  } else {
+    component::toggle::THUMB_OFF_OFFSET
+  };
+  let thumb = toggle_thumb(on);
+  container(
+    container(thumb)
+      .padding(Padding {
+        top: 2.0,
+        bottom: 2.0,
+        left: thumb_offset,
+        right: 0.0,
+      })
+      .align_y(Vertical::Center),
+  )
+  .width(component::toggle::TRACK_WIDTH)
+  .height(component::toggle::TRACK_HEIGHT)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(bg_color)),
+    border: Border {
+      color: border_color,
+      radius: radius::FULL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
 }
 
 fn world_flags(state: &State) -> Vec<FlagData> {

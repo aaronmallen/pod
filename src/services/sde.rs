@@ -106,6 +106,16 @@ async fn seed_item_tables(
   tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
   r: &Path,
 ) -> Result<(), String> {
+  seed_core_item_data(db, tx, r).await?;
+  seed_optional_ship_data(db, tx, r).await?;
+  seed_character_lore_data(db, tx, r).await
+}
+
+async fn seed_core_item_data(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   step(tx, "Seeding item categories\u{2026}").await;
   seed_categories(db, &r.join("categories.yaml")).await?;
 
@@ -115,26 +125,42 @@ async fn seed_item_tables(
   step(tx, "Seeding market groups\u{2026}").await;
   seed_market_groups(db, &r.join("marketGroups.yaml")).await?;
 
-  step(tx, "Seeding item types\u{2026}").await;
   let dynamic_path = r.join("dynamicItemAttributes.yaml");
+  step(tx, "Seeding item types\u{2026}").await;
   seed_types(db, &r.join("types.yaml"), &r.join("typeDogma.yaml"), &dynamic_path).await?;
 
   step(tx, "Seeding abyssal module stats\u{2026}").await;
   seed_abyssal_module_stats(db, &dynamic_path).await?;
 
   step(tx, "Seeding dogma attributes\u{2026}").await;
-  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await?;
+  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await
+}
 
-  if r.join("certificates.yaml").exists() {
+async fn seed_optional_ship_data(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
+  let cert_path = r.join("certificates.yaml");
+  if cert_path.exists() {
     step(tx, "Seeding certificates\u{2026}").await;
-    seed_certificates(db, &r.join("certificates.yaml")).await?;
+    seed_certificates(db, &cert_path).await?;
   }
 
-  if r.join("masteries.yaml").exists() {
+  let mastery_path = r.join("masteries.yaml");
+  if mastery_path.exists() {
     step(tx, "Seeding ship masteries\u{2026}").await;
-    seed_masteries(db, &r.join("masteries.yaml")).await?;
+    seed_masteries(db, &mastery_path).await?;
   }
 
+  Ok(())
+}
+
+async fn seed_character_lore_data(
+  db: &pod_db::Repo,
+  tx: &mut iced::futures::channel::mpsc::Sender<bootstrap::Message>,
+  r: &Path,
+) -> Result<(), String> {
   step(tx, "Seeding factions\u{2026}").await;
   seed_factions(db, &r.join("factions.yaml")).await?;
 

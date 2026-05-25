@@ -21,12 +21,19 @@ async fn open_cache_dir(cache_dir: &std::path::Path) -> Result<Option<tokio::fs:
   }
 }
 
+async fn remove_if_file(entry: tokio::fs::DirEntry) -> Result<bool, std::io::Error> {
+  let meta = entry.metadata().await?;
+  if meta.is_file() {
+    tokio::fs::remove_file(entry.path()).await?;
+    return Ok(true);
+  }
+  Ok(false)
+}
+
 async fn remove_cache_files(mut read_dir: tokio::fs::ReadDir) -> Result<usize, std::io::Error> {
   let mut count = 0usize;
   while let Some(entry) = read_dir.next_entry().await? {
-    let meta = entry.metadata().await?;
-    if meta.is_file() {
-      tokio::fs::remove_file(entry.path()).await?;
+    if remove_if_file(entry).await? {
       count += 1;
     }
   }

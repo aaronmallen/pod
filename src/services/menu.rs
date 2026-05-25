@@ -63,14 +63,24 @@ pub fn subscription() -> Subscription<MenuMessage> {
   Subscription::run(stream)
 }
 
-fn event_to_message(event: &muda::MenuEvent) -> Option<MenuMessage> {
-  match event.id().0.as_str() {
+fn id_to_message(id: &str) -> Option<MenuMessage> {
+  match id {
     ABOUT_ID => Some(MenuMessage::AboutRequested),
     CHECK_UPDATES_ID => Some(MenuMessage::CheckForUpdatesRequested),
+    id => id_to_action_message(id),
+  }
+}
+
+fn id_to_action_message(id: &str) -> Option<MenuMessage> {
+  match id {
     CLEAR_CACHE_ID => Some(MenuMessage::ClearCacheRequested),
     QUIT_ID => Some(MenuMessage::QuitRequested),
     _ => None,
   }
+}
+
+fn event_to_message(event: &muda::MenuEvent) -> Option<MenuMessage> {
+  id_to_message(event.id().0.as_str())
 }
 
 async fn drain_menu_events(tx: &mut iced::futures::channel::mpsc::Sender<MenuMessage>) {

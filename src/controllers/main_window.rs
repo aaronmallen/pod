@@ -150,6 +150,16 @@ pub fn update(
   match message {
     Message::Assets(msg) => (update_assets(state, msg, services), None),
     Message::Characters(msg) => (update_characters(state, msg, services), None),
+    msg => update_settings_or_other(state, msg, services),
+  }
+}
+
+fn update_settings_or_other(
+  state: &mut State,
+  msg: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  match msg {
     Message::Settings(msg) => update_settings(state, msg, services),
     msg => handle_other_message(state, msg, services),
   }
@@ -166,6 +176,16 @@ fn handle_nav_utility_message(
       (update_refresh_all(state, services), None)
     }
     Message::ShowToast(msg) => (show_toast(state, msg), None),
+    msg => handle_snooze_or_ignore(state, msg, services),
+  }
+}
+
+fn handle_snooze_or_ignore(
+  state: &mut State,
+  msg: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  match msg {
     Message::SnoozeTick => (update_snooze_tick(state, services), None),
     _ => (iced::Task::none(), None),
   }
@@ -179,6 +199,16 @@ fn handle_other_message(
   match msg {
     Message::CharacterDetail(m) => (update_character_detail(state, m, services), None),
     Message::Mail(m) => (update_mail(state, m, services), None),
+    msg => handle_skills_wallet_or_nav(state, msg, services),
+  }
+}
+
+fn handle_skills_wallet_or_nav(
+  state: &mut State,
+  msg: Message,
+  services: &Services,
+) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+  match msg {
     Message::Skills(m) => (update_skills(state, m, services), None),
     Message::Wallet(m) => (update_wallet(state, m, services), None),
     msg => handle_nav_utility_message(state, msg, services),
@@ -297,20 +327,22 @@ fn should_assets_refresh_values(msg: &assets::Message, s: &assets::State) -> boo
     || (matches!(msg, assets::Message::AssetsLoaded(_)) && s.active_tab == assets::Tab::Values)
 }
 
+fn extract_missing_icons(records: &[pod_ui::views::assets::AssetRecord], s: &assets::State) -> Vec<(i32, String)> {
+  records
+    .iter()
+    .map(|r| (r.type_id, r.icon_variant.clone()))
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .filter(|(type_id, variant)| !s.item_icons.contains_key(&(*type_id, variant.clone())))
+    .collect()
+}
+
 fn collect_new_item_icons(msg: &assets::Message, s: &assets::State) -> Option<Vec<(i32, String)>> {
-  match msg {
-    assets::Message::AssetsLoaded(Ok(records)) => {
-      let items: Vec<(i32, String)> = records
-        .iter()
-        .map(|r| (r.type_id, r.icon_variant.clone()))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .filter(|(type_id, variant)| !s.item_icons.contains_key(&(*type_id, variant.clone())))
-        .collect();
-      if items.is_empty() { None } else { Some(items) }
-    }
-    _ => None,
-  }
+  let assets::Message::AssetsLoaded(Ok(records)) = msg else {
+    return None;
+  };
+  let items = extract_missing_icons(records, s);
+  if items.is_empty() { None } else { Some(items) }
 }
 
 fn parse_stockpile_items(form: &assets::StockpileForm) -> Vec<(i32, i32)> {
@@ -555,11 +587,17 @@ fn handle_characters_navigation(
 fn apply_characters_tab_update(state: &mut State, tab_msg: &characters::characters_tab::Message) {
   match tab_msg {
     characters::characters_tab::Message::CharacterAdded(c) => apply_character_added(state, c),
-    characters::characters_tab::Message::LocationsRefreshed(updates) => {
-      update_sync_state(state, !updates.is_empty());
-    }
     characters::characters_tab::Message::SkillQueuesRefreshed(updates) => {
       apply_skill_queues_refreshed(state, updates);
+    }
+    tab_msg => apply_characters_tab_sync_update(state, tab_msg),
+  }
+}
+
+fn apply_characters_tab_sync_update(state: &mut State, tab_msg: &characters::characters_tab::Message) {
+  match tab_msg {
+    characters::characters_tab::Message::LocationsRefreshed(updates) => {
+      update_sync_state(state, !updates.is_empty());
     }
     characters::characters_tab::Message::WalletsRefreshed(updates) => {
       update_sync_state(state, !updates.is_empty());
@@ -571,9 +609,15 @@ fn apply_characters_tab_update(state: &mut State, tab_msg: &characters::characte
 fn apply_characters_state_updates(state: &mut State, msg: &characters::Message) {
   match msg {
     characters::Message::CharactersTab(tab_msg) => apply_characters_tab_update(state, tab_msg),
+    characters::Message::CorporationsTab(tab_msg) => apply_corporations_tab_update(state, tab_msg),
+    msg => apply_characters_removal_updates(state, msg),
+  }
+}
+
+fn apply_characters_removal_updates(state: &mut State, msg: &characters::Message) {
+  match msg {
     characters::Message::ConfirmRemove => apply_confirm_remove(state),
     characters::Message::ConfirmRemoveCorporation => apply_confirm_remove_corporation(state),
-    characters::Message::CorporationsTab(tab_msg) => apply_corporations_tab_update(state, tab_msg),
     _ => {}
   }
 }
@@ -605,12 +649,14 @@ fn apply_corporation_added(state: &mut State, corp: &Corporation) {
   state.corporations.push(corp.clone());
 }
 
+fn remove_corporation_by_id(state: &mut State, id: &i64) {
+  state.corporations.retain(|c: &Corporation| *c.id() != *id);
+}
+
 fn apply_corporations_tab_update(state: &mut State, tab_msg: &characters::corporations_tab::Message) {
   match tab_msg {
     characters::corporations_tab::Message::CorporationAdded(corp) => apply_corporation_added(state, corp),
-    characters::corporations_tab::Message::CorporationRemoved(id) => {
-      state.corporations.retain(|c: &Corporation| *c.id() != *id);
-    }
+    characters::corporations_tab::Message::CorporationRemoved(id) => remove_corporation_by_id(state, id),
     characters::corporations_tab::Message::CorporationsLoaded(corps) => {
       state.corporations = corps.clone();
     }
@@ -801,14 +847,18 @@ fn update_settings(
   apply_settings_save(state, settings_task, updated_cfg, services)
 }
 
-fn nav_feature_enabled(state: &State, nav: Nav) -> bool {
+fn nav_feature_flag(state: &State, nav: Nav) -> Option<bool> {
   match nav {
-    Nav::Assets => state.feat_asset_tracking,
-    Nav::Mail => state.feat_mail,
-    Nav::Skills => state.feat_skill_monitoring,
-    Nav::Wallet => state.feat_wallet,
-    _ => true,
+    Nav::Assets => Some(state.feat_asset_tracking),
+    Nav::Mail => Some(state.feat_mail),
+    Nav::Skills => Some(state.feat_skill_monitoring),
+    Nav::Wallet => Some(state.feat_wallet),
+    _ => None,
   }
+}
+
+fn nav_feature_enabled(state: &State, nav: Nav) -> bool {
+  nav_feature_flag(state, nav).unwrap_or(true)
 }
 
 fn active_nav_was_hidden(state: &State) -> bool {

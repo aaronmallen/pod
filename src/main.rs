@@ -230,6 +230,12 @@ fn map_window_event(id: window::Id, event: window::Event) -> Option<Message> {
       ..
     } => Some(Message::WindowOpened(id)),
     window::Event::Moved(point) => Some(Message::WindowMoved(id, point)),
+    event => map_window_event_tail(id, event),
+  }
+}
+
+fn map_window_event_tail(id: window::Id, event: window::Event) -> Option<Message> {
+  match event {
     window::Event::Resized(size) => Some(Message::WindowResized(id, size)),
     window::Event::CloseRequested => Some(Message::WindowCloseRequested(id)),
     _ => None,
@@ -336,6 +342,12 @@ fn dispatch_window_event(app: &mut App, msg: Message) -> Task<Message> {
   match msg {
     Message::WindowCloseRequested(id) => update_window_events(app, id, WindowEvent::CloseRequested),
     Message::WindowMoved(id, pt) => update_window_events(app, id, WindowEvent::Moved(pt)),
+    msg => dispatch_window_event_tail(app, msg),
+  }
+}
+
+fn dispatch_window_event_tail(app: &mut App, msg: Message) -> Task<Message> {
+  match msg {
     Message::WindowOpened(id) => update_window_events(app, id, WindowEvent::Opened),
     Message::WindowResized(id, sz) => update_window_events(app, id, WindowEvent::Resized(sz)),
     _ => unreachable!(),
@@ -450,6 +462,20 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   task
 }
 
+fn apply_save_completed(app: &mut App, plan_task: Task<Message>) -> Task<Message> {
+  if let AppPhase::Main(main_state) = &mut app.phase
+    && let main_window::ActiveView::Skills(skills_state) = &mut main_state.active_view
+  {
+    skills_state.plans_loaded = false;
+  }
+  Task::batch([
+    plan_task,
+    Task::done(Message::Main(Box::new(main_window::Message::Skills(
+      skills::Message::PlansTabOpened,
+    )))),
+  ])
+}
+
 fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_window::Message) -> Task<Message> {
   let is_pane_drag_end = matches!(&msg, skill_plan_window::Message::PaneDragEnd);
   let is_save_completed = matches!(&msg, skill_plan_window::Message::SaveCompleted);
@@ -468,17 +494,7 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
     save_geometry(app);
   }
   if is_save_completed {
-    if let AppPhase::Main(main_state) = &mut app.phase
-      && let main_window::ActiveView::Skills(skills_state) = &mut main_state.active_view
-    {
-      skills_state.plans_loaded = false;
-    }
-    Task::batch([
-      plan_task,
-      Task::done(Message::Main(Box::new(main_window::Message::Skills(
-        skills::Message::PlansTabOpened,
-      )))),
-    ])
+    apply_save_completed(app, plan_task)
   } else {
     plan_task
   }
@@ -578,20 +594,39 @@ fn compute_transition_geometry(
   (target_width, target_height, position_valid, position)
 }
 
+fn pane_widths_from_geometry(
+  g: Option<&services::window_state::WindowGeometry>,
+) -> (Option<f32>, Option<f32>, Option<f32>) {
+  (
+    g.and_then(|g| g.skills_left_pane_width),
+    g.and_then(|g| g.mail_folder_pane_width),
+    g.and_then(|g| g.mail_message_list_width),
+  )
+}
+
+fn rail_widths_from_geometry(g: Option<&services::window_state::WindowGeometry>) -> (Option<f32>, Option<f32>) {
+  (
+    g.and_then(|g| g.wallet_right_rail_width),
+    g.and_then(|g| g.assets_sidebar_width),
+  )
+}
+
 fn init_main_ctrl(
   app: &App,
   services: &Services,
   saved: &Option<services::window_state::WindowGeometry>,
 ) -> (main_ctrl::State, Task<main_ctrl::Message>) {
   let g = saved.as_ref();
+  let (skills_w, mail_folder_w, mail_list_w) = pane_widths_from_geometry(g);
+  let (wallet_w, assets_w) = rail_widths_from_geometry(g);
   main_ctrl::new(
     app.characters.clone(),
     services,
-    g.and_then(|g| g.skills_left_pane_width),
-    g.and_then(|g| g.mail_folder_pane_width),
-    g.and_then(|g| g.mail_message_list_width),
-    g.and_then(|g| g.wallet_right_rail_width),
-    g.and_then(|g| g.assets_sidebar_width),
+    skills_w,
+    mail_folder_w,
+    mail_list_w,
+    wallet_w,
+    assets_w,
   )
 }
 
@@ -660,15 +695,17 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
   }
 }
 
+fn handle_banner_dismiss(app: &mut App) -> Task<Message> {
+  if let services::updater::UpdateState::UpdateAvailable(v) = &app.update_state {
+    app.update_dismissed_for = Some(v.clone());
+  }
+  Task::none()
+}
+
 fn handle_banner_message(app: &mut App, msg: update_banner::Message) -> Task<Message> {
   match msg {
     update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
-    update_banner::Message::DismissPressed => {
-      if let services::updater::UpdateState::UpdateAvailable(v) = &app.update_state {
-        app.update_dismissed_for = Some(v.clone());
-      }
-      Task::none()
-    }
+    update_banner::Message::DismissPressed => handle_banner_dismiss(app),
     update_banner::Message::RestartPressed => {
       Task::done(Message::Updater(services::updater::Message::RestartRequested))
     }
@@ -709,17 +746,34 @@ fn handle_updater_check(app: &mut App, version: Option<String>) -> Task<Message>
   Task::none()
 }
 
+fn handle_updater_restart() -> Task<Message> {
+  services::updater::restart();
+  Task::none()
+}
+
+fn handle_updater_check_messages(app: &mut App, msg: services::updater::Message) -> Task<Message> {
+  use services::updater::Message as UpdMsg;
+  match msg {
+    UpdMsg::CheckComplete(version) => handle_updater_check(app, version),
+    UpdMsg::CheckFailed => Task::none(),
+    UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
+    _ => unreachable!(),
+  }
+}
+
+fn handle_updater_check_or_restart(app: &mut App, msg: services::updater::Message) -> Task<Message> {
+  use services::updater::Message as UpdMsg;
+  match msg {
+    UpdMsg::RestartRequested => handle_updater_restart(),
+    msg => handle_updater_check_messages(app, msg),
+  }
+}
+
 fn handle_updater_message(app: &mut App, msg: services::updater::Message) -> Task<Message> {
   use services::updater::Message as UpdMsg;
   match msg {
     UpdMsg::ApplyComplete | UpdMsg::ApplyFailed(_) | UpdMsg::ApplyRequested => handle_updater_apply(app, msg),
-    UpdMsg::CheckComplete(version) => handle_updater_check(app, version),
-    UpdMsg::CheckFailed => Task::none(),
-    UpdMsg::CheckRequested => services::updater::check().map(Message::Updater),
-    UpdMsg::RestartRequested => {
-      services::updater::restart();
-      Task::none()
-    }
+    msg => handle_updater_check_or_restart(app, msg),
   }
 }
 
@@ -730,16 +784,18 @@ fn update_updater(app: &mut App, msg: UpdaterMessage) -> Task<Message> {
   }
 }
 
+fn handle_about_requested(app: &mut App) -> Task<Message> {
+  if let Some((id, _)) = &app.about_window {
+    return window::gain_focus(*id);
+  }
+  let (win_id, open_task) = window::open(about_window::settings());
+  app.about_window = Some((win_id, about_window::State::default()));
+  open_task.map(Message::WindowOpened)
+}
+
 fn update_menu(app: &mut App, msg: menu::MenuMessage) -> Task<Message> {
   match msg {
-    menu::MenuMessage::AboutRequested => {
-      if let Some((id, _)) = &app.about_window {
-        return window::gain_focus(*id);
-      }
-      let (win_id, open_task) = window::open(about_window::settings());
-      app.about_window = Some((win_id, about_window::State::default()));
-      open_task.map(Message::WindowOpened)
-    }
+    menu::MenuMessage::AboutRequested => handle_about_requested(app),
     menu::MenuMessage::CheckForUpdatesRequested => {
       Task::done(Message::Updater(services::updater::Message::CheckRequested))
     }
@@ -816,18 +872,19 @@ fn update_window_events(app: &mut App, id: window::Id, event: WindowEvent) -> Ta
   }
 }
 
-fn save_geometry(app: &App) {
-  let AppPhase::Main(state) = &app.phase else {
-    return;
-  };
-  let pos = app.window_position.unwrap_or(Point::ORIGIN);
-  let plan_pos = app.plan_window_position;
-  let plan_pane_widths: Option<(f32, f32)> = app
+fn plan_pane_widths(app: &App) -> Option<(f32, f32)> {
+  app
     .plan_windows
     .values()
     .next()
-    .map(|s| (s.picker_pane_width, s.summary_pane_width));
-  services::window_state::save(&services::window_state::WindowGeometry {
+    .map(|s| (s.picker_pane_width, s.summary_pane_width))
+}
+
+fn build_window_geometry(app: &App, state: &main_ctrl::State) -> services::window_state::WindowGeometry {
+  let pos = app.window_position.unwrap_or(Point::ORIGIN);
+  let plan_pos = app.plan_window_position;
+  let pane_widths = plan_pane_widths(app);
+  services::window_state::WindowGeometry {
     width: app.window_size.width,
     height: app.window_size.height,
     x: pos.x,
@@ -841,9 +898,16 @@ fn save_geometry(app: &App) {
     plan_window_height: Some(app.plan_window_size.height),
     plan_window_x: plan_pos.map(|p| p.x),
     plan_window_y: plan_pos.map(|p| p.y),
-    plan_picker_pane_width: plan_pane_widths.map(|(w, _)| w),
-    plan_summary_pane_width: plan_pane_widths.map(|(_, w)| w),
-  });
+    plan_picker_pane_width: pane_widths.map(|(w, _)| w),
+    plan_summary_pane_width: pane_widths.map(|(_, w)| w),
+  }
+}
+
+fn save_geometry(app: &App) {
+  let AppPhase::Main(state) = &app.phase else {
+    return;
+  };
+  services::window_state::save(&build_window_geometry(app, state));
 }
 
 #[cfg(target_os = "macos")]

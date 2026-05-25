@@ -92,13 +92,15 @@ async fn load_singleton_pairs(character_id: i64, db: &pod_db::Repo) -> Option<Ve
   }
 }
 
+fn unique_type_ids(pairs: &[(i32, i64)]) -> Vec<i32> {
+  let mut ids: Vec<i32> = pairs.iter().map(|(tid, _)| *tid).collect();
+  ids.sort_unstable();
+  ids.dedup();
+  ids
+}
+
 async fn resolve_abyssal_type_ids(pairs: &[(i32, i64)], db: &pod_db::Repo) -> Option<std::collections::HashSet<i32>> {
-  let type_ids: Vec<i32> = {
-    let mut ids: Vec<i32> = pairs.iter().map(|(tid, _)| *tid).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-  };
+  let type_ids = unique_type_ids(pairs);
   match db.universe().item_types().find_by_ids(&type_ids).await {
     Ok(rows) => Some(rows.iter().filter(|t| t.is_abyssal).map(|t| t.id).collect()),
     Err(e) => {

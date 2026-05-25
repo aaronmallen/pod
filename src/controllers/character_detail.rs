@@ -122,7 +122,18 @@ fn resolve_first_tab(
 ) -> Tab {
   if feat_clone_monitoring {
     Tab::Clones
-  } else if feat_contacts {
+  } else {
+    resolve_first_tab_after_clones(feat_contacts, feat_combat_log, feat_eve_notifications, feat_standings)
+  }
+}
+
+fn resolve_first_tab_after_clones(
+  feat_contacts: bool,
+  feat_combat_log: bool,
+  feat_eve_notifications: bool,
+  feat_standings: bool,
+) -> Tab {
+  if feat_contacts {
     Tab::Contacts
   } else if feat_combat_log {
     Tab::Killlog
@@ -183,12 +194,32 @@ fn build_fetch_tasks(
   feat_eve_notifications: bool,
   feat_standings: bool,
 ) -> iced::Task<Message> {
-  let Some(esi) = services.esi_client.clone() else {
+  let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) else {
     return iced::Task::none();
   };
-  let Some(db) = services.db.clone() else {
-    return iced::Task::none();
-  };
+  build_enabled_fetch_tasks(
+    character,
+    esi,
+    db,
+    feat_clone_monitoring,
+    feat_contacts,
+    feat_combat_log,
+    feat_eve_notifications,
+    feat_standings,
+  )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_enabled_fetch_tasks(
+  character: &Character,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+  feat_clone_monitoring: bool,
+  feat_contacts: bool,
+  feat_combat_log: bool,
+  feat_eve_notifications: bool,
+  feat_standings: bool,
+) -> iced::Task<Message> {
   let mut tasks = Vec::new();
   if feat_clone_monitoring {
     tasks.push(clones_task(character.clone(), esi.clone(), db.clone()));
@@ -196,6 +227,27 @@ fn build_fetch_tasks(
   if feat_contacts {
     tasks.push(contacts_task(character.clone(), esi.clone(), db.clone()));
   }
+  append_optional_tasks(
+    character,
+    esi,
+    db,
+    feat_combat_log,
+    feat_eve_notifications,
+    feat_standings,
+    &mut tasks,
+  );
+  iced::Task::batch(tasks)
+}
+
+fn append_optional_tasks(
+  character: &Character,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+  feat_combat_log: bool,
+  feat_eve_notifications: bool,
+  feat_standings: bool,
+  tasks: &mut Vec<iced::Task<Message>>,
+) {
   if feat_combat_log {
     tasks.push(killlog_task(character.clone(), esi.clone(), db.clone()));
   }
@@ -205,7 +257,6 @@ fn build_fetch_tasks(
   if feat_standings {
     tasks.push(standings_task(character.clone(), esi.clone(), db.clone()));
   }
-  iced::Task::batch(tasks)
 }
 
 fn handle_notification_read(state: &mut State, id: i64) -> iced::Task<Message> {
@@ -225,17 +276,25 @@ fn handle_notification_read(state: &mut State, id: i64) -> iced::Task<Message> {
 fn dispatch_loaded(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
     Message::ClonesLoaded(result) => handle_clones_loaded(state, result, services),
-    Message::ImplantIconsLoaded(icons) => {
-      insert_image_handles(&mut state.implant_icons, icons);
-      iced::Task::none()
-    }
     Message::KilllogLoaded(result) => handle_killlog_loaded(state, result, services),
-    Message::ShipIconsLoaded(icons) => {
-      insert_image_handles(&mut state.ship_icons, icons);
-      iced::Task::none()
-    }
+    Message::ImplantIconsLoaded(icons) => handle_icon_map_loaded(&mut state.implant_icons, icons),
+    msg => dispatch_loaded_with_icons(state, msg),
+  }
+}
+
+fn dispatch_loaded_with_icons(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::ShipIconsLoaded(icons) => handle_icon_map_loaded(&mut state.ship_icons, icons),
     msg => dispatch_loaded_results(state, msg),
   }
+}
+
+fn handle_icon_map_loaded(
+  map: &mut HashMap<i32, iced::widget::image::Handle>,
+  icons: Vec<(i32, Vec<u8>)>,
+) -> iced::Task<Message> {
+  insert_image_handles(map, icons);
+  iced::Task::none()
 }
 
 fn dispatch_loaded_results(state: &mut State, message: Message) -> iced::Task<Message> {
@@ -424,19 +483,24 @@ fn collect_new_ship_type_ids(
     .collect()
 }
 
+fn contact_matches_filter(c: &pod_model::CharacterContact, filter: &ContactFilter) -> bool {
+  match filter {
+    ContactFilter::All => true,
+    ContactFilter::Character => c.contact_type == "character",
+    ContactFilter::Corp => c.contact_type == "corporation",
+    ContactFilter::Alliance => c.contact_type == "alliance",
+  }
+}
+
 fn recompute_contact_filter(state: &mut State) {
   let LoadState::Loaded(contacts) = &state.contacts else {
     state.filtered_contacts = Vec::new();
     return;
   };
+  let filter = &state.contact_filter;
   state.filtered_contacts = contacts
     .iter()
-    .filter(|c| match &state.contact_filter {
-      ContactFilter::All => true,
-      ContactFilter::Character => c.contact_type == "character",
-      ContactFilter::Corp => c.contact_type == "corporation",
-      ContactFilter::Alliance => c.contact_type == "alliance",
-    })
+    .filter(|c| contact_matches_filter(c, filter))
     .cloned()
     .collect();
 }
@@ -694,6 +758,20 @@ async fn resolve_via_esi_names(esi: &pod_esi::Client, unresolved_ids: &[i64]) ->
     .collect()
 }
 
+fn build_label_map(esi_labels: &[pod_esi::models::character::ContactLabel]) -> HashMap<i64, String> {
+  esi_labels.iter().map(|l| (l.label_id, l.label_name.clone())).collect()
+}
+
+fn convert_labels(esi_labels: Vec<pod_esi::models::character::ContactLabel>) -> Vec<pod_model::CharacterContactLabel> {
+  esi_labels
+    .into_iter()
+    .map(|l| pod_model::CharacterContactLabel {
+      label_id: l.label_id,
+      name: l.label_name,
+    })
+    .collect()
+}
+
 async fn load_contacts(
   character: Character,
   esi: pod_esi::Client,
@@ -709,20 +787,17 @@ async fn load_contacts(
   let esi_contacts = contacts_res.map_err(|e| e.to_string())?;
   let esi_labels = labels_res.unwrap_or_default();
 
-  let label_map: HashMap<i64, String> = esi_labels.iter().map(|l| (l.label_id, l.label_name.clone())).collect();
-  let labels: Vec<pod_model::CharacterContactLabel> = esi_labels
-    .into_iter()
-    .map(|l| pod_model::CharacterContactLabel {
-      label_id: l.label_id,
-      name: l.label_name,
-    })
-    .collect();
-
-  let contact_ids: Vec<i64> = esi_contacts.iter().map(|c| c.contact_id).collect();
+  let label_map = build_label_map(&esi_labels);
+  let labels = convert_labels(esi_labels);
+  let contact_ids = collect_contact_ids(&esi_contacts);
   let contact_name_map = resolve_contact_names(&contact_ids, &esi).await;
 
   let contacts = build_contacts(esi_contacts, &label_map, &contact_name_map);
   Ok((contacts, labels))
+}
+
+fn collect_contact_ids(esi_contacts: &[pod_esi::models::character::CharacterContact]) -> Vec<i64> {
+  esi_contacts.iter().map(|c| c.contact_id).collect()
 }
 
 async fn resolve_contact_names(contact_ids: &[i64], esi: &pod_esi::Client) -> HashMap<i64, String> {
@@ -789,13 +864,11 @@ async fn load_killlog(
   Ok(assemble_killlog_entries(raw_details, *character.id(), &db, &esi).await)
 }
 
-async fn assemble_killlog_entries(
-  raw_details: Vec<Result<pod_esi::models::killmail::Killmail, pod_esi::Error>>,
-  char_id: i64,
+async fn load_killlog_lookup_maps(
+  raw_details: &[Result<pod_esi::models::killmail::Killmail, pod_esi::Error>],
   db: &pod_db::Repo,
-  esi: &pod_esi::Client,
-) -> Vec<pod_model::CharacterKillEntry> {
-  let system_ids = collect_system_ids(&raw_details);
+) -> (HashMap<i32, String>, HashMap<i32, f64>, HashMap<i32, String>) {
+  let system_ids = collect_system_ids(raw_details);
   let system_rows = db
     .universe()
     .solar_systems()
@@ -804,8 +877,7 @@ async fn assemble_killlog_entries(
     .unwrap_or_default();
   let system_map: HashMap<i32, String> = system_rows.iter().map(|s| (s.id, s.name.clone())).collect();
   let system_sec_map: HashMap<i32, f64> = system_rows.into_iter().map(|s| (s.id, s.security_status)).collect();
-
-  let ship_type_ids = collect_ship_type_ids(&raw_details);
+  let ship_type_ids = collect_ship_type_ids(raw_details);
   let ship_map: HashMap<i32, String> = db
     .universe()
     .item_types()
@@ -815,6 +887,16 @@ async fn assemble_killlog_entries(
     .into_iter()
     .map(|t| (t.id, t.name))
     .collect();
+  (system_map, system_sec_map, ship_map)
+}
+
+async fn assemble_killlog_entries(
+  raw_details: Vec<Result<pod_esi::models::killmail::Killmail, pod_esi::Error>>,
+  char_id: i64,
+  db: &pod_db::Repo,
+  esi: &pod_esi::Client,
+) -> Vec<pod_model::CharacterKillEntry> {
+  let (system_map, system_sec_map, ship_map) = load_killlog_lookup_maps(&raw_details, db).await;
 
   let entity_ids = collect_killlog_entity_ids(&raw_details);
   let killmail_ids: Vec<i64> = raw_details.iter().flatten().map(|k| k.killmail_id).collect();
@@ -824,16 +906,37 @@ async fn assemble_killlog_entries(
     fetch_zkill_values(char_id, &killmail_ids),
   );
 
+  build_kill_entries(
+    raw_details,
+    char_id,
+    &system_map,
+    &system_sec_map,
+    &ship_map,
+    &entity_name_map,
+    &zkill_value_map,
+  )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_kill_entries(
+  raw_details: Vec<Result<pod_esi::models::killmail::Killmail, pod_esi::Error>>,
+  char_id: i64,
+  system_map: &HashMap<i32, String>,
+  system_sec_map: &HashMap<i32, f64>,
+  ship_map: &HashMap<i32, String>,
+  entity_name_map: &HashMap<i64, String>,
+  zkill_value_map: &HashMap<i64, f64>,
+) -> Vec<pod_model::CharacterKillEntry> {
   let mut entries = Vec::new();
   for detail in raw_details.into_iter().flatten() {
     entries.push(build_kill_entry(
       detail,
       char_id,
-      &system_map,
-      &system_sec_map,
-      &ship_map,
-      &entity_name_map,
-      &zkill_value_map,
+      system_map,
+      system_sec_map,
+      ship_map,
+      entity_name_map,
+      zkill_value_map,
     ));
   }
   entries
@@ -864,21 +967,25 @@ fn collect_ship_type_ids(raw_details: &[Result<pod_esi::models::killmail::Killma
     .collect()
 }
 
+fn insert_victim_ids(ids: &mut std::collections::HashSet<i64>, detail: &pod_esi::models::killmail::Killmail) {
+  let char_id = detail.victim.get("character_id").and_then(|v| v.as_i64()).unwrap_or(0);
+  let corp_id = detail
+    .victim
+    .get("corporation_id")
+    .and_then(|v| v.as_i64())
+    .unwrap_or(0);
+  if char_id != 0 {
+    ids.insert(char_id);
+  }
+  if corp_id != 0 {
+    ids.insert(corp_id);
+  }
+}
+
 fn collect_killlog_entity_ids(raw_details: &[Result<pod_esi::models::killmail::Killmail, pod_esi::Error>]) -> Vec<i64> {
   let mut ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
   for detail in raw_details.iter().flatten() {
-    let victim_char_id = detail.victim.get("character_id").and_then(|v| v.as_i64()).unwrap_or(0);
-    let victim_corp_id = detail
-      .victim
-      .get("corporation_id")
-      .and_then(|v| v.as_i64())
-      .unwrap_or(0);
-    if victim_char_id != 0 {
-      ids.insert(victim_char_id);
-    }
-    if victim_corp_id != 0 {
-      ids.insert(victim_corp_id);
-    }
+    insert_victim_ids(&mut ids, detail);
   }
   ids.into_iter().collect()
 }
@@ -972,9 +1079,13 @@ async fn fetch_zkill_json(char_id: i64) -> Option<Vec<serde_json::Value>> {
   resp.json::<Vec<serde_json::Value>>().await.ok()
 }
 
+fn extract_zkill_total_value(v: &serde_json::Value) -> Option<f64> {
+  v.get("zkb")?.get("totalValue")?.as_f64()
+}
+
 fn extract_zkill_entry(v: serde_json::Value) -> Option<(i64, f64)> {
   let id = v.get("killmail_id")?.as_i64()?;
-  let value = v.get("zkb")?.get("totalValue")?.as_f64()?;
+  let value = extract_zkill_total_value(&v)?;
   Some((id, value))
 }
 
@@ -1046,7 +1157,6 @@ fn notification_category_label_b(cat: &pod_model::NotificationCategory) -> &'sta
     NotificationCategory::Insurance => "insurance",
     NotificationCategory::Market => "market",
     NotificationCategory::Mission => "mission",
-    NotificationCategory::Reward => "reward",
     cat => notification_category_label_b_ext(cat),
   }
 }
@@ -1054,8 +1164,16 @@ fn notification_category_label_b(cat: &pod_model::NotificationCategory) -> &'sta
 fn notification_category_label_b_ext(cat: &pod_model::NotificationCategory) -> &'static str {
   use pod_model::NotificationCategory;
   match cat {
+    NotificationCategory::Reward => "reward",
     NotificationCategory::Standing => "standing",
     NotificationCategory::Structure => "structure",
+    cat => notification_category_label_b_ext2(cat),
+  }
+}
+
+fn notification_category_label_b_ext2(cat: &pod_model::NotificationCategory) -> &'static str {
+  use pod_model::NotificationCategory;
+  match cat {
     NotificationCategory::System => "system",
     NotificationCategory::War => "war",
     _ => "other",

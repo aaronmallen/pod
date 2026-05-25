@@ -29,21 +29,30 @@ pub fn handle_bootstrap(
   msg: bootstrap::Message,
 ) -> HandleResult {
   match msg {
-    bootstrap::Message::SeedingRequired(db_val) => {
-      *db = Some(db_val.clone());
-      *step_label = "Downloading static data\u{2026}".to_string();
-      state.progress_target = 0.25;
-      HandleResult::Bootstrap(sde::seed(db_val))
-    }
-    bootstrap::Message::SeedingComplete(db_val) => {
-      *db = Some(db_val.clone());
-      state.progress_target = 0.50;
-      HandleResult::Bootstrap(bootstrap::continue_after_db(db_val))
-    }
+    bootstrap::Message::SeedingRequired(db_val) => handle_seeding_required(state, db, step_label, db_val),
+    bootstrap::Message::SeedingComplete(db_val) => handle_seeding_complete(state, db, db_val),
     bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
     bootstrap::Message::StepChanged(label) => apply_step_progress(state, step_label, label),
     msg => handle_bootstrap_ext(state, db, characters, esi_client, msg),
   }
+}
+
+fn handle_seeding_required(
+  state: &mut State,
+  db: &mut Option<pod_db::Repo>,
+  step_label: &mut String,
+  db_val: pod_db::Repo,
+) -> HandleResult {
+  *db = Some(db_val.clone());
+  *step_label = "Downloading static data\u{2026}".to_string();
+  state.progress_target = 0.25;
+  HandleResult::Bootstrap(sde::seed(db_val))
+}
+
+fn handle_seeding_complete(state: &mut State, db: &mut Option<pod_db::Repo>, db_val: pod_db::Repo) -> HandleResult {
+  *db = Some(db_val.clone());
+  state.progress_target = 0.50;
+  HandleResult::Bootstrap(bootstrap::continue_after_db(db_val))
 }
 
 fn apply_step_progress(state: &mut State, step_label: &mut String, label: String) -> HandleResult {

@@ -74,6 +74,12 @@ fn log_data_loaded_message(message: &Message) {
     Message::AllCorpBalancesLoaded(b) => {
       tracing::debug!("wallet: corp balances loaded for {} corp(s)", b.len())
     }
+    msg => log_data_loaded_message_mid(msg),
+  }
+}
+
+fn log_data_loaded_message_mid(message: &Message) {
+  match message {
     Message::AssetValuesLoaded(v) => {
       tracing::debug!("wallet: asset values loaded for {} character(s)", v.len())
     }
@@ -422,7 +428,7 @@ async fn fetch_all_corp_totals(
 
 #[tracing::instrument(skip_all)]
 async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec<(i64, f64)> {
-  let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
+  let char_ids = collect_char_ids(&characters);
   if char_ids.is_empty() {
     return Vec::new();
   }
@@ -440,14 +446,17 @@ async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec
   let type_ids: Vec<i32> = asset_rows.iter().map(|a| a.type_id).collect();
   let prices = db.prices().latest_prices(&type_ids).await.unwrap_or_default();
 
-  let mut totals: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+  let mut totals: HashMap<i64, f64> = HashMap::new();
   for asset in &asset_rows {
     let price = prices.get(&asset.type_id).copied().unwrap_or(0.0);
     let value = price * asset.quantity as f64;
     *totals.entry(asset.character_id).or_insert(0.0) += value;
   }
-
   totals.into_iter().collect()
+}
+
+fn collect_char_ids(characters: &[Character]) -> Vec<i64> {
+  characters.iter().map(|c| *c.id()).collect()
 }
 
 async fn sync_contracts_from_esi(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
@@ -506,6 +515,25 @@ async fn fetch_contracts(
   Ok(all)
 }
 
+async fn build_corp_market_entries(
+  raw_txns: Vec<pod_esi::models::corporation::CorporationWalletTransaction>,
+  corp_id: i64,
+  division: u8,
+  db: &pod_db::Repo,
+) -> Vec<MarketEntry> {
+  let corp_type_ids: Vec<i32> = raw_txns
+    .iter()
+    .map(|t| t.type_id)
+    .collect::<HashSet<_>>()
+    .into_iter()
+    .collect();
+  let corp_type_names = load_type_names(&corp_type_ids, db).await;
+  raw_txns
+    .into_iter()
+    .map(|t| map_corp_txn_entry(t, corp_id, division, &corp_type_names))
+    .collect()
+}
+
 #[tracing::instrument(skip(corporations, esi, db))]
 async fn fetch_corp_data(
   corp_id: i64,
@@ -541,17 +569,7 @@ async fn fetch_corp_data(
     .wallet_transactions(i32::from(division))
     .await
     .unwrap_or_default();
-  let corp_type_ids: Vec<i32> = raw_txns
-    .iter()
-    .map(|t| t.type_id)
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect();
-  let corp_type_names = load_type_names(&corp_type_ids, &db).await;
-  let market: Vec<MarketEntry> = raw_txns
-    .into_iter()
-    .map(|t| map_corp_txn_entry(t, corp_id, division, &corp_type_names))
-    .collect();
+  let market = build_corp_market_entries(raw_txns, corp_id, division, &db).await;
   (divisions, journal, market)
 }
 
@@ -865,27 +883,35 @@ fn contract_matches_filter(c: &ContractEntry, who: Option<i64>, q: &str) -> bool
   true
 }
 
+fn select_journal_source<'a>(state: &'a State, corp_selected: bool) -> &'a Vec<JournalEntry> {
+  if corp_selected {
+    &state.corp_journal
+  } else {
+    &state.journal
+  }
+}
+
+fn select_market_source<'a>(state: &'a State, corp_selected: bool) -> &'a Vec<MarketEntry> {
+  if corp_selected {
+    &state.corp_market
+  } else {
+    &state.market
+  }
+}
+
 fn recompute_filters(state: &mut State) {
   let who = state.selected_character();
   let q = state.search_query.to_lowercase();
   let corp_selected = state.is_corp_selected();
   let sign = state.sign_filter.clone();
   let side = state.side_filter.clone();
-  let journal_source = if corp_selected {
-    &state.corp_journal
-  } else {
-    &state.journal
-  };
+  let journal_source = select_journal_source(state, corp_selected);
   state.filtered_journal = journal_source
     .iter()
     .filter(|j| journal_matches(j, corp_selected, who, &sign, &q))
     .cloned()
     .collect();
-  let market_source = if corp_selected {
-    &state.corp_market
-  } else {
-    &state.market
-  };
+  let market_source = select_market_source(state, corp_selected);
   state.filtered_market = market_source
     .iter()
     .filter(|m| market_matches(m, corp_selected, who, &side, &q))

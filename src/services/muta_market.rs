@@ -36,17 +36,9 @@ impl Client {
   /// if the item is not listed on MutaMarket. Throttles to 1 req/s.
   pub async fn item_price(&self, type_id: i32, item_id: i64) -> Result<Option<f64>, reqwest::Error> {
     self.throttle().await;
-
     let url = format!("{BASE_URL}/{type_id}/{item_id}");
     let response = self.http.get(&url).send().await?;
-
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-      return Ok(None);
-    }
-
-    let items: Vec<MutaMarketItem> = response.error_for_status()?.json().await?;
-    let price = items.into_iter().find_map(|item| item.estimated_value);
-    Ok(price)
+    parse_item_price_response(response).await
   }
 
   /// Enforces a 1-second gap between requests.
@@ -60,6 +52,14 @@ impl Client {
     }
     *guard = Some(Instant::now());
   }
+}
+
+async fn parse_item_price_response(response: reqwest::Response) -> Result<Option<f64>, reqwest::Error> {
+  if response.status() == reqwest::StatusCode::NOT_FOUND {
+    return Ok(None);
+  }
+  let items: Vec<MutaMarketItem> = response.error_for_status()?.json().await?;
+  Ok(items.into_iter().find_map(|item| item.estimated_value))
 }
 
 impl Default for Client {

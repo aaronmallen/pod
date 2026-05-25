@@ -1553,30 +1553,45 @@ fn update_ship_mastery_changed(state: &mut State, type_id: i32, level: u8) -> ic
   iced::Task::none()
 }
 
+fn build_type_id_to_name(state: &State) -> HashMap<i32, String> {
+  state
+    .skill_groups
+    .iter()
+    .flat_map(|g| g.skills.iter())
+    .map(|s| (s.type_id, s.name.clone()))
+    .collect()
+}
+
+fn resolve_ship_skill_wishes(
+  ship: &ItemTypeSummary,
+  mastery: u8,
+  certificates: &HashMap<i32, Certificate>,
+  type_id_to_name: &HashMap<i32, String>,
+) -> Vec<(String, u8)> {
+  let lookup = |tid: i32| type_id_to_name.get(&tid).cloned();
+  let has_cert_data = ship.mastery_cert_ids.iter().any(|v| !v.is_empty()) && !certificates.is_empty();
+  let cert_wishes = if has_cert_data {
+    skills_for_mastery(&ship.mastery_cert_ids, mastery, certificates, &lookup)
+  } else {
+    vec![]
+  };
+  if cert_wishes.is_empty() {
+    skills_for_module(&ship.skill_requirements)
+  } else {
+    cert_wishes
+  }
+}
+
 fn update_ship_selected(state: &mut State, type_id: i32, mastery: u8) -> iced::Task<Message> {
   tracing::info!(
     "skill_plan: ship selected — type_id: {type_id}, mastery: {mastery}, plan: {}",
     state.plan_name
   );
-  let type_id_to_name: HashMap<i32, String> = state
-    .skill_groups
-    .iter()
-    .flat_map(|g| g.skills.iter())
-    .map(|s| (s.type_id, s.name.clone()))
-    .collect();
-  let lookup = |tid: i32| type_id_to_name.get(&tid).cloned();
-  let Some(ship) = state.picker_ships.iter().find(|s| s.id == type_id) else {
+  let Some(ship) = state.picker_ships.iter().find(|s| s.id == type_id).cloned() else {
     return iced::Task::none();
   };
-  let has_cert_data = ship.mastery_cert_ids.iter().any(|v| !v.is_empty()) && !state.certificates.is_empty();
-  let mut skill_wishes = if has_cert_data {
-    skills_for_mastery(&ship.mastery_cert_ids, mastery, &state.certificates, &lookup)
-  } else {
-    vec![]
-  };
-  if skill_wishes.is_empty() {
-    skill_wishes = skills_for_module(&ship.skill_requirements);
-  }
+  let type_id_to_name = build_type_id_to_name(state);
+  let skill_wishes = resolve_ship_skill_wishes(&ship, mastery, &state.certificates, &type_id_to_name);
   merge_wishes_into_plan(state, skill_wishes);
   iced::Task::none()
 }

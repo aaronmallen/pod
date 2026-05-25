@@ -2,38 +2,40 @@
 
 pub mod attr_row;
 pub mod rate_grid;
+pub mod remap_card;
 
 pub use attr_row::Component as AttrRow;
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Element, Length, Padding,
   widget::{Space, column, container, text},
 };
 pub use rate_grid::RateGrid;
+pub use remap_card::RemapCard;
 
 use super::super::{State, skill_data::AttrKey};
 use crate::{
   components,
-  style::{
-    color, spacing,
-    typography::{body, mono},
-  },
+  style::{color, spacing, typography::mono},
 };
 
 /// Messages produced by the attributes tab.
 #[derive(Clone, Debug)]
 pub enum Message {}
 
+/// Attributes tab content for the skills right panel.
 pub struct Component<'a> {
   state: &'a State,
 }
 
 impl<'a> Component<'a> {
+  /// Constructs the attributes tab bound to the given state.
   pub fn new(state: &'a State) -> Self {
     Self {
       state,
     }
   }
 
+  /// Renders the attributes tab into an [`Element`].
   pub fn render(self) -> Element<'a, Message> {
     let attr_pair = self
       .state
@@ -58,7 +60,7 @@ impl<'a> Component<'a> {
     column([
       column(attr_bars).width(Length::Fill).into(),
       RateGrid::new(self.state, active_primary, active_secondary).render(),
-      remap_cta(self.state),
+      RemapCard::new(self.state).render(),
       Space::new().height(spacing::SPACE_4).into(),
     ])
     .width(Length::Fill)
@@ -118,90 +120,6 @@ fn section_header<'a>(total_pts: u32) -> Element<'a, Message> {
     left: spacing::SPACE_4,
     right: spacing::SPACE_4,
   })
-  .width(Length::Fill)
-  .into()
-}
-
-fn remap_cta<'a>(state: &'a State) -> Element<'a, Message> {
-  let (remap_bonus_text, remap_detail_text) =
-    if let Some(attrs) = state.active_character().and_then(|c| c.attributes().as_ref()) {
-      let bonus_str = match attrs.bonus_remaps {
-        0 => "No bonus remaps".to_string(),
-        1 => "1 bonus available".to_string(),
-        n => format!("{} bonuses available", n),
-      };
-      let detail_str = match (&attrs.last_remap_date, &attrs.accrued_remap_cooldown_date) {
-        (Some(last), Some(cd)) => format!(
-          "Last remap {} · next available {}",
-          last.get(..10).unwrap_or(last.as_str()),
-          cd.get(..10).unwrap_or(cd.as_str())
-        ),
-        (Some(last), None) => format!("Last remap {}", last.get(..10).unwrap_or(last.as_str())),
-        _ => "No remap history".to_string(),
-      };
-      (bonus_str, detail_str)
-    } else {
-      ("No remap data".to_string(), "Attributes not yet loaded".to_string())
-    };
-
-  container(remap_card(remap_bonus_text, remap_detail_text))
-    .padding(Padding {
-      top: 14.0,
-      bottom: 0.0,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-fn remap_card(bonus_text: String, detail_text: String) -> Element<'static, Message> {
-  container(remap_text_col(bonus_text, detail_text))
-    .padding(Padding {
-      top: 14.0,
-      bottom: 14.0,
-      left: spacing::SPACE_4,
-      right: spacing::SPACE_4,
-    })
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA_SUBTLE)),
-      border: Border {
-        color: color::accent::PLASMA_MUTED,
-        radius: 8.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn remap_text_col(bonus_text: String, detail_text: String) -> Element<'static, Message> {
-  column([
-    text("Neural remap")
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::accent::PLASMA),
-      })
-      .into(),
-    Space::new().height(4.0).into(),
-    text(bonus_text)
-      .font(body::MEDIUM)
-      .size(14.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    Space::new().height(2.0).into(),
-    text(detail_text)
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(|_| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-  ])
   .width(Length::Fill)
   .into()
 }

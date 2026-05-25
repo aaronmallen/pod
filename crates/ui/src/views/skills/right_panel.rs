@@ -3,20 +3,19 @@
 pub mod attributes_tab;
 pub mod browser_tab;
 pub mod plans_tab;
+pub mod tab_button;
 
 pub use attributes_tab::Component as Attributes;
 pub use browser_tab::Component as Browser;
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
-  widget::{Space, button, column, container, scrollable, text},
+  Background, Element, Length,
+  widget::{column, container, scrollable},
 };
 pub use plans_tab::Component as Plans;
+pub use tab_button::TabButton;
 
 use super::{RightTab, State};
-use crate::{
-  components,
-  style::{color, typography::body},
-};
+use crate::{components, style::color};
 
 /// Messages produced by the right panel.
 #[derive(Clone, Debug)]
@@ -46,7 +45,7 @@ impl<'a> Component<'a> {
     ];
     let tab_btns: Vec<Element<'_, Message>> = tabs
       .iter()
-      .map(|(tab, label)| tab_btn(*tab, label, self.state.right_tab == *tab))
+      .map(|(tab, label)| TabButton::new(*tab, label, self.state.right_tab == *tab).render())
       .collect();
     let tab_bar = column([
       row(tab_btns).width(Length::Fill).into(),
@@ -75,51 +74,4 @@ impl<'a> Component<'a> {
 
 fn row<'a>(items: Vec<Element<'a, Message>>) -> iced::widget::Row<'a, Message> {
   iced::widget::row(items)
-}
-
-fn tab_btn(tab: RightTab, label: &'static str, is_active: bool) -> Element<'static, Message> {
-  let btn = button(
-    text(label)
-      .font(body::MEDIUM)
-      .size(13.0)
-      .style(move |_| iced::widget::text::Style {
-        color: Some(if is_active {
-          color::text::PRIMARY
-        } else {
-          color::text::SECONDARY
-        }),
-      }),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 14.0,
-    bottom: 12.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .on_press(Message::TabSelected(tab))
-  .style(move |_, _| button::Style {
-    background: None,
-    border: Border::default(),
-    text_color: if is_active {
-      color::text::PRIMARY
-    } else {
-      color::text::SECONDARY
-    },
-    ..button::Style::default()
-  });
-
-  let underline = container(Space::new().width(Length::Fill).height(2.0))
-    .width(Length::Fill)
-    .height(2.0)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(if is_active {
-        color::accent::PLASMA
-      } else {
-        Color::TRANSPARENT
-      })),
-      ..container::Style::default()
-    });
-
-  column([btn.into(), underline.into()]).width(Length::Fill).into()
 }

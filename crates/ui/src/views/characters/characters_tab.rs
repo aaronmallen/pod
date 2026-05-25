@@ -52,42 +52,14 @@ impl State {
 
   pub fn update(&mut self, msg: Message) -> Task<Message> {
     match msg {
-      Message::CursorMoved(pt) => {
-        self.cursor_position = pt;
-        Task::none()
-      }
       Message::Card(_, card_msg) => self.update_card(card_msg),
       Message::ContextMenu(inner) => self.update_context_menu(inner),
-      Message::DragEnd => {
-        self.dragging_id = None;
-        self.drag_hover = None;
-        Task::none()
-      }
       Message::DragMoved(pt, pane_height) => self.update_drag_moved(pt, pane_height),
-      Message::ScrollOffsetChanged(viewport) => {
-        self.scroll_offset = viewport.absolute_offset();
-        Task::none()
-      }
-      Message::SlotEntered(slot) => {
-        if self.dragging_id.is_some() {
-          self.drag_hover = Some(slot);
-        }
-        Task::none()
-      }
-      Message::CharacterAdded(_)
-      | Message::CharacterPublicRefreshed(_)
-      | Message::CharacterPublicRefreshTick
-      | Message::CharacterTagsLoaded(_, _)
-      | Message::LocationRefreshTick
-      | Message::LocationsRefreshed(_)
-      | Message::NavigateToDetail(_)
-      | Message::NavigateToSkills(_)
-      | Message::NavigateToWallet(_)
-      | Message::RemoveCharacter(_)
-      | Message::SkillQueueRefreshTick
-      | Message::SkillQueuesRefreshed(_)
-      | Message::WalletRefreshTick
-      | Message::WalletsRefreshed(_) => Task::none(),
+      Message::CursorMoved(pt) => update_cursor_moved(self, pt),
+      Message::DragEnd => update_drag_end(self),
+      Message::ScrollOffsetChanged(viewport) => update_scroll_offset(self, viewport),
+      Message::SlotEntered(slot) => update_slot_entered(self, slot),
+      _ => Task::none(),
     }
   }
 
@@ -177,6 +149,29 @@ impl Default for State {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn update_cursor_moved(state: &mut State, pt: Point) -> Task<Message> {
+  state.cursor_position = pt;
+  Task::none()
+}
+
+fn update_drag_end(state: &mut State) -> Task<Message> {
+  state.dragging_id = None;
+  state.drag_hover = None;
+  Task::none()
+}
+
+fn update_scroll_offset(state: &mut State, viewport: scrollable::Viewport) -> Task<Message> {
+  state.scroll_offset = viewport.absolute_offset();
+  Task::none()
+}
+
+fn update_slot_entered(state: &mut State, slot: i32) -> Task<Message> {
+  if state.dragging_id.is_some() {
+    state.drag_hover = Some(slot);
+  }
+  Task::none()
 }
 
 /// Messages for the characters tab.

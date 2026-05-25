@@ -35,24 +35,8 @@ impl State {
         self.query = s;
         Task::none()
       }
-      Message::HelpPopOver(inner) => {
-        if let help_pop_over::Message::QueryInserted(ref q) = inner {
-          let sep = if self.query.is_empty() { "" } else { " " };
-          self.query = format!("{}{sep}{q}", self.query);
-          let id = self.input_id.clone();
-          let _ = self.help_pop_over.update(inner).map(Message::HelpPopOver);
-          return iced::widget::operation::focus(id).map(|_: ()| Message::FocusInput);
-        }
-        self.help_pop_over.update(inner).map(Message::HelpPopOver)
-      }
-      Message::HelpToggle => {
-        let inner = if self.help_pop_over.visible {
-          help_pop_over::Message::Close
-        } else {
-          help_pop_over::Message::Open
-        };
-        self.help_pop_over.update(inner).map(Message::HelpPopOver)
-      }
+      Message::HelpPopOver(inner) => update_help_popover(self, inner),
+      Message::HelpToggle => update_help_toggle(self),
       Message::FocusInput => iced::widget::operation::focus(self.input_id.clone()).map(|_: ()| Message::FocusInput),
     }
   }
@@ -62,6 +46,26 @@ impl Default for State {
   fn default() -> Self {
     Self::new()
   }
+}
+
+fn update_help_popover(state: &mut State, inner: help_pop_over::Message) -> Task<Message> {
+  if let help_pop_over::Message::QueryInserted(ref q) = inner {
+    let sep = if state.query.is_empty() { "" } else { " " };
+    state.query = format!("{}{sep}{q}", state.query);
+    let id = state.input_id.clone();
+    let _ = state.help_pop_over.update(inner).map(Message::HelpPopOver);
+    return iced::widget::operation::focus(id).map(|_: ()| Message::FocusInput);
+  }
+  state.help_pop_over.update(inner).map(Message::HelpPopOver)
+}
+
+fn update_help_toggle(state: &mut State) -> Task<Message> {
+  let inner = if state.help_pop_over.visible {
+    help_pop_over::Message::Close
+  } else {
+    help_pop_over::Message::Open
+  };
+  state.help_pop_over.update(inner).map(Message::HelpPopOver)
 }
 
 #[derive(Clone, Debug)]

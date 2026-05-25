@@ -187,19 +187,35 @@ fn skill_level_pips<'a, MSG: 'static>(level: i32) -> Element<'a, MSG> {
   row(pips).spacing(3.0).into()
 }
 
-fn format_eta(end_time: i64) -> String {
+fn eta_remaining_secs(end_time: i64) -> i64 {
   let now = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_secs() as i64)
     .unwrap_or(0);
-  let remaining = (end_time - now).max(0);
+  (end_time - now).max(0)
+}
+
+fn eta_parts(remaining: i64) -> (i64, i64, i64) {
   let days = remaining / 86400;
   let hours = (remaining % 86400) / 3600;
   let minutes = (remaining % 3600) / 60;
-  match (days, hours, minutes) {
-    (d, h, _) if d > 0 && h > 0 => format!("{d}d {h}h"),
-    (d, _, m) if d > 0 => format!("{d}d {m}m"),
-    (_, h, m) if h > 0 => format!("{h}h {m}m"),
-    (_, _, m) => format!("{m}m"),
+  (days, hours, minutes)
+}
+
+fn format_eta_parts(days: i64, hours: i64, minutes: i64) -> String {
+  if days > 0 && hours > 0 {
+    format!("{days}d {hours}h")
+  } else if days > 0 {
+    format!("{days}d {minutes}m")
+  } else if hours > 0 {
+    format!("{hours}h {minutes}m")
+  } else {
+    format!("{minutes}m")
   }
+}
+
+fn format_eta(end_time: i64) -> String {
+  let remaining = eta_remaining_secs(end_time);
+  let (days, hours, minutes) = eta_parts(remaining);
+  format_eta_parts(days, hours, minutes)
 }

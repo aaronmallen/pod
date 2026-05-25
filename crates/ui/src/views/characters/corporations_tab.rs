@@ -45,35 +45,12 @@ impl State {
         });
         Task::none()
       }
-      Message::ContextMenu(inner) => match inner {
-        context_menu::Message::Close => {
-          self.context_menu = None;
-          Task::none()
-        }
-        context_menu::Message::RemoveRequested => {
-          let id = self.context_menu.as_ref().map(|s| s.corporation_id);
-          self.context_menu = None;
-          if let Some(id) = id {
-            Task::done(Message::RemoveCorporation(id))
-          } else {
-            Task::none()
-          }
-        }
-      },
+      Message::ContextMenu(inner) => update_context_menu(self, inner),
       Message::CursorMoved(pt) => {
         self.cursor_position = pt;
         Task::none()
       }
-      Message::Card(_, corporation_card::Message::TagsPressed(_)) => Task::none(),
-      Message::CorporationAdded(_)
-      | Message::CorporationRemoved(_)
-      | Message::CorporationsLoaded(_)
-      | Message::CorporationTagsLoaded(_, _)
-      | Message::CorpPublicRefreshed(_)
-      | Message::CorpPublicRefreshTick
-      | Message::CorpWalletRefreshTick
-      | Message::HqNamesLoaded(_)
-      | Message::RemoveCorporation(_) => Task::none(),
+      _ => Task::none(),
     }
   }
 }
@@ -81,6 +58,20 @@ impl State {
 impl Default for State {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+fn update_context_menu(state: &mut State, inner: context_menu::Message) -> Task<Message> {
+  match inner {
+    context_menu::Message::Close => {
+      state.context_menu = None;
+      Task::none()
+    }
+    context_menu::Message::RemoveRequested => {
+      let id = state.context_menu.as_ref().map(|s| s.corporation_id);
+      state.context_menu = None;
+      id.map_or_else(Task::none, |id| Task::done(Message::RemoveCorporation(id)))
+    }
   }
 }
 

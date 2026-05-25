@@ -63,20 +63,27 @@ pub fn icon_btn(label: &'static str, msg: Message) -> Element<'static, Message> 
     right: 6.0,
   })
   .on_press(msg)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
+  .style(|_, status| icon_btn_style(status))
+  .into()
+}
+
+fn icon_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: if active {
+      Some(Background::Color(color::state::HOVER_OVERLAY))
+    } else {
+      None
     },
     border: Border {
       radius: 5.0.into(),
       ..Border::default()
     },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
+    text_color: if active {
+      color::text::PRIMARY
+    } else {
+      color::text::SECONDARY
     },
     ..button::Style::default()
-  })
-  .into()
+  }
 }

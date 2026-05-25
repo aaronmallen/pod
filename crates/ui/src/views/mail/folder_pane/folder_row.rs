@@ -67,6 +67,29 @@ fn folder_row_content(
   .align_y(iced::alignment::Vertical::Center)
 }
 
+fn folder_btn_bg(is_active: bool, status: button::Status) -> Option<Background> {
+  if is_active {
+    Some(Background::Color(color::accent::PLASMA_SUBTLE))
+  } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+    Some(Background::Color(color::state::HOVER_OVERLAY))
+  } else {
+    None
+  }
+}
+
+fn folder_btn_style(is_active: bool, status: button::Status) -> button::Style {
+  button::Style {
+    background: folder_btn_bg(is_active, status),
+    border: Border {
+      color: Color::TRANSPARENT,
+      radius: 6.0.into(),
+      width: 0.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  }
+}
+
 fn all_inboxes_background(active: bool, status: button::Status) -> Option<Background> {
   if active {
     Some(Background::Color(color::accent::PLASMA_SUBTLE))
@@ -132,38 +155,21 @@ impl Component {
   pub fn render(self) -> Element<'static, Message> {
     let is_active = self.is_active;
     if self.is_all_inboxes {
-      self.render_all_inboxes()
-    } else {
-      let icon_el = folder_icon(&self.folder, is_active);
-      let count_el = CountBadge::new(self.count).unread(self.unread).render();
-      button(folder_row_content(icon_el, self.label, is_active, count_el))
-        .padding(Padding {
-          top: 7.0,
-          bottom: 7.0,
-          left: 10.0,
-          right: 10.0,
-        })
-        .width(Length::Fill)
-        .on_press(Message::FolderSelected(self.folder))
-        .style(move |_, status| button::Style {
-          background: if is_active {
-            Some(Background::Color(color::accent::PLASMA_SUBTLE))
-          } else {
-            match status {
-              button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-              _ => None,
-            }
-          },
-          border: Border {
-            color: Color::TRANSPARENT,
-            radius: 6.0.into(),
-            width: 0.0,
-          },
-          text_color: color::text::PRIMARY,
-          ..button::Style::default()
-        })
-        .into()
+      return self.render_all_inboxes();
     }
+    let icon_el = folder_icon(&self.folder, is_active);
+    let count_el = CountBadge::new(self.count).unread(self.unread).render();
+    button(folder_row_content(icon_el, self.label, is_active, count_el))
+      .padding(Padding {
+        top: 7.0,
+        bottom: 7.0,
+        left: 10.0,
+        right: 10.0,
+      })
+      .width(Length::Fill)
+      .on_press(Message::FolderSelected(self.folder))
+      .style(move |_, status| folder_btn_style(is_active, status))
+      .into()
   }
 
   fn render_all_inboxes(self) -> Element<'static, Message> {
@@ -228,16 +234,17 @@ impl<'a> LabelRow<'a> {
   /// Render into an iced element.
   pub fn render(self) -> Element<'a, Message> {
     let is_active = self.is_active;
+    let label_color = if is_active {
+      color::text::PRIMARY
+    } else {
+      color::text::STRONG
+    };
     button(
       text(self.label)
         .font(body::REGULAR)
         .size(13.0)
         .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(if is_active {
-            color::text::PRIMARY
-          } else {
-            color::text::STRONG
-          }),
+          color: Some(label_color),
         })
         .width(Length::Fill),
     )
@@ -249,23 +256,7 @@ impl<'a> LabelRow<'a> {
     })
     .width(Length::Fill)
     .on_press(Message::FolderSelected(self.folder))
-    .style(move |_, status| button::Style {
-      background: if is_active {
-        Some(Background::Color(color::accent::PLASMA_SUBTLE))
-      } else {
-        match status {
-          button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-          _ => None,
-        }
-      },
-      border: Border {
-        color: Color::TRANSPARENT,
-        radius: 6.0.into(),
-        width: 0.0,
-      },
-      text_color: color::text::PRIMARY,
-      ..button::Style::default()
-    })
+    .style(move |_, status| folder_btn_style(is_active, status))
     .into()
   }
 }

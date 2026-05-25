@@ -170,27 +170,7 @@ impl Component {
         left: 6.0,
         right: spacing::SPACE_2_5,
       })
-      .style(move |_, status| {
-        let bg = match (is_open, status) {
-          (true, _) => Some(color::state::SUBTLE_FILL),
-          (false, button::Status::Hovered | button::Status::Pressed) => Some(color::state::HOVER_OVERLAY),
-          _ => None,
-        };
-        button::Style {
-          background: bg.map(Background::Color),
-          border: Border {
-            color: if is_open {
-              color::border::DEFAULT
-            } else {
-              Color::TRANSPARENT
-            },
-            radius: 10.0.into(),
-            width: 1.0,
-          },
-          text_color: color::text::PRIMARY,
-          ..button::Style::default()
-        }
-      })
+      .style(move |_, status| trigger_btn_style(is_open, status))
       .on_press(Message::ToggleOpen)
       .into()
   }
@@ -219,6 +199,31 @@ impl Component {
         ..container::Style::default()
       })
       .into()
+  }
+}
+
+fn trigger_btn_style(is_open: bool, status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let bg = if is_open {
+    Some(color::state::SUBTLE_FILL)
+  } else if hovered {
+    Some(color::state::HOVER_OVERLAY)
+  } else {
+    None
+  };
+  button::Style {
+    background: bg.map(Background::Color),
+    border: Border {
+      color: if is_open {
+        color::border::DEFAULT
+      } else {
+        Color::TRANSPARENT
+      },
+      radius: 10.0.into(),
+      width: 1.0,
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
   }
 }
 

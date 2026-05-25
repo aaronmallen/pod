@@ -258,19 +258,7 @@ pub fn compute_plan(entries: &[PlanEntry], attrs: &EffectiveAttrs, skill_groups:
       continue;
     }
 
-    let step_sp = if entry.to_level == starting_level + 1 {
-      if !skill_progress.contains_key(entry.skill_name.as_str()) && skill.level == starting_level {
-        let full_level_sp = sp_cost(skill.rank as f64, entry.to_level);
-        (full_level_sp as i64 - skill.sp as i64).max(0) as u64
-      } else {
-        let cost_to = sp_cost(skill.rank as f64, entry.to_level);
-        let cost_from = sp_cost(skill.rank as f64, starting_level);
-        cost_to.saturating_sub(cost_from)
-      }
-    } else {
-      sp_cost(skill.rank as f64, entry.to_level)
-    };
-
+    let step_sp = compute_step_sp(skill, entry, starting_level, &skill_progress);
     let rate = sp_per_sec(attr_value(attrs, skill.primary), attr_value(attrs, skill.secondary)) as f64;
 
     let sec = if rate > 0.0 { step_sp as f64 / rate } else { 0.0 };
@@ -353,6 +341,21 @@ pub fn implant_bonus_for_set(set: ImplantSet, current_attrs_implants: &BaseAttrs
   }
 }
 
+fn compute_step_sp(skill: &SkillDef, entry: &PlanEntry, starting_level: u8, skill_progress: &HashMap<&str, u8>) -> u64 {
+  if entry.to_level != starting_level + 1 {
+    return sp_cost(skill.rank as f64, entry.to_level);
+  }
+  let is_first_step = !skill_progress.contains_key(entry.skill_name.as_str()) && skill.level == starting_level;
+  if is_first_step {
+    let full_level_sp = sp_cost(skill.rank as f64, entry.to_level);
+    (full_level_sp as i64 - skill.sp as i64).max(0) as u64
+  } else {
+    let cost_to = sp_cost(skill.rank as f64, entry.to_level);
+    let cost_from = sp_cost(skill.rank as f64, starting_level);
+    cost_to.saturating_sub(cost_from)
+  }
+}
+
 /// Sum the SP demand per (primary, secondary) attribute pair across all
 /// entries. Used for fast optimizer passes that avoid re-walking entries.
 pub fn pair_weights(entries: &[PlanEntry], attrs: &EffectiveAttrs, skill_groups: &[SkillGroupDef]) -> Vec<PairWeight> {
@@ -374,19 +377,7 @@ pub fn pair_weights(entries: &[PlanEntry], attrs: &EffectiveAttrs, skill_groups:
       continue;
     }
 
-    let step_sp = if entry.to_level == starting_level + 1 {
-      if !skill_progress.contains_key(entry.skill_name.as_str()) && skill.level == starting_level {
-        let full_level_sp = sp_cost(skill.rank as f64, entry.to_level);
-        (full_level_sp as i64 - skill.sp as i64).max(0) as u64
-      } else {
-        let cost_to = sp_cost(skill.rank as f64, entry.to_level);
-        let cost_from = sp_cost(skill.rank as f64, starting_level);
-        cost_to.saturating_sub(cost_from)
-      }
-    } else {
-      sp_cost(skill.rank as f64, entry.to_level)
-    };
-
+    let step_sp = compute_step_sp(skill, entry, starting_level, &skill_progress);
     *weights.entry((skill.primary, skill.secondary)).or_insert(0) += step_sp;
     skill_progress.insert(entry.skill_name.as_str(), entry.to_level);
   }

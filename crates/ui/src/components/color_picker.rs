@@ -83,28 +83,7 @@ impl<'a, Message: Clone + 'static> Component<'a, Message> {
       .width(22.0)
       .height(22.0)
       .on_press(on_toggle)
-      .style(move |_, status| button::Style {
-        background: Some(Background::Color(swatch_color)),
-        border: Border {
-          color: if is_open {
-            color::accent::PLASMA
-          } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            color::accent::PLASMA_MUTED
-          } else if has_color {
-            iced::Color {
-              a: 0.5,
-              ..swatch_color
-            }
-          } else {
-            color::border::SUBTLE
-          },
-          radius: radius::CHIP.into(),
-          width: if is_open { 2.0 } else { 1.0 },
-        },
-        snap: false,
-        text_color: iced::Color::TRANSPARENT,
-        shadow: iced::Shadow::default(),
-      });
+      .style(move |_, status| swatch_anchor_style(is_open, has_color, swatch_color, status));
 
     if !is_open {
       return anchor.into();
@@ -126,6 +105,45 @@ impl<'a, Message: Clone + 'static> Component<'a, Message> {
     ])
     .spacing(0.0)
     .into()
+  }
+}
+
+fn swatch_anchor_border_color(
+  is_open: bool,
+  has_color: bool,
+  swatch_color: iced::Color,
+  status: button::Status,
+) -> iced::Color {
+  if is_open {
+    color::accent::PLASMA
+  } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+    color::accent::PLASMA_MUTED
+  } else if has_color {
+    iced::Color {
+      a: 0.5,
+      ..swatch_color
+    }
+  } else {
+    color::border::SUBTLE
+  }
+}
+
+fn swatch_anchor_style(
+  is_open: bool,
+  has_color: bool,
+  swatch_color: iced::Color,
+  status: button::Status,
+) -> button::Style {
+  button::Style {
+    background: Some(Background::Color(swatch_color)),
+    border: Border {
+      color: swatch_anchor_border_color(is_open, has_color, swatch_color, status),
+      radius: radius::CHIP.into(),
+      width: if is_open { 2.0 } else { 1.0 },
+    },
+    snap: false,
+    text_color: iced::Color::TRANSPARENT,
+    shadow: iced::Shadow::default(),
   }
 }
 

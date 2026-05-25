@@ -83,6 +83,28 @@ impl<'a> EditorHeader<'a> {
   }
 }
 
+fn dropdown_trigger_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: None,
+    border: Border {
+      color: if active {
+        color::border::DEFAULT
+      } else {
+        color::border::SUBTLE
+      },
+      radius: 8.0.into(),
+      width: 1.0,
+    },
+    text_color: if active {
+      color::text::PRIMARY
+    } else {
+      color::text::SECONDARY
+    },
+    ..button::Style::default()
+  }
+}
+
 fn dropdown_trigger_btn(label: &'static str, on_press: Message) -> button::Button<'static, Message> {
   button(
     row([
@@ -107,22 +129,7 @@ fn dropdown_trigger_btn(label: &'static str, on_press: Message) -> button::Butto
     right: 12.0,
   })
   .on_press(on_press)
-  .style(|_, status| button::Style {
-    background: None,
-    border: Border {
-      color: match status {
-        button::Status::Hovered | button::Status::Pressed => color::border::DEFAULT,
-        _ => color::border::SUBTLE,
-      },
-      radius: 8.0.into(),
-      width: 1.0,
-    },
-    text_color: match status {
-      button::Status::Hovered | button::Status::Pressed => color::text::PRIMARY,
-      _ => color::text::SECONDARY,
-    },
-    ..button::Style::default()
-  })
+  .style(|_, status| dropdown_trigger_btn_style(status))
 }
 
 fn export_trigger_btn() -> button::Button<'static, Message> {

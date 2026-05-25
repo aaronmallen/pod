@@ -197,25 +197,30 @@ pub fn all_wallets_swatch() -> Element<'static, Message> {
 }
 
 pub fn picker_row_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-  move |_, status| {
-    let bg = match (selected, status) {
-      (true, _) => Some(color::accent::PLASMA_SELECTED),
-      (false, button::Status::Hovered | button::Status::Pressed) => Some(color::state::HOVER_OVERLAY),
-      _ => None,
-    };
-    button::Style {
-      background: bg.map(Background::Color),
-      border: Border {
-        color: if selected {
-          color::accent::PLASMA
-        } else {
-          Color::TRANSPARENT
-        },
-        radius: 0.0.into(),
-        width: if selected { 2.0 } else { 0.0 },
+  move |_, status| picker_row_button_style(selected, status)
+}
+
+fn picker_row_button_style(selected: bool, status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let bg = if selected {
+    Some(color::accent::PLASMA_SELECTED)
+  } else if hovered {
+    Some(color::state::HOVER_OVERLAY)
+  } else {
+    None
+  };
+  button::Style {
+    background: bg.map(Background::Color),
+    border: Border {
+      color: if selected {
+        color::accent::PLASMA
+      } else {
+        Color::TRANSPARENT
       },
-      text_color: color::text::PRIMARY,
-      ..button::Style::default()
-    }
+      radius: 0.0.into(),
+      width: if selected { 2.0 } else { 0.0 },
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
   }
 }

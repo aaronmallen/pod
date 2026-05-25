@@ -58,6 +58,20 @@ pub fn separator<'a>() -> iced::widget::Container<'a, Message> {
     })
 }
 
+fn group_btn_style(status: button::Status) -> button::Style {
+  let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: if active {
+      Some(Background::Color(color::state::HOVER_OVERLAY))
+    } else {
+      None
+    },
+    border: iced::Border::default(),
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  }
+}
+
 fn group_btn(name: &str, caret: &str, count_label: String) -> button::Button<'static, Message> {
   button(
     row([
@@ -94,13 +108,5 @@ fn group_btn(name: &str, caret: &str, count_label: String) -> button::Button<'st
     right: spacing::SPACE_3,
   })
   .on_press(Message::PickerGroupToggled(name.to_string()))
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => Some(Background::Color(color::state::HOVER_OVERLAY)),
-      _ => None,
-    },
-    border: iced::Border::default(),
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
+  .style(|_, status| group_btn_style(status))
 }

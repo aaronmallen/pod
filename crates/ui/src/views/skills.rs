@@ -309,24 +309,34 @@ impl<'a> Component<'a> {
   }
 }
 
-fn scope_missing_guard(state: &State) -> Option<Element<'_, Message>> {
-  let char_id = state.selected_char_id().checked_sub(0).filter(|&id| id != 0)?;
-  let character = state.characters.iter().find(|c| *c.id() == char_id)?;
+fn skills_scopes_missing(character: &pod_model::Character) -> bool {
   let granted = character.granted_scopes_list();
-  if missing_scopes(
+  !missing_scopes(
     &granted,
     &["esi-skills.read_skills.v1", "esi-skills.read_skillqueue.v1"],
   )
   .is_empty()
-  {
+}
+
+fn map_scope_missing_msg(m: scope_missing::Message) -> Message {
+  match m {
+    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
+  }
+}
+
+fn scope_missing_guard(state: &State) -> Option<Element<'_, Message>> {
+  let char_id = state.selected_char_id();
+  if char_id == 0 {
+    return None;
+  }
+  let character = state.characters.iter().find(|c| *c.id() == char_id)?;
+  if !skills_scopes_missing(character) {
     return None;
   }
   Some(
     ScopeMissing::new(char_id, "skill monitoring")
       .render()
-      .map(|m| match m {
-        scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-      }),
+      .map(map_scope_missing_msg),
   )
 }
 

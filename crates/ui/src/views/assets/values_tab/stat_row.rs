@@ -128,31 +128,37 @@ fn render_header_row(structures: &[String]) -> Element<'static, Message> {
   .into()
 }
 
-fn render_char_data_row(
+fn char_row_total(cells: &[CharacterStructureCell], char_id: i64) -> f64 {
+  cells
+    .iter()
+    .filter(|c| c.character_id == char_id)
+    .map(|c| c.value)
+    .sum()
+}
+
+fn char_struct_value(cells: &[CharacterStructureCell], char_id: i64, struct_name: &str) -> f64 {
+  cells
+    .iter()
+    .filter(|c| c.character_id == char_id && c.structure_name == struct_name)
+    .map(|c| c.value)
+    .sum()
+}
+
+fn build_char_row_cells(
   cells: &[CharacterStructureCell],
   char_id: i64,
   char_name: &str,
   structures: &[String],
-) -> Element<'static, Message> {
-  let row_total: f64 = cells
-    .iter()
-    .filter(|c| c.character_id == char_id)
-    .map(|c| c.value)
-    .sum();
-
+  row_total: f64,
+) -> Vec<Element<'static, Message>> {
   let mut row_cells: Vec<Element<'static, Message>> = vec![
     ValuesStatCell::new(ValuesStatCellKind::CharName {
       name: char_name.to_string(),
     })
     .render(),
   ];
-
   for struct_name in structures {
-    let v = cells
-      .iter()
-      .filter(|c| c.character_id == char_id && &c.structure_name == struct_name)
-      .map(|c| c.value)
-      .sum::<f64>();
+    let v = char_struct_value(cells, char_id, struct_name);
     row_cells.push(
       ValuesStatCell::new(ValuesStatCellKind::Value {
         value: v,
@@ -167,6 +173,17 @@ fn render_char_data_row(
     })
     .render(),
   );
+  row_cells
+}
+
+fn render_char_data_row(
+  cells: &[CharacterStructureCell],
+  char_id: i64,
+  char_name: &str,
+  structures: &[String],
+) -> Element<'static, Message> {
+  let row_total = char_row_total(cells, char_id);
+  let row_cells = build_char_row_cells(cells, char_id, char_name, structures, row_total);
 
   container(
     row(row_cells)

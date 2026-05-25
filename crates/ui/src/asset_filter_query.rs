@@ -186,14 +186,18 @@ fn match_token(tok: &AssetFilterToken, asset: &AssetRecord, me_id: Option<i64>) 
   }
 }
 
-fn match_type(values: &[String], asset: &AssetRecord) -> bool {
-  values.iter().any(|v| match v.as_str() {
+fn asset_matches_type_value(v: &str, asset: &AssetRecord) -> bool {
+  match v {
     "bpc" => asset.icon_variant == "bpc",
     "bpo" => asset.icon_variant == "bpo",
     "singleton" => asset.is_singleton,
     "stack" => !asset.is_singleton,
     _ => false,
-  })
+  }
+}
+
+fn match_type(values: &[String], asset: &AssetRecord) -> bool {
+  values.iter().any(|v| asset_matches_type_value(v.as_str(), asset))
 }
 
 const KEY_ALIASES: &[(&str, &str)] = &[

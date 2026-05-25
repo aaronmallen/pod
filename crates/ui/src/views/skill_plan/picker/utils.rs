@@ -2,6 +2,17 @@
 
 use pod_model::ItemTypeSummary;
 
+fn item_matches_search(item: &ItemTypeSummary, lc: &str, searching: bool) -> bool {
+  !searching || item.name.to_lowercase().contains(lc)
+}
+
+fn push_item_to_groups<'a>(groups: &mut Vec<(&'a str, Vec<&'a ItemTypeSummary>)>, item: &'a ItemTypeSummary) {
+  match groups.iter_mut().find(|(g, _)| *g == item.group_name.as_str()) {
+    Some((_, members)) => members.push(item),
+    None => groups.push((item.group_name.as_str(), vec![item])),
+  }
+}
+
 /// Groups items by their `group_name`, optionally filtering by a search query.
 ///
 /// Items whose name does not contain `lc` (lowercased search string) are
@@ -14,12 +25,8 @@ pub fn collect_item_groups<'a>(
 ) -> Vec<(&'a str, Vec<&'a ItemTypeSummary>)> {
   let mut groups: Vec<(&str, Vec<&ItemTypeSummary>)> = Vec::new();
   for item in items {
-    if searching && !item.name.to_lowercase().contains(lc) {
-      continue;
-    }
-    match groups.iter_mut().find(|(g, _)| *g == item.group_name.as_str()) {
-      Some((_, members)) => members.push(item),
-      None => groups.push((item.group_name.as_str(), vec![item])),
+    if item_matches_search(item, lc, searching) {
+      push_item_to_groups(&mut groups, item);
     }
   }
   groups

@@ -55,11 +55,19 @@ pub fn categorize_notif(notif_type: &str) -> NotificationCategory {
 /// Checks explicit overrides and the first group of domain-prefix rules.
 fn categorize_early_groups(notif_type: &str) -> Option<NotificationCategory> {
   categorize_override(notif_type)
-    .or_else(|| categorize_contract_notif(notif_type))
+    .or_else(|| categorize_early_domain_a(notif_type))
+    .or_else(|| categorize_early_domain_b(notif_type))
+}
+
+fn categorize_early_domain_a(notif_type: &str) -> Option<NotificationCategory> {
+  categorize_contract_notif(notif_type)
     .or_else(|| categorize_insurance_notif(notif_type))
     .or_else(|| categorize_clone_notif(notif_type))
     .or_else(|| categorize_fw_notif(notif_type))
-    .or_else(|| categorize_standing_notif(notif_type))
+}
+
+fn categorize_early_domain_b(notif_type: &str) -> Option<NotificationCategory> {
+  categorize_standing_notif(notif_type)
     .or_else(|| categorize_combat_notif(notif_type))
     .or_else(|| categorize_mission_notif(notif_type))
     .or_else(|| categorize_industry_notif(notif_type))
@@ -67,18 +75,21 @@ fn categorize_early_groups(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Checks the second group of domain-prefix rules, including war and structure.
 fn categorize_late_groups(notif_type: &str) -> Option<NotificationCategory> {
+  categorize_late_domain_a(notif_type).or_else(|| categorize_late_domain_b(notif_type))
+}
+
+fn categorize_late_domain_a(notif_type: &str) -> Option<NotificationCategory> {
   categorize_incursion_notif(notif_type)
     .or_else(|| categorize_contact_notif(notif_type))
     .or_else(|| categorize_market_notif(notif_type))
     .or_else(|| categorize_reward_notif(notif_type))
-    .or_else(|| {
-      if notif_type.starts_with("FreelanceProject") {
-        Some(NotificationCategory::System)
-      } else {
-        None
-      }
-    })
-    .or_else(|| categorize_war_notif(notif_type))
+}
+
+fn categorize_late_domain_b(notif_type: &str) -> Option<NotificationCategory> {
+  if notif_type.starts_with("FreelanceProject") {
+    return Some(NotificationCategory::System);
+  }
+  categorize_war_notif(notif_type)
     .or_else(|| categorize_structure_notif(notif_type))
     .or_else(|| categorize_corp_notif(notif_type))
 }
@@ -223,15 +234,17 @@ fn categorize_market_notif(notif_type: &str) -> Option<NotificationCategory> {
 
 /// Classifies reward, gift, and seasonal-challenge notifications.
 fn categorize_reward_notif(notif_type: &str) -> Option<NotificationCategory> {
-  if notif_type.starts_with("GameTime")
-    || notif_type.starts_with("Gift")
-    || notif_type.starts_with("DailyItemReward")
-    || notif_type.starts_with("LPAutoRedeemed")
-    || notif_type.starts_with("SkinSequencing")
-    || notif_type.starts_with("SPAutoRedeemed")
-    || notif_type.starts_with("SeasonalChallenge")
-    || notif_type.starts_with("ExpertSystem")
-  {
+  const PREFIXES: &[&str] = &[
+    "DailyItemReward",
+    "ExpertSystem",
+    "GameTime",
+    "Gift",
+    "LPAutoRedeemed",
+    "SPAutoRedeemed",
+    "SeasonalChallenge",
+    "SkinSequencing",
+  ];
+  if PREFIXES.iter().any(|p| notif_type.starts_with(p)) {
     Some(NotificationCategory::Reward)
   } else {
     None

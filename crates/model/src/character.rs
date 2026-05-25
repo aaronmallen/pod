@@ -301,7 +301,6 @@ impl Model {
     let skill = self.active_training()?;
     let end_time = skill.training_end_time?;
     let start_time = skill.training_start_time?;
-
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
 
     if let (Some(level_start), Some(level_end), Some(run_start_sp)) = (
@@ -309,18 +308,7 @@ impl Model {
       skill.training_level_end_sp,
       skill.training_start_sp,
     ) {
-      let level_range = (level_end - level_start) as f64;
-      if level_range <= 0.0 {
-        return Some(1.0);
-      }
-      let run_duration = (end_time - start_time) as f64;
-      let sp_rate = if run_duration > 0.0 {
-        (level_end - run_start_sp) as f64 / run_duration
-      } else {
-        return Some(1.0);
-      };
-      let current_sp = run_start_sp as f64 + (now - start_time).max(0) as f64 * sp_rate;
-      return Some(((current_sp - level_start as f64) / level_range).clamp(0.0, 1.0));
+      return sp_based_percent(level_start, level_end, run_start_sp, start_time, end_time, now);
     }
 
     let total_duration = (end_time - start_time) as f64;
@@ -329,6 +317,27 @@ impl Model {
     }
     Some(((now - start_time) as f64 / total_duration).clamp(0.0, 1.0))
   }
+}
+
+fn sp_based_percent(
+  level_start: i64,
+  level_end: i64,
+  run_start_sp: i64,
+  start_time: i64,
+  end_time: i64,
+  now: i64,
+) -> Option<f64> {
+  let level_range = (level_end - level_start) as f64;
+  if level_range <= 0.0 {
+    return Some(1.0);
+  }
+  let run_duration = (end_time - start_time) as f64;
+  if run_duration <= 0.0 {
+    return Some(1.0);
+  }
+  let sp_rate = (level_end - run_start_sp) as f64 / run_duration;
+  let current_sp = run_start_sp as f64 + (now - start_time).max(0) as f64 * sp_rate;
+  Some(((current_sp - level_start as f64) / level_range).clamp(0.0, 1.0))
 }
 
 #[cfg(test)]

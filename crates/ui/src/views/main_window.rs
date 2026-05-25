@@ -55,6 +55,8 @@ pub enum Message {
   Settings(settings::Message),
   ShowToast(String),
   Skills(skills::Message),
+  /// Fires on the 60-second background timer to check for expired snoozes.
+  SnoozeTick,
   StatusBar(components::status_bar::Message),
   Wallet(wallet::Message),
 }
@@ -76,6 +78,10 @@ pub struct State {
   pub hovered_nav: Option<Nav>,
   pub mail_folder_pane_width: f32,
   pub mail_message_list_width: f32,
+  /// Expired snooze pairs queued while the mail view is inactive.
+  ///
+  /// Applied to the mail state the next time the user navigates to mail.
+  pub pending_snooze_expired: Vec<(i64, i64)>,
   pub refresh_successes: u8,
   pub skills_left_pane_width: f32,
   pub sync: components::status_bar::SyncState,

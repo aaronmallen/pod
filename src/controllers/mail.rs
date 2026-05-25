@@ -37,6 +37,21 @@ pub fn new(
   (state, task)
 }
 
+/// Returns a task that checks for expired snoozes and emits `SnoozedExpired`.
+///
+/// Runs independent of the mail view state so the background loop can fire
+/// regardless of which screen is active.
+pub fn snooze_tick_task(characters: Vec<Character>, services: &Services) -> iced::Task<Message> {
+  if let Some(db) = services.db.clone() {
+    let esi = services.esi_client.clone();
+    return iced::Task::perform(
+      async move { check_expired_snoozes(characters, esi, db).await },
+      |expired| Message::ReadingPane(reading_pane::Message::SnoozedExpired(expired)),
+    );
+  }
+  iced::Task::none()
+}
+
 /// Processes a mail message and returns a task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {

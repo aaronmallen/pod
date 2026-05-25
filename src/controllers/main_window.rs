@@ -91,6 +91,7 @@ pub fn new(
     hovered_nav: None,
     mail_folder_pane_width: mail_folder_pane_width.unwrap_or(240.0),
     mail_message_list_width: mail_message_list_width.unwrap_or(380.0),
+    pending_snooze_expired: Vec::new(),
     refresh_successes: 0,
     skills_left_pane_width: skills_left_pane_width.unwrap_or(700.0),
     sync: status_bar::SyncState::default(),
@@ -105,9 +106,10 @@ pub fn reauth(services: &Services) -> iced::Task<Message> {
   trigger_reauth(services)
 }
 
-/// Returns background subscriptions for the currently active view.
+/// Returns background subscriptions for the currently active view plus
+/// a global snooze-expiry timer.
 pub fn subscription(state: &State) -> Subscription<Message> {
-  match &state.active_view {
+  let view_sub = match &state.active_view {
     ActiveView::Assets(s) => assets::subscription(s).map(Message::Assets),
     ActiveView::Characters(chars_state) => characters_ctrl::subscription(chars_state).map(Message::Characters),
     ActiveView::Mail(s) => mail::subscription(s).map(Message::Mail),
@@ -115,6 +117,12 @@ pub fn subscription(state: &State) -> Subscription<Message> {
     ActiveView::Skills(s) => skills_ctrl::subscription(s).map(Message::Skills),
     ActiveView::Wallet(s) => wallet::subscription(s).map(Message::Wallet),
     _ => Subscription::none(),
+  };
+  if state.feat_mail {
+    let snooze_sub = iced::time::every(std::time::Duration::from_secs(60)).map(|_| Message::SnoozeTick);
+    Subscription::batch([view_sub, snooze_sub])
+  } else {
+    view_sub
   }
 }
 
@@ -152,6 +160,7 @@ fn handle_other_message(
     }
     Message::ShowToast(msg) => (show_toast(state, msg), None),
     Message::Skills(msg) => (update_skills(state, msg, services), None),
+    Message::SnoozeTick => (update_snooze_tick(state, services), None),
     Message::Wallet(msg) => (update_wallet(state, msg, services), None),
     _ => (iced::Task::none(), None),
   }
@@ -584,6 +593,14 @@ fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> ic
   if let mail::Message::ReauthorizeCharacter(_) = &msg {
     return trigger_reauth(services);
   }
+  // When snoozes expire while mail is inactive, queue the pairs for
+  // application the next time the mail view becomes active.
+  if let mail::Message::ReadingPane(pod_ui::views::mail::reading_pane::Message::SnoozedExpired(ref pairs)) = msg
+    && !matches!(state.active_view, ActiveView::Mail(_))
+  {
+    state.pending_snooze_expired.extend_from_slice(pairs);
+    return iced::Task::none();
+  }
   let is_drag_end = matches!(&msg, mail::Message::PaneDragEnd);
   let ActiveView::Mail(s) = &mut state.active_view else {
     return iced::Task::none();
@@ -630,7 +647,16 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
         state.mail_message_list_width,
       );
       swap_active_view(state, ActiveView::Mail(s));
-      task.map(Message::Mail)
+      // Flush any snooze expirations that fired while mail was inactive.
+      let pending = std::mem::take(&mut state.pending_snooze_expired);
+      if pending.is_empty() {
+        task.map(Message::Mail)
+      } else {
+        let flush = Message::Mail(mail::Message::ReadingPane(
+          pod_ui::views::mail::reading_pane::Message::SnoozedExpired(pending),
+        ));
+        iced::Task::batch([task.map(Message::Mail), iced::Task::done(flush)])
+      }
     }
     Nav::Settings => {
       let (s, task) = settings_ctrl::new(services.config.features());
@@ -731,6 +757,10 @@ fn apply_settings_save(
     );
   }
   (iced::Task::batch([settings_task, toast_task]), Some(cfg))
+}
+
+fn update_snooze_tick(state: &mut State, services: &Services) -> iced::Task<Message> {
+  mail_ctrl::snooze_tick_task(state.characters.clone(), services).map(Message::Mail)
 }
 
 fn update_skills(state: &mut State, msg: skills::Message, services: &Services) -> iced::Task<Message> {
@@ -839,6 +869,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),
@@ -897,6 +928,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),
@@ -938,6 +970,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),
@@ -986,6 +1019,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),
@@ -1023,6 +1057,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),
@@ -1112,6 +1147,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
         sync: status_bar::SyncState::default(),

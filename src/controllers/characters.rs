@@ -455,37 +455,37 @@ fn handle_tag_remove(state: &mut State, tag_id: i32, services: &Services) -> ice
   }
 }
 
+async fn fetch_removed_corporation_tags(
+  entity_id: i64,
+  new_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+  db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
+  let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
+  Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
+}
+
 fn remove_corporation_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> iced::Task<Message> {
   iced::Task::perform(
-    async move {
-      db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
-      let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
-      Some((
-        entity_id,
-        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
-      ))
-    },
-    |result| match result {
-      Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-      None => Message::TagsApplied,
-    },
+    fetch_removed_corporation_tags(entity_id, new_ids, db),
+    corp_tags_loaded_message,
   )
+}
+
+async fn fetch_removed_character_tags(
+  entity_id: i64,
+  new_ids: Vec<i32>,
+  db: pod_db::Repo,
+) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+  db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
+  let tags = db.tags().tags_for_character(entity_id).await.ok()?;
+  Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
 }
 
 fn remove_character_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> iced::Task<Message> {
   iced::Task::perform(
-    async move {
-      db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
-      let tags = db.tags().tags_for_character(entity_id).await.ok()?;
-      Some((
-        entity_id,
-        tags.into_iter().map(|t| (t.id, t.name, t.color)).collect::<Vec<_>>(),
-      ))
-    },
-    |result| match result {
-      Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-      None => Message::TagsApplied,
-    },
+    fetch_removed_character_tags(entity_id, new_ids, db),
+    char_tags_loaded_message,
   )
 }
 
@@ -522,6 +522,20 @@ async fn fetch_corporation_tags(
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
 }
 
+fn corp_tags_loaded_message(result: Option<(i64, Vec<(i32, String, Option<String>)>)>) -> Message {
+  match result {
+    Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
+    None => Message::TagsApplied,
+  }
+}
+
+fn char_tags_loaded_message(result: Option<(i64, Vec<(i32, String, Option<String>)>)>) -> Message {
+  match result {
+    Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
+    None => Message::TagsApplied,
+  }
+}
+
 fn apply_corporation_tag_task(
   entity_id: i64,
   tag_name: String,
@@ -530,10 +544,7 @@ fn apply_corporation_tag_task(
 ) -> iced::Task<Message> {
   iced::Task::perform(
     fetch_corporation_tags(entity_id, tag_name, existing_ids, db),
-    |result| match result {
-      Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
-      None => Message::TagsApplied,
-    },
+    corp_tags_loaded_message,
   )
 }
 
@@ -561,10 +572,7 @@ fn apply_character_tag_task(
 ) -> iced::Task<Message> {
   iced::Task::perform(
     fetch_character_tags(entity_id, tag_name, existing_ids, db),
-    |result| match result {
-      Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
-      None => Message::TagsApplied,
-    },
+    char_tags_loaded_message,
   )
 }
 
@@ -578,6 +586,16 @@ fn drag_release_subscription() -> Subscription<Message> {
   })
 }
 
+fn tag_modal_key_message(key: &Key) -> Option<Message> {
+  match key {
+    Key::Named(Named::Escape) => Some(Message::TagModal(tag_modal::Message::Close)),
+    Key::Named(Named::ArrowUp) => Some(Message::TagModal(tag_modal::Message::MoveUp)),
+    Key::Named(Named::ArrowDown) => Some(Message::TagModal(tag_modal::Message::MoveDown)),
+    Key::Named(Named::Enter) => Some(Message::TagModal(tag_modal::Message::CommitHighlighted)),
+    _ => None,
+  }
+}
+
 fn tag_modal_keyboard_subscription() -> Subscription<Message> {
   iced::event::listen_with(|event, _status, _id| {
     let Event::Keyboard(keyboard::Event::KeyPressed {
@@ -586,26 +604,24 @@ fn tag_modal_keyboard_subscription() -> Subscription<Message> {
     else {
       return None;
     };
-    match key {
-      Key::Named(Named::Escape) => Some(Message::TagModal(tag_modal::Message::Close)),
-      Key::Named(Named::ArrowUp) => Some(Message::TagModal(tag_modal::Message::MoveUp)),
-      Key::Named(Named::ArrowDown) => Some(Message::TagModal(tag_modal::Message::MoveDown)),
-      Key::Named(Named::Enter) => Some(Message::TagModal(tag_modal::Message::CommitHighlighted)),
-      _ => None,
-    }
+    tag_modal_key_message(&key)
   })
 }
 
+fn is_search_focus_key(key: &Key, modifiers: keyboard::Modifiers) -> bool {
+  matches!(key, Key::Character(c) if c.as_ref() == "k") && (modifiers.command() || modifiers.control())
+}
+
 fn filter_key_message(key: &Key, modifiers: keyboard::Modifiers) -> Option<Message> {
-  match key {
-    Key::Character(c) if c.as_ref() == "k" && (modifiers.command() || modifiers.control()) => {
-      Some(Message::SearchFilter(search_filter::Message::FocusInput))
-    }
-    Key::Named(Named::Escape) => Some(Message::SearchFilter(search_filter::Message::QueryChanged(
-      String::new(),
-    ))),
-    _ => None,
+  if is_search_focus_key(key, modifiers) {
+    return Some(Message::SearchFilter(search_filter::Message::FocusInput));
   }
+  if matches!(key, Key::Named(Named::Escape)) {
+    return Some(Message::SearchFilter(search_filter::Message::QueryChanged(
+      String::new(),
+    )));
+  }
+  None
 }
 
 fn filter_keyboard_subscription() -> Subscription<Message> {
@@ -646,25 +662,31 @@ fn ticker_subscriptions(state: &State) -> Vec<Subscription<Message>> {
   subs
 }
 
+fn location_tick_sub() -> Subscription<Message> {
+  iced::time::every(std::time::Duration::from_secs(60))
+    .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick))
+}
+
+fn skill_queue_tick_sub() -> Subscription<Message> {
+  iced::time::every(std::time::Duration::from_secs(120))
+    .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick))
+}
+
+fn wallet_tick_sub() -> Subscription<Message> {
+  iced::time::every(std::time::Duration::from_secs(300))
+    .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick))
+}
+
 fn feature_ticker_subs(state: &State) -> Vec<Subscription<Message>> {
   let mut subs: Vec<Subscription<Message>> = Vec::new();
   if state.feat_location_tracking {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(60))
-        .map(|_| Message::CharactersTab(characters_tab::Message::LocationRefreshTick)),
-    );
+    subs.push(location_tick_sub());
   }
   if state.feat_skill_monitoring {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(120))
-        .map(|_| Message::CharactersTab(characters_tab::Message::SkillQueueRefreshTick)),
-    );
+    subs.push(skill_queue_tick_sub());
   }
   if state.feat_wallet {
-    subs.push(
-      iced::time::every(std::time::Duration::from_secs(300))
-        .map(|_| Message::CharactersTab(characters_tab::Message::WalletRefreshTick)),
-    );
+    subs.push(wallet_tick_sub());
   }
   subs
 }
@@ -818,6 +840,19 @@ async fn fetch_locations(
   results
 }
 
+async fn inject_skill_names_from_db(skills: &mut Vec<CharacterSkill>, db: &pod_db::Repo) {
+  let type_ids: Vec<i32> = skills.iter().map(|s| s.skill_id).collect();
+  let Ok(types) = db.universe().item_types().find_by_ids(&type_ids).await else {
+    return;
+  };
+  let name_map: HashMap<i32, String> = types.into_iter().map(|t| (t.id, t.name)).collect();
+  for skill in skills.iter_mut() {
+    if let Some(name) = name_map.get(&skill.skill_id) {
+      skill.skill_name = Some(name.clone());
+    }
+  }
+}
+
 async fn fetch_skill_queues(
   characters: Vec<Character>,
   esi: pod_esi::Client,
@@ -834,15 +869,7 @@ async fn fetch_skill_queues(
       continue;
     };
     let mut updated_skills = character_service::reconcile_skills(*character.id(), character.skills(), queue.clone());
-    let type_ids: Vec<i32> = updated_skills.iter().map(|s| s.skill_id).collect();
-    if let Ok(types) = db.universe().item_types().find_by_ids(&type_ids).await {
-      let name_map: HashMap<i32, String> = types.into_iter().map(|t| (t.id, t.name)).collect();
-      for skill in &mut updated_skills {
-        if let Some(name) = name_map.get(&skill.skill_id) {
-          skill.skill_name = Some(name.clone());
-        }
-      }
-    }
+    inject_skill_names_from_db(&mut updated_skills, &db).await;
     let training_queue = character_service::build_training_queue(&queue, &updated_skills);
     let _ = db.characters().upsert_skills(*character.id(), &updated_skills).await;
     results.push((*character.id(), updated_skills, training_queue));
@@ -895,6 +922,21 @@ async fn resolve_hq_name(station_id: Option<i64>, esi: &pod_esi::Client) -> Opti
   esi.universe().station(sid).await.ok().map(|s| s.name)
 }
 
+async fn resolve_char_detail(
+  esi: &pod_esi::Client,
+  grant: &pod_esi::models::auth::Grant,
+) -> (i64, String, i64, String) {
+  let character_id = *grant.character_id();
+  let char_detail = esi.character_public(character_id).detail().await.ok();
+  let corp_id = char_detail.as_ref().map(|d| d.corporation_id).unwrap_or(0);
+  let character_name = char_detail
+    .as_ref()
+    .map(|d| d.name.clone())
+    .unwrap_or_else(|| grant.character_name().clone());
+  let corp_name = resolve_corp_name(corp_id, esi).await;
+  (character_id, character_name, corp_id, corp_name)
+}
+
 async fn add_character(
   esi: pod_esi::Client,
   oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
@@ -903,15 +945,7 @@ async fn add_character(
   db: Option<pod_db::Repo>,
 ) -> Result<Character, String> {
   let grant = exchange_oauth_grant(&esi, oauth_callback_tx, verifier, oauth_state).await?;
-
-  let character_id = *grant.character_id();
-  let char_detail = esi.character_public(character_id).detail().await.ok();
-  let corp_id = char_detail.as_ref().map(|d| d.corporation_id).unwrap_or(0);
-  let character_name = char_detail
-    .as_ref()
-    .map(|d| d.name.clone())
-    .unwrap_or_else(|| grant.character_name().clone());
-  let corp_name = resolve_corp_name(corp_id, &esi).await;
+  let (character_id, character_name, corp_id, corp_name) = resolve_char_detail(&esi, &grant).await;
 
   let (mut character, character_skills, character_assets) =
     build_character_from_grant(&grant, character_id, character_name, corp_id, corp_name, &esi).await;
@@ -1483,15 +1517,28 @@ fn handle_locations_refreshed(
   iced::Task::none()
 }
 
-fn update_characters_tab(state: &mut State, msg: characters_tab::Message, services: &Services) -> iced::Task<Message> {
+fn update_wallet_and_skills(
+  state: &mut State,
+  msg: characters_tab::Message,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
   match msg {
-    characters_tab::Message::DragEnd => update_drag(state, services),
-    characters_tab::Message::SkillQueueRefreshTick => skill_queue_refresh_task(state, services),
-    characters_tab::Message::SkillQueuesRefreshed(updates) => update_skills_queue(state, updates),
-    characters_tab::Message::WalletRefreshTick => wallet_refresh_task(state, services),
-    characters_tab::Message::WalletsRefreshed(updates) => update_wallet(state, updates),
-    msg => update_character_card(state, msg, services),
+    characters_tab::Message::SkillQueueRefreshTick => Some(skill_queue_refresh_task(state, services)),
+    characters_tab::Message::SkillQueuesRefreshed(updates) => Some(update_skills_queue(state, updates)),
+    characters_tab::Message::WalletRefreshTick => Some(wallet_refresh_task(state, services)),
+    characters_tab::Message::WalletsRefreshed(updates) => Some(update_wallet(state, updates)),
+    _ => None,
   }
+}
+
+fn update_characters_tab(state: &mut State, msg: characters_tab::Message, services: &Services) -> iced::Task<Message> {
+  if let characters_tab::Message::DragEnd = msg {
+    return update_drag(state, services);
+  }
+  if let Some(task) = update_wallet_and_skills(state, msg.clone(), services) {
+    return task;
+  }
+  update_character_card(state, msg, services)
 }
 
 fn update_confirm_remove(state: &mut State, services: &Services) -> iced::Task<Message> {
@@ -1574,20 +1621,24 @@ fn handle_corp_tags_pressed(state: &mut State, corp_id: i64) -> iced::Task<Messa
   iced::Task::none()
 }
 
+fn apply_refreshed_corp(state: &mut State, corp: Corporation) {
+  if let Some(bytes) = corp.icon_data() {
+    state
+      .corporation_pane
+      .icon_handles
+      .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+  }
+  if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+    *existing = corp.clone();
+  }
+  if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
+    *existing = corp;
+  }
+}
+
 fn handle_corp_public_refreshed(state: &mut State, updated: Vec<Corporation>) -> iced::Task<Message> {
   for corp in updated {
-    if let Some(bytes) = corp.icon_data() {
-      state
-        .corporation_pane
-        .icon_handles
-        .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
-    }
-    if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-      *existing = corp.clone();
-    }
-    if let Some(existing) = state.corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
-      *existing = corp;
-    }
+    apply_refreshed_corp(state, corp);
   }
   iced::Task::none()
 }
@@ -1669,30 +1720,35 @@ fn corps_tag_tasks(corps: &[Corporation], services: &Services) -> iced::Task<Mes
   }))
 }
 
+async fn resolve_hq_names(corps_with_hq: Vec<(i64, i64)>, esi: pod_esi::Client) -> Vec<(i64, String)> {
+  let mut results = Vec::new();
+  for (corp_id, station_id) in corps_with_hq {
+    if let Ok(station) = esi.universe().station(station_id).await {
+      results.push((corp_id, station.name));
+    }
+  }
+  results
+}
+
+fn corps_with_hq_ids(corps: &[Corporation]) -> Vec<(i64, i64)> {
+  corps
+    .iter()
+    .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
+    .collect()
+}
+
 /// Builds the HQ station name resolution task after corporations are loaded.
 fn corps_hq_task(corps: &[Corporation], services: &Services) -> iced::Task<Message> {
   let Some(esi) = services.esi_client.clone() else {
     return iced::Task::none();
   };
-  let corps_with_hq: Vec<(i64, i64)> = corps
-    .iter()
-    .filter_map(|c| (*c.home_station_id()).map(|sid| (*c.id(), sid)))
-    .collect();
+  let corps_with_hq = corps_with_hq_ids(corps);
   if corps_with_hq.is_empty() {
     return iced::Task::none();
   }
-  iced::Task::perform(
-    async move {
-      let mut results = Vec::new();
-      for (corp_id, station_id) in corps_with_hq {
-        if let Ok(station) = esi.universe().station(station_id).await {
-          results.push((corp_id, station.name));
-        }
-      }
-      results
-    },
-    |resolved| Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved)),
-  )
+  iced::Task::perform(resolve_hq_names(corps_with_hq, esi), |resolved| {
+    Message::CorporationsTab(corporations_tab::Message::HqNamesLoaded(resolved))
+  })
 }
 
 fn handle_hq_names_loaded(state: &mut State, resolved: Vec<(i64, String)>) -> iced::Task<Message> {

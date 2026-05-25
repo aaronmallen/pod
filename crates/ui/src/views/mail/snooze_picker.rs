@@ -157,17 +157,10 @@ fn preset_next_week_target(today: chrono::NaiveDate) -> Option<DateTime<Utc>> {
     .into()
 }
 
-/// Maps a `Weekday` to its 3-letter abbreviation.
+const WEEKDAY_ABBRS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 fn weekday_abbr(weekday: Weekday) -> &'static str {
-  match weekday {
-    Weekday::Mon => "Mon",
-    Weekday::Tue => "Tue",
-    Weekday::Wed => "Wed",
-    Weekday::Thu => "Thu",
-    Weekday::Fri => "Fri",
-    Weekday::Sat => "Sat",
-    Weekday::Sun => "Sun",
-  }
+  WEEKDAY_ABBRS[(weekday.number_from_monday() as usize) - 1]
 }
 
 /// Formats a snooze date relative to today: "Today", "Tomorrow", or

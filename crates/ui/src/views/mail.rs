@@ -200,14 +200,19 @@ fn compose_suggestion_key_event(event: Event) -> Option<Message> {
   }
 }
 
+fn compose_to_suggestion_active(state: &State) -> bool {
+  !state.compose.to_suggestions.is_empty() && !state.compose.to_search.is_empty()
+}
+
+fn compose_cc_suggestion_active(state: &State) -> bool {
+  state.compose.cc_visible && !state.compose.cc_suggestions.is_empty() && !state.compose.cc_search.is_empty()
+}
+
 fn compose_keyboard_subscription(state: &State) -> Option<Subscription<Message>> {
   if !state.compose_open {
     return None;
   }
-  let to_active = !state.compose.to_suggestions.is_empty() && !state.compose.to_search.is_empty();
-  let cc_active =
-    state.compose.cc_visible && !state.compose.cc_suggestions.is_empty() && !state.compose.cc_search.is_empty();
-  if !to_active && !cc_active {
+  if !compose_to_suggestion_active(state) && !compose_cc_suggestion_active(state) {
     return None;
   }
   Some(iced::event::listen_with(|event, _status, _id| {

@@ -15,11 +15,11 @@ fn folder_icon_widget(folder: &Folder) -> Icon {
   match folder {
     Folder::Archive => Icon::archive(),
     Folder::Drafts => Icon::draft(),
-    Folder::Inbox | Folder::All | Folder::Label(_) => Icon::inbox(),
     Folder::Sent => Icon::send(),
     Folder::Snoozed => Icon::snooze(),
     Folder::Starred => Icon::star(),
     Folder::Trash => Icon::trash(),
+    _ => Icon::inbox(),
   }
 }
 

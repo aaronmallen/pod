@@ -60,47 +60,40 @@ fn message_portrait_stack<'a>(msg: &'a MailMessage, portrait_handle: Option<imag
   }
 }
 
-fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
-  let mut prefix: Vec<Element<'_, Message>> = Vec::new();
+fn subject_prefix_icon(msg: &MailMessage) -> Option<Element<'_, Message>> {
   if msg.pinned {
-    prefix.push(Icon::pin().size(12.0).color(color::status::CAUTION).render::<Message>());
+    Some(Icon::pin().size(12.0).color(color::status::CAUTION).render::<Message>())
   } else if msg.starred {
-    prefix.push(
+    Some(
       Icon::star()
         .size(12.0)
         .color(color::status::CAUTION)
         .render::<Message>(),
-    );
+    )
+  } else {
+    None
   }
+}
+
+fn message_subject_row<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
   let subject_font = if msg.unread { body::MEDIUM } else { body::REGULAR };
   let subject_color = if msg.unread {
     color::text::PRIMARY
   } else {
     color::text::STRONG
   };
-  if prefix.is_empty() {
-    text(&msg.subject)
-      .font(subject_font)
-      .size(13.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(subject_color),
-      })
-      .into()
-  } else {
-    prefix.push(
-      text(&msg.subject)
-        .font(subject_font)
-        .size(13.0)
-        .style(move |_: &Theme| iced::widget::text::Style {
-          color: Some(subject_color),
-        })
-        .width(Length::Fill)
-        .into(),
-    );
-    row(prefix)
+  let subject_text = text(&msg.subject)
+    .font(subject_font)
+    .size(13.0)
+    .style(move |_: &Theme| iced::widget::text::Style {
+      color: Some(subject_color),
+    });
+  match subject_prefix_icon(msg) {
+    None => subject_text.into(),
+    Some(icon) => row([icon, subject_text.width(Length::Fill).into()])
       .spacing(6.0)
       .align_y(iced::alignment::Vertical::Center)
-      .into()
+      .into(),
   }
 }
 
@@ -166,9 +159,9 @@ fn attachment_chip() -> Element<'static, Message> {
   .into()
 }
 
-fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
+fn sender_name_text<'a>(msg: &'a MailMessage) -> iced::widget::Text<'a> {
   let unread = msg.unread;
-  let name_text = text(&msg.from_name)
+  text(&msg.from_name)
     .font(if unread { body::MEDIUM } else { body::REGULAR })
     .size(13.0)
     .style(move |_: &Theme| iced::widget::text::Style {
@@ -178,21 +171,30 @@ fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
         color::text::SECONDARY
       }),
     })
-    .width(Length::Fill);
-  let time_display: String = msg
+    .width(Length::Fill)
+}
+
+fn message_time_display(msg: &MailMessage) -> String {
+  msg
     .snoozed
     .as_deref()
     .map(snooze_picker::format_snooze_expiry)
-    .unwrap_or_else(|| msg.time.clone());
-  let time_text = text(time_display)
-    .font(mono::REGULAR)
-    .size(10.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-  let name_row = row([name_text.into(), time_text.into()])
-    .align_y(iced::alignment::Vertical::Bottom)
-    .spacing(8.0);
+    .unwrap_or_else(|| msg.time.clone())
+}
+
+fn message_body_col<'a>(msg: &'a MailMessage) -> Element<'a, Message> {
+  let name_row = row([
+    sender_name_text(msg).into(),
+    text(message_time_display(msg))
+      .font(mono::REGULAR)
+      .size(10.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .align_y(iced::alignment::Vertical::Bottom)
+  .spacing(8.0);
   let preview_text = text(&msg.preview)
     .font(body::REGULAR)
     .size(12.0)

@@ -55,9 +55,21 @@ impl State {
       Message::Card(_, card_msg) => self.update_card(card_msg),
       Message::ContextMenu(inner) => self.update_context_menu(inner),
       Message::DragMoved(pt, pane_height) => self.update_drag_moved(pt, pane_height),
+      msg => self.update_misc(msg),
+    }
+  }
+
+  fn update_misc(&mut self, msg: Message) -> Task<Message> {
+    match msg {
       Message::CursorMoved(pt) => update_cursor_moved(self, pt),
-      Message::DragEnd => update_drag_end(self),
       Message::ScrollOffsetChanged(viewport) => update_scroll_offset(self, viewport),
+      msg => self.update_drag_state(msg),
+    }
+  }
+
+  fn update_drag_state(&mut self, msg: Message) -> Task<Message> {
+    match msg {
+      Message::DragEnd => update_drag_end(self),
       Message::SlotEntered(slot) => update_slot_entered(self, slot),
       _ => Task::none(),
     }

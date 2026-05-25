@@ -61,20 +61,29 @@ pub struct Item {
 pub fn compute_items(state: &State, corpus: &[(String, usize)]) -> Vec<Item> {
   let trimmed = state.query.trim().to_string();
   let lc = trimmed.to_lowercase();
-  let existing_lower: HashSet<String> = state.existing_tags.iter().map(|(_, n, _)| n.to_lowercase()).collect();
+  let existing_lower = existing_tags_lowercase(&state.existing_tags);
+  let filtered = filter_corpus(corpus, &existing_lower, &lc);
+  filtered_to_items(filtered, &trimmed, &lc)
+}
 
-  let filtered: Vec<(String, usize)> = corpus
+fn existing_tags_lowercase(tags: &[(i32, String, Option<String>)]) -> HashSet<String> {
+  tags.iter().map(|(_, n, _)| n.to_lowercase()).collect()
+}
+
+fn filter_corpus(corpus: &[(String, usize)], existing_lower: &HashSet<String>, lc: &str) -> Vec<(String, usize)> {
+  corpus
     .iter()
     .filter(|(name, _)| {
       let n = name.to_lowercase();
-      !existing_lower.contains(&n) && (lc.is_empty() || n.contains(&lc))
+      !existing_lower.contains(&n) && (lc.is_empty() || n.contains(lc))
     })
     .cloned()
-    .collect();
+    .collect()
+}
 
+fn filtered_to_items(filtered: Vec<(String, usize)>, trimmed: &str, lc: &str) -> Vec<Item> {
   let exact = filtered.iter().any(|(name, _)| name.to_lowercase() == lc);
   let can_create = !trimmed.is_empty() && !exact;
-
   let mut items: Vec<Item> = filtered
     .into_iter()
     .map(|(n, c)| Item {
@@ -83,15 +92,13 @@ pub fn compute_items(state: &State, corpus: &[(String, usize)]) -> Vec<Item> {
       count: Some(c),
     })
     .collect();
-
   if can_create {
     items.push(Item {
       is_create: true,
-      name: trimmed,
+      name: trimmed.to_string(),
       count: None,
     });
   }
-
   items
 }
 

@@ -5,19 +5,22 @@
 //! bottom of the band, overlapping the bottom rule.
 
 pub mod add_character_button;
+pub mod add_corporation_button;
 pub mod count;
+pub mod tab;
 pub mod title;
 
 pub use add_character_button::Component as AddCharacterButton;
+pub use add_corporation_button::Component as AddCorporationButton;
 pub use count::Component as Count;
 use iced::{
-  Background, Border, Element, Length, Padding, Shadow,
-  alignment::Vertical,
-  widget::{Space, button, column, container, row, text},
+  Background, Element, Length, Padding,
+  widget::{Space, column, container, row},
 };
+pub use tab::Component as Tab;
 pub use title::Component as Title;
 
-use crate::style::{color, spacing, typography};
+use crate::style::{color, spacing};
 
 /// State held by the header component.
 #[derive(Clone, Debug, Default)]
@@ -73,24 +76,26 @@ impl Component {
     let corp_count_str = count_label(self.is_filtered && corps_active, self.corp_visible, self.corp_total);
 
     let action_btn: Element<'static, Message> = if corps_active {
-      render_add_corporation_button()
+      AddCorporationButton::new().render().map(|_| Message::AddCorporation)
     } else {
       AddCharacterButton::new().render().map(|_| Message::AddCharacter)
     };
 
     let tabs_row = row([
-      render_tab(
+      Tab::new(
         "Characters",
         &char_count_str,
         chars_active,
         Message::TabSelected("characters".to_string()),
-      ),
-      render_tab(
+      )
+      .render(),
+      Tab::new(
         "Corporations",
         &corp_count_str,
         corps_active,
         Message::TabSelected("corporations".to_string()),
-      ),
+      )
+      .render(),
       iced::widget::Space::new().width(Length::Fill).into(),
       container(action_btn).center_y(spacing::layout::HEADER_HEIGHT).into(),
     ])
@@ -122,83 +127,4 @@ fn count_label(filtered: bool, visible: usize, total: usize) -> String {
   } else {
     total.to_string()
   }
-}
-
-fn render_add_corporation_button() -> Element<'static, Message> {
-  use crate::{components, style::spacing};
-
-  components::Button::ghost(
-    row([
-      text("+").font(typography::body::MEDIUM).size(13.0).into(),
-      text("Add corporation").font(typography::body::MEDIUM).size(13.0).into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .on_press(Message::AddCorporation)
-  .into()
-}
-
-fn render_tab(label: &str, count: &str, is_active: bool, on_press: Message) -> Element<'static, Message> {
-  let tab_btn = tab_button(label, count, is_active, on_press);
-  let underline = tab_underline(is_active);
-  column([tab_btn.into(), underline.into()]).width(Length::Shrink).into()
-}
-
-fn tab_button(label: &str, count: &str, is_active: bool, on_press: Message) -> button::Button<'static, Message> {
-  let label_owned = label.to_string();
-  let count_owned = count.to_string();
-
-  let content = row([
-    text(label_owned).font(typography::body::MEDIUM).size(20.0).into(),
-    text(count_owned)
-      .font(typography::mono::MEDIUM)
-      .size(11.0)
-      .style(move |_| iced::widget::text::Style {
-        color: Some(if is_active {
-          color::accent::PLASMA
-        } else {
-          color::text::TERTIARY
-        }),
-      })
-      .into(),
-  ])
-  .spacing(10.0)
-  .align_y(Vertical::Center);
-
-  let centered = container(content).height(Length::Fill).center_y(Length::Fill);
-
-  button(centered)
-    .height(spacing::layout::HEADER_HEIGHT - 2.0)
-    .padding(Padding {
-      top: 0.0,
-      bottom: 0.0,
-      left: 2.0,
-      right: 2.0,
-    })
-    .style(move |_, status| button::Style {
-      text_color: match (is_active, status) {
-        (true, _) | (_, button::Status::Hovered | button::Status::Pressed) => color::text::PRIMARY,
-        _ => color::text::SECONDARY,
-      },
-      background: None,
-      border: Border::default(),
-      shadow: Shadow::default(),
-      snap: false,
-    })
-    .on_press(on_press)
-}
-
-fn tab_underline(is_active: bool) -> container::Container<'static, Message> {
-  container(iced::widget::Space::new().width(Length::Fill).height(2.0))
-    .width(Length::Fill)
-    .height(2.0)
-    .style(move |_| container::Style {
-      background: if is_active {
-        Some(Background::Color(color::accent::PLASMA))
-      } else {
-        None
-      },
-      ..container::Style::default()
-    })
 }

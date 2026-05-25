@@ -380,6 +380,16 @@ fn effective_right_rail_width(state: &State, window_width: f32) -> f32 {
 /// Processes a wallet message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
+    Message::PaneDrag(cursor_x) => update_pane_drag(state, cursor_x),
+    Message::PaneDragEnd => update_pane_drag_end(state),
+    Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
+    msg => update_dispatch(state, msg),
+  }
+  iced::Task::none()
+}
+
+fn update_dispatch(state: &mut State, msg: Message) {
+  match msg {
     Message::CharacterPicker(msg) => update_character_picker(state, msg),
     Message::CorpDataLoaded {
       divisions,
@@ -388,12 +398,8 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     } => update_corp_data(state, divisions, journal, market),
     Message::JournalTab(msg) => update_journal_tab(state, msg),
     Message::MarketTab(msg) => update_market_tab(state, msg),
-    Message::PaneDrag(cursor_x) => update_pane_drag(state, cursor_x),
-    Message::PaneDragEnd => update_pane_drag_end(state),
-    Message::PaneDragStart(pane) => update_pane_drag_start(state, pane),
     msg => update_simple(state, msg),
   }
-  iced::Task::none()
 }
 
 fn update_asset_values(state: &mut State, values: Vec<(i64, f64)>) {

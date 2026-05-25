@@ -4,6 +4,7 @@ use iced::{
   Background, Border, Element, Length, Padding,
   widget::{Space, column, container, text},
 };
+use pod_model::CharacterAttributes;
 
 use super::{super::super::State, Message};
 use crate::style::{
@@ -22,23 +23,7 @@ impl RemapCard {
   pub fn new(state: &State) -> Self {
     let (bonus_text, detail_text) = if let Some(attrs) = state.active_character().and_then(|c| c.attributes().as_ref())
     {
-      let bonus_str = match attrs.bonus_remaps {
-        0 => "No bonus remaps".to_string(),
-        1 => "1 bonus available".to_string(),
-        n => format!("{} bonuses available", n),
-      };
-      let detail_str = match (&attrs.last_remap_date, &attrs.accrued_remap_cooldown_date) {
-        (Some(last), Some(cd)) => format!(
-          "Last remap {} · next available {}",
-          last.get(..10).unwrap_or(last.as_str()),
-          cd.get(..10).unwrap_or(cd.as_str())
-        ),
-        (Some(last), None) => {
-          format!("Last remap {}", last.get(..10).unwrap_or(last.as_str()))
-        }
-        _ => "No remap history".to_string(),
-      };
-      (bonus_str, detail_str)
+      (bonus_remap_text(attrs), detail_remap_text(attrs))
     } else {
       ("No remap data".to_string(), "Attributes not yet loaded".to_string())
     };
@@ -60,6 +45,26 @@ impl RemapCard {
       })
       .width(Length::Fill)
       .into()
+  }
+}
+
+fn bonus_remap_text(attrs: &CharacterAttributes) -> String {
+  match attrs.bonus_remaps {
+    0 => "No bonus remaps".to_string(),
+    1 => "1 bonus available".to_string(),
+    n => format!("{} bonuses available", n),
+  }
+}
+
+fn detail_remap_text(attrs: &CharacterAttributes) -> String {
+  match (&attrs.last_remap_date, &attrs.accrued_remap_cooldown_date) {
+    (Some(last), Some(cd)) => format!(
+      "Last remap {} · next available {}",
+      last.get(..10).unwrap_or(last.as_str()),
+      cd.get(..10).unwrap_or(cd.as_str())
+    ),
+    (Some(last), None) => format!("Last remap {}", last.get(..10).unwrap_or(last.as_str())),
+    _ => "No remap history".to_string(),
   }
 }
 

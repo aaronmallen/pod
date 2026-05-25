@@ -180,12 +180,19 @@ fn render_rail(state: &State) -> Element<'_, Message> {
 fn render_active_view(state: &State, window_width: f32, window_height: f32) -> Element<'_, Message> {
   match &state.active_view {
     ActiveView::Assets(s) => assets::Component::new(s).render().map(Message::Assets),
+    ActiveView::Settings(s) => settings::Component::new(s).render().map(Message::Settings),
+    v => render_active_view_with_size(v, window_width, window_height),
+  }
+}
+
+fn render_active_view_with_size(view: &ActiveView, window_width: f32, window_height: f32) -> Element<'_, Message> {
+  match view {
     ActiveView::CharacterDetail(s) => render_character_detail(s),
     ActiveView::Characters(s) => render_characters(s, window_width, window_height),
     ActiveView::Mail(s) => render_mail(s, window_width),
-    ActiveView::Settings(s) => settings::Component::new(s).render().map(Message::Settings),
     ActiveView::Skills(s) => render_skills(s, window_width),
     ActiveView::Wallet(s) => render_wallet(s, window_width),
+    _ => unreachable!(),
   }
 }
 

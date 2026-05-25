@@ -161,7 +161,6 @@ fn type_icon_tile(base_type_name: &str, type_id: i32) -> Element<'static, Messag
   .into()
 }
 
-/// Renders a single stat row within an abyssal card.
 fn stat_roll_direction(stat: &AbyssalStatViewModel) -> Option<bool> {
   let delta = stat.rolled_value - stat.base_value;
   if delta.abs() < 1e-9 {
@@ -213,7 +212,7 @@ fn stat_intensity_bar(intensity: f32, fill_col: Color) -> Element<'static, Messa
   .into()
 }
 
-fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
+fn stat_row_inner(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
   let delta = stat.rolled_value - stat.base_value;
   let stat_color = stat_direction_color(stat_roll_direction(stat));
   let intensity = stat_delta_intensity(stat, delta);
@@ -224,7 +223,6 @@ fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, 
   } else {
     color::text::SECONDARY
   };
-
   let name_el: Element<'static, Message> = text(stat.display_name.clone())
     .font(body::REGULAR)
     .size(11.0)
@@ -251,33 +249,40 @@ fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, 
   ])
   .align_y(iced::alignment::Vertical::Center)
   .into();
-  let inner: Element<'static, Message> = row([
+  row([
     stat_icon_tile(&stat.display_name, stat.icon_id),
     Space::new().width(10.0).into(),
     column([name_el, value_row]).width(Length::Fill).into(),
     stat_intensity_bar(intensity, stat_color),
   ])
   .align_y(iced::alignment::Vertical::Center)
-  .into();
+  .into()
+}
 
+fn stat_row_highlighted(inner: Element<'static, Message>) -> Element<'static, Message> {
+  container(inner)
+    .padding(Padding {
+      top: 6.0,
+      bottom: 6.0,
+      left: 8.0,
+      right: 8.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08))),
+      border: Border {
+        color: color::with_alpha(color::text::ACCENT, 0.20),
+        radius: 6.0.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn stat_row(stat: &AbyssalStatViewModel, highlighted: bool) -> Element<'static, Message> {
+  let inner = stat_row_inner(stat, highlighted);
   if highlighted {
-    container(inner)
-      .padding(Padding {
-        top: 6.0,
-        bottom: 6.0,
-        left: 8.0,
-        right: 8.0,
-      })
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.08))),
-        border: Border {
-          color: color::with_alpha(color::text::ACCENT, 0.20),
-          radius: 6.0.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      })
-      .into()
+    stat_row_highlighted(inner)
   } else {
     container(inner)
       .padding(Padding {
@@ -953,39 +958,15 @@ fn card_grid<'a>(state: &'a State, search_query: &'a str, only_positive: bool) -
   .into()
 }
 
-/// Renders the filter sidebar with module type picker.
-fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
-  let abyssals_state = &state.abyssals;
-  let all_btn = sidebar_all_button(abyssals_state.selected_type_id.is_none());
-
-  let mut type_ids: Vec<i32> = abyssals_state
-    .abyssals
-    .iter()
-    .map(|i| i.type_id)
-    .collect::<std::collections::HashSet<_>>()
-    .into_iter()
-    .collect();
-  type_ids.sort();
-
-  let type_btns: Vec<Element<'_, Message>> = type_ids
-    .iter()
-    .map(|&tid| {
-      let is_active = abyssals_state.selected_type_id == Some(tid);
-      let type_name = abyssals_state
-        .abyssals
-        .iter()
-        .find(|i| i.type_id == tid)
-        .map(|i| i.base_type_name.as_str())
-        .unwrap_or("Unknown");
-      sidebar_type_button(type_name, tid, is_active)
-    })
-    .collect();
-
-  let reset_btn: Element<'_, Message> = button(text("Reset filters").font(mono::REGULAR).size(9.0).style(
-    |_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::TERTIARY),
-    },
-  ))
+fn sidebar_reset_button() -> Element<'static, Message> {
+  button(
+    text("Reset filters")
+      .font(mono::REGULAR)
+      .size(9.0)
+      .style(|_: &Theme| iced::widget::text::Style {
+        color: Some(color::text::TERTIARY),
+      }),
+  )
   .padding(Padding {
     top: 6.0,
     bottom: 6.0,
@@ -1003,7 +984,39 @@ fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
     text_color: color::text::TERTIARY,
     ..button::Style::default()
   })
-  .into();
+  .into()
+}
+
+fn sidebar_type_buttons<'a>(abyssals_state: &'a AbyssalsState) -> Vec<Element<'a, Message>> {
+  let mut type_ids: Vec<i32> = abyssals_state
+    .abyssals
+    .iter()
+    .map(|i| i.type_id)
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect();
+  type_ids.sort();
+  type_ids
+    .into_iter()
+    .map(|tid| {
+      let is_active = abyssals_state.selected_type_id == Some(tid);
+      let type_name = abyssals_state
+        .abyssals
+        .iter()
+        .find(|i| i.type_id == tid)
+        .map(|i| i.base_type_name.as_str())
+        .unwrap_or("Unknown");
+      sidebar_type_button(type_name, tid, is_active)
+    })
+    .collect()
+}
+
+/// Renders the filter sidebar with module type picker.
+fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
+  let abyssals_state = &state.abyssals;
+  let all_btn = sidebar_all_button(abyssals_state.selected_type_id.is_none());
+  let type_btns = sidebar_type_buttons(abyssals_state);
+  let reset_btn = sidebar_reset_button();
 
   let mut sidebar_items: Vec<Element<'_, Message>> = vec![all_btn, Space::new().height(6.0).into()];
   sidebar_items.extend(type_btns);

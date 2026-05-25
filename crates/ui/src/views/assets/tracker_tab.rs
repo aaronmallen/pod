@@ -269,6 +269,52 @@ fn stat_tile<'a>(label: &str, value: String, sub_value: Option<String>, accent: 
     .into()
 }
 
+fn nav_change_stats(series: &[f64]) -> (f64, f64, f64) {
+  let last = series.last().copied().unwrap_or(0.0);
+  let first = series.first().copied().unwrap_or(last);
+  let change = last - first;
+  let change_pct = if first > 0.0 { change / first * 100.0 } else { 0.0 };
+  (last, change, change_pct)
+}
+
+fn nav_avg30(series: &[f64]) -> f64 {
+  let last30: Vec<_> = series.iter().rev().take(30).cloned().collect();
+  if last30.is_empty() {
+    0.0
+  } else {
+    last30.iter().sum::<f64>() / last30.len() as f64
+  }
+}
+
+fn render_stat_tiles<'a>(state: &'a State, series: &[f64]) -> Element<'a, Message> {
+  let (last, change, change_pct) = nav_change_stats(series);
+  let high = series.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+  let low = series.iter().cloned().fold(f64::INFINITY, f64::min);
+  let avg30 = nav_avg30(series);
+  let is_up = change >= 0.0;
+  let change_color = if is_up {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
+  let range_label = state.tracker_range.label();
+  let change_sign = if is_up { "+" } else { "-" };
+  let pct_sign = if change_pct >= 0.0 { "+" } else { "" };
+  let tiles: Vec<Element<'_, Message>> = vec![
+    stat_tile("Current", format::fmt_isk(last), None, color::text::PRIMARY),
+    stat_tile(
+      &format!("{range_label} change"),
+      format!("{}{}", change_sign, format::fmt_isk(change.abs())),
+      Some(format!("{}{:.2}%", pct_sign, change_pct)),
+      change_color,
+    ),
+    stat_tile("High", format::fmt_isk(high), None, color::text::SECONDARY),
+    stat_tile("Low", format::fmt_isk(low), None, color::text::SECONDARY),
+    stat_tile("30d avg", format::fmt_isk(avg30), None, color::text::SECONDARY),
+  ];
+  row(tiles).spacing(14.0).into()
+}
+
 /// Builder for the NAV tracker tab.
 pub struct Component<'a> {
   state: &'a State,
@@ -288,45 +334,7 @@ impl<'a> Component<'a> {
     let dated = state.visible_nav_history();
     let series: Vec<f64> = dated.iter().map(|(_, v)| *v).collect();
 
-    let last = series.last().copied().unwrap_or(0.0);
-    let first = series.first().copied().unwrap_or(last);
-    let change = last - first;
-    let change_pct = if first > 0.0 { change / first * 100.0 } else { 0.0 };
-    let high = series.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let low = series.iter().cloned().fold(f64::INFINITY, f64::min);
-    let last30: Vec<_> = series.iter().rev().take(30).cloned().collect();
-    let avg30 = if last30.is_empty() {
-      0.0
-    } else {
-      last30.iter().sum::<f64>() / last30.len() as f64
-    };
-    let is_up = change >= 0.0;
-    let change_color = if is_up {
-      color::status::ONLINE
-    } else {
-      color::status::DANGER
-    };
-
-    let range_label = state.tracker_range.label();
-    let stat_tiles: Vec<Element<'_, Message>> = vec![
-      stat_tile("Current", format::fmt_isk(last), None, color::text::PRIMARY),
-      stat_tile(
-        &format!("{range_label} change"),
-        format!("{}{}", if is_up { "+" } else { "-" }, format::fmt_isk(change.abs())),
-        Some(format!(
-          "{}{:.2}%",
-          if change_pct >= 0.0 { "+" } else { "" },
-          change_pct
-        )),
-        change_color,
-      ),
-      stat_tile("High", format::fmt_isk(high), None, color::text::SECONDARY),
-      stat_tile("Low", format::fmt_isk(low), None, color::text::SECONDARY),
-      stat_tile("30d avg", format::fmt_isk(avg30), None, color::text::SECONDARY),
-    ];
-
-    let stats_row: Element<'_, Message> = row(stat_tiles).spacing(14.0).into();
-
+    let stats_row = render_stat_tiles(state, &series);
     let chart_card_el = if series.len() >= 2 {
       chart_card(dated, &state.tracker_range)
     } else {

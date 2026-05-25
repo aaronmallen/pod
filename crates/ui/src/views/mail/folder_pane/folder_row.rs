@@ -11,11 +11,20 @@ use crate::{
   style::{color, typography::body},
 };
 
-fn folder_icon_widget(folder: &Folder) -> Icon {
+fn named_folder_icon(folder: &Folder) -> Option<Icon> {
   match folder {
-    Folder::Archive => Icon::archive(),
-    Folder::Drafts => Icon::draft(),
-    Folder::Sent => Icon::send(),
+    Folder::Archive => Some(Icon::archive()),
+    Folder::Drafts => Some(Icon::draft()),
+    Folder::Sent => Some(Icon::send()),
+    _ => None,
+  }
+}
+
+fn folder_icon_widget(folder: &Folder) -> Icon {
+  if let Some(icon) = named_folder_icon(folder) {
+    return icon;
+  }
+  match folder {
     Folder::Snoozed => Icon::snooze(),
     Folder::Starred => Icon::star(),
     Folder::Trash => Icon::trash(),

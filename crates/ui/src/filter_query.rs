@@ -240,14 +240,26 @@ fn match_name(values: &[String], character: &Character) -> bool {
   values.iter().any(|v| name.contains(v.as_str()))
 }
 
-fn match_key_value(key: &str, values: &[String], character: &Character) -> bool {
+type KeyMatchFn = fn(&[String], &Character) -> bool;
+
+fn key_match_fn(key: &str) -> Option<KeyMatchFn> {
   match key {
-    "tag" => match_tag(values, character),
-    "corp" => match_corp(values, character),
-    "loc" => match_loc(values, character),
-    "status" => match_status(values, character),
-    "training" => match_training(values, character),
-    "name" => match_name(values, character),
-    _ => false,
+    "tag" => Some(match_tag),
+    "corp" => Some(match_corp),
+    "loc" => Some(match_loc),
+    _ => key_match_fn_secondary(key),
   }
+}
+
+fn key_match_fn_secondary(key: &str) -> Option<KeyMatchFn> {
+  match key {
+    "status" => Some(match_status),
+    "training" => Some(match_training),
+    "name" => Some(match_name),
+    _ => None,
+  }
+}
+
+fn match_key_value(key: &str, values: &[String], character: &Character) -> bool {
+  key_match_fn(key).is_some_and(|f| f(values, character))
 }

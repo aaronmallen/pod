@@ -322,38 +322,57 @@ fn render_tab_content<'a>(
   window_height: f32,
 ) -> Element<'a, Message> {
   match state.active_tab {
-    Tab::Characters => {
-      let visible: Vec<&Character> = state.characters.iter().collect();
-      if visible.is_empty() && !is_filtered {
-        EmptyState::new()
-          .add_status(state.add_status.as_deref())
-          .render::<Message>()
-      } else if visible.is_empty() {
-        EmptyState::new().filtered(query).render::<Message>()
-      } else {
-        let pane_h = (window_height - spacing::layout::HEADER_HEIGHT - spacing::SPACE_8 * 2.0).max(0.0);
-        CharacterPane::new(visible, &state.character_pane)
-          .feat_skill_monitoring(state.feat_skill_monitoring)
-          .feat_wallet(state.feat_wallet)
-          .window_width(window_width)
-          .pane_height(pane_h)
-          .render()
-          .map(Message::CharactersTab)
-      }
-    }
-    Tab::Corporations => {
-      let visible: Vec<&Corporation> = state.corporations.iter().collect();
-      if visible.is_empty() && !is_filtered {
-        CorporationEmptyState::new().render()
-      } else if visible.is_empty() {
-        CorporationEmptyState::new().filtered(query).render()
-      } else {
-        CorporationPane::new(visible, &state.corporation_pane)
-          .characters(&state.all_characters)
-          .window_width(window_width)
-          .render()
-          .map(Message::CorporationsTab)
-      }
-    }
+    Tab::Characters => render_characters_tab(state, is_filtered, query, window_width, window_height),
+    Tab::Corporations => render_corporations_tab(state, is_filtered, query, window_width),
   }
+}
+
+fn render_characters_tab<'a>(
+  state: &'a State,
+  is_filtered: bool,
+  query: &'a str,
+  window_width: f32,
+  window_height: f32,
+) -> Element<'a, Message> {
+  let visible: Vec<&Character> = state.characters.iter().collect();
+
+  if visible.is_empty() && !is_filtered {
+    return EmptyState::new()
+      .add_status(state.add_status.as_deref())
+      .render::<Message>();
+  }
+  if visible.is_empty() {
+    return EmptyState::new().filtered(query).render::<Message>();
+  }
+
+  let pane_h = (window_height - spacing::layout::HEADER_HEIGHT - spacing::SPACE_8 * 2.0).max(0.0);
+  CharacterPane::new(visible, &state.character_pane)
+    .feat_skill_monitoring(state.feat_skill_monitoring)
+    .feat_wallet(state.feat_wallet)
+    .window_width(window_width)
+    .pane_height(pane_h)
+    .render()
+    .map(Message::CharactersTab)
+}
+
+fn render_corporations_tab<'a>(
+  state: &'a State,
+  is_filtered: bool,
+  query: &'a str,
+  window_width: f32,
+) -> Element<'a, Message> {
+  let visible: Vec<&Corporation> = state.corporations.iter().collect();
+
+  if visible.is_empty() && !is_filtered {
+    return CorporationEmptyState::new().render();
+  }
+  if visible.is_empty() {
+    return CorporationEmptyState::new().filtered(query).render();
+  }
+
+  CorporationPane::new(visible, &state.corporation_pane)
+    .characters(&state.all_characters)
+    .window_width(window_width)
+    .render()
+    .map(Message::CorporationsTab)
 }

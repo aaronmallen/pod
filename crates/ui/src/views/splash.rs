@@ -52,32 +52,42 @@ impl Default for State {
 
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::DragWindow => iced::Task::none(),
-    Message::ExpandComplete => iced::Task::none(),
+    Message::DragWindow | Message::ExpandComplete => iced::Task::none(),
     Message::LoadingComplete => {
       state.phase = Phase::Expanding;
       iced::Task::none()
     }
-    Message::Tick => {
-      state.progress += (state.progress_target - state.progress) * 0.08;
-      state.pulse += 0.05;
-      match state.phase {
-        Phase::Done => {}
-        Phase::Loading => {
-          state.rotation = (state.rotation + 2.0) % 360.0;
-        }
-        Phase::Expanding => {
-          state.expand += 0.025;
-          if state.expand >= 1.0 {
-            state.expand = 1.0;
-            state.phase = Phase::Done;
-            return iced::Task::done(Message::ExpandComplete);
-          }
-        }
+    Message::Tick => tick(state),
+  }
+}
+
+fn tick(state: &mut State) -> iced::Task<Message> {
+  state.progress += (state.progress_target - state.progress) * 0.08;
+  state.pulse += 0.05;
+
+  match state.phase {
+    Phase::Done => {}
+    Phase::Loading => {
+      state.rotation = (state.rotation + 2.0) % 360.0;
+    }
+    Phase::Expanding => {
+      if let Some(task) = advance_expand(state) {
+        return task;
       }
-      iced::Task::none()
     }
   }
+
+  iced::Task::none()
+}
+
+fn advance_expand(state: &mut State) -> Option<iced::Task<Message>> {
+  state.expand += 0.025;
+  if state.expand >= 1.0 {
+    state.expand = 1.0;
+    state.phase = Phase::Done;
+    return Some(iced::Task::done(Message::ExpandComplete));
+  }
+  None
 }
 
 pub struct Component<'a> {

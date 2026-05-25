@@ -215,8 +215,18 @@ async fn sync_skills_and_queue(
   grant: &pod_esi::models::auth::Grant,
   db: &pod_db::Repo,
 ) {
-  let char_client = esi.character(grant);
-  match char_client.skills().await {
+  apply_skills(character, char_id, esi, grant, db).await;
+  apply_skill_queue(character, char_id, esi, grant, db).await;
+}
+
+async fn apply_skills(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  match esi.character(grant).skills().await {
     Ok(esi_skills) => {
       let skills = character_service::build_character_skills(char_id, esi_skills.skills, vec![]);
       if let Err(e) = db.characters().upsert_skills(char_id, &skills).await {
@@ -226,7 +236,16 @@ async fn sync_skills_and_queue(
     }
     Err(e) => tracing::warn!("sync: failed to fetch skills for character {char_id}: {e}"),
   }
-  match char_client.skill_queue().await {
+}
+
+async fn apply_skill_queue(
+  character: &mut Character,
+  char_id: i64,
+  esi: &Client,
+  grant: &pod_esi::models::auth::Grant,
+  db: &pod_db::Repo,
+) {
+  match esi.character(grant).skill_queue().await {
     Ok(queue) => {
       let merged = character_service::reconcile_skills(char_id, character.skills(), queue.clone());
       let tq = character_service::build_training_queue(&queue, &merged);
@@ -305,35 +324,43 @@ async fn sync_assets(
   grant: &pod_esi::models::auth::Grant,
   db: &pod_db::Repo,
 ) {
-  let char_client = esi.character(grant);
-  match char_client.assets().await {
-    Ok(raw) => {
-      let assets: Vec<CharacterAsset> = raw
-        .into_iter()
-        .map(|a| CharacterAsset {
-          character_id: char_id,
-          is_blueprint_copy: a.is_blueprint_copy,
-          is_singleton: a.is_singleton,
-          item_id: a.item_id,
-          location_flag: a.location_flag,
-          location_id: a.location_id,
-          location_type: a.location_type,
-          quantity: a.quantity,
-          type_id: a.type_id,
-          ..Default::default()
-        })
-        .collect();
-      let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
-      if let Err(e) = db.characters().upsert_assets(char_id, &assets).await {
-        tracing::warn!("sync: failed to persist assets for character {char_id}: {e}");
-      }
-      if let Err(e) = db.characters().delete_stale_assets(char_id, &keep_ids).await {
-        tracing::warn!("sync: failed to delete stale assets for character {char_id}: {e}");
-      }
-      cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
-    }
+  match esi.character(grant).assets().await {
+    Ok(raw) => persist_character_assets(character, char_id, raw, grant, esi, db).await,
     Err(e) => tracing::warn!("sync: failed to fetch assets for character {char_id}: {e}"),
   }
+}
+
+async fn persist_character_assets(
+  character: &mut Character,
+  char_id: i64,
+  raw: Vec<pod_esi::models::character::Asset>,
+  grant: &pod_esi::models::auth::Grant,
+  esi: &Client,
+  db: &pod_db::Repo,
+) {
+  let assets: Vec<CharacterAsset> = raw
+    .into_iter()
+    .map(|a| CharacterAsset {
+      character_id: char_id,
+      is_blueprint_copy: a.is_blueprint_copy,
+      is_singleton: a.is_singleton,
+      item_id: a.item_id,
+      location_flag: a.location_flag,
+      location_id: a.location_id,
+      location_type: a.location_type,
+      quantity: a.quantity,
+      type_id: a.type_id,
+      ..Default::default()
+    })
+    .collect();
+  let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+  if let Err(e) = db.characters().upsert_assets(char_id, &assets).await {
+    tracing::warn!("sync: failed to persist assets for character {char_id}: {e}");
+  }
+  if let Err(e) = db.characters().delete_stale_assets(char_id, &keep_ids).await {
+    tracing::warn!("sync: failed to delete stale assets for character {char_id}: {e}");
+  }
+  cache_structure_names_from_assets(&assets, character, grant, esi, db).await;
 }
 
 async fn sync_active_ship(
@@ -363,15 +390,30 @@ async fn sync_active_ship(
     }
   };
 
-  let (location_id, location_type) = if let Some(id) = location.station_id {
+  let (location_id, location_type) = resolve_location(&location);
+  let synthetic = build_active_ship_asset(char_id, &ship, location_id, location_type);
+  if let Err(e) = db.characters().upsert_assets(char_id, &[synthetic]).await {
+    tracing::warn!("bootstrap: failed to persist active ship for character {char_id}: {e}");
+  }
+}
+
+fn resolve_location(location: &pod_esi::models::character::CharacterLocation) -> (i64, &'static str) {
+  if let Some(id) = location.station_id {
     (id, "station")
   } else if let Some(id) = location.structure_id {
     (id, "item")
   } else {
     (location.solar_system_id, "solar_system")
-  };
+  }
+}
 
-  let synthetic = CharacterAsset {
+fn build_active_ship_asset(
+  char_id: i64,
+  ship: &pod_esi::models::character::CharacterShip,
+  location_id: i64,
+  location_type: &str,
+) -> CharacterAsset {
+  CharacterAsset {
     character_id: char_id,
     is_active_ship: true,
     is_blueprint_copy: None,
@@ -381,12 +423,8 @@ async fn sync_active_ship(
     location_id,
     location_type: location_type.to_string(),
     quantity: 1,
-    ship_name: Some(ship.ship_name),
+    ship_name: Some(ship.ship_name.clone()),
     type_id: ship.ship_type_id,
-  };
-
-  if let Err(e) = db.characters().upsert_assets(char_id, &[synthetic]).await {
-    tracing::warn!("bootstrap: failed to persist active ship for character {char_id}: {e}");
   }
 }
 

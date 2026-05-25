@@ -3,6 +3,7 @@
 pub mod characters_tab;
 pub mod confirm_dialog;
 pub mod corporation_confirm_dialog;
+pub mod corporation_empty_state;
 pub mod corporations_tab;
 pub mod empty_state;
 pub mod header;
@@ -12,6 +13,7 @@ pub mod tag_modal;
 pub use characters_tab::Component as CharacterPane;
 pub use confirm_dialog::Component as ConfirmDialog;
 pub use corporation_confirm_dialog::Component as CorporationConfirmDialog;
+pub use corporation_empty_state::Component as CorporationEmptyState;
 pub use corporations_tab::Component as CorporationPane;
 pub use empty_state::Component as EmptyState;
 pub use header::Component as Header;
@@ -196,63 +198,6 @@ impl<'a> Component<'a> {
   }
 }
 
-fn corporation_empty_state<'a>() -> Element<'a, Message> {
-  use iced::widget::{container, text};
-
-  use crate::style::{color, typography};
-
-  container(
-    text("Add your first corporation to get started")
-      .font(typography::body::REGULAR)
-      .size(15.0)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .center_x(Length::Fill)
-  .center_y(Length::Fill)
-  .into()
-}
-
-fn corporation_filtered_empty_state<'a>(query: &str) -> Element<'a, Message> {
-  use iced::{
-    alignment::Horizontal,
-    widget::{column, container, text},
-  };
-
-  use crate::style::{color, spacing, typography};
-
-  let q = query.to_owned();
-
-  container(
-    column([
-      text("No results")
-        .font(typography::body::MEDIUM)
-        .size(15.0)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      text(format!("No corporations match \"{q}\""))
-        .font(typography::body::REGULAR)
-        .size(13.0)
-        .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .spacing(spacing::SPACE_1)
-    .align_x(Horizontal::Center),
-  )
-  .height(Length::Fill)
-  .width(Length::Fill)
-  .center_x(Length::Fill)
-  .center_y(Length::Fill)
-  .into()
-}
-
 fn push_confirm_remove_corporation_overlay<'a>(
   state: &'a State,
   window_width: f32,
@@ -399,9 +344,9 @@ fn render_tab_content<'a>(
     Tab::Corporations => {
       let visible: Vec<&Corporation> = state.corporations.iter().collect();
       if visible.is_empty() && !is_filtered {
-        corporation_empty_state()
+        CorporationEmptyState::new().render()
       } else if visible.is_empty() {
-        corporation_filtered_empty_state(query)
+        CorporationEmptyState::new().filtered(query).render()
       } else {
         CorporationPane::new(visible, &state.corporation_pane)
           .characters(&state.all_characters)

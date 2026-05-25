@@ -149,6 +149,26 @@ fn boot() -> (App, Task<Message>) {
   (app, task)
 }
 
+fn splash_theme() -> iced::Theme {
+  iced::Theme::custom(
+    "splash".to_string(),
+    iced::theme::Palette {
+      background: Color::TRANSPARENT,
+      ..iced::theme::Palette::DARK
+    },
+  )
+}
+
+fn resolve_theme(app: &App, window: window::Id) -> Option<iced::Theme> {
+  if app.plan_windows.contains_key(&window) {
+    return Some(iced::Theme::Dark);
+  }
+  match &app.phase {
+    AppPhase::Splash(_) => Some(splash_theme()),
+    AppPhase::Main(_) => Some(iced::Theme::Dark),
+  }
+}
+
 fn main() -> iced::Result {
   let log_dir = dir_spec::state_home()
     .expect("cannot determine state home directory")
@@ -178,21 +198,7 @@ fn main() -> iced::Result {
 
   iced::daemon(boot, update, view)
     .title(|_app: &App, _window: window::Id| "Pod".to_string())
-    .theme(|app: &App, window: window::Id| {
-      if app.plan_windows.contains_key(&window) {
-        return Some(iced::Theme::Dark);
-      }
-      match &app.phase {
-        AppPhase::Splash(_) => Some(iced::Theme::custom(
-          "splash".to_string(),
-          iced::theme::Palette {
-            background: Color::TRANSPARENT,
-            ..iced::theme::Palette::DARK
-          },
-        )),
-        AppPhase::Main(_) => Some(iced::Theme::Dark),
-      }
-    })
+    .theme(resolve_theme)
     .subscription(subscription)
     .font(font_bytes::BODY_REGULAR)
     .font(font_bytes::BODY_MEDIUM)
@@ -218,8 +224,8 @@ fn subscription(app: &App) -> Subscription<Message> {
   )
 }
 
-fn window_event_subscription() -> Subscription<Message> {
-  window::events().filter_map(|(id, event)| match event {
+fn map_window_event(id: window::Id, event: window::Event) -> Option<Message> {
+  match event {
     window::Event::Opened {
       ..
     } => Some(Message::WindowOpened(id)),
@@ -227,7 +233,11 @@ fn window_event_subscription() -> Subscription<Message> {
     window::Event::Resized(size) => Some(Message::WindowResized(id, size)),
     window::Event::CloseRequested => Some(Message::WindowCloseRequested(id)),
     _ => None,
-  })
+  }
+}
+
+fn window_event_subscription() -> Subscription<Message> {
+  window::events().filter_map(|(id, event)| map_window_event(id, event))
 }
 
 fn phase_tick_subscription(phase: &AppPhase) -> Subscription<Message> {
@@ -373,17 +383,20 @@ fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> T
   }
 }
 
+fn collect_queue_items(state: &main_ctrl::State) -> Vec<(String, u8)> {
+  let main_window::ActiveView::Skills(s) = &state.active_view else {
+    return Vec::new();
+  };
+  s.queue.iter().map(|q| (q.skill_name.clone(), q.to_level)).collect()
+}
+
 fn get_plan_seed(skills_msg: &skills::Message, state: &main_ctrl::State) -> Option<(i64, skill_plan_window::PlanSeed)> {
   let char_id = state.active_view.skills_char_id();
   match skills_msg {
-    skills::Message::PlanFromQueueRequested => {
-      let queue_items: Vec<(String, u8)> = if let main_window::ActiveView::Skills(s) = &state.active_view {
-        s.queue.iter().map(|q| (q.skill_name.clone(), q.to_level)).collect()
-      } else {
-        Vec::new()
-      };
-      Some((char_id, skill_plan_window::PlanSeed::FromQueue(queue_items)))
-    }
+    skills::Message::PlanFromQueueRequested => Some((
+      char_id,
+      skill_plan_window::PlanSeed::FromQueue(collect_queue_items(state)),
+    )),
     skills::Message::PlanNewRequested => Some((char_id, skill_plan_window::PlanSeed::New)),
     skills::Message::PlanOpenRequested(id) => Some((char_id, skill_plan_window::PlanSeed::Existing(id.clone()))),
     _ => None,

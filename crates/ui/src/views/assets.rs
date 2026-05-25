@@ -507,6 +507,21 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
     .collect()
 }
 
+fn asset_owner_matches(a: &AssetRecord, owner_id: Option<i64>) -> bool {
+  owner_id.map_or(true, |id| a.character_id == id)
+}
+
+fn asset_category_matches(a: &AssetRecord, cat_key: &str) -> bool {
+  cat_key == "all" || a.category_key == cat_key
+}
+
+fn asset_loc_matches(a: &AssetRecord, loc: Option<&str>) -> bool {
+  match loc {
+    None => true,
+    Some(filter) => asset_matches_loc_filter(a, filter),
+  }
+}
+
 fn asset_filter_predicate(
   a: &AssetRecord,
   owner_id: Option<i64>,
@@ -514,30 +529,40 @@ fn asset_filter_predicate(
   loc: Option<&str>,
   query: &AssetFilterQuery,
 ) -> bool {
-  if let Some(id) = owner_id
-    && a.character_id != id
-  {
+  if !asset_owner_matches(a, owner_id) {
     return false;
   }
-  if cat_key != "all" && a.category_key != cat_key {
+  if !asset_category_matches(a, cat_key) {
     return false;
   }
-  if let Some(filter) = loc
-    && !asset_matches_loc_filter(a, filter)
-  {
+  if !asset_loc_matches(a, loc) {
     return false;
   }
   query.matches(a)
 }
 
 fn asset_matches_loc_filter(a: &AssetRecord, filter: &str) -> bool {
+  if let Some(result) = asset_matches_loc_primary(a, filter) {
+    return result;
+  }
+  asset_matches_loc_secondary(a, filter)
+}
+
+fn asset_matches_loc_primary(a: &AssetRecord, filter: &str) -> Option<bool> {
   if let Some(sys) = filter.strip_prefix("system:") {
-    a.system_name == sys
+    Some(a.system_name == sys)
   } else if let Some(loc_name) = filter.strip_prefix("location:") {
-    a.location_name == loc_name
+    Some(a.location_name == loc_name)
   } else if let Some(cid_str) = filter.strip_prefix("container:") {
-    cid_str.parse::<i64>().map_or(true, |cid| a.container_id == cid)
-  } else if let Some(region) = filter.strip_prefix("region:") {
+    let cid = cid_str.parse::<i64>().ok();
+    Some(cid.map_or(true, |id| a.container_id == id))
+  } else {
+    None
+  }
+}
+
+fn asset_matches_loc_secondary(a: &AssetRecord, filter: &str) -> bool {
+  if let Some(region) = filter.strip_prefix("region:") {
     a.region_name == region
   } else if let Some(constellation) = filter.strip_prefix("constellation:") {
     a.constellation_name == constellation
@@ -648,6 +673,12 @@ fn update_inventory_tab_secondary(state: &mut State, msg: inventory_tab::Message
   match msg {
     inventory_tab::Message::ScrollUpdate(y) => update_scroll_update(state, y),
     inventory_tab::Message::SearchChanged(q) => update_search_changed(state, q),
+    msg => update_inventory_tab_tertiary(state, msg),
+  }
+}
+
+fn update_inventory_tab_tertiary(state: &mut State, msg: inventory_tab::Message) {
+  match msg {
     inventory_tab::Message::SortChanged(col) => update_sort_changed(state, col),
     inventory_tab::Message::ToggleContainer(id) => update_toggle_container(state, id),
     _ => {}
@@ -715,6 +746,12 @@ fn update_stockpile_form_items(state: &mut State, msg: stockpiles_tab::Message) 
   match msg {
     stockpiles_tab::Message::FormItemTypeChanged(idx, val) => form_set_item_type(state, idx, val),
     stockpiles_tab::Message::FormItemQtyChanged(idx, val) => form_set_item_qty(state, idx, val),
+    msg => update_stockpile_form_items_secondary(state, msg),
+  }
+}
+
+fn update_stockpile_form_items_secondary(state: &mut State, msg: stockpiles_tab::Message) {
+  match msg {
     stockpiles_tab::Message::FormAddItem => form_add_item(state),
     stockpiles_tab::Message::FormRemoveItem(idx) => form_remove_item(state, idx),
     _ => {}
@@ -729,9 +766,13 @@ fn update_stockpiles_tab(state: &mut State, msg: stockpiles_tab::Message) {
         ..StockpileForm::default()
       });
     }
-    stockpiles_tab::Message::EditStockpile(id) => {
-      update_edit_stockpile(state, id);
-    }
+    stockpiles_tab::Message::EditStockpile(id) => update_edit_stockpile(state, id),
+    msg => update_stockpiles_tab_secondary(state, msg),
+  }
+}
+
+fn update_stockpiles_tab_secondary(state: &mut State, msg: stockpiles_tab::Message) {
+  match msg {
     stockpiles_tab::Message::DeleteStockpile(_id) => {}
     stockpiles_tab::Message::ConfirmDelete(_) => {}
     stockpiles_tab::Message::FormSave => {}
@@ -787,13 +828,21 @@ fn apply_data_loaded_secondary(state: &mut State, message: Message) {
   match message {
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
     Message::NavHistoryLoaded(history) => update_nav_history(state, history),
+    msg => apply_data_loaded_tertiary(state, msg),
+  }
+}
+
+fn apply_data_loaded_tertiary(state: &mut State, message: Message) {
+  match message {
     Message::StockpilesLoaded(piles) => state.stockpiles = piles,
-    Message::ValuesLoaded(data) => {
-      state.asset_values_data = Some(data);
-      state.values_loading = false;
-    }
+    Message::ValuesLoaded(data) => apply_values_loaded(state, data),
     _ => {}
   }
+}
+
+fn apply_values_loaded(state: &mut State, data: AssetValuesData) {
+  state.asset_values_data = Some(data);
+  state.values_loading = false;
 }
 
 fn collect_known_loc_keys(assets: &[AssetRecord]) -> HashSet<String> {
@@ -867,6 +916,12 @@ fn update_assets_state_messages(state: &mut State, message: Message) {
   match message {
     Message::LoadMoreAssets => update_load_more_assets(state),
     Message::LocationSelected(loc) => update_location_selected(state, loc),
+    msg => update_assets_state_messages_secondary(state, msg),
+  }
+}
+
+fn update_assets_state_messages_secondary(state: &mut State, message: Message) {
+  match message {
     Message::TabSelected(tab) => update_tab_selected(state, tab),
     Message::ToggleSidebarGroup(key) => update_toggle_sidebar_group(state, key),
     msg => apply_data_loaded(state, msg),
@@ -948,6 +1003,13 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       update_inventory_tab(state, msg);
       iced::Task::none()
     }
+    Message::Picker(msg) => update_picker(state, msg),
+    msg => update_pane_or_secondary(state, msg),
+  }
+}
+
+fn update_pane_or_secondary(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::PaneDrag(x) => {
       update_pane_drag(state, x);
       iced::Task::none()
@@ -960,7 +1022,6 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
       update_pane_drag_start(state);
       iced::Task::none()
     }
-    Message::Picker(msg) => update_picker(state, msg),
     msg => update_assets_secondary(state, msg),
   }
 }
@@ -969,19 +1030,27 @@ pub fn asset_value(a: &AssetRecord) -> f64 {
   a.unit_price * a.quantity as f64
 }
 
-/// Returns subscriptions for nav history refresh and pane drag tracking.
-pub fn subscription(state: &State) -> Subscription<Message> {
-  let nav_refresh = iced::time::every(std::time::Duration::from_secs(1800)).map(|_| Message::RefreshNavHistory);
-  if !state.dragging_pane {
-    return nav_refresh;
-  }
-  let drag = iced::event::listen_with(|event, _status, _id| match event {
+fn nav_refresh_subscription() -> Subscription<Message> {
+  iced::time::every(std::time::Duration::from_secs(1800)).map(|_| Message::RefreshNavHistory)
+}
+
+fn drag_event_to_message(event: Event) -> Option<Message> {
+  match event {
     Event::Mouse(mouse::Event::CursorMoved {
       position,
     }) => Some(Message::PaneDrag(position.x)),
     Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Some(Message::PaneDragEnd),
     _ => None,
-  });
+  }
+}
+
+/// Returns subscriptions for nav history refresh and pane drag tracking.
+pub fn subscription(state: &State) -> Subscription<Message> {
+  let nav_refresh = nav_refresh_subscription();
+  if !state.dragging_pane {
+    return nav_refresh;
+  }
+  let drag = iced::event::listen_with(|event, _status, _id| drag_event_to_message(event));
   Subscription::batch([nav_refresh, drag])
 }
 
@@ -1051,14 +1120,14 @@ pub fn cat_glyph(cat: &str) -> &'static str {
     .unwrap_or("·")
 }
 
+const STRUCT_GLYPHS: &[(&str, &str)] = &[("keepstar", "✦"), ("astrahus", "◇"), ("station", "⊟"), ("space", "∞")];
+
 pub fn struct_glyph(kind: &str) -> &'static str {
-  match kind {
-    "keepstar" => "✦",
-    "astrahus" => "◇",
-    "station" => "⊟",
-    "space" => "∞",
-    _ => "⊟",
-  }
+  STRUCT_GLYPHS
+    .iter()
+    .find(|&&(k, _)| k == kind)
+    .map(|&(_, v)| v)
+    .unwrap_or("⊟")
 }
 
 fn render_base<'a>(state: &'a State) -> Element<'a, Message> {
@@ -1082,18 +1151,33 @@ fn render_picker_overlay<'a>(state: &'a State) -> Option<Element<'a, Message>> {
   PickerOverlay::new(&state.picker).render()
 }
 
-fn render_scope_missing<'a>(state: &'a State) -> Option<Element<'a, Message>> {
-  if let Some(char_id) = state.selected_character()
-    && let Some(character) = state.characters.iter().find(|c| *c.id() == char_id)
-  {
-    let granted = character.granted_scopes_list();
-    if !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty() {
-      return Some(ScopeMissing::new(char_id, "asset tracking").render().map(|m| match m {
-        scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
-      }));
-    }
+fn scope_missing_element(char_id: i64) -> Element<'static, Message> {
+  ScopeMissing::new(char_id, "asset tracking")
+    .render()
+    .map(scope_missing_to_message)
+}
+
+fn scope_missing_to_message(m: scope_missing::Message) -> Message {
+  match m {
+    scope_missing::Message::ReauthorizePressed(id) => Message::ReauthorizeCharacter(id),
   }
-  None
+}
+
+fn character_missing_asset_scope(state: &State, char_id: i64) -> bool {
+  let Some(character) = state.characters.iter().find(|c| *c.id() == char_id) else {
+    return false;
+  };
+  let granted = character.granted_scopes_list();
+  !missing_scopes(&granted, &["esi-assets.read_assets.v1"]).is_empty()
+}
+
+fn render_scope_missing<'a>(state: &'a State) -> Option<Element<'a, Message>> {
+  let char_id = state.selected_character()?;
+  if character_missing_asset_scope(state, char_id) {
+    Some(scope_missing_element(char_id))
+  } else {
+    None
+  }
 }
 
 /// Builder for the assets view.

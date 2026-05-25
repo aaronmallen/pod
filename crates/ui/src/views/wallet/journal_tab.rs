@@ -95,8 +95,8 @@ fn entry_row(entry: &JournalEntry) -> Element<'_, Message> {
   .padding(Padding {
     top: 12.0,
     bottom: 12.0,
-    left: spacing::SPACE_7,
-    right: spacing::SPACE_7,
+    left: spacing::SPACE_4,
+    right: spacing::SPACE_4,
   });
 
   container(inner)

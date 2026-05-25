@@ -7,7 +7,7 @@ pub mod tag_panel_header;
 
 use iced::{
   Element, Length, Padding,
-  widget::{Space, column, container, mouse_area, row, scrollable},
+  widget::{Space, column, container, mouse_area, scrollable},
 };
 pub use tag_color_swatch::TagColorSwatch;
 pub use tag_empty_state::Component as TagEmptyState;

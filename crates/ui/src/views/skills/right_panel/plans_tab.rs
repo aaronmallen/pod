@@ -9,7 +9,7 @@ pub mod plan_card;
 pub use empty_state::Component as PlansEmptyState;
 pub use from_queue_button::Component as FromQueueButton;
 use iced::{
-  Element, Length, Padding,
+  Element, Length,
   widget::{Space, column, container},
 };
 pub use loading_state::Component as PlansLoadingState;

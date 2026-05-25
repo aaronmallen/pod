@@ -14,12 +14,12 @@ pub use ghost_card::Component as GhostCard;
 pub use ghost_overlay::Component as GhostOverlay;
 pub use grid_row::{CharacterCell, EmptySlot};
 use iced::{
-  Border, Element, Length, Padding, Point, Task,
-  widget::{Id, column, container, mouse_area, row, scrollable, stack},
+  Element, Length, Padding, Point, Task,
+  widget::{Id, column, container, mouse_area, scrollable, stack},
 };
 use pod_model::{Character, CharacterSkill, TrainingQueueEntry};
 
-use crate::style::{color, radius, spacing};
+use crate::style::spacing;
 
 /// Scroll ID for the character grid; exposed so controllers can programmatically restore scroll position.
 pub static GRID_SCROLL_ID: std::sync::LazyLock<Id> = std::sync::LazyLock::new(|| Id::new("character-grid"));
@@ -346,162 +346,5 @@ impl<'a> Component<'a> {
         }
       })
       .into()
-  }
-}
-
-fn build_character_cell<'a>(
-  c: &'a Character,
-  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
-  slot: i32,
-  dragging_id: Option<i64>,
-  drag_hover: Option<i32>,
-  feat_skill_monitoring: bool,
-  feat_wallet: bool,
-) -> Element<'a, Message> {
-  let id = *c.id();
-  let is_dragging = dragging_id.is_some();
-  CharacterCard::new(c)
-    .portrait_handle(portrait_handles.get(&id))
-    .feat_skill_monitoring(feat_skill_monitoring)
-    .feat_wallet(feat_wallet)
-    .is_dragging(dragging_id == Some(id))
-    .is_hover_target(is_dragging && drag_hover == Some(slot) && dragging_id != Some(id))
-    .render()
-    .map(move |msg| match msg {
-      character_card::Message::CardEntered(_) => Message::SlotEntered(slot),
-      other => Message::Card(id, other),
-    })
-}
-
-fn build_grid_row<'a>(
-  row_idx: usize,
-  slot_map: &HashMap<i32, &'a Character>,
-  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
-  dragging_id: Option<i64>,
-  drag_hover: Option<i32>,
-  feat_skill_monitoring: bool,
-  feat_wallet: bool,
-) -> Element<'a, Message> {
-  let is_dragging = dragging_id.is_some();
-  let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(3);
-  for col_idx in 0i32..3 {
-    let slot = row_idx as i32 * 3 + col_idx;
-    if let Some(c) = slot_map.get(&slot) {
-      cells.push(build_character_cell(
-        c,
-        portrait_handles,
-        slot,
-        dragging_id,
-        drag_hover,
-        feat_skill_monitoring,
-        feat_wallet,
-      ));
-    } else {
-      cells.push(empty_slot_placeholder(slot, is_dragging));
-    }
-  }
-  row(cells).spacing(spacing::SPACE_4).into()
-}
-
-fn build_grid_rows<'a>(
-  characters: Vec<&'a Character>,
-  cols: usize,
-  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
-  dragging_id: Option<i64>,
-  drag_hover: Option<i32>,
-  feat_skill_monitoring: bool,
-  feat_wallet: bool,
-) -> Vec<Element<'a, Message>> {
-  if cols < 3 || characters.is_empty() {
-    return build_grid_rows_responsive(
-      characters,
-      cols,
-      portrait_handles,
-      dragging_id,
-      drag_hover,
-      feat_skill_monitoring,
-      feat_wallet,
-    );
-  }
-
-  let max_slot = characters.iter().map(|c| *c.sort_order()).max().unwrap_or(0);
-  let row_count = (max_slot / 3 + 2) as usize;
-  let slot_map: HashMap<i32, &Character> = characters.iter().map(|c| (*c.sort_order(), *c)).collect();
-
-  (0..row_count)
-    .map(|row_idx| {
-      build_grid_row(
-        row_idx,
-        &slot_map,
-        portrait_handles,
-        dragging_id,
-        drag_hover,
-        feat_skill_monitoring,
-        feat_wallet,
-      )
-    })
-    .collect()
-}
-
-fn build_grid_rows_responsive<'a>(
-  characters: Vec<&'a Character>,
-  cols: usize,
-  portrait_handles: &'a HashMap<i64, iced::widget::image::Handle>,
-  dragging_id: Option<i64>,
-  drag_hover: Option<i32>,
-  feat_skill_monitoring: bool,
-  feat_wallet: bool,
-) -> Vec<Element<'a, Message>> {
-  let mut grid_rows: Vec<Element<'a, Message>> = Vec::new();
-  for chunk in characters.chunks(cols) {
-    let mut cells: Vec<Element<'a, Message>> = chunk
-      .iter()
-      .map(|c| {
-        let id = *c.id();
-        let sort_order = *c.sort_order();
-        CharacterCard::new(c)
-          .portrait_handle(portrait_handles.get(&id))
-          .feat_skill_monitoring(feat_skill_monitoring)
-          .feat_wallet(feat_wallet)
-          .is_dragging(dragging_id == Some(id))
-          .is_hover_target(dragging_id.is_some() && drag_hover == Some(sort_order) && dragging_id != Some(id))
-          .render()
-          .map(move |msg| match msg {
-            character_card::Message::CardEntered(_) => Message::SlotEntered(sort_order),
-            other => Message::Card(id, other),
-          })
-      })
-      .collect();
-    while cells.len() < cols {
-      cells.push(iced::widget::Space::new().width(Length::Fill).into());
-    }
-    grid_rows.push(row(cells).spacing(spacing::SPACE_4).into());
-  }
-  grid_rows
-}
-
-fn empty_slot_placeholder<'a>(slot: i32, is_dragging: bool) -> Element<'a, Message> {
-  let content = container(iced::widget::Space::new().width(Length::Fill))
-    .width(Length::Fill)
-    .height(spacing::layout::CHARACTER_CARD_HEIGHT)
-    .style(move |_| {
-      if is_dragging {
-        container::Style {
-          border: Border {
-            color: color::border::SUBTLE,
-            radius: radius::PANEL.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        }
-      } else {
-        container::Style::default()
-      }
-    });
-
-  if is_dragging {
-    mouse_area(content).on_enter(Message::SlotEntered(slot)).into()
-  } else {
-    content.into()
   }
 }

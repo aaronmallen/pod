@@ -7,8 +7,8 @@ pub mod section_header;
 
 pub use attr_row::Component as AttrRow;
 use iced::{
-  Element, Length, Padding,
-  widget::{Space, column, container, text},
+  Element, Length,
+  widget::{Space, column},
 };
 pub use rate_grid::RateGrid;
 pub use remap_card::RemapCard;
@@ -17,7 +17,7 @@ pub use section_header::SectionHeader;
 use super::super::{State, skill_data::AttrKey};
 use crate::{
   components,
-  style::{color, spacing, typography::mono},
+  style::{color, spacing},
 };
 
 /// Messages produced by the attributes tab.

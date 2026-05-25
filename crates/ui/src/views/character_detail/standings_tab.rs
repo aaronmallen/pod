@@ -1,27 +1,32 @@
 //! Standings tab: faction, corp, and agent standing rows with bar visualisation.
 
+pub mod standing_bar;
+pub mod standing_row;
+
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Theme,
+  Background, Border, Element, Length, Padding, Theme,
   widget::{Space, column, container, row, scrollable, text},
 };
 use pod_model::CharacterStanding;
+use standing_row::StandingRow;
 
 use crate::{
+  components::LoadState,
   style::{
     color,
     typography::{body, mono},
   },
-  views::character_detail::{LoadState, Message},
+  views::character_detail::{LoadState as DataState, Message},
 };
 
 /// Builder for the standings tab content.
 pub struct Component<'a> {
-  standings: &'a LoadState<Vec<CharacterStanding>>,
+  standings: &'a DataState<Vec<CharacterStanding>>,
 }
 
 impl<'a> Component<'a> {
   /// Creates a new standings tab component.
-  pub fn new(standings: &'a LoadState<Vec<CharacterStanding>>) -> Self {
+  pub fn new(standings: &'a DataState<Vec<CharacterStanding>>) -> Self {
     Self {
       standings,
     }
@@ -30,51 +35,11 @@ impl<'a> Component<'a> {
   /// Renders the standings tab.
   pub fn render(self) -> Element<'a, Message> {
     match self.standings {
-      LoadState::Loading => loading_state(),
-      LoadState::Error(e) => error_state(e),
-      LoadState::Loaded(standings) => standings_content(standings),
+      DataState::Loading => LoadState::loading("Loading standings…").render(),
+      DataState::Error(e) => LoadState::error(e).render(),
+      DataState::Loaded(standings) => standings_content(standings),
     }
   }
-}
-
-fn loading_state<'a>() -> Element<'a, Message> {
-  container(
-    text("Loading standings…")
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .padding(32.0)
-  .width(Length::Fill)
-  .center_x(Length::Fill)
-  .into()
-}
-
-fn error_state<'a>(msg: &'a str) -> Element<'a, Message> {
-  container(
-    text(msg)
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::status::DANGER),
-      }),
-  )
-  .padding(32.0)
-  .width(Length::Fill)
-  .center_x(Length::Fill)
-  .into()
-}
-
-fn filter_standings(standings: &[CharacterStanding]) -> [Vec<&CharacterStanding>; 3] {
-  let factions = standings.iter().filter(|s| s.from_type == "faction").collect();
-  let corps = standings
-    .iter()
-    .filter(|s| s.from_type == "npc_corp" || s.from_type == "corporation")
-    .collect();
-  let agents = standings.iter().filter(|s| s.from_type == "agent").collect();
-  [factions, corps, agents]
 }
 
 fn empty_standings_message<'a>() -> Element<'a, Message> {
@@ -88,6 +53,32 @@ fn empty_standings_message<'a>() -> Element<'a, Message> {
   )
   .padding(32.0)
   .into()
+}
+
+fn filter_standings(standings: &[CharacterStanding]) -> [Vec<&CharacterStanding>; 3] {
+  let factions = standings.iter().filter(|s| s.from_type == "faction").collect();
+  let corps = standings
+    .iter()
+    .filter(|s| s.from_type == "npc_corp" || s.from_type == "corporation")
+    .collect();
+  let agents = standings.iter().filter(|s| s.from_type == "agent").collect();
+  [factions, corps, agents]
+}
+
+fn section_eyebrow(label: &str, right: &str) -> Element<'static, Message> {
+  let left_el = text(label.to_uppercase())
+    .font(mono::REGULAR)
+    .size(9.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::SECONDARY),
+    });
+  let right_el = text(right.to_uppercase())
+    .font(mono::REGULAR)
+    .size(9.0)
+    .style(|_: &Theme| iced::widget::text::Style {
+      color: Some(color::text::TERTIARY),
+    });
+  row([left_el.into(), Space::new().width(Length::Fill).into(), right_el.into()]).into()
 }
 
 fn standings_content(standings: &[CharacterStanding]) -> Element<'_, Message> {
@@ -126,7 +117,7 @@ fn standings_section<'a>(label: &'a str, rows: &[&'a CharacterStanding]) -> Elem
   let mut row_els: Vec<Element<'_, Message>> = rows
     .iter()
     .enumerate()
-    .map(|(i, s)| standing_row(s, i == rows.len() - 1))
+    .map(|(i, s)| StandingRow::new(s, i == rows.len() - 1).render())
     .collect();
   if row_els.is_empty() {
     row_els.push(Space::new().height(0.0).into());
@@ -143,158 +134,4 @@ fn standings_section<'a>(label: &'a str, rows: &[&'a CharacterStanding]) -> Elem
       ..container::Style::default()
     });
   column([eyebrow, card.into()]).spacing(10.0).into()
-}
-
-fn section_eyebrow(label: &str, right: &str) -> Element<'static, Message> {
-  let left_el = text(label.to_uppercase())
-    .font(mono::REGULAR)
-    .size(9.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-  let right_el = text(right.to_uppercase())
-    .font(mono::REGULAR)
-    .size(9.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::TERTIARY),
-    });
-  row([left_el.into(), Space::new().width(Length::Fill).into(), right_el.into()]).into()
-}
-
-fn standing_name_col<'a>(standing: &'a CharacterStanding) -> Element<'a, Message> {
-  text(standing.from_name.clone())
-    .font(body::REGULAR)
-    .size(13.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::PRIMARY),
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-fn standing_raw_col<'a>(standing: &'a CharacterStanding) -> Element<'a, Message> {
-  let raw_label = format!(
-    "{}{:.2} raw",
-    if standing.standing >= 0.0 { "+" } else { "" },
-    standing.standing
-  );
-  container(
-    text(raw_label)
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(90.0)
-  .align_x(iced::alignment::Horizontal::Right)
-  .into()
-}
-
-fn standing_eff_col<'a>(v: f64, effective_color: Color) -> Element<'a, Message> {
-  let eff_label = format!("{}{:.2}", if v >= 0.0 { "+" } else { "" }, v);
-  container(
-    text(eff_label)
-      .font(mono::MEDIUM)
-      .size(14.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(effective_color),
-      }),
-  )
-  .width(60.0)
-  .align_x(iced::alignment::Horizontal::Right)
-  .into()
-}
-
-fn standing_row<'a>(standing: &'a CharacterStanding, is_last: bool) -> Element<'a, Message> {
-  let v = standing.standing;
-  let effective_color = standing_color(v);
-  let inner = row([
-    standing_name_col(standing),
-    standing_raw_col(standing),
-    standing_eff_col(v, effective_color),
-    standing_bar(v),
-  ])
-  .align_y(iced::alignment::Vertical::Center)
-  .spacing(16.0)
-  .padding(Padding {
-    top: 10.0,
-    bottom: 10.0,
-    left: 16.0,
-    right: 16.0,
-  });
-  container(inner)
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      border: Border {
-        color: if is_last {
-          Color::TRANSPARENT
-        } else {
-          color::border::SUBTLE
-        },
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn standing_color(v: f64) -> Color {
-  if v >= 5.0 {
-    color::status::ONLINE
-  } else if v > 0.0 {
-    color::status::ONLINE_STRONG
-  } else if v >= -0.01 {
-    color::text::SECONDARY
-  } else if v > -5.0 {
-    color::status::DANGER_STRONG
-  } else {
-    color::status::DANGER
-  }
-}
-
-fn standing_bar_fill<'a>(bar_color: Color, fill_width: f32) -> Element<'a, Message> {
-  container(Space::new().width(fill_width).height(6.0))
-    .width(fill_width)
-    .height(6.0)
-    .style(move |_: &Theme| container::Style {
-      background: Some(Background::Color(bar_color)),
-      border: Border {
-        radius: 3.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn standing_bar<'a>(value: f64) -> Element<'a, Message> {
-  let bar_color = standing_color(value);
-  let pct = (value.abs() / 10.0 * 50.0).min(50.0) as f32;
-  let positive = value >= 0.0;
-  let fill_width = (220.0 * pct / 100.0).max(0.0);
-  let fill = standing_bar_fill(bar_color, fill_width);
-  let bar_inner: Element<'_, Message> = if positive {
-    row([Space::new().width(110.0).height(6.0).into(), fill])
-      .height(6.0)
-      .into()
-  } else {
-    let fill_start = 110.0 - fill_width;
-    row([Space::new().width(fill_start).height(6.0).into(), fill])
-      .height(6.0)
-      .into()
-  };
-  container(bar_inner)
-    .width(220.0)
-    .height(6.0)
-    .style(|_: &Theme| container::Style {
-      background: Some(Background::Color(color::state::HOVER_OVERLAY)),
-      border: Border {
-        radius: 3.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into()
 }

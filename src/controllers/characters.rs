@@ -167,8 +167,14 @@ pub fn wallet_refresh_task(state: &State, services: &Services) -> iced::Task<Mes
 
 /// Processes a characters message and returns a task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  if let Message::CharactersTab(msg) = message {
+    return update_characters_tab(state, msg, services);
+  }
+  update_non_characters_tab(state, message, services)
+}
+
+fn update_non_characters_tab(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
-    Message::CharactersTab(msg) => update_characters_tab(state, msg, services),
     Message::CorporationsTab(msg) => update_corporation(state, msg, services),
     Message::Header(msg) => update_header(state, msg, services),
     Message::SearchFilter(msg) => update_search_filter(state, msg),
@@ -325,8 +331,8 @@ fn confirm_remove_corporation_keyboard_subscription() -> Subscription<Message> {
   })
 }
 
-fn context_menu_keyboard_subscription() -> Subscription<Message> {
-  iced::event::listen_with(|event, status, _id| match event {
+fn context_menu_event_to_message(event: Event, status: iced::event::Status) -> Option<Message> {
+  match event {
     Event::Keyboard(keyboard::Event::KeyPressed {
       key: Key::Named(Named::Escape),
       ..
@@ -337,11 +343,15 @@ fn context_menu_keyboard_subscription() -> Subscription<Message> {
       Message::CharactersTab(characters_tab::Message::ContextMenu(context_menu::Message::Close)),
     ),
     _ => None,
-  })
+  }
 }
 
-fn corp_context_menu_keyboard_subscription() -> Subscription<Message> {
-  iced::event::listen_with(|event, status, _id| match event {
+fn context_menu_keyboard_subscription() -> Subscription<Message> {
+  iced::event::listen_with(|event, status, _id| context_menu_event_to_message(event, status))
+}
+
+fn corp_context_menu_event_to_message(event: Event, status: iced::event::Status) -> Option<Message> {
+  match event {
     Event::Keyboard(keyboard::Event::KeyPressed {
       key: Key::Named(Named::Escape),
       ..
@@ -354,15 +364,25 @@ fn corp_context_menu_keyboard_subscription() -> Subscription<Message> {
       )))
     }
     _ => None,
-  })
+  }
+}
+
+fn corp_context_menu_keyboard_subscription() -> Subscription<Message> {
+  iced::event::listen_with(|event, status, _id| corp_context_menu_event_to_message(event, status))
 }
 
 fn handle_tag_modal(state: &mut State, msg: tag_modal::Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
-    tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
     tag_modal::Message::QueryChanged(q) => handle_tag_query_changed(state, q),
     tag_modal::Message::Remove(tag_id) => handle_tag_remove(state, tag_id, services),
+    msg => handle_tag_apply_or_state(state, msg, services),
+  }
+}
+
+fn handle_tag_apply_or_state(state: &mut State, msg: tag_modal::Message, services: &Services) -> iced::Task<Message> {
+  match msg {
+    tag_modal::Message::CommitHighlighted => handle_tag_commit_highlighted(state, services),
+    tag_modal::Message::Confirm(name) => handle_tag_confirm(state, name, services),
     msg => handle_tag_state_mutation(state, msg),
   }
 }
@@ -506,6 +526,12 @@ fn apply_tag_task(
   }
 }
 
+fn add_tag_id_if_missing(ids: &mut Vec<i32>, tag_id: i32) {
+  if !ids.contains(&tag_id) {
+    ids.push(tag_id);
+  }
+}
+
 async fn fetch_corporation_tags(
   entity_id: i64,
   tag_name: String,
@@ -514,9 +540,7 @@ async fn fetch_corporation_tags(
 ) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
   let tag = db.tags().find_or_create(&tag_name).await.ok()?;
   let mut new_ids = existing_ids;
-  if !new_ids.contains(&tag.id) {
-    new_ids.push(tag.id);
-  }
+  add_tag_id_if_missing(&mut new_ids, tag.id);
   db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
   let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
@@ -556,9 +580,7 @@ async fn fetch_character_tags(
 ) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
   let tag = db.tags().find_or_create(&tag_name).await.ok()?;
   let mut new_ids = existing_ids;
-  if !new_ids.contains(&tag.id) {
-    new_ids.push(tag.id);
-  }
+  add_tag_id_if_missing(&mut new_ids, tag.id);
   db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
   let tags = db.tags().tags_for_character(entity_id).await.ok()?;
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
@@ -586,13 +608,19 @@ fn drag_release_subscription() -> Subscription<Message> {
   })
 }
 
+fn tag_modal_nav_key_message(key: &Key) -> Option<Message> {
+  match key {
+    Key::Named(Named::ArrowUp) => Some(Message::TagModal(tag_modal::Message::MoveUp)),
+    Key::Named(Named::ArrowDown) => Some(Message::TagModal(tag_modal::Message::MoveDown)),
+    _ => None,
+  }
+}
+
 fn tag_modal_key_message(key: &Key) -> Option<Message> {
   match key {
     Key::Named(Named::Escape) => Some(Message::TagModal(tag_modal::Message::Close)),
-    Key::Named(Named::ArrowUp) => Some(Message::TagModal(tag_modal::Message::MoveUp)),
-    Key::Named(Named::ArrowDown) => Some(Message::TagModal(tag_modal::Message::MoveDown)),
     Key::Named(Named::Enter) => Some(Message::TagModal(tag_modal::Message::CommitHighlighted)),
-    _ => None,
+    key => tag_modal_nav_key_message(key),
   }
 }
 
@@ -638,13 +666,8 @@ fn filter_keyboard_subscription() -> Subscription<Message> {
   })
 }
 
-/// Returns the keyboard subscription matching the active overlay or default filter.
-fn active_keyboard_subscription(state: &State) -> Subscription<Message> {
-  if state.tag_modal.is_some() {
-    tag_modal_keyboard_subscription()
-  } else if state.character_pane.context_menu.is_some() {
-    context_menu_keyboard_subscription()
-  } else if state.corporation_pane.context_menu.is_some() {
+fn active_keyboard_subscription_lower(state: &State) -> Subscription<Message> {
+  if state.corporation_pane.context_menu.is_some() {
     corp_context_menu_keyboard_subscription()
   } else if state.confirm_remove.is_some() {
     confirm_remove_keyboard_subscription()
@@ -652,6 +675,17 @@ fn active_keyboard_subscription(state: &State) -> Subscription<Message> {
     confirm_remove_corporation_keyboard_subscription()
   } else {
     filter_keyboard_subscription()
+  }
+}
+
+/// Returns the keyboard subscription matching the active overlay or default filter.
+fn active_keyboard_subscription(state: &State) -> Subscription<Message> {
+  if state.tag_modal.is_some() {
+    tag_modal_keyboard_subscription()
+  } else if state.character_pane.context_menu.is_some() {
+    context_menu_keyboard_subscription()
+  } else {
+    active_keyboard_subscription_lower(state)
   }
 }
 
@@ -805,6 +839,33 @@ async fn fetch_character_public_data(
   results
 }
 
+async fn fetch_char_location(
+  character: &Character,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Option<(i64, Option<String>, Option<bool>)> {
+  let token = character_service::ensure_valid_token(character, esi, db).await?;
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  let loc = char_client.location().await.ok()?;
+  let docked = loc.station_id.is_some() || loc.structure_id.is_some();
+  let name = if let Some(sid) = loc.station_id {
+    esi.universe().station(sid).await.ok().map(|s| s.name)
+  } else {
+    esi
+      .universe()
+      .solar_system(loc.solar_system_id)
+      .await
+      .ok()
+      .map(|s| s.name)
+  };
+  let _ = db
+    .characters()
+    .update_location(*character.id(), name.clone(), Some(docked))
+    .await;
+  Some((*character.id(), name, Some(docked)))
+}
+
 async fn fetch_locations(
   characters: Vec<Character>,
   esi: pod_esi::Client,
@@ -812,30 +873,9 @@ async fn fetch_locations(
 ) -> Vec<(i64, Option<String>, Option<bool>)> {
   let mut results = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    let Ok(loc) = char_client.location().await else {
-      continue;
-    };
-    let docked = loc.station_id.is_some() || loc.structure_id.is_some();
-    let name = if let Some(sid) = loc.station_id {
-      esi.universe().station(sid).await.ok().map(|s| s.name)
-    } else {
-      esi
-        .universe()
-        .solar_system(loc.solar_system_id)
-        .await
-        .ok()
-        .map(|s| s.name)
-    };
-    let _ = db
-      .characters()
-      .update_location(*character.id(), name.clone(), Some(docked))
-      .await;
-    results.push((*character.id(), name, Some(docked)));
+    if let Some(r) = fetch_char_location(character, &esi, &db).await {
+      results.push(r);
+    }
   }
   results
 }
@@ -1517,6 +1557,18 @@ fn handle_locations_refreshed(
   iced::Task::none()
 }
 
+fn update_wallet_messages(
+  state: &mut State,
+  msg: characters_tab::Message,
+  services: &Services,
+) -> Option<iced::Task<Message>> {
+  match msg {
+    characters_tab::Message::WalletRefreshTick => Some(wallet_refresh_task(state, services)),
+    characters_tab::Message::WalletsRefreshed(updates) => Some(update_wallet(state, updates)),
+    _ => None,
+  }
+}
+
 fn update_wallet_and_skills(
   state: &mut State,
   msg: characters_tab::Message,
@@ -1525,9 +1577,7 @@ fn update_wallet_and_skills(
   match msg {
     characters_tab::Message::SkillQueueRefreshTick => Some(skill_queue_refresh_task(state, services)),
     characters_tab::Message::SkillQueuesRefreshed(updates) => Some(update_skills_queue(state, updates)),
-    characters_tab::Message::WalletRefreshTick => Some(wallet_refresh_task(state, services)),
-    characters_tab::Message::WalletsRefreshed(updates) => Some(update_wallet(state, updates)),
-    _ => None,
+    msg => update_wallet_messages(state, msg, services),
   }
 }
 
@@ -1588,6 +1638,16 @@ fn handle_corporation_event(
   match msg {
     corporations_tab::Message::CorpPublicRefreshTick => corp_public_refresh_task(state, services),
     corporations_tab::Message::CorpPublicRefreshed(updated) => handle_corp_public_refreshed(state, updated),
+    msg => handle_corporation_event_b(state, msg, services),
+  }
+}
+
+fn handle_corporation_event_b(
+  state: &mut State,
+  msg: corporations_tab::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     corporations_tab::Message::CorpWalletRefreshTick => corp_wallet_refresh_task(state, services),
     corporations_tab::Message::CorporationAdded(corp) => handle_corporation_added(state, corp),
     msg => handle_corporation_event_ext(state, msg, services),
@@ -1602,6 +1662,16 @@ fn handle_corporation_event_ext(
   match msg {
     corporations_tab::Message::CorporationRemoved(id) => handle_corporation_removed(state, id),
     corporations_tab::Message::CorporationTagsLoaded(id, tags) => handle_corporation_tags_loaded(state, id, tags),
+    msg => handle_corporation_event_ext_b(state, msg, services),
+  }
+}
+
+fn handle_corporation_event_ext_b(
+  state: &mut State,
+  msg: corporations_tab::Message,
+  services: &Services,
+) -> iced::Task<Message> {
+  match msg {
     corporations_tab::Message::HqNamesLoaded(resolved) => handle_hq_names_loaded(state, resolved),
     corporations_tab::Message::RemoveCorporation(corp_id) => handle_remove_corporation(state, corp_id, services),
     msg => state.corporation_pane.update(msg).map(Message::CorporationsTab),
@@ -1621,13 +1691,14 @@ fn handle_corp_tags_pressed(state: &mut State, corp_id: i64) -> iced::Task<Messa
   iced::Task::none()
 }
 
-fn apply_refreshed_corp(state: &mut State, corp: Corporation) {
+fn update_corp_icon_handle(icon_handles: &mut HashMap<i64, iced::widget::image::Handle>, corp: &Corporation) {
   if let Some(bytes) = corp.icon_data() {
-    state
-      .corporation_pane
-      .icon_handles
-      .insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+    icon_handles.insert(*corp.id(), iced::widget::image::Handle::from_bytes(bytes.clone()));
   }
+}
+
+fn apply_refreshed_corp(state: &mut State, corp: Corporation) {
+  update_corp_icon_handle(&mut state.corporation_pane.icon_handles, &corp);
   if let Some(existing) = state.all_corporations.iter_mut().find(|c| *c.id() == *corp.id()) {
     *existing = corp.clone();
   }
@@ -1751,14 +1822,18 @@ fn corps_hq_task(corps: &[Corporation], services: &Services) -> iced::Task<Messa
   })
 }
 
+fn apply_hq_name(state: &mut State, corp_id: i64, name: String) {
+  if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
+    *c.hq_name_mut() = Some(name.clone());
+  }
+  if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
+    *c.hq_name_mut() = Some(name);
+  }
+}
+
 fn handle_hq_names_loaded(state: &mut State, resolved: Vec<(i64, String)>) -> iced::Task<Message> {
   for (corp_id, name) in resolved {
-    if let Some(c) = state.all_corporations.iter_mut().find(|c| *c.id() == corp_id) {
-      *c.hq_name_mut() = Some(name.clone());
-    }
-    if let Some(c) = state.corporations.iter_mut().find(|c| *c.id() == corp_id) {
-      *c.hq_name_mut() = Some(name);
-    }
+    apply_hq_name(state, corp_id, name);
   }
   iced::Task::none()
 }
@@ -1913,6 +1988,22 @@ fn update_search_filter(state: &mut State, msg: search_filter::Message) -> iced:
   state.search_filter.update(msg).map(Message::SearchFilter)
 }
 
+fn apply_skill_updates(c: &mut Character, skill_map: &HashMap<i32, &CharacterSkill>) {
+  for s in c.skills_mut().iter_mut() {
+    s.is_active_training = false;
+    if let Some(updated) = skill_map.get(&s.skill_id) {
+      s.active_level = updated.active_level;
+      s.is_active_training = updated.is_active_training;
+      s.trained_level = updated.trained_level;
+      s.training_end_time = updated.training_end_time;
+      s.training_level_end_sp = updated.training_level_end_sp;
+      s.training_level_start_sp = updated.training_level_start_sp;
+      s.training_start_sp = updated.training_start_sp;
+      s.training_start_time = updated.training_start_time;
+    }
+  }
+}
+
 fn update_skills_queue(
   state: &mut State,
   updates: Vec<(i64, Vec<CharacterSkill>, Vec<TrainingQueueEntry>)>,
@@ -1922,19 +2013,7 @@ fn update_skills_queue(
       continue;
     };
     let skill_map: HashMap<i32, &CharacterSkill> = skills.iter().map(|s| (s.skill_id, s)).collect();
-    for s in c.skills_mut().iter_mut() {
-      s.is_active_training = false;
-      if let Some(updated) = skill_map.get(&s.skill_id) {
-        s.active_level = updated.active_level;
-        s.is_active_training = updated.is_active_training;
-        s.trained_level = updated.trained_level;
-        s.training_end_time = updated.training_end_time;
-        s.training_level_end_sp = updated.training_level_end_sp;
-        s.training_level_start_sp = updated.training_level_start_sp;
-        s.training_start_sp = updated.training_start_sp;
-        s.training_start_time = updated.training_start_time;
-      }
-    }
+    apply_skill_updates(c, &skill_map);
     *c.training_queue_mut() = tq;
   }
   refilter(state);

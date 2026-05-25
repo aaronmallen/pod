@@ -788,19 +788,27 @@ fn solar_system_id_for_structure(location_id: i64, structure_name_map: &HashMap<
   )
 }
 
+fn is_npc_location(location_id: i64) -> bool {
+  location_id < i32::MAX as i64
+}
+
+fn is_space_location(location_type: &str) -> bool {
+  location_type == "solar_system" || location_type == "space"
+}
+
 /// Returns the solar system ID for a row's top-level location, if resolvable.
 fn resolve_solar_system_id(row: &RawAssetRow, maps: &AssetMaps) -> Option<i32> {
-  if row.location_type == "station" && row.location_id < i32::MAX as i64 {
-    solar_system_id_for_station(row.location_id, &maps.station_map)
-  } else if (row.location_type == "solar_system" || row.location_type == "space") && row.location_id < i32::MAX as i64 {
-    solar_system_id_for_space(row.location_id)
+  if row.location_type == "station" && is_npc_location(row.location_id) {
+    return solar_system_id_for_station(row.location_id, &maps.station_map);
+  }
+  if is_space_location(&row.location_type) && is_npc_location(row.location_id) {
+    return solar_system_id_for_space(row.location_id);
+  }
+  let is_at_structure = !is_npc_location(row.location_id) && !maps.item_index.contains_key(&row.location_id);
+  if is_at_structure {
+    solar_system_id_for_structure(row.location_id, &maps.structure_name_map)
   } else {
-    let is_at_structure = row.location_id >= i32::MAX as i64 && !maps.item_index.contains_key(&row.location_id);
-    if is_at_structure {
-      solar_system_id_for_structure(row.location_id, &maps.structure_name_map)
-    } else {
-      None
-    }
+    None
   }
 }
 
@@ -1206,6 +1214,37 @@ pub async fn asset_values_breakdown(
   }
 }
 
+fn asset_structure_name(a: &AssetRecord) -> String {
+  if a.container_path.is_empty() {
+    a.location_name.clone()
+  } else {
+    a.container_path
+      .split(" · ")
+      .next()
+      .unwrap_or(&a.location_name)
+      .to_string()
+  }
+}
+
+fn matrix_to_cell(
+  char_id: i64,
+  struct_id: String,
+  struct_name: String,
+  value: f64,
+  char_name_map: &HashMap<i64, String>,
+) -> CharacterStructureCell {
+  CharacterStructureCell {
+    character_id: char_id,
+    character_name: char_name_map
+      .get(&char_id)
+      .cloned()
+      .unwrap_or_else(|| char_id.to_string()),
+    structure_id: struct_id,
+    structure_name: struct_name,
+    value,
+  }
+}
+
 /// Builds the per-character, per-structure value matrix for the Values tab.
 fn build_char_structure_cells(
   valued: &[(&AssetRecord, f64)],
@@ -1213,15 +1252,7 @@ fn build_char_structure_cells(
 ) -> Vec<CharacterStructureCell> {
   let mut matrix: HashMap<(i64, String), (String, String, f64)> = HashMap::new();
   for (a, value) in valued {
-    let struct_name = if a.container_path.is_empty() {
-      a.location_name.clone()
-    } else {
-      a.container_path
-        .split(" · ")
-        .next()
-        .unwrap_or(&a.location_name)
-        .to_string()
-    };
+    let struct_name = asset_structure_name(a);
     let entry = matrix
       .entry((a.character_id, struct_name.clone()))
       .or_insert_with(|| (struct_name.clone(), struct_name, 0.0));
@@ -1229,18 +1260,9 @@ fn build_char_structure_cells(
   }
   let mut cells: Vec<CharacterStructureCell> = matrix
     .into_iter()
-    .map(
-      |((char_id, struct_id), (_sid, struct_name, value))| CharacterStructureCell {
-        character_id: char_id,
-        character_name: char_name_map
-          .get(&char_id)
-          .cloned()
-          .unwrap_or_else(|| char_id.to_string()),
-        structure_id: struct_id,
-        structure_name: struct_name,
-        value,
-      },
-    )
+    .map(|((char_id, struct_id), (_sid, struct_name, value))| {
+      matrix_to_cell(char_id, struct_id, struct_name, value, char_name_map)
+    })
     .collect();
   cells.sort_by(|a, b| {
     a.character_id
@@ -1250,28 +1272,34 @@ fn build_char_structure_cells(
   cells
 }
 
+fn normalize_category_key(key: &str) -> &str {
+  if key == "all" || key.is_empty() {
+    "commodity"
+  } else {
+    key
+  }
+}
+
+fn make_category_value(cat_key: String, value: f64, total_value: f64) -> CategoryValue {
+  let pct = if total_value > 0.0 { value / total_value } else { 0.0 };
+  CategoryValue {
+    category_name: cat_key,
+    value,
+    pct,
+  }
+}
+
 /// Builds the category breakdown sorted by value descending.
 fn build_category_breakdown(valued: &[(&AssetRecord, f64)], total_value: f64) -> Vec<CategoryValue> {
   let mut cat_map: HashMap<String, f64> = HashMap::new();
   for (a, value) in valued {
-    let cat = if a.category_key == "all" || a.category_key.is_empty() {
-      "commodity"
-    } else {
-      &a.category_key
-    };
-    *cat_map.entry(cat.to_string()).or_insert(0.0) += value;
+    let cat = normalize_category_key(&a.category_key).to_string();
+    *cat_map.entry(cat).or_insert(0.0) += value;
   }
   let mut breakdown: Vec<CategoryValue> = cat_map
     .into_iter()
     .filter(|(_, v)| *v > 0.0)
-    .map(|(cat_key, value)| {
-      let pct = if total_value > 0.0 { value / total_value } else { 0.0 };
-      CategoryValue {
-        category_name: cat_key,
-        value,
-        pct,
-      }
-    })
+    .map(|(k, v)| make_category_value(k, v, total_value))
     .collect();
   breakdown.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
   breakdown

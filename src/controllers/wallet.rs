@@ -367,25 +367,25 @@ fn collect_station_ids(loc_ids: &[i64]) -> Vec<i32> {
     .collect()
 }
 
-fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
-  let market_entries: Option<&Vec<MarketEntry>> = match message {
+fn market_entries_from_message(message: &Message) -> Option<&Vec<MarketEntry>> {
+  match message {
     Message::TransactionsLoaded(entries) => Some(entries),
     Message::CorpDataLoaded {
       market, ..
     } => Some(market),
     _ => None,
-  };
-  market_entries
-    .map(|entries| {
-      entries
-        .iter()
-        .map(|e| e.type_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .filter(|id| !state.item_icons.contains_key(id))
-        .collect::<Vec<_>>()
-    })
-    .filter(|ids| !ids.is_empty())
+  }
+}
+
+fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
+  let ids: Vec<i32> = market_entries_from_message(message)?
+    .iter()
+    .map(|e| e.type_id)
+    .collect::<HashSet<_>>()
+    .into_iter()
+    .filter(|id| !state.item_icons.contains_key(id))
+    .collect();
+  if ids.is_empty() { None } else { Some(ids) }
 }
 
 #[tracing::instrument(skip_all)]
@@ -441,6 +441,47 @@ async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec
   totals.into_iter().collect()
 }
 
+async fn sync_contracts_from_esi(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    return;
+  };
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  if let Ok(contracts) = char_client.contracts().await {
+    let db_rows: Vec<_> = contracts
+      .iter()
+      .map(|c| CharacterContract {
+        character_id: *character.id(),
+        contract_id: c.contract_id,
+        contract_type: c.r#type.clone(),
+        status: c.status.clone(),
+        title: c.title.clone().unwrap_or_default(),
+        issuer_id: c.issuer_id,
+        assignee_id: c.assignee_id,
+        acceptor_id: c.acceptor_id,
+        price: c.price,
+        collateral: c.collateral,
+        date_issued: c.date_issued.clone(),
+        date_expired: c.date_expired.clone(),
+        start_location_id: c.start_location_id,
+      })
+      .collect();
+    let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
+  }
+}
+
+async fn load_contract_entries(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) -> Vec<ContractEntry> {
+  let Ok(rows) = db.characters().contracts(*character.id()).await else {
+    return Vec::new();
+  };
+  let names = resolve_entity_names(&rows, esi).await;
+  let locations = resolve_location_names(&rows, esi, db).await;
+  rows
+    .into_iter()
+    .map(|row| build_contract_entry(row, &names, &locations))
+    .collect()
+}
+
 #[tracing::instrument(skip_all)]
 async fn fetch_contracts(
   characters: Vec<Character>,
@@ -449,38 +490,8 @@ async fn fetch_contracts(
 ) -> Result<Vec<ContractEntry>, String> {
   let mut all: Vec<ContractEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(contracts) = char_client.contracts().await {
-        let db_rows: Vec<_> = contracts
-          .iter()
-          .map(|c| CharacterContract {
-            character_id: *character.id(),
-            contract_id: c.contract_id,
-            contract_type: c.r#type.clone(),
-            status: c.status.clone(),
-            title: c.title.clone().unwrap_or_default(),
-            issuer_id: c.issuer_id,
-            assignee_id: c.assignee_id,
-            acceptor_id: c.acceptor_id,
-            price: c.price,
-            collateral: c.collateral,
-            date_issued: c.date_issued.clone(),
-            date_expired: c.date_expired.clone(),
-            start_location_id: c.start_location_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
-      }
-    }
-    if let Ok(rows) = db.characters().contracts(*character.id()).await {
-      let names = resolve_entity_names(&rows, &esi).await;
-      let locations = resolve_location_names(&rows, &esi, &db).await;
-      for row in rows {
-        all.push(build_contract_entry(row, &names, &locations));
-      }
-    }
+    sync_contracts_from_esi(character, &esi, &db).await;
+    all.extend(load_contract_entries(character, &esi, &db).await);
   }
   all.sort_by_key(|e| e.ts_secs);
   Ok(all)
@@ -535,45 +546,52 @@ async fn fetch_corp_data(
   (divisions, journal, market)
 }
 
+async fn sync_journal_from_esi(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
+  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    return;
+  };
+  let grant = character_service::refresh_grant(character, &token);
+  let char_client = esi.character(&grant);
+  if let Ok(entries) = char_client.wallet_journal().await {
+    let db_rows: Vec<_> = entries
+      .iter()
+      .map(|e| WalletJournalEntry {
+        character_id: *character.id(),
+        entry_id: e.id,
+        ref_type: e.ref_type.clone(),
+        amount: e.amount,
+        balance: e.balance,
+        date: e.date.clone(),
+        description: e.description.clone(),
+        first_party_id: e.first_party_id,
+        second_party_id: e.second_party_id,
+      })
+      .collect();
+    let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
+  }
+}
+
+fn map_journal_db_row(row: WalletJournalEntry) -> JournalEntry {
+  let ts = parse_iso_to_unix(&row.date);
+  JournalEntry {
+    id: format!("{}-{}", row.character_id, row.entry_id),
+    who: row.character_id,
+    entry_type: row.ref_type,
+    delta: row.amount.unwrap_or(0.0),
+    ts_secs: secs_ago(ts),
+    reference: row.description,
+    party: format_party_id(row.first_party_id.or(row.second_party_id)),
+    location: String::new(),
+  }
+}
+
 #[tracing::instrument(skip_all)]
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
   let mut all: Vec<JournalEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(entries) = char_client.wallet_journal().await {
-        let db_rows: Vec<_> = entries
-          .iter()
-          .map(|e| WalletJournalEntry {
-            character_id: *character.id(),
-            entry_id: e.id,
-            ref_type: e.ref_type.clone(),
-            amount: e.amount,
-            balance: e.balance,
-            date: e.date.clone(),
-            description: e.description.clone(),
-            first_party_id: e.first_party_id,
-            second_party_id: e.second_party_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
-      }
-    }
+    sync_journal_from_esi(character, &esi, &db).await;
     if let Ok(rows) = db.characters().journal_entries(*character.id()).await {
-      for row in rows {
-        let ts = parse_iso_to_unix(&row.date);
-        all.push(JournalEntry {
-          id: format!("{}-{}", row.character_id, row.entry_id),
-          who: row.character_id,
-          entry_type: row.ref_type,
-          delta: row.amount.unwrap_or(0.0),
-          ts_secs: secs_ago(ts),
-          reference: row.description,
-          party: format_party_id(row.first_party_id.or(row.second_party_id)),
-          location: String::new(),
-        });
-      }
+      all.extend(rows.into_iter().map(map_journal_db_row));
     }
   }
   all.sort_by_key(|e| e.ts_secs);
@@ -953,6 +971,35 @@ fn secs_ago(ts: i64) -> u64 {
   (now - ts).max(0) as u64
 }
 
+fn log_picker_selection(sel: &PickerSelection) {
+  match sel {
+    PickerSelection::All => tracing::info!("wallet: all wallets selected"),
+    PickerSelection::Character(id) => tracing::info!("wallet: character selected — character_id: {id}"),
+    PickerSelection::Corporation(id) => tracing::info!("wallet: corporation selected — corp_id: {id}"),
+  }
+}
+
+fn try_dispatch_corp_fetch(
+  state: &mut State,
+  corp_id: i64,
+  corporations: &[Corporation],
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+  msg: pod_ui::components::character_picker::Message,
+) -> iced::Task<Message> {
+  let corps = corporations.to_vec();
+  let _ = pod_ui::views::wallet::update(state, Message::CharacterPicker(msg));
+  recompute_derived(state);
+  iced::Task::perform(
+    async move { fetch_corp_data(corp_id, 1, corps, esi, db).await },
+    |(divisions, journal, market)| Message::CorpDataLoaded {
+      divisions,
+      journal,
+      market,
+    },
+  )
+}
+
 fn update_character_picker(
   state: &mut State,
   msg: pod_ui::components::character_picker::Message,
@@ -961,31 +1008,12 @@ fn update_character_picker(
   icon_type_ids: Option<Vec<i32>>,
 ) -> iced::Task<Message> {
   if let pod_ui::components::character_picker::Message::Select(sel) = &msg {
-    match sel {
-      PickerSelection::All => tracing::info!("wallet: all wallets selected"),
-      PickerSelection::Character(id) => {
-        tracing::info!("wallet: character selected — character_id: {id}")
-      }
-      PickerSelection::Corporation(id) => {
-        tracing::info!("wallet: corporation selected — corp_id: {id}")
-      }
-    }
+    log_picker_selection(sel);
   }
   if let pod_ui::components::character_picker::Message::Select(PickerSelection::Corporation(corp_id)) = &msg
     && let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone())
   {
-    let corp_id = *corp_id;
-    let corps = corporations.to_vec();
-    let _ = pod_ui::views::wallet::update(state, Message::CharacterPicker(msg));
-    recompute_derived(state);
-    return iced::Task::perform(
-      async move { fetch_corp_data(corp_id, 1, corps, esi, db).await },
-      |(divisions, journal, market)| Message::CorpDataLoaded {
-        divisions,
-        journal,
-        market,
-      },
-    );
+    return try_dispatch_corp_fetch(state, *corp_id, corporations, esi, db, msg);
   }
   let base = pod_ui::views::wallet::update(state, Message::CharacterPicker(msg));
   recompute_derived(state);

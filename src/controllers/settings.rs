@@ -120,17 +120,31 @@ fn reorder_task(tags: &tags_tab::State, services: &Services) -> iced::Task<Messa
 }
 
 fn toggle_feature(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  if !toggle_feature_tracking(features, feature) {
+    toggle_feature_social(features, feature);
+  }
+}
+
+fn toggle_feature_tracking(features: &mut features_tab::State, feature: &features_tab::Feature) -> bool {
   match feature {
     features_tab::Feature::AssetTracking => features.asset_tracking = !features.asset_tracking,
     features_tab::Feature::CloneMonitoring => features.clone_monitoring = !features.clone_monitoring,
     features_tab::Feature::CombatLog => features.combat_log = !features.combat_log,
+    features_tab::Feature::LocationTracking => features.location_tracking = !features.location_tracking,
+    features_tab::Feature::SkillMonitoring => features.skill_monitoring = !features.skill_monitoring,
+    _ => return false,
+  }
+  true
+}
+
+fn toggle_feature_social(features: &mut features_tab::State, feature: &features_tab::Feature) {
+  match feature {
     features_tab::Feature::Contacts => features.contacts = !features.contacts,
     features_tab::Feature::EveNotifications => features.eve_notifications = !features.eve_notifications,
-    features_tab::Feature::LocationTracking => features.location_tracking = !features.location_tracking,
     features_tab::Feature::Mail => features.mail = !features.mail,
-    features_tab::Feature::SkillMonitoring => features.skill_monitoring = !features.skill_monitoring,
     features_tab::Feature::Standings => features.standings = !features.standings,
     features_tab::Feature::Wallet => features.wallet = !features.wallet,
+    _ => {}
   }
 }
 
@@ -158,6 +172,34 @@ fn update_tags(state: &mut State, msg: tags_tab::Message, services: &Services) -
   }
 }
 
+fn apply_color_set(state: &mut State, result: Result<(i32, String, Option<String>), String>) {
+  match result {
+    Ok((id, name, color)) => {
+      if let Some(t) = state.tags.tags.iter_mut().find(|(tid, _, _)| *tid == id) {
+        *t = (id, name, color);
+      }
+    }
+    Err(e) => tracing::error!("settings: set_color failed — {e}"),
+  }
+  state.tags.color_open = None;
+}
+
+fn dispatch_set_color(id: i32, color: Option<String>, services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move {
+      db.tags()
+        .set_color(id, color.as_deref())
+        .await
+        .map(|t| (t.id, t.name, t.color))
+        .map_err(|e| e.to_string())
+    },
+    |result| Message::TagsTab(tags_tab::Message::ColorSet(result)),
+  )
+}
+
 fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
     tags_tab::Message::ColorClose => {
@@ -170,32 +212,10 @@ fn update_tags_color(state: &mut State, msg: tags_tab::Message, services: &Servi
       iced::Task::none()
     }
     tags_tab::Message::ColorSet(result) => {
-      match result {
-        Ok((id, name, color)) => {
-          if let Some(t) = state.tags.tags.iter_mut().find(|(tid, _, _)| *tid == id) {
-            *t = (id, name, color);
-          }
-        }
-        Err(e) => tracing::error!("settings: set_color failed — {e}"),
-      }
-      state.tags.color_open = None;
+      apply_color_set(state, result);
       iced::Task::none()
     }
-    tags_tab::Message::SetColor(id, color) => {
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(
-        async move {
-          db.tags()
-            .set_color(id, color.as_deref())
-            .await
-            .map(|t| (t.id, t.name, t.color))
-            .map_err(|e| e.to_string())
-        },
-        |result| Message::TagsTab(tags_tab::Message::ColorSet(result)),
-      )
-    }
+    tags_tab::Message::SetColor(id, color) => dispatch_set_color(id, color, services),
     _ => iced::Task::none(),
   }
 }
@@ -233,30 +253,37 @@ fn update_tags_create(state: &mut State, msg: tags_tab::Message, services: &Serv
   }
 }
 
+fn dispatch_delete(id: i32, services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move { db.tags().delete(id).await.map(|_| id).map_err(|e| e.to_string()) },
+    |result| Message::TagsTab(tags_tab::Message::Deleted(result)),
+  )
+}
+
+fn apply_tag_deleted(state: &mut State, result: Result<i32, String>) {
+  match result {
+    Ok(id) => {
+      state.tags.tags.retain(|(tid, _, _)| *tid != id);
+      if state.tags.editing == Some(id) {
+        state.tags.editing = None;
+        state.tags.draft.clear();
+      }
+      if state.tags.color_open == Some(id) {
+        state.tags.color_open = None;
+      }
+    }
+    Err(e) => tracing::error!("settings: tag delete failed — {e}"),
+  }
+}
+
 fn update_tags_delete(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
-    tags_tab::Message::Delete(id) => {
-      let Some(db) = services.db.clone() else {
-        return iced::Task::none();
-      };
-      iced::Task::perform(
-        async move { db.tags().delete(id).await.map(|_| id).map_err(|e| e.to_string()) },
-        |result| Message::TagsTab(tags_tab::Message::Deleted(result)),
-      )
-    }
+    tags_tab::Message::Delete(id) => dispatch_delete(id, services),
     tags_tab::Message::Deleted(result) => {
-      if let Ok(id) = result {
-        state.tags.tags.retain(|(tid, _, _)| *tid != id);
-        if state.tags.editing == Some(id) {
-          state.tags.editing = None;
-          state.tags.draft.clear();
-        }
-        if state.tags.color_open == Some(id) {
-          state.tags.color_open = None;
-        }
-      } else if let Err(e) = result {
-        tracing::error!("settings: tag delete failed — {e}");
-      }
+      apply_tag_deleted(state, result);
       iced::Task::none()
     }
     _ => iced::Task::none(),
@@ -310,6 +337,30 @@ fn apply_tag_drop(state: &mut State, services: &Services) -> iced::Task<Message>
   iced::Task::none()
 }
 
+fn apply_edit_start(state: &mut State, id: i32) {
+  let draft = state
+    .tags
+    .tags
+    .iter()
+    .find(|(tid, _, _)| *tid == id)
+    .map(|(_, n, _)| n.clone())
+    .unwrap_or_default();
+  state.tags.editing = Some(id);
+  state.tags.draft = draft;
+  state.tags.color_open = None;
+}
+
+fn apply_tag_renamed(state: &mut State, result: Result<(i32, String, Option<String>), String>) {
+  match result {
+    Ok((id, name, color)) => {
+      if let Some(t) = state.tags.tags.iter_mut().find(|(tid, _, _)| *tid == id) {
+        *t = (id, name, color);
+      }
+    }
+    Err(e) => tracing::error!("settings: tag rename failed — {e}"),
+  }
+}
+
 fn update_tags_edit(state: &mut State, msg: tags_tab::Message, services: &Services) -> iced::Task<Message> {
   match msg {
     tags_tab::Message::DraftChanged(s) => {
@@ -317,28 +368,12 @@ fn update_tags_edit(state: &mut State, msg: tags_tab::Message, services: &Servic
       iced::Task::none()
     }
     tags_tab::Message::EditStart(id) => {
-      let draft = state
-        .tags
-        .tags
-        .iter()
-        .find(|(tid, _, _)| *tid == id)
-        .map(|(_, n, _)| n.clone())
-        .unwrap_or_default();
-      state.tags.editing = Some(id);
-      state.tags.draft = draft;
-      state.tags.color_open = None;
+      apply_edit_start(state, id);
       iced::Task::none()
     }
     tags_tab::Message::Rename => submit_tag_rename(state, services),
     tags_tab::Message::Renamed(result) => {
-      match result {
-        Ok((id, name, color)) => {
-          if let Some(t) = state.tags.tags.iter_mut().find(|(tid, _, _)| *tid == id) {
-            *t = (id, name, color);
-          }
-        }
-        Err(e) => tracing::error!("settings: tag rename failed — {e}"),
-      }
+      apply_tag_renamed(state, result);
       iced::Task::none()
     }
     _ => iced::Task::none(),

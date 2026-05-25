@@ -60,6 +60,18 @@ fn compute_today_nav(latest_prices: &HashMap<i32, f64>, qty_map: &HashMap<i32, i
     .sum()
 }
 
+fn assemble_nav_result(mut nav_by_date: HashMap<NaiveDate, f64>, today_nav: f64) -> Vec<(NaiveDate, f64)> {
+  if today_nav > 0.0 {
+    nav_by_date.insert(Utc::now().date_naive(), today_nav);
+  }
+  let mut result: Vec<(NaiveDate, f64)> = nav_by_date.into_iter().collect();
+  result.sort_by_key(|(d, _)| *d);
+  if result.len() < 2 {
+    return Vec::new();
+  }
+  result
+}
+
 /// Repository for type price intraday observations and daily OHLC aggregation.
 pub struct Repo<'a> {
   db: &'a DatabaseConnection,
@@ -294,35 +306,29 @@ impl<'a> Repo<'a> {
   /// empty vec if fewer than 2 data points exist.
   #[tracing::instrument(level = "trace", skip(self))]
   pub async fn nav_history(&self, char_ids: &[i64], days: u32) -> Result<Vec<(NaiveDate, f64)>, Error> {
-    if char_ids.is_empty() {
-      return Ok(Vec::new());
-    }
-    let assets = AssetEntity::find()
-      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
-      .all(self.db)
-      .await?;
+    let assets = self.load_char_assets(char_ids).await?;
     if assets.is_empty() {
       return Ok(Vec::new());
     }
-
     let qty_map = build_qty_map(&assets);
     let tracked: Vec<i32> = qty_map.keys().copied().collect();
     let cutoff_str = (Utc::now().date_naive() - Duration::days(days as i64))
       .format("%Y-%m-%d")
       .to_string();
-
-    let mut nav_by_date = self.nav_by_date_from_history(&tracked, &cutoff_str, &qty_map).await?;
+    let nav_by_date = self.nav_by_date_from_history(&tracked, &cutoff_str, &qty_map).await?;
     let today_nav = self.today_nav_from_intraday(&tracked, &qty_map).await?;
-    if today_nav > 0.0 {
-      nav_by_date.insert(Utc::now().date_naive(), today_nav);
-    }
+    Ok(assemble_nav_result(nav_by_date, today_nav))
+  }
 
-    let mut result: Vec<(NaiveDate, f64)> = nav_by_date.into_iter().collect();
-    result.sort_by_key(|(d, _)| *d);
-    if result.len() < 2 {
-      result.clear();
+  async fn load_char_assets(&self, char_ids: &[i64]) -> Result<Vec<crate::entities::character_asset::Model>, Error> {
+    if char_ids.is_empty() {
+      return Ok(Vec::new());
     }
-    Ok(result)
+    AssetEntity::find()
+      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
+      .all(self.db)
+      .await
+      .map_err(Error::from)
   }
 
   /// Returns distinct UTC calendar dates that have intraday rows older than

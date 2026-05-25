@@ -16,15 +16,27 @@ use crate::{
   },
 };
 
+fn find_attr_int(attrs: &[dogma_attribute::Entry], attr_id: i32) -> Option<i32> {
+  for a in attrs {
+    if a.attribute_id == attr_id {
+      return Some(a.value as i32);
+    }
+  }
+  None
+}
+
+fn find_attr_level(attrs: &[dogma_attribute::Entry], attr_id: i32) -> Option<u8> {
+  for a in attrs {
+    if a.attribute_id == attr_id {
+      return Some(a.value as u8);
+    }
+  }
+  None
+}
+
 fn extract_skill_pair(attrs: &[dogma_attribute::Entry], type_attr_id: i32, level_attr_id: i32) -> Option<(i32, u8)> {
-  let tid = attrs
-    .iter()
-    .find(|a| a.attribute_id == type_attr_id)
-    .map(|a| a.value as i32)?;
-  let lvl = attrs
-    .iter()
-    .find(|a| a.attribute_id == level_attr_id)
-    .map(|a| a.value as u8)?;
+  let tid = find_attr_int(attrs, type_attr_id)?;
+  let lvl = find_attr_level(attrs, level_attr_id)?;
   if tid > 0 && lvl > 0 { Some((tid, lvl)) } else { None }
 }
 

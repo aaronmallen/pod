@@ -49,14 +49,29 @@ pub fn new(
 /// Processes a character detail message, returning a follow-up task.
 pub fn update(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
   match message {
-    Message::TabChanged(tab) => {
-      tracing::info!(
-        "character: tab selected — {tab:?}, character_id: {}",
-        state.character_id
-      );
-      state.active_tab = tab;
+    Message::TabChanged(tab) => handle_tab_changed(state, tab),
+    Message::Picker(msg) => {
+      state.picker.update(msg);
       iced::Task::none()
     }
+    Message::CharacterSwitched(_) | Message::NavigateToDetail(_) | Message::ReauthorizeCharacter(_) => {
+      iced::Task::none()
+    }
+    msg => handle_filter_or_loaded(state, msg, services),
+  }
+}
+
+fn handle_tab_changed(state: &mut State, tab: Tab) -> iced::Task<Message> {
+  tracing::info!(
+    "character: tab selected — {tab:?}, character_id: {}",
+    state.character_id
+  );
+  state.active_tab = tab;
+  iced::Task::none()
+}
+
+fn handle_filter_or_loaded(state: &mut State, message: Message, services: &Services) -> iced::Task<Message> {
+  match message {
     Message::ContactsFilterChanged(f) => {
       tracing::info!("character: contacts filter changed — {f:?}");
       state.contact_filter = f;
@@ -76,13 +91,6 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
       iced::Task::none()
     }
     Message::NotificationRead(id) => handle_notification_read(state, id),
-    Message::CharacterSwitched(_) | Message::NavigateToDetail(_) | Message::ReauthorizeCharacter(_) => {
-      iced::Task::none()
-    }
-    Message::Picker(msg) => {
-      state.picker.update(msg);
-      iced::Task::none()
-    }
     msg => dispatch_loaded(state, msg, services),
   }
 }
@@ -754,8 +762,15 @@ async fn load_killlog(
   for r in &refs {
     raw_details.push(esi.killmail(r.killmail_id, &r.killmail_hash).detail().await);
   }
+  Ok(assemble_killlog_entries(raw_details, *character.id(), &db, &esi).await)
+}
 
-  let char_id = *character.id();
+async fn assemble_killlog_entries(
+  raw_details: Vec<Result<pod_esi::models::killmail::Killmail, pod_esi::Error>>,
+  char_id: i64,
+  db: &pod_db::Repo,
+  esi: &pod_esi::Client,
+) -> Vec<pod_model::CharacterKillEntry> {
   let system_ids = collect_system_ids(&raw_details);
   let system_rows = db
     .universe()
@@ -781,7 +796,7 @@ async fn load_killlog(
   let killmail_ids: Vec<i64> = raw_details.iter().flatten().map(|k| k.killmail_id).collect();
 
   let (entity_name_map, zkill_value_map) = tokio::join!(
-    resolve_killlog_entity_names(&entity_ids, &esi),
+    resolve_killlog_entity_names(&entity_ids, esi),
     fetch_zkill_values(char_id, &killmail_ids),
   );
 
@@ -797,7 +812,7 @@ async fn load_killlog(
       &zkill_value_map,
     ));
   }
-  Ok(entries)
+  entries
 }
 
 fn collect_system_ids(raw_details: &[Result<pod_esi::models::killmail::Killmail, pod_esi::Error>]) -> Vec<i32> {

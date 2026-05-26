@@ -5,7 +5,7 @@ use iced::{
   widget::{Space, button, column, container, row, scrollable, text},
 };
 
-use super::{MODAL_LAYOUT, MODAL_SOURCE_PATTERNS, Message, section_divider};
+use super::{MODAL_LAYOUT, MODAL_SOURCE_PATTERNS, Message, filter_sidebar::section_divider};
 use crate::{
   style::{
     color,

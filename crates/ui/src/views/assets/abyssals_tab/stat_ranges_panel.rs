@@ -7,7 +7,7 @@ use iced::{
 use pod_model::AbyssalStatViewModel;
 
 use super::{
-  AbyssalsState, Message, RangeSliderProgram, SliderEndpoint, filter_section, format_stat_value,
+  AbyssalsState, Message, RangeSliderProgram, SliderEndpoint, filter_sidebar::filter_section, format_stat_value,
   module_type_picker::modal_source_pattern,
 };
 use crate::style::{

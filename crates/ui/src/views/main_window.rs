@@ -98,6 +98,12 @@ pub struct State {
   /// Applied to the mail state the next time the user navigates to mail.
   pub pending_snooze_expired: Vec<(i64, i64)>,
   pub refresh_successes: u8,
+  /// Whether the most recent ESI error was a server-side (5xx) failure.
+  pub registry_has_server_error: bool,
+  /// ESI data type names currently being fetched.
+  pub registry_in_flight: Vec<String>,
+  /// Timestamp of the most recent successful sync completion.
+  pub registry_last_synced_at: Option<std::time::Instant>,
   pub skills_left_pane_width: f32,
   pub sync: components::status_bar::SyncState,
   pub toast: Option<String>,
@@ -131,7 +137,14 @@ impl<'a> Component<'a> {
     let content = render_content(self.state, view);
 
     let bar = components::status_bar::Component::new()
-      .render(&self.state.eve_time, &self.state.sync, self.state.esi_connected)
+      .render(
+        &self.state.eve_time,
+        &self.state.sync,
+        self.state.esi_connected,
+        &self.state.registry_in_flight,
+        self.state.registry_last_synced_at,
+        self.state.registry_has_server_error,
+      )
       .map(Message::StatusBar);
 
     column([row([rail_el, content]).height(Length::Fill).into(), bar]).into()

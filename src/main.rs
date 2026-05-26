@@ -316,7 +316,10 @@ fn update_other(app: &mut App, message: Message) -> Task<Message> {
       Task::none()
     }
     Message::Menu(msg) => update_menu(app, msg),
-    Message::Sync(_event) => Task::none(),
+    Message::Sync(event) => {
+      update_sync_registry(app, event);
+      Task::none()
+    }
     msg => update_secondary(app, msg),
   }
 }
@@ -404,6 +407,39 @@ fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
+}
+
+fn update_sync_registry(app: &mut App, event: SyncEvent) {
+  let AppPhase::Main(state) = &mut app.phase else {
+    return;
+  };
+  match event {
+    SyncEvent::Completed {
+      data_type,
+      completed_at,
+      ..
+    } => {
+      state.registry_in_flight.retain(|t| *t != data_type);
+      state.registry_last_synced_at = Some(completed_at);
+    }
+    SyncEvent::Error {
+      data_type,
+      is_server_error,
+      ..
+    } => {
+      state.registry_in_flight.retain(|t| *t != data_type);
+      if is_server_error {
+        state.registry_has_server_error = true;
+      }
+    }
+    SyncEvent::InFlight {
+      data_type, ..
+    } => {
+      if !state.registry_in_flight.contains(&data_type) {
+        state.registry_in_flight.push(data_type);
+      }
+    }
+  }
 }
 
 fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> Task<Message> {

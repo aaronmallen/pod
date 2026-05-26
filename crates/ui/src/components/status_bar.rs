@@ -29,7 +29,15 @@ impl Component {
     Self
   }
 
-  pub fn render<'a>(self, eve_time: &'a str, sync: &'a SyncState, esi_connected: bool) -> Element<'a, Message> {
+  pub fn render<'a>(
+    self,
+    eve_time: &'a str,
+    sync: &'a SyncState,
+    esi_connected: bool,
+    in_flight: &'a [String],
+    last_synced_at: Option<std::time::Instant>,
+    has_server_error: bool,
+  ) -> Element<'a, Message> {
     let is_syncing = sync.is_syncing();
     let progress = sync.progress();
 
@@ -37,7 +45,14 @@ impl Component {
     let content: Element<'a, Message> = row([
       eve_time::view(eve_time),
       components::Separator::vertical().render(),
-      sync_indicator::view(is_syncing, progress, sync.secs_since_sync()),
+      sync_indicator::view(
+        is_syncing,
+        progress,
+        sync.secs_since_sync(),
+        in_flight,
+        last_synced_at,
+        has_server_error,
+      ),
       components::Separator::vertical().render(),
       refresh_button::view(is_syncing),
       components::Separator::vertical().render(),

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use iced::{
   Background, Border, Element, Length, Padding,
   widget::{container, row, text},
@@ -5,9 +7,18 @@ use iced::{
 
 use crate::style::{color, spacing, typography};
 
-pub fn view(is_syncing: bool, progress: f32, secs_since_sync: u64) -> Element<'static, super::Message> {
+pub fn view<'a>(
+  is_syncing: bool,
+  progress: f32,
+  secs_since_sync: u64,
+  in_flight: &'a [String],
+  last_synced_at: Option<Instant>,
+  has_server_error: bool,
+) -> Element<'a, super::Message> {
   let dot_color = if is_syncing {
     color::accent::PLASMA
+  } else if has_server_error {
+    color::status::DANGER
   } else {
     color::status::ONLINE
   };
@@ -24,9 +35,13 @@ pub fn view(is_syncing: bool, progress: f32, secs_since_sync: u64) -> Element<'s
     });
 
   let label = if is_syncing {
-    syncing_label(progress)
+    if !in_flight.is_empty() {
+      syncing_named_label(in_flight)
+    } else {
+      syncing_progress_label(progress)
+    }
   } else {
-    synced_label(secs_since_sync)
+    idle_label(secs_since_sync, last_synced_at)
   };
 
   container(
@@ -46,7 +61,30 @@ pub fn view(is_syncing: bool, progress: f32, secs_since_sync: u64) -> Element<'s
   .into()
 }
 
-fn syncing_label(progress: f32) -> Element<'static, super::Message> {
+fn syncing_named_label(in_flight: &[String]) -> Element<'_, super::Message> {
+  let names = in_flight.join(", ");
+  row([
+    text("Syncing:")
+      .font(typography::mono::REGULAR)
+      .size(10.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text(names)
+      .font(typography::mono::REGULAR)
+      .size(10.0)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_1)
+  .align_y(iced::alignment::Vertical::Center)
+  .into()
+}
+
+fn syncing_progress_label(progress: f32) -> Element<'static, super::Message> {
   let pct = (progress * 100.0).round() as u16;
   let bar_fill = pct.max(1);
   let bar_rest = 100u16.saturating_sub(bar_fill);
@@ -70,6 +108,23 @@ fn syncing_label(progress: f32) -> Element<'static, super::Message> {
   .spacing(10.0)
   .align_y(iced::alignment::Vertical::Center)
   .into()
+}
+
+fn idle_label(secs_since_sync: u64, last_synced_at: Option<Instant>) -> Element<'static, super::Message> {
+  if last_synced_at.is_none() {
+    return not_synced_label();
+  }
+  synced_label(secs_since_sync)
+}
+
+fn not_synced_label() -> Element<'static, super::Message> {
+  text("Not synced yet")
+    .font(typography::mono::REGULAR)
+    .size(10.0)
+    .style(|_| text::Style {
+      color: Some(color::text::TERTIARY),
+    })
+    .into()
 }
 
 fn sync_progress_bar(bar_fill: u16, bar_rest: u16) -> Element<'static, super::Message> {

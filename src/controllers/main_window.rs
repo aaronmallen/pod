@@ -154,19 +154,21 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 
 /// Processes a main window message and returns a task.
 ///
-/// Returns `(task, Option<new_config>)` — the config is `Some` whenever a
-/// settings toggle or reset just ran, so the caller can update `app.config`.
+/// Returns `(task, Option<new_config>, Option<restart_msg>)` — the config
+/// is `Some` whenever a settings toggle or reset just ran, so the caller
+/// can update `app.config`; the restart_msg is `Some` when a storage path
+/// change requires a restart.
 pub fn update(
   state: &mut State,
   message: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   if let Some(result) = update_state_only(state, &message) {
     return result;
   }
   match message {
-    Message::Assets(msg) => (update_assets(state, msg, services), None),
-    Message::Characters(msg) => (update_characters(state, msg, services), None),
+    Message::Assets(msg) => (update_assets(state, msg, services), None, None),
+    Message::Characters(msg) => (update_characters(state, msg, services), None, None),
     msg => update_settings_or_other(state, msg, services),
   }
 }
@@ -175,7 +177,7 @@ fn update_settings_or_other(
   state: &mut State,
   msg: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   match msg {
     Message::Settings(msg) => update_settings(state, msg, services),
     msg => handle_other_message(state, msg, services),
@@ -186,13 +188,13 @@ fn handle_nav_utility_message(
   state: &mut State,
   msg: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   match msg {
-    Message::Navigate(nav) => (update_navigate(state, nav, services), None),
+    Message::Navigate(nav) => (update_navigate(state, nav, services), None, None),
     Message::RefreshAll | Message::StatusBar(status_bar::Message::RefreshPressed) => {
-      (update_refresh_all(state, services), None)
+      (update_refresh_all(state, services), None, None)
     }
-    Message::ShowToast(msg) => (show_toast(state, msg), None),
+    Message::ShowToast(msg) => (show_toast(state, msg), None, None),
     msg => handle_snooze_or_ignore(state, msg, services),
   }
 }
@@ -201,10 +203,10 @@ fn handle_snooze_or_ignore(
   state: &mut State,
   msg: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   match msg {
-    Message::SnoozeTick => (update_snooze_tick(state, services), None),
-    _ => (iced::Task::none(), None),
+    Message::SnoozeTick => (update_snooze_tick(state, services), None, None),
+    _ => (iced::Task::none(), None, None),
   }
 }
 
@@ -212,10 +214,10 @@ fn handle_other_message(
   state: &mut State,
   msg: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   match msg {
-    Message::CharacterDetail(m) => (update_character_detail(state, m, services), None),
-    Message::Mail(m) => (update_mail(state, m, services), None),
+    Message::CharacterDetail(m) => (update_character_detail(state, m, services), None, None),
+    Message::Mail(m) => (update_mail(state, m, services), None, None),
     msg => handle_skills_wallet_or_nav(state, msg, services),
   }
 }
@@ -224,10 +226,10 @@ fn handle_skills_wallet_or_nav(
   state: &mut State,
   msg: Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   match msg {
-    Message::Skills(m) => (update_skills(state, m, services), None),
-    Message::Wallet(m) => (update_wallet(state, m, services), None),
+    Message::Skills(m) => (update_skills(state, m, services), None, None),
+    Message::Wallet(m) => (update_wallet(state, m, services), None, None),
     msg => handle_nav_utility_message(state, msg, services),
   }
 }
@@ -235,19 +237,19 @@ fn handle_skills_wallet_or_nav(
 fn update_state_only(
   state: &mut State,
   message: &Message,
-) -> Option<(iced::Task<Message>, Option<crate::config::Settings>)> {
+) -> Option<(iced::Task<Message>, Option<crate::config::Settings>, Option<String>)> {
   match message {
     Message::DismissToast => {
       state.toast = None;
-      Some((iced::Task::none(), None))
+      Some((iced::Task::none(), None, None))
     }
     Message::EveTimeTick => {
       state.eve_time = utc_time_string();
-      Some((iced::Task::none(), None))
+      Some((iced::Task::none(), None, None))
     }
     Message::HoverNav(nav) => {
       state.hovered_nav = *nav;
-      Some((iced::Task::none(), None))
+      Some((iced::Task::none(), None, None))
     }
     _ => None,
   }
@@ -800,7 +802,7 @@ fn navigate_to_characters(state: &mut State, services: &Services) -> iced::Task<
 fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
   match nav {
     Nav::Settings => {
-      let (s, task) = settings_ctrl::new(services.config.features());
+      let (s, task) = settings_ctrl::new(&services.config);
       swap_active_view(state, ActiveView::Settings(s));
       task.map(Message::Settings)
     }
@@ -860,23 +862,24 @@ fn update_settings(
   state: &mut State,
   msg: settings::Message,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
-  let is_save = matches!(
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
+  let is_features_save = matches!(
     &msg,
     settings::Message::FeaturesTab(settings::features_tab::Message::ToggleFeature(_))
       | settings::Message::ResetDefaults
   );
   let ActiveView::Settings(s) = &mut state.active_view else {
-    return (iced::Task::none(), None);
+    return (iced::Task::none(), None, None);
   };
-  let settings_task = settings_ctrl::update(s, msg, services).map(Message::Settings);
-  let updated_cfg = if is_save {
+  let (settings_task, restart_msg, storage_cfg) = settings_ctrl::update(s, msg, services);
+  let settings_task = settings_task.map(Message::Settings);
+  let updated_cfg = if is_features_save {
     Some(settings_ctrl::updated_config(s, &services.config))
   } else {
-    None
+    storage_cfg
   };
 
-  apply_settings_save(state, settings_task, updated_cfg, services)
+  apply_settings_save(state, settings_task, updated_cfg, restart_msg, services)
 }
 
 fn nav_feature_flag(state: &State, nav: Nav) -> Option<bool> {
@@ -915,10 +918,11 @@ fn apply_settings_save(
   state: &mut State,
   settings_task: iced::Task<Message>,
   updated_cfg: Option<crate::config::Settings>,
+  restart_msg: Option<String>,
   services: &Services,
-) -> (iced::Task<Message>, Option<crate::config::Settings>) {
+) -> (iced::Task<Message>, Option<crate::config::Settings>, Option<String>) {
   let Some(cfg) = updated_cfg else {
-    return (settings_task, None);
+    return (settings_task, None, restart_msg);
   };
   apply_settings_features(state, &cfg);
   let toast_task = iced::Task::done(Message::ShowToast("Preferences saved".to_string()));
@@ -929,9 +933,10 @@ fn apply_settings_save(
     return (
       iced::Task::batch([settings_task, chars_task.map(Message::Characters), toast_task]),
       Some(cfg),
+      restart_msg,
     );
   }
-  (iced::Task::batch([settings_task, toast_task]), Some(cfg))
+  (iced::Task::batch([settings_task, toast_task]), Some(cfg), restart_msg)
 }
 
 fn update_snooze_tick(state: &mut State, services: &Services) -> iced::Task<Message> {

@@ -1,11 +1,14 @@
 //! Settings view: feature-flag toggles and tag management.
 
 pub mod features_tab;
+pub mod storage_tab;
 pub mod tags_tab;
 
 pub use tags_tab::TagSortMode;
 
 mod sidebar;
+
+use std::path::PathBuf;
 
 use iced::{
   Background, Element, Length, Padding,
@@ -20,6 +23,7 @@ use crate::style::{color, spacing};
 pub enum Category {
   #[default]
   Features,
+  Storage,
   Tags,
 }
 
@@ -45,6 +49,9 @@ impl<'a> Component<'a> {
       Category::Features => features_tab::Component::new(&state.features)
         .render()
         .map(Message::FeaturesTab),
+      Category::Storage => storage_tab::Component::new(&state.storage)
+        .render()
+        .map(Message::StorageTab),
       Category::Tags => tags_tab::Component::new(&state.tags).render().map(Message::TagsTab),
     };
     let body: Element<'_, Message> = row([categories, panel]).width(Length::Fill).height(Length::Fill).into();
@@ -68,6 +75,23 @@ pub enum Message {
   FeaturesTab(features_tab::Message),
   /// All settings were reset to their defaults.
   ResetDefaults,
+  /// User clicked Browse for a storage path.
+  StorageBrowse(storage_tab::PathId),
+  /// User confirmed a move for the given storage path.
+  StorageConfirmMove(storage_tab::PathId),
+  /// User chose to skip moving files for the given storage path.
+  StorageConfirmSkip(storage_tab::PathId),
+  /// User cancelled a pending storage path change.
+  StorageConfirmCancel(storage_tab::PathId),
+  /// Commit the pending path change for the given storage path.
+  StoragePathCommit(storage_tab::PathId),
+  /// OS folder picker returned a result for the given storage location.
+  /// `None` means the user cancelled the dialog.
+  StoragePathSelected(storage_tab::PathId, Option<PathBuf>),
+  /// Reset a storage path to its platform default.
+  StorageResetPath(storage_tab::PathId),
+  /// A raw message from the storage tab panel.
+  StorageTab(storage_tab::Message),
   /// A message from the tags tab panel.
   TagsTab(tags_tab::Message),
 }
@@ -79,6 +103,8 @@ pub struct State {
   pub active_category: Category,
   /// State for the features tab panel.
   pub features: features_tab::State,
+  /// State for the storage tab panel.
+  pub storage: storage_tab::State,
   /// State for the tags tab panel.
   pub tags: tags_tab::State,
 }

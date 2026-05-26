@@ -29,6 +29,8 @@ pub enum BannerState {
   Error(String),
   /// Update installed; app needs to restart.
   ReadyToRestart,
+  /// A path or config change has been saved; restart required to take effect.
+  RestartRequired(String),
   /// A newer version is available; carries the version string.
   UpdateAvailable(String),
 }
@@ -62,6 +64,7 @@ fn banner_inner(state: BannerState) -> Element<'static, Message> {
     BannerState::Downloading => render_downloading(),
     BannerState::Error(msg) => render_error(msg),
     BannerState::ReadyToRestart => render_ready_to_restart(),
+    BannerState::RestartRequired(msg) => render_restart_required(msg),
     BannerState::UpdateAvailable(version) => render_update_available(version),
   }
 }
@@ -139,6 +142,24 @@ fn render_ready_to_restart<'a>() -> Element<'a, Message> {
       .into(),
     Space::new().width(Length::Fill).into(),
     action_button("Restart Now", Message::RestartPressed),
+  ])
+  .align_y(iced::alignment::Vertical::Center)
+  .into()
+}
+
+fn render_restart_required<'a>(msg: String) -> Element<'a, Message> {
+  row([
+    text(format!("{msg} \u{2014} restart to apply"))
+      .font(typography::body::REGULAR)
+      .size(13.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    Space::new().width(Length::Fill).into(),
+    action_button("Restart Now", Message::RestartPressed),
+    Space::new().width(8.0).into(),
+    dismiss_button(),
   ])
   .align_y(iced::alignment::Vertical::Center)
   .into()

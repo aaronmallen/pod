@@ -1,14 +1,18 @@
 //! Settings controller: manages feature flag state and config persistence.
 
+use std::path::PathBuf;
+
 use pod_ui::{
   components::color_picker::normalize_hex,
-  views::settings::{Category, Message, State, features_tab, tags_tab},
+  views::settings::{Category, Message, State, features_tab, storage_tab, tags_tab},
 };
 
 use crate::services::Services;
 
-/// Creates initial settings state from the current feature config.
-pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<Message>) {
+/// Creates initial settings state from the current config.
+pub fn new(config: &crate::config::Settings) -> (State, iced::Task<Message>) {
+  let features = config.features();
+  let storage_cfg = config.storage();
   let state = State {
     active_category: Category::default(),
     features: features_tab::State {
@@ -24,23 +28,50 @@ pub fn new(features: &crate::config::features::Settings) -> (State, iced::Task<M
       standings: *features.standings(),
       wallet: *features.wallet(),
     },
+    storage: storage_tab::State::from_paths(
+      storage_cfg.db_dir().as_ref(),
+      storage_cfg.cache_dir().as_ref(),
+      storage_cfg.log_dir().as_ref(),
+    ),
     tags: tags_tab::State::default(),
   };
   (state, iced::Task::none())
 }
 
+/// Result of a settings message update that may include a new config.
+///
+/// `(task, restart_required_msg, new_config)`
+pub type UpdateResult = (iced::Task<Message>, Option<String>, Option<crate::config::Settings>);
+
 /// Processes a settings message, persists the config to disk, and
 /// returns a task. The caller is responsible for updating `app.config`
-/// by calling [`updated_config`] after any toggle or reset.
-pub fn update(state: &mut State, msg: Message, services: &Services) -> iced::Task<Message> {
+/// when `new_config` is `Some`.
+///
+/// Returns `(task, restart_required_msg, new_config)`.
+pub fn update(state: &mut State, msg: Message, services: &Services) -> UpdateResult {
   match msg {
-    Message::CategorySelected(cat) => handle_category_selected(state, cat, services),
-    Message::FeaturesTab(inner) => handle_features_tab(state, inner),
+    Message::CategorySelected(cat) => (handle_category_selected(state, cat, services), None, None),
+    Message::FeaturesTab(inner) => (handle_features_tab(state, inner), None, None),
     Message::ResetDefaults => {
       reset_features_defaults(&mut state.features);
-      iced::Task::none()
+      (iced::Task::none(), None, None)
     }
-    Message::TagsTab(inner) => update_tags(state, inner, services),
+    Message::StorageBrowse(id) => (handle_storage_browse(id), None, None),
+    Message::StorageConfirmCancel(id) => {
+      handle_storage_confirm_cancel(state, id);
+      (iced::Task::none(), None, None)
+    }
+    Message::StorageConfirmMove(id) => handle_storage_confirm_move(state, id, services),
+    Message::StorageConfirmSkip(id) => handle_storage_confirm_skip(state, id, services),
+    Message::StoragePathCommit(id) => handle_storage_path_commit(state, id, services),
+    Message::StoragePathSelected(id, Some(path)) => {
+      handle_storage_path_selected(state, id, path);
+      (iced::Task::none(), None, None)
+    }
+    Message::StoragePathSelected(_, None) => (iced::Task::none(), None, None),
+    Message::StorageResetPath(id) => handle_storage_reset_path(state, id, services),
+    Message::StorageTab(inner) => handle_storage_tab_inner(state, inner, services),
+    Message::TagsTab(inner) => (update_tags(state, inner, services), None, None),
   }
 }
 
@@ -51,6 +82,225 @@ fn handle_category_selected(state: &mut State, cat: Category, services: &Service
     load_tags_task(services)
   } else {
     iced::Task::none()
+  }
+}
+
+fn storage_browse_label(id: &storage_tab::PathId) -> &'static str {
+  match id {
+    storage_tab::PathId::CacheDir => "Choose Cache Directory",
+    storage_tab::PathId::DbDir => "Choose Database Directory",
+    storage_tab::PathId::LogDir => "Choose Log Directory",
+  }
+}
+
+fn handle_storage_browse(id: storage_tab::PathId) -> iced::Task<Message> {
+  let label = storage_browse_label(&id).to_string();
+  iced::Task::perform(
+    async move {
+      rfd::AsyncFileDialog::new()
+        .set_title(label)
+        .pick_folder()
+        .await
+        .map(|f| f.path().to_path_buf())
+    },
+    move |path| Message::StoragePathSelected(id, path),
+  )
+}
+
+fn current_storage_path(id: &storage_tab::PathId, config: &crate::config::Settings) -> Option<PathBuf> {
+  let storage = config.storage();
+  match id {
+    storage_tab::PathId::CacheDir => storage.cache_dir().clone(),
+    storage_tab::PathId::DbDir => storage.db_dir().clone(),
+    storage_tab::PathId::LogDir => storage.log_dir().clone(),
+  }
+}
+
+fn default_storage_path(id: &storage_tab::PathId) -> Option<PathBuf> {
+  match id {
+    storage_tab::PathId::CacheDir => dir_spec::cache_home().map(|p| p.join("pod")),
+    storage_tab::PathId::DbDir => dir_spec::data_home().map(|p| p.join("pod")),
+    storage_tab::PathId::LogDir => dir_spec::state_home().map(|p| p.join("pod").join("logs")),
+  }
+}
+
+fn effective_current_path(id: &storage_tab::PathId, config: &crate::config::Settings) -> Option<PathBuf> {
+  current_storage_path(id, config).or_else(|| default_storage_path(id))
+}
+
+fn has_existing_data(id: &storage_tab::PathId, current: &std::path::Path) -> bool {
+  match id {
+    storage_tab::PathId::DbDir => current.join("pod.db").exists(),
+    storage_tab::PathId::CacheDir | storage_tab::PathId::LogDir => std::fs::read_dir(current)
+      .map(|mut d| d.next().is_some())
+      .unwrap_or(false),
+  }
+}
+
+fn handle_storage_path_selected(state: &mut State, id: storage_tab::PathId, path: PathBuf) {
+  let row = state.storage.row_mut(&id);
+  row.draft = path.display().to_string();
+}
+
+fn handle_storage_path_commit(state: &mut State, id: storage_tab::PathId, services: &Services) -> UpdateResult {
+  let new_path_str = state.storage.row(&id).draft.clone();
+  if new_path_str.is_empty() {
+    return (iced::Task::none(), None, None);
+  }
+  let new_path = PathBuf::from(&new_path_str);
+  let Some(current) = effective_current_path(&id, &services.config) else {
+    return save_storage_path(state, id, Some(new_path), services);
+  };
+  if current == new_path {
+    return (iced::Task::none(), None, None);
+  }
+  if has_existing_data(&id, &current) {
+    let row = state.storage.row_mut(&id);
+    row.previous = current.display().to_string();
+    row.confirm_move = true;
+    return (iced::Task::none(), None, None);
+  }
+  save_storage_path(state, id, Some(new_path), services)
+}
+
+fn handle_storage_confirm_cancel(state: &mut State, id: storage_tab::PathId) {
+  let row = state.storage.row_mut(&id);
+  row.draft = row.previous.clone();
+  row.confirm_move = false;
+}
+
+fn handle_storage_confirm_skip(state: &mut State, id: storage_tab::PathId, services: &Services) -> UpdateResult {
+  let row = state.storage.row_mut(&id);
+  row.confirm_move = false;
+  let new_path = PathBuf::from(row.draft.clone());
+  save_storage_path(state, id, Some(new_path), services)
+}
+
+fn handle_storage_confirm_move(state: &mut State, id: storage_tab::PathId, _services: &Services) -> UpdateResult {
+  let row = state.storage.row_mut(&id);
+  row.confirm_move = false;
+  let old_path = PathBuf::from(row.previous.clone());
+  let new_path = PathBuf::from(row.draft.clone());
+  let id_for_async = id.clone();
+  let id_for_map = id;
+  let task = iced::Task::perform(
+    async move { move_storage_data(&id_for_async, &old_path, &new_path).await },
+    move |result| match result {
+      Ok(()) => Message::StoragePathCommit(id_for_map.clone()),
+      Err(e) => {
+        tracing::error!("storage: move failed — {e}");
+        Message::StorageConfirmSkip(id_for_map)
+      }
+    },
+  );
+  (task, None, None)
+}
+
+async fn move_storage_data(
+  id: &storage_tab::PathId,
+  old: &std::path::Path,
+  new: &std::path::Path,
+) -> Result<(), String> {
+  if let Err(e) = tokio::fs::create_dir_all(new).await {
+    return Err(format!("create_dir_all failed: {e}"));
+  }
+  match id {
+    storage_tab::PathId::DbDir => move_db_files(old, new).await,
+    storage_tab::PathId::CacheDir | storage_tab::PathId::LogDir => move_dir_contents(old, new).await,
+  }
+}
+
+async fn move_db_files(old: &std::path::Path, new: &std::path::Path) -> Result<(), String> {
+  let files = ["pod.db", "pod.db-shm", "pod.db-wal"];
+  for name in files {
+    let src = old.join(name);
+    if !src.exists() {
+      continue;
+    }
+    let dst = new.join(name);
+    move_single_file(&src, &dst).await?;
+  }
+  Ok(())
+}
+
+async fn move_single_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+  match tokio::fs::rename(src, dst).await {
+    Ok(()) => Ok(()),
+    Err(_) => copy_then_delete(src, dst).await,
+  }
+}
+
+async fn copy_then_delete(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+  tokio::fs::copy(src, dst)
+    .await
+    .map_err(|e| format!("copy failed: {e}"))?;
+  tokio::fs::remove_file(src)
+    .await
+    .map_err(|e| format!("remove after copy failed: {e}"))?;
+  Ok(())
+}
+
+async fn move_dir_contents(old: &std::path::Path, new: &std::path::Path) -> Result<(), String> {
+  let mut rd = match tokio::fs::read_dir(old).await {
+    Ok(r) => r,
+    Err(_) => return Ok(()),
+  };
+  while let Ok(Some(entry)) = rd.next_entry().await {
+    let src = entry.path();
+    let Some(name) = src.file_name() else { continue };
+    let dst = new.join(name);
+    move_single_file(&src, &dst).await?;
+  }
+  Ok(())
+}
+
+fn save_storage_path(
+  state: &mut State,
+  id: storage_tab::PathId,
+  path: Option<PathBuf>,
+  services: &Services,
+) -> UpdateResult {
+  let row = state.storage.row_mut(&id);
+  let display = path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+  row.draft = display.clone();
+  row.previous = display;
+  row.confirm_move = false;
+  let new_config = updated_storage_config(&id, path, &services.config);
+  (
+    iced::Task::none(),
+    Some("Path changes saved".to_string()),
+    Some(new_config),
+  )
+}
+
+fn handle_storage_reset_path(state: &mut State, id: storage_tab::PathId, services: &Services) -> UpdateResult {
+  let row = state.storage.row_mut(&id);
+  row.draft = String::new();
+  row.previous = String::new();
+  row.confirm_move = false;
+  let new_config = updated_storage_config(&id, None, &services.config);
+  (
+    iced::Task::none(),
+    Some("Path changes saved".to_string()),
+    Some(new_config),
+  )
+}
+
+fn handle_storage_tab_inner(state: &mut State, inner: storage_tab::Message, services: &Services) -> UpdateResult {
+  match inner {
+    storage_tab::Message::Browse(id) => (handle_storage_browse(id), None, None),
+    storage_tab::Message::Commit(id) => handle_storage_path_commit(state, id, services),
+    storage_tab::Message::ConfirmCancel(id) => {
+      handle_storage_confirm_cancel(state, id);
+      (iced::Task::none(), None, None)
+    }
+    storage_tab::Message::ConfirmMove(id) => handle_storage_confirm_move(state, id, services),
+    storage_tab::Message::ConfirmSkip(id) => handle_storage_confirm_skip(state, id, services),
+    storage_tab::Message::PathSelected(id, path) => {
+      handle_storage_path_selected(state, id.clone(), path);
+      (iced::Task::none(), None, None)
+    }
+    storage_tab::Message::ResetPath(id) => handle_storage_reset_path(state, id, services),
   }
 }
 
@@ -99,6 +349,25 @@ pub fn updated_config(state: &State, current: &crate::config::Settings) -> crate
   );
   let mut config = current.clone();
   config.set_features(features);
+  crate::config::save(&config);
+  config
+}
+
+/// Builds an updated config with the given storage path override applied,
+/// persists it to disk, and returns it so the caller can update `app.config`.
+pub fn updated_storage_config(
+  id: &storage_tab::PathId,
+  path: Option<PathBuf>,
+  current: &crate::config::Settings,
+) -> crate::config::Settings {
+  let mut storage = current.storage().clone();
+  match id {
+    storage_tab::PathId::CacheDir => storage.set_cache_dir(path),
+    storage_tab::PathId::DbDir => storage.set_db_dir(path),
+    storage_tab::PathId::LogDir => storage.set_log_dir(path),
+  }
+  let mut config = current.clone();
+  config.set_storage(storage);
   crate::config::save(&config);
   config
 }

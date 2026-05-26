@@ -20,6 +20,12 @@ pub(super) fn render_categories_pane(state: &State) -> Element<'_, Message> {
     state.active_category == Category::Features,
     Message::CategorySelected(Category::Features),
   );
+  let storage_row = categories_item_row(
+    "Storage",
+    None,
+    state.active_category == Category::Storage,
+    Message::CategorySelected(Category::Storage),
+  );
   let tags_row = categories_item_row(
     "Tags",
     Some(state.tags.colored_count().to_string()),
@@ -37,6 +43,7 @@ pub(super) fn render_categories_pane(state: &State) -> Element<'_, Message> {
       })
       .into(),
     features_row,
+    storage_row,
     tags_row,
   ])
   .padding(Padding {

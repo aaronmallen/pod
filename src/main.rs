@@ -42,6 +42,7 @@ struct App {
   plan_window_position: Option<Point>,
   plan_window_size: Size,
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
+  restart_required: Option<String>,
   step_label: String,
   update_dismissed_for: Option<String>,
   update_state: services::updater::UpdateState,
@@ -106,7 +107,9 @@ impl Default for App {
       muta_market_client: services::muta_market::Client::new(),
       oauth_callback_tx,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
+      plan_window_position: None,
       plan_windows: HashMap::new(),
+      restart_required: None,
       step_label: "Opening database\u{2026}".to_string(),
       update_dismissed_for: None,
       update_state: services::updater::UpdateState::default(),
@@ -114,7 +117,6 @@ impl Default for App {
       window_position: None,
       window_size: Size::new(layout::WINDOW_DEFAULT_WIDTH, layout::WINDOW_DEFAULT_HEIGHT),
       plan_window_size: Size::new(900.0, 700.0),
-      plan_window_position: None,
     }
   }
 }
@@ -451,9 +453,12 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
-  let (task, new_config) = main_ctrl::update(state, msg, &services);
+  let (task, new_config, restart_msg) = main_ctrl::update(state, msg, &services);
   if let Some(cfg) = new_config {
     app.config = cfg;
+  }
+  if let Some(msg) = restart_msg {
+    app.restart_required = Some(msg);
   }
   let task = task.map(|m| Message::Main(Box::new(m)));
   if drag_end {
@@ -700,6 +705,10 @@ fn update_splash(app: &mut App, msg: SplashMessage) -> Task<Message> {
 }
 
 fn handle_banner_dismiss(app: &mut App) -> Task<Message> {
+  if app.restart_required.is_some() {
+    app.restart_required = None;
+    return Task::none();
+  }
   if let services::updater::UpdateState::UpdateAvailable(v) = &app.update_state {
     app.update_dismissed_for = Some(v.clone());
   }
@@ -962,7 +971,7 @@ fn view_main_phase<'a>(app: &'a App, state: &'a main_ctrl::State) -> Element<'a,
     .window_size(app.window_size.width, app.window_size.height)
     .render()
     .map(|m| Message::Main(Box::new(m)));
-  match banner_state(&app.update_state, &app.update_dismissed_for) {
+  match resolve_banner_state(app) {
     Some(bs) => iced::widget::column([
       update_banner::Component::new(bs).render().map(Message::UpdateBanner),
       content,
@@ -1016,6 +1025,13 @@ fn banner_state(
     UpdateState::Downloading | UpdateState::ReadyToRestart => Some(progress_banner(state)),
     UpdateState::Error(e) => Some(update_banner::BannerState::Error(e.clone())),
   }
+}
+
+fn resolve_banner_state(app: &App) -> Option<update_banner::BannerState> {
+  if let Some(msg) = &app.restart_required {
+    return Some(update_banner::BannerState::RestartRequired(msg.clone()));
+  }
+  banner_state(&app.update_state, &app.update_dismissed_for)
 }
 
 fn build_attrs_loaded_message(

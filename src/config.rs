@@ -1,6 +1,7 @@
 //! Application configuration loading and persistence.
 
 pub mod features;
+pub mod storage;
 
 use figment::{
   Figment,
@@ -27,12 +28,22 @@ pub struct Settings {
   #[getset(get = "pub")]
   #[serde(default)]
   features: features::Settings,
+
+  /// Storage path overrides.
+  #[getset(get = "pub")]
+  #[serde(default)]
+  storage: storage::Settings,
 }
 
 impl Settings {
   /// Replace the feature flag configuration.
   pub fn set_features(&mut self, features: features::Settings) {
     self.features = features;
+  }
+
+  /// Replace the storage path configuration.
+  pub fn set_storage(&mut self, storage: storage::Settings) {
+    self.storage = storage;
   }
 }
 

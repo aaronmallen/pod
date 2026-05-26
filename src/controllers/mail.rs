@@ -100,6 +100,18 @@ fn build_mail_message_db_only(
   }
 }
 
+/// Returns a task that reloads mail headers from the database and emits
+/// `MailHeadersLoaded`, refreshing an already-active mail view.
+pub fn reload_task(characters: Vec<Character>, services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  iced::Task::perform(
+    async move { load_mail_from_db(characters, db).await },
+    Message::MailHeadersLoaded,
+  )
+}
+
 /// Restores folder and message selection from saved navigation state.
 pub fn restore_nav_state(state: &mut State, nav: &MailNavState) {
   if let Some(folder) = nav.selected_folder.clone() {

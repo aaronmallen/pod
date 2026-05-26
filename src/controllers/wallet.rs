@@ -115,6 +115,35 @@ fn map_journal_row(row: WalletJournalEntry) -> JournalEntry {
   }
 }
 
+/// Returns a task that reloads journal entries, transactions, and contracts
+/// from the database and emits the corresponding `Loaded` messages, refreshing
+/// an already-active wallet view.
+pub fn reload_task(characters: Vec<Character>, services: &Services) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
+  let db_j = db.clone();
+  let db_t = db.clone();
+  let db_c = db.clone();
+  let ids_j = char_ids.clone();
+  let ids_t = char_ids.clone();
+  let ids_c = char_ids;
+  let journal_task = iced::Task::perform(
+    async move { load_journal_from_db(ids_j, db_j).await },
+    Message::JournalLoaded,
+  );
+  let transactions_task = iced::Task::perform(
+    async move { load_transactions_from_db(ids_t, db_t).await },
+    Message::TransactionsLoaded,
+  );
+  let contracts_task = iced::Task::perform(
+    async move { load_contracts_from_db(ids_c, db_c).await },
+    Message::ContractsLoaded,
+  );
+  iced::Task::batch([journal_task, transactions_task, contracts_task])
+}
+
 /// Processes a wallet message, performing ESI fetches when a corporation is
 /// selected or a division is changed.
 pub fn update(

@@ -8,7 +8,10 @@ mod services;
 
 use std::collections::HashMap;
 
-use controllers::{about_window, main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
+use controllers::{
+  about_window, assets as assets_ctrl, mail as mail_ctrl, main_window as main_ctrl, skill_plan_window,
+  splash as splash_ctrl, wallet as wallet_ctrl,
+};
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
@@ -18,7 +21,7 @@ use pod_ui::{
   views::{assets, mail, main_window, skills, splash, wallet},
 };
 use services::{
-  Services, menu,
+  Services, bootstrap, menu,
   sync_service::{SyncEvent, SyncService},
 };
 
@@ -317,10 +320,7 @@ fn update_other(app: &mut App, message: Message) -> Task<Message> {
       Task::none()
     }
     Message::Menu(msg) => update_menu(app, msg),
-    Message::Sync(event) => {
-      update_sync_registry(app, event);
-      Task::none()
-    }
+    Message::Sync(event) => update_sync_registry(app, event),
     msg => update_secondary(app, msg),
   }
 }
@@ -402,37 +402,118 @@ fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
   main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
 }
 
-fn update_sync_registry(app: &mut App, event: SyncEvent) {
-  let AppPhase::Main(state) = &mut app.phase else {
-    return;
-  };
+fn update_sync_registry(app: &mut App, event: SyncEvent) -> Task<Message> {
   match event {
     SyncEvent::Completed {
-      data_type,
+      character_id,
       completed_at,
+      data_type,
       ..
-    } => {
-      state.registry_in_flight.retain(|t| *t != data_type);
-      state.registry_last_synced_at = Some(completed_at);
-    }
+    } => apply_sync_completed(app, data_type, completed_at, character_id),
     SyncEvent::Error {
       data_type,
       is_server_error,
       ..
     } => {
-      state.registry_in_flight.retain(|t| *t != data_type);
-      if is_server_error {
-        state.registry_has_server_error = true;
-      }
+      apply_sync_error(app, data_type, is_server_error);
+      Task::none()
     }
     SyncEvent::InFlight {
       data_type, ..
     } => {
-      if !state.registry_in_flight.contains(&data_type) {
-        state.registry_in_flight.push(data_type);
-      }
+      apply_sync_in_flight(app, data_type);
+      Task::none()
     }
   }
+}
+
+fn apply_sync_completed(
+  app: &mut App,
+  data_type: String,
+  completed_at: std::time::Instant,
+  character_id: i64,
+) -> Task<Message> {
+  if let AppPhase::Main(state) = &mut app.phase {
+    state.registry_in_flight.retain(|t| *t != data_type);
+    state.registry_has_server_error = false;
+    state.registry_last_synced_at = Some(completed_at);
+  }
+  active_view_reload_task(app, &data_type, character_id)
+}
+
+fn apply_sync_error(app: &mut App, data_type: String, is_server_error: bool) {
+  let AppPhase::Main(state) = &mut app.phase else {
+    return;
+  };
+  state.registry_in_flight.retain(|t| *t != data_type);
+  if is_server_error {
+    state.registry_has_server_error = true;
+  }
+}
+
+fn apply_sync_in_flight(app: &mut App, data_type: String) {
+  let AppPhase::Main(state) = &mut app.phase else {
+    return;
+  };
+  if !state.registry_in_flight.contains(&data_type) {
+    state.registry_in_flight.push(data_type);
+  }
+}
+
+fn active_view_reload_task(app: &App, data_type: &str, character_id: i64) -> Task<Message> {
+  let AppPhase::Main(state) = &app.phase else {
+    return Task::none();
+  };
+  let services = Services {
+    config: app.config.clone(),
+    db: app.db.clone(),
+    esi_client: app.esi_client.clone(),
+    muta_market_client: app.muta_market_client.clone(),
+    oauth_callback_tx: app.oauth_callback_tx.clone(),
+  };
+  let characters = state.characters.clone();
+  let corporations = state.corporations.clone();
+  match &state.active_view {
+    main_window::ActiveView::Skills(_) if data_type == "Skills" => {
+      skills_reload_task(app.db.clone(), characters, character_id)
+    }
+    main_window::ActiveView::Mail(_) if data_type == "Mail" => {
+      mail_ctrl::reload_task(characters, &services).map(|m| Message::Main(Box::new(main_ctrl::Message::Mail(m))))
+    }
+    main_window::ActiveView::Wallet(_) if is_wallet_data_type(data_type) => {
+      wallet_ctrl::reload_task(characters, &services).map(|m| Message::Main(Box::new(main_ctrl::Message::Wallet(m))))
+    }
+    main_window::ActiveView::Assets(_) if data_type == "Assets" => {
+      assets_ctrl::reload_task(characters, corporations, &services)
+        .map(|m| Message::Main(Box::new(main_ctrl::Message::Assets(m))))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn is_wallet_data_type(data_type: &str) -> bool {
+  matches!(
+    data_type,
+    "Contracts" | "Wallet Balance" | "Wallet Journal" | "Wallet Transactions"
+  )
+}
+
+fn skills_reload_task(db: Option<pod_db::Repo>, characters: Vec<Character>, character_id: i64) -> Task<Message> {
+  let Some(db) = db else {
+    return Task::none();
+  };
+  let Some(character) = characters.into_iter().find(|c| *c.id() == character_id) else {
+    return Task::none();
+  };
+  Task::perform(
+    async move {
+      let skills = db.skills().skills_for_character(character_id).await.unwrap_or_default();
+      let mut updated = character;
+      *updated.skills_mut() = skills;
+      Box::new(updated)
+    },
+    |character| Message::BackgroundSync(bootstrap::Message::CharacterSynced(character)),
+  )
 }
 
 fn update_background_sync(app: &mut App, msg: services::bootstrap::Message) -> Task<Message> {

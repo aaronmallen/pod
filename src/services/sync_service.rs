@@ -52,6 +52,20 @@ pub enum SyncDataType {
 }
 
 impl SyncDataType {
+  /// Returns the human-readable display name emitted in `SyncEvent` payloads.
+  pub fn human_label(self) -> &'static str {
+    match self {
+      Self::CharacterAssets => "Assets",
+      Self::CharacterLocation => "Location",
+      Self::Contracts => "Contracts",
+      Self::Mail => "Mail",
+      Self::Skills => "Skills",
+      Self::WalletBalance => "Wallet Balance",
+      Self::WalletJournal => "Wallet Journal",
+      Self::WalletTransactions => "Wallet Transactions",
+    }
+  }
+
   /// Returns the string identifier emitted in `SyncEvent` payloads.
   pub fn label(self) -> &'static str {
     match self {
@@ -403,7 +417,7 @@ async fn run_tick(
     .iter()
     .map(|(char_id, _, dt)| SyncEvent::InFlight {
       character_id: *char_id,
-      data_type: dt.label().to_string(),
+      data_type: dt.human_label().to_string(),
     })
     .collect();
 
@@ -444,7 +458,7 @@ async fn run_tick(
         result_events.push(SyncEvent::Completed {
           character_id: char_id,
           completed_at: Instant::now(),
-          data_type: dt.label().to_string(),
+          data_type: dt.human_label().to_string(),
           next_allowed_at: next,
         });
       }
@@ -457,7 +471,7 @@ async fn run_tick(
         }
         result_events.push(SyncEvent::Error {
           character_id: char_id,
-          data_type: dt.label().to_string(),
+          data_type: dt.human_label().to_string(),
           is_server_error: false,
         });
       }
@@ -468,7 +482,7 @@ async fn run_tick(
         }
         result_events.push(SyncEvent::Error {
           character_id: char_id,
-          data_type: dt.label().to_string(),
+          data_type: dt.human_label().to_string(),
           is_server_error: false,
         });
       }
@@ -479,7 +493,7 @@ async fn run_tick(
         }
         result_events.push(SyncEvent::Error {
           character_id: char_id,
-          data_type: dt.label().to_string(),
+          data_type: dt.human_label().to_string(),
           is_server_error: true,
         });
       }
@@ -1080,6 +1094,52 @@ mod tests {
 
   mod sync_data_type {
     use super::*;
+
+    mod human_label {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_returns_assets_for_character_assets() {
+        assert_eq!(SyncDataType::CharacterAssets.human_label(), "Assets");
+      }
+
+      #[test]
+      fn it_returns_contracts_for_contracts() {
+        assert_eq!(SyncDataType::Contracts.human_label(), "Contracts");
+      }
+
+      #[test]
+      fn it_returns_location_for_character_location() {
+        assert_eq!(SyncDataType::CharacterLocation.human_label(), "Location");
+      }
+
+      #[test]
+      fn it_returns_mail_for_mail() {
+        assert_eq!(SyncDataType::Mail.human_label(), "Mail");
+      }
+
+      #[test]
+      fn it_returns_skills_for_skills() {
+        assert_eq!(SyncDataType::Skills.human_label(), "Skills");
+      }
+
+      #[test]
+      fn it_returns_wallet_balance_for_wallet_balance() {
+        assert_eq!(SyncDataType::WalletBalance.human_label(), "Wallet Balance");
+      }
+
+      #[test]
+      fn it_returns_wallet_journal_for_wallet_journal() {
+        assert_eq!(SyncDataType::WalletJournal.human_label(), "Wallet Journal");
+      }
+
+      #[test]
+      fn it_returns_wallet_transactions_for_wallet_transactions() {
+        assert_eq!(SyncDataType::WalletTransactions.human_label(), "Wallet Transactions");
+      }
+    }
 
     mod label {
       use pretty_assertions::assert_eq;

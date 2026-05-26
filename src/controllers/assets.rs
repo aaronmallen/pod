@@ -140,6 +140,23 @@ pub fn from_nav_state(
   state
 }
 
+/// Returns a task that reloads assets from the database and emits
+/// `AssetsLoaded`, refreshing an already-active assets view.
+pub fn reload_task(
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  services: &Services,
+) -> iced::Task<Message> {
+  let Some(db) = services.db.clone() else {
+    return iced::Task::none();
+  };
+  let esi = services.esi_client.clone();
+  iced::Task::perform(
+    load_all_assets_from_db(db, characters, corporations, esi),
+    Message::AssetsLoaded,
+  )
+}
+
 /// Creates a stockpile and refreshes the list.
 pub async fn create_stockpile(
   db: pod_db::Repo,

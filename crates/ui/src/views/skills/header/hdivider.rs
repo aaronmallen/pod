@@ -10,6 +10,12 @@ use crate::style::color;
 
 pub struct HDivider;
 
+impl Default for HDivider {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl HDivider {
   pub fn new() -> Self {
     Self

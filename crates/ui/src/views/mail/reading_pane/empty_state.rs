@@ -13,6 +13,12 @@ use crate::{
 /// Builder for the reading pane empty state.
 pub struct Component;
 
+impl Default for Component {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl Component {
   /// Creates a new empty state component.
   pub fn new() -> Self {

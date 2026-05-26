@@ -183,7 +183,7 @@ fn build_color_picker<'a>(
     picker = picker
       .hex_draft(hex_draft)
       .hex_error(hex_error)
-      .on_hex_changed(|s| Message::HexChanged(s))
+      .on_hex_changed(Message::HexChanged)
       .on_hex_submit(Message::HexSubmit);
   }
   picker.render()

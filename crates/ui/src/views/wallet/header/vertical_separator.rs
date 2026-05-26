@@ -10,6 +10,12 @@ use crate::{style::color, views::wallet::Message};
 /// 1 × 32 px vertical rule used between stats cells in the wallet header.
 pub struct VerticalSeparator;
 
+impl Default for VerticalSeparator {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl VerticalSeparator {
   /// Creates a new vertical separator.
   pub fn new() -> Self {

@@ -447,8 +447,10 @@ pub fn new(
     .entries(picker_entries)
     .corp_entries(corp_entries)
     .show_all(true);
-  let mut abyssals = abyssals_tab::AbyssalsState::default();
-  abyssals.filter_pane_width = abyssals_filter_pane_width;
+  let abyssals = abyssals_tab::AbyssalsState {
+    filter_pane_width: abyssals_filter_pane_width,
+    ..Default::default()
+  };
   State {
     abyssals,
     active_tab: Tab::Inventory,
@@ -517,7 +519,7 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
 }
 
 fn asset_owner_matches(a: &AssetRecord, owner_id: Option<i64>) -> bool {
-  owner_id.map_or(true, |id| a.character_id == id)
+  owner_id.is_none_or(|id| a.character_id == id)
 }
 
 fn asset_category_matches(a: &AssetRecord, cat_key: &str) -> bool {
@@ -564,7 +566,7 @@ fn asset_matches_loc_primary(a: &AssetRecord, filter: &str) -> Option<bool> {
     Some(a.location_name == loc_name)
   } else if let Some(cid_str) = filter.strip_prefix("container:") {
     let cid = cid_str.parse::<i64>().ok();
-    Some(cid.map_or(true, |id| a.container_id == id))
+    Some(cid.is_none_or(|id| a.container_id == id))
   } else {
     None
   }
@@ -963,10 +965,10 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
             return false;
           }
           for (attr_id, (min_val, max_val)) in filters {
-            if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id) {
-              if stat.rolled_value < *min_val || stat.rolled_value > *max_val {
-                return false;
-              }
+            if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id)
+              && (stat.rolled_value < *min_val || stat.rolled_value > *max_val)
+            {
+              return false;
             }
           }
           true

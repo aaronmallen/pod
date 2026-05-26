@@ -166,10 +166,10 @@ fn asset_in_region_tree(a: &super::AssetRecord, char_id: Option<i64>) -> bool {
   !a.region_name.is_empty() && !a.system_name.is_empty() && is_owned_by(a, char_id)
 }
 
-fn build_region_tree<'a>(
-  source: &'a [super::AssetRecord],
+fn build_region_tree(
+  source: &[super::AssetRecord],
   char_id: Option<i64>,
-) -> BTreeMap<&'a str, BTreeMap<&'a str, BTreeSet<&'a str>>> {
+) -> BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> {
   let mut tree: BTreeMap<&str, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
   for a in source.iter().filter(|a| asset_in_region_tree(a, char_id)) {
     tree
@@ -182,29 +182,33 @@ fn build_region_tree<'a>(
   tree
 }
 
-fn push_region_row<'a>(
-  items: &mut Vec<Element<'a, Message>>,
+struct RegionRowCtx<'a, 'b> {
   source: &'a [super::AssetRecord],
+  char_id: Option<i64>,
+  selected_loc: Option<&'a str>,
+  collapsed_groups: &'b std::collections::HashSet<String>,
+  query: &'b AssetFilterQuery,
+}
+
+fn push_region_row<'a, 'b>(
+  items: &mut Vec<Element<'a, Message>>,
   region_name: &'a str,
   constellations: &BTreeMap<&'a str, BTreeSet<&'a str>>,
-  char_id: Option<i64>,
-  selected_loc: Option<&str>,
-  collapsed_groups: &std::collections::HashSet<String>,
-  query: &AssetFilterQuery,
+  ctx: &RegionRowCtx<'a, 'b>,
 ) {
   let region_key = format!("region:{}", region_name);
-  let region_collapsed = collapsed_groups.contains(&region_key);
-  let region_count = count_filtered(source, char_id, query, |a| a.region_name == region_name);
+  let region_collapsed = ctx.collapsed_groups.contains(&region_key);
+  let region_count = count_filtered(ctx.source, ctx.char_id, ctx.query, |a| a.region_name == region_name);
   items.push(RegionRow::new(region_name, region_key, region_collapsed, region_count).render());
   if !region_collapsed {
     push_constellation_rows(
       items,
-      source,
+      ctx.source,
       constellations,
-      char_id,
-      selected_loc,
-      collapsed_groups,
-      query,
+      ctx.char_id,
+      ctx.selected_loc,
+      ctx.collapsed_groups,
+      ctx.query,
     );
   }
 }
@@ -213,22 +217,20 @@ fn push_region_tree<'a>(
   items: &mut Vec<Element<'a, Message>>,
   source: &'a [super::AssetRecord],
   char_id: Option<i64>,
-  selected_loc: Option<&str>,
+  selected_loc: Option<&'a str>,
   collapsed_groups: &std::collections::HashSet<String>,
   query: &AssetFilterQuery,
 ) {
   let tree = build_region_tree(source, char_id);
+  let ctx = RegionRowCtx {
+    source,
+    char_id,
+    selected_loc,
+    collapsed_groups,
+    query,
+  };
   for (region_name, constellations) in &tree {
-    push_region_row(
-      items,
-      source,
-      region_name,
-      constellations,
-      char_id,
-      selected_loc,
-      collapsed_groups,
-      query,
-    );
+    push_region_row(items, region_name, constellations, &ctx);
   }
 }
 
@@ -258,7 +260,7 @@ fn is_ungrouped_system(a: &super::AssetRecord, owner_id: Option<i64>) -> bool {
   is_system_asset(a, owner_id) && a.region_name.is_empty()
 }
 
-fn collect_ungrouped_systems<'a>(source: &'a [super::AssetRecord], owner_id: Option<i64>) -> BTreeSet<&'a str> {
+fn collect_ungrouped_systems(source: &[super::AssetRecord], owner_id: Option<i64>) -> BTreeSet<&str> {
   source
     .iter()
     .filter(|a| is_ungrouped_system(a, owner_id))

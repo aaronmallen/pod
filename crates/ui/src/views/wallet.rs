@@ -271,7 +271,7 @@ fn character_field_total(
 ) -> f64 {
   match selected {
     None => characters.iter().map(field).sum(),
-    Some(id) => characters.iter().find(|c| c.id == id).map_or(0.0, |c| field(c)),
+    Some(id) => characters.iter().find(|c| c.id == id).map_or(0.0, field),
   }
 }
 

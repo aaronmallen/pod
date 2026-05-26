@@ -269,7 +269,7 @@ fn hex_input_row<'a, Message: Clone + 'static>(
       left: spacing::SPACE_3,
       right: spacing::SPACE_3,
     })
-    .on_input(move |s| on_hex_changed(s))
+    .on_input(on_hex_changed)
     .on_submit(on_hex_submit)
     .style(move |_, _| text_input::Style {
       background: Background::Color(color::surface::SUNKEN),
@@ -343,9 +343,9 @@ fn palette_body<'a, Message: Clone + 'static>(
   }
 
   children.push(Space::new().height(12.0).into());
-  children.push(palette_divider().into());
+  children.push(palette_divider());
   children.push(Space::new().height(10.0).into());
-  children.push(clear_button(clear_msg).into());
+  children.push(clear_button(clear_msg));
 
   container(column(children).spacing(0.0)).padding(12.0).into()
 }

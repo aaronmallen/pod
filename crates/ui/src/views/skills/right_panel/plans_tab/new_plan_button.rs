@@ -10,6 +10,12 @@ use crate::style::{color, spacing, typography::body};
 
 pub struct Component;
 
+impl Default for Component {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl Component {
   pub fn new() -> Self {
     Self

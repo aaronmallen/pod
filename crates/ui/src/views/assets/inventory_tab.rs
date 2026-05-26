@@ -75,7 +75,7 @@ pub enum Message {
   ToggleContainer(i64),
 }
 
-fn find_character_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
+fn find_character_name(state: &State, id: i64) -> Option<&str> {
   state
     .characters
     .iter()
@@ -83,7 +83,7 @@ fn find_character_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
     .map(|c| c.name().as_str())
 }
 
-fn find_corporation_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
+fn find_corporation_name(state: &State, id: i64) -> Option<&str> {
   state
     .corporations
     .iter()
@@ -91,7 +91,7 @@ fn find_corporation_name<'a>(state: &'a State, id: i64) -> Option<&'a str> {
     .map(|c| c.name().as_str())
 }
 
-fn resolve_owner_name<'a>(state: &'a State, character_id: i64) -> &'a str {
+fn resolve_owner_name(state: &State, character_id: i64) -> &str {
   find_character_name(state, character_id)
     .or_else(|| find_corporation_name(state, character_id))
     .unwrap_or("Unknown")
@@ -309,7 +309,7 @@ fn build_children_map<'a>(all_assets: &'a [AssetRecord]) -> HashMap<i64, Vec<&'a
   children_map
 }
 
-fn collect_roots<'a>(sorted: Vec<&'a AssetRecord>) -> Vec<&'a AssetRecord> {
+fn collect_roots(sorted: Vec<&AssetRecord>) -> Vec<&AssetRecord> {
   let visible_ids: HashSet<i64> = sorted.iter().map(|a| a.item_id).collect();
   sorted
     .into_iter()

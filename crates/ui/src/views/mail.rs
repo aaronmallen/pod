@@ -702,7 +702,7 @@ fn mail_header_count_col(folder: &Folder, total_messages: usize, total_unread: u
 fn compose_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
   let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
   button::Style {
-    background: active.then(|| Background::Color(color::state::HOVER_OVERLAY)),
+    background: active.then_some(Background::Color(color::state::HOVER_OVERLAY)),
     border: Border {
       color: if active {
         color::border::DEFAULT

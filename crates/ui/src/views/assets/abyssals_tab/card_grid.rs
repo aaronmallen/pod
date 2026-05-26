@@ -32,10 +32,10 @@ fn item_passes_filter(
     return false;
   }
   for (attr_id, (min_val, max_val)) in stat_range_filters {
-    if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id) {
-      if stat.rolled_value < *min_val || stat.rolled_value > *max_val {
-        return false;
-      }
+    if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id)
+      && (stat.rolled_value < *min_val || stat.rolled_value > *max_val)
+    {
+      return false;
     }
   }
   true
@@ -73,7 +73,7 @@ fn build_card<'a>(
     .into()
 }
 
-fn char_name_for<'a>(state: &'a State, character_id: i64) -> &'a str {
+fn char_name_for(state: &State, character_id: i64) -> &str {
   state
     .characters
     .iter()

@@ -157,9 +157,7 @@ impl canvas::Program<Message> for RangeSliderProgram {
           width: bounds.width + thumb_r * 2.0,
           height: bounds.height,
         };
-        let Some(pos) = cursor.position_in(padded) else {
-          return None;
-        };
+        let pos = cursor.position_in(padded)?;
         let canvas_x = pos.x - thumb_r;
         let thumb_lo = thumb_r;
         let thumb_hi = thumb_r + inner_w;
@@ -183,7 +181,7 @@ impl canvas::Program<Message> for RangeSliderProgram {
       canvas::Event::Mouse(mouse::Event::CursorMoved {
         ..
       }) => {
-        let Some(target) = state.dragging else { return None };
+        let target = state.dragging?;
         let raw = cursor.position().unwrap_or_default();
         let canvas_x = raw.x - bounds.x;
         let new_val = val_at_x(canvas_x);

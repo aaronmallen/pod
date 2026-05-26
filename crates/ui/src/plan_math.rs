@@ -412,20 +412,17 @@ pub fn plan_time_with_attrs(weights: &[PairWeight], attrs: &EffectiveAttrs) -> f
   total
 }
 
-fn try_candidate(
-  per: i32,
-  mem: i32,
-  wil: i32,
-  intl: i32,
+struct RemapParams<'a> {
   base_total: i32,
-  implant: &ImplantBonus,
-  weights: &[PairWeight],
+  implant: &'a ImplantBonus,
+  weights: &'a [PairWeight],
   current_time: f64,
-  best: &mut RemapResult,
-) {
+}
+
+fn try_candidate(per: i32, mem: i32, wil: i32, intl: i32, p: &RemapParams<'_>, best: &mut RemapResult) {
   const ATTR_MIN: i32 = 17;
   const ATTR_MAX: i32 = 27;
-  let cha = base_total - per - mem - wil - intl;
+  let cha = p.base_total - per - mem - wil - intl;
   if !(ATTR_MIN..=ATTR_MAX).contains(&cha) {
     return;
   }
@@ -436,13 +433,13 @@ fn try_candidate(
     intelligence: intl,
     charisma: cha,
   };
-  let eff = effective_attrs(&base, implant);
-  let t = plan_time_with_attrs(weights, &eff);
+  let eff = effective_attrs(&base, p.implant);
+  let t = plan_time_with_attrs(p.weights, &eff);
   if t < best.total_sec {
     *best = RemapResult {
       base,
       total_sec: t,
-      current_sec: current_time,
+      current_sec: p.current_time,
       is_current: false,
     };
   }
@@ -457,27 +454,25 @@ fn search_remap_candidates(
 ) {
   const ATTR_MIN: i32 = 17;
   const ATTR_MAX: i32 = 27;
+  let p = RemapParams {
+    base_total,
+    implant,
+    weights,
+    current_time,
+  };
   for per in ATTR_MIN..=ATTR_MAX {
     for mem in ATTR_MIN..=ATTR_MAX {
-      search_remap_wil_intl(per, mem, base_total, implant, weights, current_time, best);
+      search_remap_wil_intl(per, mem, &p, best);
     }
   }
 }
 
-fn search_remap_wil_intl(
-  per: i32,
-  mem: i32,
-  base_total: i32,
-  implant: &ImplantBonus,
-  weights: &[PairWeight],
-  current_time: f64,
-  best: &mut RemapResult,
-) {
+fn search_remap_wil_intl(per: i32, mem: i32, p: &RemapParams<'_>, best: &mut RemapResult) {
   const ATTR_MIN: i32 = 17;
   const ATTR_MAX: i32 = 27;
   for wil in ATTR_MIN..=ATTR_MAX {
     for intl in ATTR_MIN..=ATTR_MAX {
-      try_candidate(per, mem, wil, intl, base_total, implant, weights, current_time, best);
+      try_candidate(per, mem, wil, intl, p, best);
     }
   }
 }

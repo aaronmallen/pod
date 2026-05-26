@@ -130,7 +130,7 @@ fn append_character_bar<'a>(
   if !all_wallets || characters.is_empty() {
     return;
   }
-  let total_nw: f64 = characters.iter().map(|c| character_net_worth(c)).sum();
+  let total_nw: f64 = characters.iter().map(character_net_worth).sum();
   if total_nw > 0.0 {
     children.push(Space::new().height(16.0).into());
     children.push(by_character_bar(characters, total_nw));
@@ -257,7 +257,7 @@ fn character_net_worth(c: &WalletCharacter) -> f64 {
   c.liquid + c.assets + c.escrow
 }
 
-fn sort_characters_by_net_worth<'a>(characters: &'a [WalletCharacter]) -> Vec<&'a WalletCharacter> {
+fn sort_characters_by_net_worth(characters: &[WalletCharacter]) -> Vec<&WalletCharacter> {
   let mut sorted: Vec<&WalletCharacter> = characters.iter().collect();
   sorted.sort_by(|a, b| {
     character_net_worth(b)

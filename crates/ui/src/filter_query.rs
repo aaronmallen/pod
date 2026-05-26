@@ -122,10 +122,10 @@ fn parse_raw_token(raw: &str) -> FilterToken {
     Some(stripped) => (true, stripped),
     None => (false, raw),
   };
-  if let Some(colon_pos) = rest.find(':') {
-    if let Some(token) = parse_key_value(negated, &rest[..colon_pos], &rest[colon_pos + 1..]) {
-      return token;
-    }
+  if let Some(colon_pos) = rest.find(':')
+    && let Some(token) = parse_key_value(negated, &rest[..colon_pos], &rest[colon_pos + 1..])
+  {
+    return token;
   }
   free_text(negated, rest)
 }

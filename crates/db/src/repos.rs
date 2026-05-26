@@ -2,18 +2,22 @@
 
 pub mod abyssals;
 pub mod assets;
+pub mod character_assets;
 pub mod characters;
 pub mod clones;
 pub mod contacts;
 pub mod corporations;
 pub mod killmails;
+pub mod mail;
 pub mod notifications;
 pub mod prices;
 pub mod skill_plans;
+pub mod skills;
 pub mod standings;
 pub mod stockpiles;
 pub mod tags;
 mod universe;
+pub mod wallet;
 
 use std::path::PathBuf;
 
@@ -70,6 +74,11 @@ impl Root {
     assets::Repo::new(&self.connection)
   }
 
+  /// Returns a character assets sub-repository.
+  pub fn character_assets(&self) -> character_assets::Repo<'_> {
+    character_assets::Repo::new(&self.connection)
+  }
+
   /// Returns a characters sub-repository.
   pub fn characters(&self) -> characters::Repo<'_> {
     characters::Repo::new(&self.connection)
@@ -95,6 +104,11 @@ impl Root {
     killmails::Repo::new(&self.connection)
   }
 
+  /// Returns a mail sub-repository.
+  pub fn mail(&self) -> mail::Repo<'_> {
+    mail::Repo::new(&self.connection)
+  }
+
   /// Returns a notifications sub-repository.
   pub fn notifications(&self) -> notifications::Repo<'_> {
     notifications::Repo::new(&self.connection)
@@ -108,6 +122,11 @@ impl Root {
   /// Returns a skill plans sub-repository.
   pub fn skill_plans(&self) -> skill_plans::Repo<'_> {
     skill_plans::Repo::new(&self.connection)
+  }
+
+  /// Returns a skills sub-repository.
+  pub fn skills(&self) -> skills::Repo<'_> {
+    skills::Repo::new(&self.connection)
   }
 
   /// Returns a standings sub-repository.
@@ -147,5 +166,10 @@ impl Root {
 
   pub fn universe(&self) -> universe::Repo<'_> {
     universe::Repo::new(&self.connection)
+  }
+
+  /// Returns a wallet sub-repository.
+  pub fn wallet(&self) -> wallet::Repo<'_> {
+    wallet::Repo::new(&self.connection)
   }
 }

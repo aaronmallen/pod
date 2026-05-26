@@ -1,19 +1,24 @@
 //! Abyssals tab — mutated module grid with stat rows and resizable filter sidebar.
 
+pub mod module_type_picker;
+pub mod stat_ranges_panel;
+pub mod stat_row;
 pub mod tier_badge;
 pub mod type_icon_tile;
+
 use std::collections::HashMap;
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Point, Size, Theme, mouse,
+  Background, Border, Element, Length, Padding, Point, Size, Theme, mouse,
   widget::{
-    Canvas, Space, button,
+    Space, button,
     canvas::{self, Action, Frame, Geometry, Path, Stroke},
-    column, container, image, mouse_area, row, scrollable, stack, text, text_input,
+    column, container, image, mouse_area, row, scrollable, stack, text,
   },
 };
 use pod_model::{AbyssalCategory, AbyssalStatViewModel, AbyssalViewModel};
 
+use self::module_type_picker::{ModalEntry, ModalRow, ModalSection};
 use super::State;
 use crate::{
   components::{
@@ -86,150 +91,10 @@ pub enum Message {
   TypeSelected(Option<i32>),
 }
 
-fn stat_roll_direction(stat: &AbyssalStatViewModel) -> Option<bool> {
-  let delta = stat.rolled_value - stat.base_value;
-  if delta.abs() < 1e-9 {
-    None
-  } else if stat.high_is_good {
-    Some(delta > 0.0)
-  } else {
-    Some(delta < 0.0)
-  }
-}
-
-fn stat_direction_color(dir: Option<bool>) -> Color {
-  match dir {
-    Some(true) => color::text::SUCCESS,
-    Some(false) => color::text::DANGER,
-    None => color::text::TERTIARY,
-  }
-}
-
-fn stat_delta_intensity(stat: &AbyssalStatViewModel, delta: f64) -> f32 {
-  let range_span = (stat.max_mult - 1.0).abs().max(1e-9);
-  let delta_pct = if stat.base_value.abs() > 1e-9 {
-    (delta / stat.base_value).abs()
-  } else {
-    0.0
-  };
-  (delta_pct / range_span).clamp(0.0, 1.0) as f32
-}
-
-fn stat_intensity_bar(intensity: f32, fill_col: Color) -> Element<'static, Message> {
-  let bg_col = color::border::SUBTLE;
-  container(
-    container(Space::new().width(Length::Fixed(intensity * 110.0)).height(4.0)).style(move |_| container::Style {
-      background: Some(Background::Color(color::with_alpha(fill_col, 0.9))),
-      ..container::Style::default()
-    }),
-  )
-  .width(110.0)
-  .height(4.0)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(bg_col)),
-    border: Border {
-      radius: 2.0.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .clip(true)
-  .into()
-}
-
-fn format_stat_value(value: f64, unit_suffix: &str) -> String {
+pub(super) fn format_stat_value(value: f64, unit_suffix: &str) -> String {
   let formatted = format!("{:.2}", value);
   let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
   format!("{}{unit_suffix}", trimmed)
-}
-
-fn format_delta_line(delta: f64, base: f64, unit_suffix: &str) -> String {
-  let sign = if delta >= 0.0 { "+" } else { "" };
-  let abs_str = format_stat_value(delta.abs(), unit_suffix);
-  let pct = if base.abs() > 1e-9 { delta / base * 100.0 } else { 0.0 };
-  let pct_sign = if pct >= 0.0 { "+" } else { "" };
-  format!("{}{} \u{00b7} {}{:.1}%", sign, abs_str, pct_sign, pct)
-}
-
-fn stat_row(stat: &AbyssalStatViewModel) -> Element<'_, Message> {
-  let delta = stat.rolled_value - stat.base_value;
-  let stat_color = stat_direction_color(stat_roll_direction(stat));
-  let intensity = stat_delta_intensity(stat, delta);
-  let border_color = if delta.abs() < 1e-9 {
-    Color::TRANSPARENT
-  } else {
-    stat_color
-  };
-
-  let name_el = text(stat.display_name.clone())
-    .font(body::REGULAR)
-    .size(11.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::SECONDARY),
-    });
-
-  let delta_line = format_delta_line(delta, stat.base_value, &stat.unit_suffix);
-  let delta_el = text(delta_line)
-    .font(mono::REGULAR)
-    .size(10.0)
-    .style(move |_: &Theme| iced::widget::text::Style {
-      color: Some(stat_color),
-    });
-
-  let left_col = column([name_el.into(), delta_el.into()]).width(Length::Fill);
-
-  let value_num = format_stat_value(stat.rolled_value, "");
-  let unit_str = stat.unit_suffix.trim().to_string();
-  let value_el = row([
-    text(value_num)
-      .font(mono::MEDIUM)
-      .size(16.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    text(unit_str)
-      .font(mono::REGULAR)
-      .size(11.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::TERTIARY),
-      })
-      .into(),
-  ])
-  .align_y(iced::alignment::Vertical::Bottom);
-
-  let bar_el = container(stat_intensity_bar(intensity, stat_color)).width(110.0);
-
-  let content = row([
-    left_col.into(),
-    Space::new().width(14.0).into(),
-    value_el.into(),
-    Space::new().width(14.0).into(),
-    bar_el.into(),
-  ])
-  .align_y(iced::alignment::Vertical::Center)
-  .width(Length::Fill);
-
-  container(row([
-    container(Space::new())
-      .width(2.0)
-      .height(Length::Fill)
-      .style(move |_| container::Style {
-        background: Some(Background::Color(border_color)),
-        ..container::Style::default()
-      })
-      .into(),
-    Space::new().width(8.0).into(),
-    content.into(),
-  ]))
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 5.0,
-    bottom: 5.0,
-    left: 0.0,
-    right: 0.0,
-  })
-  .into()
 }
 
 fn abyssal_card_header<'a>(
@@ -295,7 +160,11 @@ fn abyssal_card_header<'a>(
 }
 
 fn abyssal_card_stats(item: &AbyssalViewModel) -> Element<'_, Message> {
-  let stat_rows: Vec<Element<'_, Message>> = item.stats.iter().map(stat_row).collect();
+  let stat_rows: Vec<Element<'_, Message>> = item
+    .stats
+    .iter()
+    .map(|s| stat_row::Component::new(s).render())
+    .collect();
   container(column(stat_rows).spacing(2.0))
     .padding(Padding {
       top: 6.0,
@@ -509,7 +378,7 @@ fn card_grid<'a>(state: &'a State) -> Element<'a, Message> {
   .into()
 }
 
-fn section_divider() -> Element<'static, Message> {
+pub(super) fn section_divider() -> Element<'static, Message> {
   container(Space::new().width(Length::Fill).height(1.0))
     .width(Length::Fill)
     .height(1.0)
@@ -520,7 +389,7 @@ fn section_divider() -> Element<'static, Message> {
     .into()
 }
 
-fn filter_section<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Message> {
+pub(super) fn filter_section<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Message> {
   let label_el = text(label.to_uppercase())
     .font(mono::REGULAR)
     .size(9.0)
@@ -733,166 +602,6 @@ impl canvas::Program<Message> for RangeSliderProgram {
   }
 }
 
-fn slider_value_label<'a>(
-  attr_id: i32,
-  endpoint: SliderEndpoint,
-  value: f64,
-  unit: &str,
-  editing: Option<(&(i32, SliderEndpoint), &str)>,
-) -> Element<'a, Message> {
-  let is_editing = editing.is_some_and(|(k, _)| k.0 == attr_id && k.1 == endpoint);
-  if is_editing {
-    let current_text = editing.map(|(_, t)| t).unwrap_or("").to_string();
-    return text_input("", &current_text)
-      .on_input(Message::SliderEditInput)
-      .on_submit(Message::SliderEditCommit(attr_id, endpoint))
-      .font(mono::REGULAR)
-      .size(10.0)
-      .width(56.0)
-      .style(|_, _| text_input::Style {
-        background: Background::Color(color::with_alpha(color::text::ACCENT, 0.08)),
-        border: Border {
-          color: color::text::ACCENT,
-          radius: 3.0.into(),
-          width: 1.0,
-        },
-        icon: color::text::ACCENT,
-        placeholder: color::text::TERTIARY,
-        value: color::text::ACCENT,
-        selection: color::with_alpha(color::text::ACCENT, 0.25),
-      })
-      .into();
-  }
-  let label = format!("{}{}", format_stat_value(value, ""), unit.trim());
-  button(
-    text(label)
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::ACCENT),
-      }),
-  )
-  .padding(Padding::ZERO)
-  .on_press(Message::SliderEditStart(attr_id, endpoint, value))
-  .style(|_, _| button::Style {
-    background: None,
-    border: Border::default(),
-    text_color: color::text::ACCENT,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn stat_slider_row<'a>(
-  stat: &AbyssalStatViewModel,
-  filter_range: Option<(f64, f64)>,
-  bounds: (f64, f64),
-  editing: Option<(&'a (i32, SliderEndpoint), &'a str)>,
-) -> Element<'a, Message> {
-  let (lo, hi) = bounds;
-  let (filter_min, filter_max) = filter_range
-    .map(|(min, max)| (min.max(lo), max.min(hi)))
-    .unwrap_or((lo, hi));
-  let is_active = filter_range.is_some();
-  let unit = stat.unit_suffix.clone();
-
-  let readout_color = if is_active {
-    color::text::ACCENT
-  } else {
-    color::text::TERTIARY
-  };
-  let sep_col = readout_color;
-
-  let min_el = slider_value_label(stat.attribute_id, SliderEndpoint::Min, filter_min, &unit, editing);
-  let max_el = slider_value_label(stat.attribute_id, SliderEndpoint::Max, filter_max, &unit, editing);
-
-  let readout_row: Element<'_, Message> = row([
-    min_el,
-    text(" \u{2013} ")
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(sep_col),
-      })
-      .into(),
-    max_el,
-    text(format!(" {}", unit.trim()))
-      .font(mono::REGULAR)
-      .size(10.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(readout_color),
-      })
-      .into(),
-  ])
-  .align_y(iced::alignment::Vertical::Center)
-  .into();
-
-  let label_row: Element<'_, Message> = row([
-    text(stat.display_name.clone())
-      .font(body::MEDIUM)
-      .size(11.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .width(Length::Fill)
-      .into(),
-    readout_row,
-  ])
-  .align_y(iced::alignment::Vertical::Center)
-  .into();
-
-  let track = Canvas::new(RangeSliderProgram {
-    attribute_id: stat.attribute_id,
-    current_max: filter_max,
-    current_min: filter_min,
-    hi,
-    lo,
-  })
-  .width(Length::Fill)
-  .height(22.0);
-
-  let bounds_row: Element<'_, Message> = row([
-    text(format_stat_value(lo, &unit))
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::TERTIARY),
-      })
-      .into(),
-    Space::new().width(Length::Fill).into(),
-    text(format!(
-      "base {}{}",
-      format_stat_value(stat.base_value, if unit.trim() == "%" { &unit } else { "" }),
-      if unit.trim() == "%" { "" } else { unit.trim() }
-    ))
-    .font(mono::REGULAR)
-    .size(9.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::TERTIARY),
-    })
-    .into(),
-    Space::new().width(Length::Fill).into(),
-    text(format_stat_value(hi, &unit))
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::TERTIARY),
-      })
-      .into(),
-  ])
-  .into();
-
-  column([
-    label_row,
-    Space::new().height(6.0).into(),
-    track.into(),
-    Space::new().height(3.0).into(),
-    bounds_row,
-  ])
-  .spacing(0.0)
-  .into()
-}
-
 fn module_type_filter_button(has_filter: bool) -> Element<'static, Message> {
   let (bg, border_col, label_col) = if has_filter {
     (
@@ -1028,27 +737,6 @@ fn selected_type_chip(type_name: &str) -> Element<'static, Message> {
     ..container::Style::default()
   })
   .into()
-}
-
-struct ModalEntry {
-  label: &'static str,
-  type_id: i32,
-}
-
-enum ModalRow {
-  Family {
-    name: &'static str,
-    variants: &'static [ModalEntry],
-  },
-  Single {
-    label: &'static str,
-    type_id: i32,
-  },
-}
-
-struct ModalSection {
-  rows: &'static [ModalRow],
-  title: &'static str,
 }
 
 static MODAL_LAYOUT: &[&[ModalSection]] = &[
@@ -1561,36 +1249,6 @@ static MODAL_LAYOUT: &[&[ModalSection]] = &[
   ],
 ];
 
-fn modal_selected_label(type_id: i32) -> Option<String> {
-  for col in MODAL_LAYOUT {
-    for section in *col {
-      for row in section.rows {
-        match row {
-          ModalRow::Single {
-            label,
-            type_id: tid,
-          } if *tid == type_id => {
-            return Some((*label).to_string());
-          }
-          ModalRow::Family {
-            name,
-            variants,
-            ..
-          } => {
-            for e in *variants {
-              if e.type_id == type_id {
-                return Some(format!("{} ({})", name, e.label));
-              }
-            }
-          }
-          _ => {}
-        }
-      }
-    }
-  }
-  None
-}
-
 static MODAL_SOURCE_PATTERNS: &[(i32, &str)] = &[
   (47702, "Stasis Webifier"),
   (47732, "Warp Scrambler"),
@@ -1676,456 +1334,6 @@ static MODAL_SOURCE_PATTERNS: &[(i32, &str)] = &[
   (90622, "'Excavator' Ice Harvesting Drone"),
 ];
 
-fn modal_source_pattern(type_id: i32) -> Option<&'static str> {
-  MODAL_SOURCE_PATTERNS
-    .iter()
-    .find(|&&(tid, _)| tid == type_id)
-    .map(|&(_, p)| p)
-}
-
-fn modal_type_chip(label: &str, type_id: i32, selected: bool) -> Element<'static, Message> {
-  let (bg, border_col, text_col) = if selected {
-    (
-      Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.14))),
-      color::text::ACCENT,
-      color::text::ACCENT,
-    )
-  } else {
-    (
-      Some(Background::Color(color::surface::BASE)),
-      color::border::SUBTLE,
-      color::text::SECONDARY,
-    )
-  };
-  let label = label.to_string();
-  button(
-    text(label)
-      .font(body::REGULAR)
-      .size(11.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(text_col),
-      }),
-  )
-  .padding(Padding {
-    top: 4.0,
-    bottom: 4.0,
-    left: 8.0,
-    right: 8.0,
-  })
-  .on_press(Message::TypeSelected(Some(type_id)))
-  .style(move |_, _| button::Style {
-    background: bg,
-    border: Border {
-      color: border_col,
-      radius: 4.0.into(),
-      width: 1.0,
-    },
-    text_color: text_col,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn modal_single_row(label: &'static str, type_id: i32, selected: bool) -> Element<'static, Message> {
-  let (bg, text_col, border_col) = if selected {
-    (
-      Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.10))),
-      color::text::ACCENT,
-      color::text::ACCENT,
-    )
-  } else {
-    (None, color::text::PRIMARY, Color::TRANSPARENT)
-  };
-  button(
-    text(label)
-      .font(body::REGULAR)
-      .size(12.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(text_col),
-      })
-      .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .on_press(Message::TypeSelected(Some(type_id)))
-  .style(move |_, _| button::Style {
-    background: bg,
-    border: Border {
-      color: border_col,
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    text_color: text_col,
-    ..button::Style::default()
-  })
-  .into()
-}
-
-fn modal_family_row(
-  name: &'static str,
-  variants: &'static [ModalEntry],
-  selected_id: Option<i32>,
-) -> Element<'static, Message> {
-  let some_selected = variants.iter().any(|e| selected_id == Some(e.type_id));
-  let (bg, border_col) = if some_selected {
-    (
-      Some(Background::Color(color::with_alpha(color::text::ACCENT, 0.06))),
-      color::with_alpha(color::text::ACCENT, 0.30),
-    )
-  } else {
-    (None, Color::TRANSPARENT)
-  };
-  let name_el = text(name)
-    .font(body::MEDIUM)
-    .size(12.0)
-    .style(|_: &Theme| iced::widget::text::Style {
-      color: Some(color::text::PRIMARY),
-    });
-  let chips: Vec<Element<'static, Message>> = variants
-    .iter()
-    .map(|e| modal_type_chip(e.label, e.type_id, selected_id == Some(e.type_id)))
-    .collect();
-  container(column([
-    name_el.into(),
-    Space::new().height(8.0).into(),
-    row(chips).spacing(4.0).wrap().into(),
-  ]))
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .style(move |_| container::Style {
-    background: bg,
-    border: Border {
-      color: border_col,
-      radius: 6.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn modal_section_el(section: &'static ModalSection, selected_id: Option<i32>) -> Element<'static, Message> {
-  let title = column([
-    text(section.title)
-      .font(body::MEDIUM)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::ACCENT),
-      })
-      .into(),
-    Space::new().height(6.0).into(),
-    section_divider(),
-    Space::new().height(8.0).into(),
-  ])
-  .width(Length::Fill);
-
-  let rows: Vec<Element<'static, Message>> = section
-    .rows
-    .iter()
-    .map(|row| match row {
-      ModalRow::Single {
-        label,
-        type_id,
-      } => modal_single_row(label, *type_id, selected_id == Some(*type_id)),
-      ModalRow::Family {
-        name,
-        variants,
-        ..
-      } => modal_family_row(name, variants, selected_id),
-    })
-    .collect();
-
-  column([title.into(), column(rows).spacing(2.0).width(Length::Fill).into()])
-    .width(Length::Fill)
-    .into()
-}
-
-fn abyssals_modal(state: &State) -> Element<'_, Message> {
-  let selected_id = state.abyssals.selected_source_type_id;
-
-  let build_col = |sections: &'static [ModalSection]| -> Vec<Element<'static, Message>> {
-    sections
-      .iter()
-      .map(|s| {
-        container(modal_section_el(s, selected_id))
-          .padding(Padding {
-            bottom: 24.0,
-            ..Padding::ZERO
-          })
-          .into()
-      })
-      .collect()
-  };
-
-  let col0 = build_col(MODAL_LAYOUT[0]);
-  let col1 = build_col(MODAL_LAYOUT[1]);
-  let col2 = build_col(MODAL_LAYOUT[2]);
-
-  let subtitle = selected_id
-    .and_then(modal_selected_label)
-    .unwrap_or_else(|| "Pick a module type".to_string());
-
-  let mut header_row_items: Vec<Element<'_, Message>> = vec![
-    column([
-      text("Filter by module type")
-        .font(body::MEDIUM)
-        .size(14.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::PRIMARY),
-        })
-        .into(),
-      Space::new().height(2.0).into(),
-      text(subtitle)
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-    ])
-    .width(Length::Fill)
-    .into(),
-  ];
-
-  if selected_id.is_some() {
-    header_row_items.push(
-      button(
-        text("Clear")
-          .font(body::REGULAR)
-          .size(11.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          }),
-      )
-      .padding(Padding {
-        top: 5.0,
-        bottom: 5.0,
-        left: 10.0,
-        right: 10.0,
-      })
-      .on_press(Message::TypeSelected(None))
-      .style(|_, _| button::Style {
-        background: None,
-        border: Border {
-          color: color::border::SUBTLE,
-          radius: 5.0.into(),
-          width: 1.0,
-        },
-        text_color: color::text::SECONDARY,
-        ..button::Style::default()
-      })
-      .into(),
-    );
-    header_row_items.push(Space::new().width(8.0).into());
-  }
-
-  header_row_items.push(
-    button(
-      text("\u{00d7}")
-        .font(mono::REGULAR)
-        .size(18.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
-    )
-    .width(28.0)
-    .height(28.0)
-    .on_press(Message::CloseTypeModal)
-    .style(|_, _| button::Style {
-      background: None,
-      border: Border::default(),
-      text_color: color::text::SECONDARY,
-      ..button::Style::default()
-    })
-    .into(),
-  );
-
-  let panel_header = container(row(header_row_items).align_y(iced::alignment::Vertical::Center))
-    .padding(Padding {
-      top: 16.0,
-      bottom: 16.0,
-      left: 24.0,
-      right: 24.0,
-    })
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      ..container::Style::default()
-    });
-
-  let panel_body = scrollable(
-    container(row([
-      column(col0).width(Length::Fill).into(),
-      Space::new().width(44.0).into(),
-      column(col1).width(Length::Fill).into(),
-      Space::new().width(44.0).into(),
-      column(col2).width(Length::Fill).into(),
-    ]))
-    .padding(Padding {
-      top: 24.0,
-      bottom: 28.0,
-      left: 32.0,
-      right: 32.0,
-    })
-    .width(Length::Fill),
-  )
-  .height(Length::Fill);
-
-  let panel_footer = container(
-    row([
-      text("esc \u{00b7} close")
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::TERTIARY),
-        })
-        .width(Length::Fill)
-        .into(),
-      button(
-        text("Done")
-          .font(body::MEDIUM)
-          .size(12.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::surface::BASE),
-          }),
-      )
-      .padding(Padding {
-        top: 8.0,
-        bottom: 8.0,
-        left: 18.0,
-        right: 18.0,
-      })
-      .on_press(Message::CloseTypeModal)
-      .style(|_, _| button::Style {
-        background: Some(Background::Color(color::text::ACCENT)),
-        border: Border {
-          radius: 6.0.into(),
-          ..Border::default()
-        },
-        text_color: color::surface::BASE,
-        ..button::Style::default()
-      })
-      .into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 12.0,
-    bottom: 12.0,
-    left: 24.0,
-    right: 24.0,
-  })
-  .width(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    ..container::Style::default()
-  });
-
-  let panel = container(column([
-    panel_header.into(),
-    section_divider(),
-    panel_body.into(),
-    section_divider(),
-    panel_footer.into(),
-  ]))
-  .max_width(1180.0)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    border: Border {
-      color: color::border::DEFAULT,
-      radius: 12.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  });
-
-  container(panel)
-    .center(Length::Fill)
-    .padding(32.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::state::OVERLAY_DARKER)),
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn stat_ranges_section<'a>(abyssals_state: &'a AbyssalsState, source_type_id: i32) -> Element<'a, Message> {
-  let editing_key = abyssals_state.slider_editing.as_ref();
-  let editing_text = abyssals_state.slider_edit_text.as_str();
-  let template_stats: Vec<&AbyssalStatViewModel> = abyssals_state
-    .abyssals
-    .iter()
-    .find(|i| i.type_id == source_type_id)
-    .map(|i| i.stats.iter().collect())
-    .unwrap_or_else(|| {
-      modal_source_pattern(source_type_id)
-        .and_then(|pattern| {
-          abyssals_state
-            .categories
-            .iter()
-            .flat_map(|c| c.source_types.iter())
-            .find(|t| !t.stat_templates.is_empty() && t.name.starts_with(pattern))
-            .map(|t| t.stat_templates.iter().collect())
-        })
-        .unwrap_or_default()
-    });
-
-  if template_stats.is_empty() {
-    return Space::new().into();
-  }
-
-  let mut sliders: Vec<Element<'_, Message>> = vec![];
-
-  for stat in &template_stats {
-    let lo_raw = stat.base_value * stat.min_mult;
-    let hi_raw = stat.base_value * stat.max_mult;
-    let lo = lo_raw.min(hi_raw);
-    let hi = lo_raw.max(hi_raw);
-    if (hi - lo).abs() < 1e-9 {
-      continue;
-    }
-    let filter = abyssals_state.stat_range_filters.get(&stat.attribute_id).copied();
-    let editing = editing_key.map(|k| (k, editing_text));
-    sliders.push(stat_slider_row(stat, filter, (lo, hi), editing));
-    sliders.push(Space::new().height(14.0).into());
-  }
-
-  if sliders.is_empty() {
-    return Space::new().into();
-  }
-
-  filter_section("Stat ranges", column(sliders).width(Length::Fill).into())
-}
-
-fn stat_ranges_placeholder() -> Element<'static, Message> {
-  container(
-    text("Pick a module type to filter by its rolled stats.")
-      .font(body::REGULAR)
-      .size(11.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::TERTIARY),
-      }),
-  )
-  .padding(Padding {
-    top: 20.0,
-    bottom: 20.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .width(Length::Fill)
-  .into()
-}
-
 fn filter_pane_drag_handle() -> Element<'static, Message> {
   mouse_area(
     container(Space::new().width(4.0).height(Length::Fill))
@@ -2172,15 +1380,15 @@ fn filter_sidebar<'a>(state: &'a State) -> Element<'a, Message> {
   let filter_btn = module_type_filter_button(abyssals_state.selected_source_type_id.is_some());
   let mut module_type_items: Vec<Element<'_, Message>> = vec![filter_btn];
   if let Some(type_id) = abyssals_state.selected_source_type_id {
-    let type_name = modal_selected_label(type_id).unwrap_or_else(|| "Unknown".to_string());
+    let type_name = module_type_picker::modal_selected_label(type_id).unwrap_or_else(|| "Unknown".to_string());
     module_type_items.push(Space::new().height(10.0).into());
     module_type_items.push(selected_type_chip(&type_name));
   }
   let module_section = filter_section("Module Type", column(module_type_items).width(Length::Fill).into());
 
   let stat_el = match abyssals_state.selected_source_type_id {
-    Some(src_id) => stat_ranges_section(abyssals_state, src_id),
-    None => stat_ranges_placeholder(),
+    Some(src_id) => stat_ranges_panel::Component::new(abyssals_state, src_id).render(),
+    None => stat_ranges_panel::placeholder(),
   };
 
   let body = scrollable(column([module_section, stat_el]).width(Length::Fill)).height(Length::Fill);
@@ -2277,7 +1485,7 @@ impl<'a> Component<'a> {
       .height(Length::Fill);
 
     if state.abyssals.modal_open {
-      stack([base.into(), abyssals_modal(state)])
+      stack([base.into(), module_type_picker::Component::new(state).render()])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

@@ -172,9 +172,8 @@ fn resolve_theme(app: &App, window: window::Id) -> Option<iced::Theme> {
 }
 
 fn main() -> iced::Result {
-  let log_dir = dir_spec::state_home()
-    .expect("cannot determine state home directory")
-    .join("pod/logs");
+  config::init_global(config::load().unwrap_or_default());
+  let log_dir = config::Settings::global().resolved_log_dir();
   let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
     .rotation(tracing_appender::rolling::Rotation::DAILY)
     .filename_prefix("pod")

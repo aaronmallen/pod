@@ -3,12 +3,16 @@
 pub mod features;
 pub mod storage;
 
+use std::{path::PathBuf, sync::OnceLock};
+
 use figment::{
   Figment,
   providers::{Format, Serialized, Toml},
 };
 use getset::Getters;
 use serde::{Deserialize, Serialize};
+
+static GLOBAL: OnceLock<Settings> = OnceLock::new();
 
 /// Error variants for config load failures.
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +40,50 @@ pub struct Settings {
 }
 
 impl Settings {
+  /// Returns the global `Settings` instance, which must have been
+  /// initialized with [`init_global`] before this is called.
+  ///
+  /// Panics if called before [`init_global`].
+  pub fn global() -> &'static Settings {
+    GLOBAL.get().expect("Config::global() called before init_global()")
+  }
+
+  /// Returns the resolved ESI disk-cache directory.
+  ///
+  /// Uses `storage.cache_dir` if set; otherwise falls back to
+  /// `{cache_home}/pod`.
+  pub fn resolved_cache_dir(&self) -> PathBuf {
+    self.storage.cache_dir().clone().unwrap_or_else(|| {
+      dir_spec::cache_home()
+        .map(|p| p.join("pod"))
+        .expect("failed to resolve cache directory")
+    })
+  }
+
+  /// Returns the resolved SQLite database path.
+  ///
+  /// Uses `storage.db_dir` as the file path if set; otherwise falls
+  /// back to `{data_home}/pod/pod.db`.
+  pub fn resolved_db_path(&self) -> PathBuf {
+    self.storage.db_dir().clone().unwrap_or_else(|| {
+      dir_spec::data_home()
+        .map(|p| p.join("pod").join("pod.db"))
+        .expect("failed to resolve user data directory")
+    })
+  }
+
+  /// Returns the resolved rolling log directory.
+  ///
+  /// Uses `storage.log_dir` if set; otherwise falls back to
+  /// `{state_home}/pod/logs`.
+  pub fn resolved_log_dir(&self) -> PathBuf {
+    self.storage.log_dir().clone().unwrap_or_else(|| {
+      dir_spec::state_home()
+        .map(|p| p.join("pod/logs"))
+        .expect("cannot determine state home directory")
+    })
+  }
+
   /// Replace the feature flag configuration.
   pub fn set_features(&mut self, features: features::Settings) {
     self.features = features;
@@ -45,6 +93,14 @@ impl Settings {
   pub fn set_storage(&mut self, storage: storage::Settings) {
     self.storage = storage;
   }
+}
+
+/// Initializes the global `Settings` singleton.
+///
+/// Must be called exactly once before [`Settings::global`] is used.
+/// Subsequent calls are silently ignored.
+pub fn init_global(settings: Settings) {
+  let _ = GLOBAL.set(settings);
 }
 
 /// Loads application configuration from `{config_home}/pod/config.toml`,

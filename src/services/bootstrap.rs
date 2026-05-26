@@ -1,9 +1,6 @@
 //! Application startup bootstrap sequence.
 
-use std::{
-  collections::{HashMap, HashSet},
-  path::PathBuf,
-};
+use std::collections::{HashMap, HashSet};
 
 use iced::{Task, futures::SinkExt as _};
 use pod_esi::Client;
@@ -70,14 +67,15 @@ pub fn run() -> Task<Message> {
 
 async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
   tracing::info!("boot: starting");
-  if let Err(e) = std::fs::create_dir_all(cache_path()) {
+  let cache_dir = crate::config::Settings::global().resolved_cache_dir();
+  if let Err(e) = std::fs::create_dir_all(&cache_dir) {
     let _ = tx
       .send(Message::Error(format!("failed to create cache directory: {e}")))
       .await;
     return;
   }
   step(&mut tx, "Building ESI client\u{2026}".to_string()).await;
-  let esi = match Client::builder(crate::ESI_CLIENT_ID).disk_cache(cache_path()).build() {
+  let esi = match Client::builder(crate::ESI_CLIENT_ID).disk_cache(cache_dir).build() {
     Ok(c) => c,
     Err(e) => {
       let _ = tx.send(Message::Error(e.to_string())).await;
@@ -530,20 +528,9 @@ async fn propagate_skill_names(character: &mut Character, esi: &Client) {
   }
 }
 
-fn cache_path() -> PathBuf {
-  dir_spec::cache_home()
-    .map(|path| path.join("pod"))
-    .expect("failed to resolve cache directory")
-}
-
-fn db_path() -> PathBuf {
-  dir_spec::data_home()
-    .map(|path| path.join("pod").join("pod.db"))
-    .expect("failed to resolve user data directory")
-}
-
 async fn open_database() -> Result<pod_db::Repo, String> {
-  pod_db::open(&db_path()).await.map_err(|e| e.to_string())
+  let path = crate::config::Settings::global().resolved_db_path();
+  pod_db::open(&path).await.map_err(|e| e.to_string())
 }
 
 async fn cache_structure_names_from_assets(

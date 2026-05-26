@@ -72,7 +72,8 @@ fn card_grid<'a>(state: &'a State) -> Element<'a, Message> {
     return empty_grid_message("No abyssal modules match the current filters.");
   }
 
-  let cards: Vec<Element<'_, Message>> = items
+  let visible = state.abyssals.visible_count.min(items.len());
+  let cards: Vec<Element<'_, Message>> = items[..visible]
     .iter()
     .map(|item| {
       let char_name = char_name_map.get(&item.character_id).copied().unwrap_or("");
@@ -101,6 +102,7 @@ fn card_grid<'a>(state: &'a State) -> Element<'a, Message> {
       .width(Length::Fill),
   )
   .height(Length::Fill)
+  .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
   .into()
 }
 

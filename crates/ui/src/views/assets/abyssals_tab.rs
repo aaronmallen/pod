@@ -69,6 +69,8 @@ pub enum Message {
   PaneDragEnd,
   /// Filter pane drag handle pressed.
   PaneDragStart,
+  /// The card grid was scrolled; carries relative vertical offset (0.0–1.0).
+  ScrollUpdate(f32),
   /// A slider value text field was committed (attribute_id, endpoint).
   SliderEditCommit(i32, SliderEndpoint),
   /// A slider value text field content changed (new text).
@@ -895,6 +897,8 @@ pub struct AbyssalsState {
   pub slider_edit_text: String,
   /// Loaded EVE icons keyed by source_type_id.
   pub type_icons: HashMap<i32, image::Handle>,
+  /// Number of cards currently rendered; grows by 25 on scroll past 85%.
+  pub visible_count: usize,
 }
 
 impl Default for AbyssalsState {
@@ -912,6 +916,7 @@ impl Default for AbyssalsState {
       slider_editing: None,
       stat_range_filters: HashMap::new(),
       type_icons: HashMap::new(),
+      visible_count: 50,
     }
   }
 }

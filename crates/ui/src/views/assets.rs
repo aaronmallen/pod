@@ -931,6 +931,7 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
       state.abyssals.modal_open = false;
       state.abyssals.selected_source_type_id = None;
       state.abyssals.stat_range_filters.clear();
+      state.abyssals.visible_count = 50;
     }
     abyssals_tab::Message::OpenTypeModal => {
       state.abyssals.modal_open = true;
@@ -950,13 +951,40 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
       state.abyssals.filter_pane_dragging = false;
       state.abyssals.filter_pane_last_drag_x = 0.0;
     }
+    abyssals_tab::Message::ScrollUpdate(y) => {
+      let selected = state.abyssals.selected_source_type_id;
+      let filters = &state.abyssals.stat_range_filters;
+      let total = state
+        .abyssals
+        .abyssals
+        .iter()
+        .filter(|item| {
+          if selected.is_some_and(|id| item.type_id != id) {
+            return false;
+          }
+          for (attr_id, (min_val, max_val)) in filters {
+            if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id) {
+              if stat.rolled_value < *min_val || stat.rolled_value > *max_val {
+                return false;
+              }
+            }
+          }
+          true
+        })
+        .count();
+      if y > 0.85 && state.abyssals.visible_count < total {
+        state.abyssals.visible_count += 25;
+      }
+    }
     abyssals_tab::Message::StatMaxFilterChanged(attr_id, val) => {
       let entry = state.abyssals.stat_range_filters.entry(attr_id).or_insert((val, val));
       entry.1 = val;
+      state.abyssals.visible_count = 50;
     }
     abyssals_tab::Message::StatMinFilterChanged(attr_id, val) => {
       let entry = state.abyssals.stat_range_filters.entry(attr_id).or_insert((val, val));
       entry.0 = val;
+      state.abyssals.visible_count = 50;
     }
     abyssals_tab::Message::TypeSelected(id) => {
       state.abyssals.modal_open = false;
@@ -964,6 +992,7 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
       state.abyssals.stat_range_filters.clear();
       state.abyssals.slider_editing = None;
       state.abyssals.slider_edit_text.clear();
+      state.abyssals.visible_count = 50;
     }
     abyssals_tab::Message::SliderEditStart(attr_id, endpoint, current_value) => {
       let unit = state

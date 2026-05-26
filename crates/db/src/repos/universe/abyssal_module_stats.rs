@@ -31,6 +31,19 @@ impl<'a> Repo<'a> {
     Ok(rows.into_iter().map(Into::into).collect())
   }
 
+  /// Returns all abyssal module stats for any of the given type IDs.
+  #[tracing::instrument(level = "trace", skip(self))]
+  pub async fn find_by_type_ids(&self, type_ids: &[i32]) -> Result<Vec<AbyssalModuleStat>, Error> {
+    if type_ids.is_empty() {
+      return Ok(Vec::new());
+    }
+    let rows = Entity::find()
+      .filter(Column::AbyssalTypeId.is_in(type_ids.to_vec()))
+      .all(self.db)
+      .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+  }
+
   /// Bulk-upserts abyssal module stat rows in chunks of 500.
   #[tracing::instrument(level = "trace", skip(self))]
   pub async fn upsert_many(&self, records: &[AbyssalModuleStat]) -> Result<(), Error> {
@@ -89,6 +102,61 @@ mod tests {
       let result = repo.find_by_type_id(47408).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod find_by_type_ids {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      assert!(repo.find_by_type_ids(&[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_matching_stats() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+
+      assert!(repo.find_by_type_ids(&[99999]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_stats_for_multiple_type_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![
+        AbyssalModuleStat::new(47408, 6, 0.6, 1.4),
+        AbyssalModuleStat::new(47409, 6, 0.7, 1.3),
+        AbyssalModuleStat::new(47410, 6, 0.8, 1.2),
+      ];
+      repo.upsert_many(&records).await.unwrap();
+
+      let result = repo.find_by_type_ids(&[47408, 47410]).await.unwrap();
+
+      assert_eq!(result.len(), 2);
+      let mut type_ids: Vec<i32> = result.iter().map(|r| *r.abyssal_type_id()).collect();
+      type_ids.sort_unstable();
+      assert_eq!(type_ids, vec![47408, 47410]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_all_stats_across_type_ids() {
+      let db = setup_db().await;
+      let repo = Repo::new(&db);
+      let records = vec![
+        AbyssalModuleStat::new(47408, 6, 0.6, 1.4),
+        AbyssalModuleStat::new(47408, 20, 0.9, 1.1),
+        AbyssalModuleStat::new(47409, 6, 0.7, 1.3),
+      ];
+      repo.upsert_many(&records).await.unwrap();
+
+      let result = repo.find_by_type_ids(&[47408, 47409]).await.unwrap();
+
+      assert_eq!(result.len(), 3);
     }
   }
 

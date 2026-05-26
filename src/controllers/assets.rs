@@ -2153,15 +2153,15 @@ pub async fn load_abyssals_from_db(db: pod_db::Repo, esi: Option<pod_esi::Client
     ids.dedup();
     ids
   };
+  let all_module_stats = db
+    .universe()
+    .abyssal_module_stats()
+    .find_by_type_ids(&unique_abyssal_type_ids)
+    .await
+    .unwrap_or_default();
   let mut module_stats_map: HashMap<i32, Vec<pod_model::AbyssalModuleStat>> = HashMap::new();
-  for tid in unique_abyssal_type_ids {
-    let stats = db
-      .universe()
-      .abyssal_module_stats()
-      .find_by_type_id(tid)
-      .await
-      .unwrap_or_default();
-    module_stats_map.insert(tid, stats);
+  for stat in all_module_stats {
+    module_stats_map.entry(*stat.abyssal_type_id()).or_default().push(stat);
   }
 
   let item_location_map = build_abyssal_location_map(&records, &db).await;

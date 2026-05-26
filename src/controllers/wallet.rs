@@ -694,19 +694,27 @@ fn contract_matches_filter(c: &ContractEntry, who: Option<i64>, q: &str) -> bool
   true
 }
 
-fn select_journal_source(state: &State, corp_selected: bool) -> &Vec<JournalEntry> {
+fn select_journal_source(state: &State, corp_selected: bool) -> Vec<JournalEntry> {
   if corp_selected {
-    &state.corp_journal
+    state.corp_journal.clone()
+  } else if state.selected_character().is_none() {
+    let mut all = state.journal.clone();
+    all.extend(state.corp_journal.iter().cloned());
+    all
   } else {
-    &state.journal
+    state.journal.clone()
   }
 }
 
-fn select_market_source(state: &State, corp_selected: bool) -> &Vec<MarketEntry> {
+fn select_market_source(state: &State, corp_selected: bool) -> Vec<MarketEntry> {
   if corp_selected {
-    &state.corp_market
+    state.corp_market.clone()
+  } else if state.selected_character().is_none() {
+    let mut all = state.market.clone();
+    all.extend(state.corp_market.iter().cloned());
+    all
   } else {
-    &state.market
+    state.market.clone()
   }
 }
 
@@ -742,12 +750,16 @@ fn collect_series_journal(state: &State) -> Vec<JournalEntry> {
     return state.corp_journal.clone();
   }
   let selected_char = state.selected_character();
-  state
+  let mut entries: Vec<JournalEntry> = state
     .journal
     .iter()
     .filter(|e| selected_char.is_none_or(|id| e.who == id))
     .cloned()
-    .collect()
+    .collect();
+  if selected_char.is_none() {
+    entries.extend(state.corp_journal.iter().cloned());
+  }
+  entries
 }
 
 fn trim_series_to_days(series: &[f64], days: usize) -> Vec<f64> {

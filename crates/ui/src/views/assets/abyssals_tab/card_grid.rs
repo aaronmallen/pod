@@ -28,7 +28,7 @@ fn item_passes_filter(
   selected_source_type_id: Option<i32>,
   stat_range_filters: &HashMap<i32, (f64, f64)>,
 ) -> bool {
-  if selected_source_type_id.is_some_and(|id| item.source_type_id != id) {
+  if selected_source_type_id.is_some_and(|id| item.type_id != id) {
     return false;
   }
   for (attr_id, (min_val, max_val)) in stat_range_filters {

@@ -31,6 +31,32 @@ use crate::{
   style::spacing,
 };
 
+/// Preserved navigation state for the skills view.
+///
+/// Saved when the user leaves Skills and restored on return,
+/// so the selected character, search filter, and tab survive
+/// navigation to other views.
+#[derive(Clone, Debug, Default)]
+pub struct NavState {
+  /// The ID of the character that was selected in the picker.
+  pub selected_char_id: i64,
+  /// The active search/filter query in the skill browser.
+  pub search_query: String,
+  /// Which right-panel tab was selected.
+  pub right_tab: RightTab,
+}
+
+impl NavState {
+  /// Captures nav state from an active skills view state.
+  pub fn from_state(state: &State) -> Self {
+    Self {
+      right_tab: state.right_tab,
+      search_query: state.search_query.clone(),
+      selected_char_id: state.selected_char_id(),
+    }
+  }
+}
+
 /// One entry in the training queue.
 #[derive(Clone, Debug)]
 pub struct QueueItem {
@@ -42,8 +68,9 @@ pub struct QueueItem {
 }
 
 /// Which tab is active in the right panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RightTab {
+  #[default]
   Browse,
   Attrs,
   Plans,

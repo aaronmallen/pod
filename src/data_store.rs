@@ -20,4 +20,12 @@ impl DataStore {
   pub fn mail_for(&self, _character_id: i64) -> Vec<pod_ui::views::mail::MailMessage> {
     vec![]
   }
+
+  /// Returns skill group definitions for the given character.
+  ///
+  /// Always returns an empty slice until the SyncService populates
+  /// the store with universe skill data.
+  pub fn skills_for(&self, _character_id: i64) -> Vec<pod_model::SkillGroupDef> {
+    vec![]
+  }
 }

@@ -3,6 +3,7 @@ use iced::{
   widget::{column, mouse_area, row, stack},
 };
 use pod_model::{Character, Corporation};
+pub use skills::NavState as SkillsNavState;
 
 use crate::{
   components::{self, Icon, NavButton},
@@ -104,6 +105,11 @@ pub struct State {
   pub registry_in_flight: Vec<String>,
   /// Timestamp of the most recent successful sync completion.
   pub registry_last_synced_at: Option<std::time::Instant>,
+  /// Preserved navigation state for the skills view.
+  ///
+  /// Saved when leaving Skills and applied when returning, so the
+  /// selected character and active filter survive navigation.
+  pub skills_nav: SkillsNavState,
   pub skills_left_pane_width: f32,
   pub sync: components::status_bar::SyncState,
   pub toast: Option<String>,

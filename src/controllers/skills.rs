@@ -10,25 +10,37 @@ use pod_ui::{
     character_picker::{self, CharacterEntry, PickerSelection},
   },
   format::{sp_cost, sp_per_sec},
-  views::skills::{self, ComputedQueueItem, Message, QueueItem, RightTab, State, right_panel, skill_data::find_skill},
+  views::skills::{
+    self, ComputedQueueItem, Message, NavState, QueueItem, RightTab, State, right_panel, skill_data::find_skill,
+  },
 };
 
 use crate::services::Services;
 
 /// Creates the initial skills state from the given characters.
-pub fn new(characters: Vec<Character>, left_pane_width: f32, services: &Services) -> (State, iced::Task<Message>) {
-  let selected_char_id = characters.first().map(|c| *c.id()).unwrap_or(0);
-  let char_skill_map = build_char_skill_map(&characters, selected_char_id);
+///
+/// Skill groups are seeded from the DataStore (empty until SyncService
+/// populates it), so no DB task is spawned on navigation.
+pub fn new(
+  characters: Vec<Character>,
+  left_pane_width: f32,
+  selected_char_id: Option<i64>,
+  services: &Services,
+) -> State {
+  let char_id = selected_char_id
+    .or_else(|| characters.first().map(|c| *c.id()))
+    .unwrap_or(0);
+  let char_skill_map = build_char_skill_map(&characters, char_id);
   let queue = characters
     .iter()
-    .find(|c| *c.id() == selected_char_id)
+    .find(|c| *c.id() == char_id)
     .map(build_queue_from_character)
     .unwrap_or_default();
-  let picker = build_skills_picker(&characters, selected_char_id);
-  let mut state = build_initial_skills_state(characters, left_pane_width, picker, queue, char_skill_map);
+  let picker = build_skills_picker(&characters, char_id);
+  let skill_groups = services.data_store.skills_for(char_id);
+  let mut state = build_initial_skills_state(characters, left_pane_width, picker, queue, char_skill_map, skill_groups);
   recompute_queue(&mut state);
-  let task = build_skill_groups_task(services);
-  (state, task)
+  state
 }
 
 /// Dispatches a skills message, rebuilding queue and skill map on character selection.
@@ -43,6 +55,15 @@ pub fn update(state: &mut State, message: Message, services: &Services) -> iced:
     _ => {}
   }
   handle_skills_other_message(state, message, services, was_char_switch)
+}
+
+/// Restores previously saved navigation state into a newly created skills view.
+///
+/// Applies search query and right-tab selection from `nav`; the selected
+/// character is already baked in during `new()`.
+pub fn apply_nav_state(state: &mut State, nav: &NavState) {
+  state.search_query = nav.search_query.clone();
+  state.right_tab = nav.right_tab;
 }
 
 /// Updates characters in the skills view and rebuilds the queue.
@@ -211,6 +232,7 @@ fn build_initial_skills_state(
   picker: CharacterPicker,
   queue: Vec<QueueItem>,
   char_skill_map: HashMap<String, (u8, i64)>,
+  skill_groups: Vec<pod_model::SkillGroupDef>,
 ) -> State {
   let mut expanded_groups = HashSet::new();
   expanded_groups.insert("spaceship".to_string());
@@ -230,19 +252,8 @@ fn build_initial_skills_state(
     queue_id_counter: 100,
     right_tab: RightTab::Browse,
     search_query: String::new(),
-    skill_groups: Vec::new(),
+    skill_groups,
     sp_rate: 0.0,
-  }
-}
-
-fn build_skill_groups_task(services: &Services) -> iced::Task<Message> {
-  if let Some(db) = services.db.clone() {
-    iced::Task::perform(
-      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
-      Message::SkillGroupsLoaded,
-    )
-  } else {
-    iced::Task::none()
   }
 }
 

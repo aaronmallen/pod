@@ -115,6 +115,7 @@ pub fn new(
     registry_in_flight: Vec::new(),
     registry_last_synced_at: None,
     skills_left_pane_width: skills_left_pane_width.unwrap_or(700.0),
+    skills_nav: pod_ui::views::main_window::SkillsNavState::default(),
     sync: status_bar::SyncState::default(),
     toast: None,
     wallet_right_rail_width: wallet_right_rail_width.unwrap_or(220.0),
@@ -572,7 +573,12 @@ fn nav_to_character_detail_from_list(
 
 fn nav_to_skills_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
   state.active_nav = Nav::Skills;
-  let (mut s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
+  let mut s = skills_ctrl::new(
+    state.characters.clone(),
+    state.skills_left_pane_width,
+    Some(char_id),
+    services,
+  );
   let _ = skills_ctrl::update(
     &mut s,
     skills::Message::Picker(character_picker::Message::Select(
@@ -581,7 +587,7 @@ fn nav_to_skills_for_character(state: &mut State, char_id: i64, services: &Servi
     services,
   );
   state.active_view = ActiveView::Skills(s);
-  Some(task.map(Message::Skills))
+  Some(iced::Task::none())
 }
 
 fn nav_to_wallet_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
@@ -813,9 +819,16 @@ fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> 
       task.map(Message::Settings)
     }
     Nav::Skills => {
-      let (s, task) = skills_ctrl::new(state.characters.clone(), state.skills_left_pane_width, services);
+      let nav = state.skills_nav.clone();
+      let mut s = skills_ctrl::new(
+        state.characters.clone(),
+        state.skills_left_pane_width,
+        Some(nav.selected_char_id),
+        services,
+      );
+      skills_ctrl::apply_nav_state(&mut s, &nav);
       swap_active_view(state, ActiveView::Skills(s));
-      task.map(Message::Skills)
+      iced::Task::none()
     }
     Nav::Wallet => {
       let (s, task) = wallet_ctrl::new(
@@ -842,9 +855,8 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
   }
 }
 
-/// Replaces `state.active_view` with `new_view`; saves the prior view to
-/// `cached_assets_state` if it was an Assets view, and saves mail nav
-/// state if it was the Mail view.
+/// Replaces `state.active_view` with `new_view`; saves the prior view's
+/// nav state (assets cache, mail nav, skills nav) before replacing.
 fn swap_active_view(state: &mut State, new_view: ActiveView) {
   let prev = std::mem::replace(&mut state.active_view, new_view);
   match prev {
@@ -856,6 +868,10 @@ fn swap_active_view(state: &mut State, new_view: ActiveView) {
         selected_folder: Some(s.selected_folder),
         selected_message_id: s.selected_message_id,
       };
+    }
+    ActiveView::Skills(s) => {
+      state.skills_nav = pod_ui::views::skills::NavState::from_state(&s);
+      state.skills_left_pane_width = s.left_pane_width;
     }
     _ => {}
   }
@@ -1073,6 +1089,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,
@@ -1137,6 +1154,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,
@@ -1184,6 +1202,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,
@@ -1238,6 +1257,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,
@@ -1281,6 +1301,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,
@@ -1376,6 +1397,7 @@ mod tests {
         registry_in_flight: Vec::new(),
         registry_last_synced_at: None,
         skills_left_pane_width: 0.0,
+        skills_nav: Default::default(),
         sync: status_bar::SyncState::default(),
         toast: None,
         wallet_right_rail_width: 0.0,

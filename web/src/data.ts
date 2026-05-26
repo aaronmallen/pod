@@ -1,14 +1,44 @@
 import type { Feature, Platform, ReleaseData } from './types';
 
 export const FEATURES: Feature[] = [
-  { id: 'characters', icon: 'characters', title: 'Characters', line: 'Roster overview with sheets, standings and clone state.' },
-  { id: 'skills',     icon: 'skills',     title: 'Skills',     line: 'Plan queues months out; compare paths side-by-side.' },
-  { id: 'mail',       icon: 'mail',       title: 'Mail',       line: 'One inbox for every pilot. Labels, drafts and mailing lists.' },
-  { id: 'wallet',     icon: 'wallet',     title: 'Wallet',     line: 'Journal, market, contracts and recurring across every character.' },
-  { id: 'assets',     icon: 'assets',     title: 'Assets',     line: 'Search every hangar and container by name or category.' },
-  { id: 'fitting',    icon: 'fitting',    title: 'Fitting',    line: 'Build, simulate and share fits offline. EFT-compatible.', soon: true },
+  {
+    id: 'characters',
+    icon: 'characters',
+    title: 'Characters',
+    line: 'Roster overview with sheets, standings and clone state across every EVE character.',
+  },
+  {
+    id: 'skills',
+    icon: 'skills',
+    title: 'Skills',
+    line: 'Plan EVE skill queues months out; compare paths side-by-side.',
+  },
+  {
+    id: 'mail',
+    icon: 'mail',
+    title: 'Mail',
+    line: 'One inbox for all your EVE mail. Labels, drafts and mailing lists.',
+  },
+  {
+    id: 'wallet',
+    icon: 'wallet',
+    title: 'Wallet',
+    line: 'In-game wallet journal, market orders, contracts and recurring across every character.',
+  },
+  {
+    id: 'assets',
+    icon: 'assets',
+    title: 'Assets',
+    line: 'Search every hangar and container by name or category.',
+  },
+  {
+    id: 'fitting',
+    icon: 'fitting',
+    title: 'Fitting',
+    line: 'Build, simulate and share EVE fits offline. EFT-compatible.',
+    soon: true,
+  },
 ];
-
 
 export const PLATFORMS: Platform[] = [
   {

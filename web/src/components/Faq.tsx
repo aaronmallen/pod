@@ -4,32 +4,6 @@ import { SectionHead } from './SectionHead';
 
 const ENTRIES: { question: string; answer: React.ReactNode }[] = [
   {
-    question: "Why does Pod request so many EVE Online permissions?",
-    answer: (
-      <>
-        Every permission Pod requests is tied directly to a feature you can
-        see and control. We never ask for access we don&apos;t use.
-        <br/><br/>
-        If you&apos;d like to limit what Pod can access, open{' '}
-        <strong>Settings</strong> before signing in and disable any features
-        you don&apos;t need. Pod will only request permissions for the
-        features that are turned on — so you stay in control of what you
-        share.
-      </>
-    ),
-  },
-  {
-    question: "Is this built by AI?",
-    answer: (
-      <>
-        Pod is built by a software engineer by trade. AI tools are used to
-        augment the development workflow — things like code completion,
-        review, and research — but every decision, every line of code, and
-        every release is subject to human oversight.
-      </>
-    ),
-  },
-  {
     question: "The app says it's damaged on macOS",
     answer: (
       <>
@@ -51,6 +25,54 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
         </code>
         <br/>
         Then try launching Pod again. You only need to do this once.
+      </>
+    ),
+  },
+  {
+    question: "Windows blocked the app / SmartScreen warning",
+    answer: (
+      <>
+        Windows SmartScreen blocks apps from unrecognised publishers. Click{' '}
+        <strong>More info</strong> then <strong>Run anyway</strong> to
+        proceed. The prompt appears once per install.
+      </>
+    ),
+  },
+  {
+    question: "Why does Pod request so many EVE Online permissions?",
+    answer: (
+      <>
+        Every permission Pod requests is tied directly to a feature you can
+        see and control. We never ask for access we don&apos;t use.
+        <br/><br/>
+        If you&apos;d like to limit what Pod can access, open{' '}
+        <strong>Settings</strong> before signing in and disable any features
+        you don&apos;t need. Pod will only request permissions for the
+        features that are turned on — so you stay in control of what you
+        share.
+      </>
+    ),
+  },
+  {
+    question: "Does Pod store my data anywhere?",
+    answer: (
+      <>
+        Pod stores all character data in a local SQLite database on your
+        machine. Nothing is sent to Pod servers — there are no Pod servers.
+        The only outbound connection is to{' '}
+        <strong>esi.evetech.net</strong> (CCP&apos;s official API) to sync
+        your character data, with your explicit consent.
+      </>
+    ),
+  },
+  {
+    question: "Is this built by AI?",
+    answer: (
+      <>
+        Pod is built by a software engineer by trade. AI tools are used to
+        augment the development workflow — things like code completion,
+        review, and research — but every decision, every line of code, and
+        every release is subject to human oversight.
       </>
     ),
   },

@@ -7,7 +7,7 @@ const REQS: [string, string][] = [
   ['Windows', '10 (build 1809) or later · 64-bit · 240 MB disk'],
   ['Linux',   'glibc 2.31 · X11 or Wayland · 260 MB disk'],
   ['Network', 'HTTPS to esi.evetech.net · 1 MB/hr typical sync'],
-  ['Storage', 'Local SQLite cache · encrypted at rest with OS keychain'],
+  ['Storage', 'Local SQLite cache · data stays on your machine'],
 ];
 
 interface Props {

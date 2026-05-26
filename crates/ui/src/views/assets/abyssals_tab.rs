@@ -1,6 +1,7 @@
 //! Abyssals tab — mutated module grid with stat rows and resizable filter sidebar.
 
 pub mod abyssal_card;
+pub mod card_grid;
 pub mod filter_sidebar;
 pub mod module_type_picker;
 pub mod stat_ranges_panel;
@@ -11,17 +12,17 @@ pub mod type_icon_tile;
 use std::collections::HashMap;
 
 use iced::{
-  Element, Length, Padding, Point, Size, Theme, mouse,
+  Element, Length, Point, Size, mouse,
   widget::{
     canvas::{self, Action, Frame, Geometry, Path, Stroke},
-    column, container, image, row, scrollable, stack, text,
+    image, row, stack,
   },
 };
 use pod_model::{AbyssalCategory, AbyssalStatViewModel, AbyssalViewModel};
 
 use self::module_type_picker::{ModalEntry, ModalRow, ModalSection};
 use super::State;
-use crate::style::{color, typography::body};
+use crate::style::color;
 
 const UNIT_SUFFIX_TABLE: &[(i32, &str)] = &[
   (71, " GJ"),
@@ -88,24 +89,6 @@ pub(super) fn format_stat_value(value: f64, unit_suffix: &str) -> String {
   format!("{}{unit_suffix}", trimmed)
 }
 
-fn item_passes_filter(
-  item: &AbyssalViewModel,
-  selected_source_type_id: Option<i32>,
-  stat_range_filters: &HashMap<i32, (f64, f64)>,
-) -> bool {
-  if selected_source_type_id.is_some_and(|id| item.type_id != id) {
-    return false;
-  }
-  for (attr_id, (min_val, max_val)) in stat_range_filters {
-    if let Some(stat) = item.stats.iter().find(|s| s.attribute_id == *attr_id) {
-      if stat.rolled_value < *min_val || stat.rolled_value > *max_val {
-        return false;
-      }
-    }
-  }
-  true
-}
-
 fn stat_roll_contribution(s: &AbyssalStatViewModel) -> Option<f64> {
   let delta = s.rolled_value - s.base_value;
   if delta.abs() < 1e-9 {
@@ -125,78 +108,6 @@ pub fn roll_score(item: &AbyssalViewModel) -> f64 {
   }
   let sum: f64 = item.stats.iter().filter_map(stat_roll_contribution).sum();
   sum / item.stats.len() as f64
-}
-
-fn empty_grid_message(msg: &str) -> Element<'static, Message> {
-  container(
-    text(msg.to_string())
-      .font(body::REGULAR)
-      .size(13.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .center(Length::Fill)
-  .into()
-}
-
-fn card_grid<'a>(state: &'a State) -> Element<'a, Message> {
-  if state.abyssals.abyssals.is_empty() {
-    return empty_grid_message("No abyssal modules synced yet.\nSync your characters to load abyssal data.");
-  }
-
-  let char_name_map: HashMap<i64, &str> = state.characters.iter().map(|c| (*c.id(), c.name().as_str())).collect();
-  let type_icons = &state.abyssals.type_icons;
-
-  let items: Vec<&AbyssalViewModel> = state
-    .abyssals
-    .abyssals
-    .iter()
-    .filter(|item| {
-      item_passes_filter(
-        item,
-        state.abyssals.selected_source_type_id,
-        &state.abyssals.stat_range_filters,
-      )
-    })
-    .collect();
-
-  if items.is_empty() {
-    return empty_grid_message("No abyssal modules match the current filters.");
-  }
-
-  let cards: Vec<Element<'_, Message>> = items
-    .iter()
-    .map(|item| {
-      let char_name = char_name_map.get(&item.character_id).copied().unwrap_or("");
-      let portrait = state.abyssals.portrait_handles.get(&item.character_id).cloned();
-      container(abyssal_card::Component::new(item, char_name, type_icons, portrait).render())
-        .padding(Padding {
-          top: 0.0,
-          bottom: 16.0,
-          left: 0.0,
-          right: 0.0,
-        })
-        .max_width(500.0)
-        .width(Length::Fill)
-        .into()
-    })
-    .collect();
-
-  scrollable(
-    container(column(cards).spacing(0.0))
-      .padding(Padding {
-        top: 20.0,
-        bottom: 32.0,
-        left: 28.0,
-        right: 28.0,
-      })
-      .width(Length::Fill),
-  )
-  .height(Length::Fill)
-  .into()
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1023,7 +934,7 @@ impl<'a> Component<'a> {
     let state = self.state;
     let sidebar_el = filter_sidebar::Component::new(state).render();
     let drag_handle = filter_sidebar::drag_handle();
-    let grid_el = card_grid(state);
+    let grid_el = card_grid::Component::new(state).render();
 
     let base = row([sidebar_el, drag_handle, grid_el])
       .width(Length::Fill)

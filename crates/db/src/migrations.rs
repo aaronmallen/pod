@@ -92,6 +92,7 @@ pub mod m0000000052_add_is_abyssal_to_item_types;
 pub mod m0000000053_create_abyssal_module_stats;
 pub mod m0000000054_create_abyssal_items;
 pub mod m0000000055_create_abyssal_source_types;
+pub mod m0000000056_create_abyssal_source_attributes;
 
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::prelude::*;
@@ -176,6 +177,7 @@ impl MigratorTrait for Migrator {
       Box::new(m0000000053_create_abyssal_module_stats::Migration),
       Box::new(m0000000054_create_abyssal_items::Migration),
       Box::new(m0000000055_create_abyssal_source_types::Migration),
+      Box::new(m0000000056_create_abyssal_source_attributes::Migration),
     ]
   }
 }

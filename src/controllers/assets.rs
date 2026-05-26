@@ -1776,41 +1776,6 @@ fn build_abyssal_categories(
   categories
 }
 
-#[derive(serde::Deserialize)]
-struct DynAttrMapping {
-  #[serde(rename = "applicableTypes")]
-  applicable_types: Vec<i32>,
-}
-
-#[derive(serde::Deserialize)]
-struct DynAttrEntry {
-  #[serde(rename = "attributeIDs")]
-  attribute_ids: HashMap<i32, serde_yaml::Value>,
-  #[serde(rename = "inputOutputMapping")]
-  input_output_mapping: Vec<DynAttrMapping>,
-}
-
-fn build_dynamic_attr_map() -> HashMap<i32, HashSet<i32>> {
-  const YAML: &str = include_str!("../../tmp/eve-sde-inspect/dynamicItemAttributes.yaml");
-  let entries: HashMap<i32, DynAttrEntry> = match serde_yaml::from_str(YAML) {
-    Ok(v) => v,
-    Err(e) => {
-      tracing::warn!("abyssals: failed to parse dynamicItemAttributes.yaml: {e}");
-      return HashMap::new();
-    }
-  };
-  let mut result: HashMap<i32, HashSet<i32>> = HashMap::new();
-  for entry in entries.values() {
-    let attr_ids: Vec<i32> = entry.attribute_ids.keys().copied().collect();
-    for mapping in &entry.input_output_mapping {
-      for &source_type_id in &mapping.applicable_types {
-        result.entry(source_type_id).or_default().extend(&attr_ids);
-      }
-    }
-  }
-  result
-}
-
 fn build_synthetic_stat_templates(
   source_type_id: i32,
   source_base_values: &HashMap<i32, HashMap<i32, f64>>,
@@ -2025,11 +1990,17 @@ async fn build_abyssal_location_map(
 }
 
 pub async fn load_abyssals_from_db(db: pod_db::Repo, esi: Option<pod_esi::Client>) -> pod_model::AbyssalsData {
-  let dynamic_attr_map = build_dynamic_attr_map();
   let source_type_ids = db
     .universe()
     .abyssal_source_types()
     .all_source_type_ids()
+    .await
+    .unwrap_or_default();
+
+  let dynamic_attr_map = db
+    .universe()
+    .abyssal_source_attributes()
+    .find_attr_ids_by_source_type_ids(&source_type_ids)
     .await
     .unwrap_or_default();
 

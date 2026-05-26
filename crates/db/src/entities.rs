@@ -2,6 +2,7 @@
 
 pub mod abyssal_item;
 pub mod abyssal_module_stat;
+pub mod abyssal_source_attribute;
 pub mod abyssal_source_type;
 pub mod asset_sync_state;
 pub mod bloodline;

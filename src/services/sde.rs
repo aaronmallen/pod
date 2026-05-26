@@ -174,6 +174,9 @@ async fn seed_dogma_data(
   step(tx, "Seeding abyssal source types\u{2026}").await;
   seed_abyssal_source_types(db, &dynamic_path).await?;
 
+  step(tx, "Seeding abyssal source attributes\u{2026}").await;
+  seed_abyssal_source_attributes(db, &dynamic_path).await?;
+
   step(tx, "Seeding dogma attributes\u{2026}").await;
   seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await
 }
@@ -602,6 +605,34 @@ async fn seed_abyssal_source_types(db: &pod_db::Repo, path: &Path) -> Result<(),
   db.universe()
     .abyssal_source_types()
     .replace_all(&sorted)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tracing::instrument(skip(db))]
+async fn seed_abyssal_source_attributes(db: &pod_db::Repo, path: &Path) -> Result<(), String> {
+  let Ok(entries): Result<HashMap<i32, SdeDynamicEntry>, _> = read_yaml(path).await else {
+    return Ok(());
+  };
+
+  let mut records: Vec<(i32, i32)> = Vec::new();
+  for entry in entries.values() {
+    let attr_ids: Vec<i32> = entry.attribute_ids.keys().copied().collect();
+    for mapping in &entry.input_output_mapping {
+      for &source_type_id in &mapping.input_types {
+        for &attr_id in &attr_ids {
+          records.push((source_type_id, attr_id));
+        }
+      }
+    }
+  }
+
+  records.sort_unstable();
+  records.dedup();
+
+  db.universe()
+    .abyssal_source_attributes()
+    .upsert_many(&records)
     .await
     .map_err(|e| e.to_string())
 }

@@ -17,6 +17,13 @@ pub enum AbyssalItems {
 }
 
 #[derive(DeriveIden)]
+pub enum AbyssalSourceAttributes {
+  AttrId,
+  SourceTypeId,
+  Table,
+}
+
+#[derive(DeriveIden)]
 pub enum AbyssalSourceTypes {
   SourceTypeId,
   Table,

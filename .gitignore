@@ -9,6 +9,8 @@ web/src/generated/release.ts
 .env.*
 
 # Rust
+**/*.profraw
+**/*.profdata
 **/*.rs.bk
 *.pdb
 **/mutants.out*/

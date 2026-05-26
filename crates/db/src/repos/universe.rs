@@ -1,6 +1,7 @@
 use sea_orm::DatabaseConnection;
 
 pub mod abyssal_module_stats;
+pub mod abyssal_source_attributes;
 pub mod abyssal_source_types;
 pub mod bloodlines;
 pub mod certificates;
@@ -34,6 +35,10 @@ impl<'a> Repo<'a> {
 
   pub fn abyssal_module_stats(&self) -> abyssal_module_stats::Repo<'_> {
     abyssal_module_stats::Repo::new(self.connection)
+  }
+
+  pub fn abyssal_source_attributes(&self) -> abyssal_source_attributes::Repo<'_> {
+    abyssal_source_attributes::Repo::new(self.connection)
   }
 
   pub fn abyssal_source_types(&self) -> abyssal_source_types::Repo<'_> {

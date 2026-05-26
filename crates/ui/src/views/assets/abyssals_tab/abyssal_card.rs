@@ -78,7 +78,7 @@ fn abyssal_card_header<'a>(
         ])
         .align_y(iced::alignment::Vertical::Center),
       )
-      .on_press(Message::OpenMutamarket)
+      .on_press(Message::OpenMutamarket(item.item_id))
       .into(),
     ])
     .align_y(iced::alignment::Vertical::Center),

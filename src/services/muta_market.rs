@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-const BASE_URL: &str = "https://mutamarket.com/api/modules/type";
+const BASE_URL: &str = "https://mutamarket.com/api/modules";
 
 /// A single price estimate entry from the MutaMarket API.
 #[derive(Deserialize)]
@@ -34,9 +34,9 @@ impl Client {
 
   /// Returns the estimated ISK price for the given abyssal item, or `None`
   /// if the item is not listed on MutaMarket. Throttles to 1 req/s.
-  pub async fn item_price(&self, type_id: i32, item_id: i64) -> Result<Option<f64>, reqwest::Error> {
+  pub async fn item_price(&self, item_id: i64) -> Result<Option<f64>, reqwest::Error> {
     self.throttle().await;
-    let url = format!("{BASE_URL}/{type_id}/{item_id}");
+    let url = format!("{BASE_URL}/{item_id}");
     let response = self.http.get(&url).send().await?;
     parse_item_price_response(response).await
   }
@@ -58,8 +58,8 @@ async fn parse_item_price_response(response: reqwest::Response) -> Result<Option
   if response.status() == reqwest::StatusCode::NOT_FOUND {
     return Ok(None);
   }
-  let items: Vec<MutaMarketItem> = response.error_for_status()?.json().await?;
-  Ok(items.into_iter().find_map(|item| item.estimated_value))
+  let item: MutaMarketItem = response.error_for_status()?.json().await?;
+  Ok(item.estimated_value)
 }
 
 impl Default for Client {

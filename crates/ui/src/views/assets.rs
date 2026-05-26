@@ -935,8 +935,8 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
       state.abyssals.stat_range_filters.clear();
       state.abyssals.visible_count = 50;
     }
-    abyssals_tab::Message::OpenMutamarket => {
-      let _ = open::that_detached("https://mutamarket.com");
+    abyssals_tab::Message::OpenMutamarket(item_id) => {
+      let _ = open::that_detached(format!("https://mutamarket.com/modules/{item_id}"));
     }
     abyssals_tab::Message::OpenTypeModal => {
       state.abyssals.modal_open = true;

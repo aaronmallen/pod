@@ -184,7 +184,7 @@ async fn price_one_abyssal(
   db: &pod_db::Repo,
   now: i64,
 ) {
-  match muta.item_price(*item.type_id(), *item.item_id()).await {
+  match muta.item_price(*item.item_id()).await {
     Ok(Some(price)) => {
       if let Err(e) = db
         .abyssals()

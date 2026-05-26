@@ -477,7 +477,7 @@ fn active_view_reload_task(app: &App, data_type: &str, character_id: i64) -> Tas
       mail_ctrl::reload_task(characters, &services).map(|m| Message::Main(Box::new(main_ctrl::Message::Mail(m))))
     }
     main_window::ActiveView::Wallet(_) if is_wallet_data_type(data_type) => {
-      wallet_ctrl::reload_task(characters, &services).map(|m| Message::Main(Box::new(main_ctrl::Message::Wallet(m))))
+      wallet_ctrl::reload_task(characters, &corporations, &services).map(|m| Message::Main(Box::new(main_ctrl::Message::Wallet(m))))
     }
     main_window::ActiveView::Assets(_) if data_type == "Assets" => {
       assets_ctrl::reload_task(characters, corporations, &services)

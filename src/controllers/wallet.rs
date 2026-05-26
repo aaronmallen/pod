@@ -21,7 +21,8 @@ use pod_ui::{
 use crate::services::{Services, corporation as corporation_service};
 
 /// Creates the initial wallet state and spawns background tasks to load
-/// journal entries, transactions, and contracts from the database.
+/// journal entries, transactions, contracts, and corp balances from the
+/// database and ESI.
 pub fn new(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
@@ -49,11 +50,49 @@ pub fn new(
       async move { load_contracts_from_db(ids_c, db_c).await },
       Message::ContractsLoaded,
     );
-    iced::Task::batch([journal_task, transactions_task, contracts_task])
+    let corp_balance_task = build_corp_balance_task(&corporations, services);
+    iced::Task::batch([journal_task, transactions_task, contracts_task, corp_balance_task])
   } else {
     iced::Task::none()
   };
   (state, task)
+}
+
+fn build_corp_balance_task(corporations: &[Corporation], services: &Services) -> iced::Task<Message> {
+  let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) else {
+    return iced::Task::none();
+  };
+  let corps = corporations.to_vec();
+  iced::Task::perform(
+    async move { fetch_all_corp_balances(corps, esi, db).await },
+    Message::AllCorpBalancesLoaded,
+  )
+}
+
+async fn fetch_all_corp_balances(
+  corporations: Vec<Corporation>,
+  esi: pod_esi::Client,
+  db: pod_db::Repo,
+) -> Vec<(i64, f64)> {
+  let mut result = Vec::new();
+  for corp in &corporations {
+    let corp_id = *corp.id();
+    let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
+      continue;
+    };
+    let grant = corporation_service::refresh_grant(corp, &token);
+    let total: f64 = esi
+      .corporation(corp_id)
+      .auth(&grant)
+      .wallets()
+      .await
+      .unwrap_or_default()
+      .iter()
+      .map(|w| w.balance)
+      .sum();
+    result.push((corp_id, total));
+  }
+  result
 }
 
 async fn load_journal_from_db(char_ids: Vec<i64>, db: pod_db::Repo) -> Vec<JournalEntry> {
@@ -118,7 +157,7 @@ fn map_journal_row(row: WalletJournalEntry) -> JournalEntry {
 /// Returns a task that reloads journal entries, transactions, and contracts
 /// from the database and emits the corresponding `Loaded` messages, refreshing
 /// an already-active wallet view.
-pub fn reload_task(characters: Vec<Character>, services: &Services) -> iced::Task<Message> {
+pub fn reload_task(characters: Vec<Character>, corporations: &[Corporation], services: &Services) -> iced::Task<Message> {
   let Some(db) = services.db.clone() else {
     return iced::Task::none();
   };
@@ -141,7 +180,8 @@ pub fn reload_task(characters: Vec<Character>, services: &Services) -> iced::Tas
     async move { load_contracts_from_db(ids_c, db_c).await },
     Message::ContractsLoaded,
   );
-  iced::Task::batch([journal_task, transactions_task, contracts_task])
+  let corp_balance_task = build_corp_balance_task(corporations, services);
+  iced::Task::batch([journal_task, transactions_task, contracts_task, corp_balance_task])
 }
 
 /// Processes a wallet message, performing ESI fetches when a corporation is

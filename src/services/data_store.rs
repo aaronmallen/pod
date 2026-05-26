@@ -193,10 +193,11 @@ where
 fn persist<T: Serialize>(data_type: &str, character_id: i64, records: &T) {
   let path = data_path(data_type, character_id);
   if let Some(parent) = path.parent()
-    && let Err(e) = std::fs::create_dir_all(parent) {
-      tracing::warn!("data_store: failed to create {data_type} directory: {e}");
-      return;
-    }
+    && let Err(e) = std::fs::create_dir_all(parent)
+  {
+    tracing::warn!("data_store: failed to create {data_type} directory: {e}");
+    return;
+  }
   match serde_json::to_vec(records) {
     Ok(bytes) => {
       if let Err(e) = std::fs::write(&path, bytes) {

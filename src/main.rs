@@ -6,7 +6,7 @@ mod config;
 mod controllers;
 mod services;
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use controllers::{about_window, main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
@@ -18,9 +18,7 @@ use pod_ui::{
   views::{assets, mail, main_window, skills, splash, wallet},
 };
 use services::{
-  Services,
-  data_store::DataStore,
-  menu,
+  Services, menu,
   sync_service::{SyncEvent, SyncService},
 };
 
@@ -39,7 +37,6 @@ struct App {
   about_window: Option<(window::Id, about_window::State)>,
   characters: Vec<Character>,
   config: config::Settings,
-  data_store: Arc<DataStore>,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
   /// Non-fatal warning from the database lockfile check, surfaced as a toast
@@ -114,7 +111,6 @@ impl Default for App {
       about_window: None,
       characters: Vec::new(),
       config: config::Settings::default(),
-      data_store: Arc::new(DataStore::load()),
       db: None,
       esi_client: None,
       lock_warning: None,
@@ -397,7 +393,6 @@ fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
   };
   let services = Services {
     config: app.config.clone(),
-    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -499,7 +494,6 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   };
   let services = Services {
     config: app.config.clone(),
-    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -538,7 +532,6 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
   let is_save_completed = matches!(&msg, skill_plan_window::Message::SaveCompleted);
   let services = Services {
     config: app.config.clone(),
-    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -704,7 +697,6 @@ fn init_main_ctrl(
 fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
   let services = Services {
     config: app.config.clone(),
-    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),

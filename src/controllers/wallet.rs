@@ -1,4 +1,4 @@
-//! Wallet controller: navigation and DataStore-backed data reads.
+//! Wallet controller: navigation and DB-backed data reads.
 
 use std::{
   cmp::Reverse,
@@ -7,7 +7,7 @@ use std::{
 };
 
 use iced::widget::image;
-use pod_model::{Character, CharacterContract, Corporation, WalletTransaction};
+use pod_model::{Character, CharacterContract, Corporation, WalletJournalEntry, WalletTransaction};
 use pod_ui::{
   components::{
     CharacterPicker,
@@ -20,40 +20,99 @@ use pod_ui::{
 
 use crate::services::{Services, corporation as corporation_service};
 
-/// Creates the initial wallet state from DataStore reads.
-///
-/// No background tasks are spawned; data comes from the DataStore stub.
-/// When the store is empty the view renders its empty/loading state.
+/// Creates the initial wallet state and spawns background tasks to load
+/// journal entries, transactions, and contracts from the database.
 pub fn new(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
   services: &Services,
   right_rail_width: f32,
 ) -> (State, iced::Task<Message>) {
-  let mut state = build_wallet_state(&characters, &corporations, right_rail_width);
-  populate_from_data_store(&mut state, &characters, services);
-  recompute_derived(&mut state);
-  (state, iced::Task::none())
+  let state = build_wallet_state(&characters, &corporations, right_rail_width);
+  let task = if let Some(db) = services.db.clone() {
+    let char_ids: Vec<i64> = characters.iter().map(|c| *c.id()).collect();
+    let db_j = db.clone();
+    let db_t = db.clone();
+    let db_c = db.clone();
+    let ids_j = char_ids.clone();
+    let ids_t = char_ids.clone();
+    let ids_c = char_ids;
+    let journal_task = iced::Task::perform(
+      async move { load_journal_from_db(ids_j, db_j).await },
+      Message::JournalLoaded,
+    );
+    let transactions_task = iced::Task::perform(
+      async move { load_transactions_from_db(ids_t, db_t).await },
+      Message::TransactionsLoaded,
+    );
+    let contracts_task = iced::Task::perform(
+      async move { load_contracts_from_db(ids_c, db_c).await },
+      Message::ContractsLoaded,
+    );
+    iced::Task::batch([journal_task, transactions_task, contracts_task])
+  } else {
+    iced::Task::none()
+  };
+  (state, task)
 }
 
-/// Reads wallet data for all characters from the DataStore and populates state.
-fn populate_from_data_store(state: &mut State, characters: &[Character], services: &Services) {
-  let ds = &services.data_store;
-  let mut journal: Vec<JournalEntry> = Vec::new();
-  let mut market: Vec<MarketEntry> = Vec::new();
-  let mut contracts: Vec<ContractEntry> = Vec::new();
-  for character in characters {
-    let id = *character.id();
-    journal.extend(ds.wallet_journal_for(id));
-    market.extend(ds.wallet_transactions_for(id));
-    contracts.extend(ds.contracts_for(id));
+async fn load_journal_from_db(char_ids: Vec<i64>, db: pod_db::Repo) -> Vec<JournalEntry> {
+  let mut entries: Vec<JournalEntry> = Vec::new();
+  for id in char_ids {
+    let rows = db.wallet().journal_for_character(id).await.unwrap_or_default();
+    entries.extend(rows.into_iter().map(map_journal_row));
   }
-  journal.sort_by_key(|e| e.ts_secs);
-  market.sort_by_key(|e| e.ts_secs);
+  entries.sort_by_key(|e| e.ts_secs);
+  entries
+}
+
+async fn load_transactions_from_db(char_ids: Vec<i64>, db: pod_db::Repo) -> Vec<MarketEntry> {
+  let mut entries: Vec<MarketEntry> = Vec::new();
+  let type_ids: Vec<i32> = {
+    let mut all: Vec<WalletTransaction> = Vec::new();
+    for id in &char_ids {
+      all.extend(db.wallet().transactions_for_character(*id).await.unwrap_or_default());
+    }
+    all
+      .iter()
+      .map(|t| t.type_id)
+      .collect::<HashSet<_>>()
+      .into_iter()
+      .collect()
+  };
+  let type_names = load_type_names(&type_ids, &db).await;
+  for id in char_ids {
+    let rows = db.wallet().transactions_for_character(id).await.unwrap_or_default();
+    entries.extend(rows.into_iter().map(|r| map_txn_row(r, &type_names)));
+  }
+  entries.sort_by_key(|e| e.ts_secs);
+  entries
+}
+
+async fn load_contracts_from_db(char_ids: Vec<i64>, db: pod_db::Repo) -> Result<Vec<ContractEntry>, String> {
+  let names: HashMap<i64, String> = HashMap::new();
+  let locations: HashMap<i64, String> = HashMap::new();
+  let mut contracts: Vec<ContractEntry> = Vec::new();
+  for id in char_ids {
+    let rows = db.wallet().contracts_for_character(id).await.unwrap_or_default();
+    contracts.extend(rows.into_iter().map(|r| build_contract_entry(r, &names, &locations)));
+  }
   contracts.sort_by_key(|e| e.ts_secs);
-  state.journal = journal;
-  state.market = market;
-  state.contracts = contracts;
+  Ok(contracts)
+}
+
+fn map_journal_row(row: WalletJournalEntry) -> JournalEntry {
+  let ts = parse_iso_to_unix(&row.date);
+  JournalEntry {
+    id: format!("{}-{}", row.character_id, row.entry_id),
+    who: row.character_id,
+    entry_type: row.ref_type,
+    delta: row.amount.unwrap_or(0.0),
+    ts_secs: secs_ago(ts),
+    reference: row.description,
+    party: row.first_party_id.map(|id| format!("#{id}")).unwrap_or_default(),
+    location: String::new(),
+  }
 }
 
 /// Processes a wallet message, performing ESI fetches when a corporation is

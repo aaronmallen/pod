@@ -1,6 +1,6 @@
 //! Main window controller: navigation shell that routes to child view controllers.
 
-use iced::{Subscription, widget::image};
+use iced::Subscription;
 use pod_model::{Character, CharacterSkill, Corporation};
 pub use pod_ui::views::main_window::{ActiveView, AssetsNavState, Message, Nav, State};
 use pod_ui::{
@@ -36,23 +36,28 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   *character.tags_mut() = tags;
   state.characters[idx] = character.clone();
   let updated = state.characters.clone();
+  let portrait_handle = character
+    .portrait_data()
+    .as_ref()
+    .map(|b| iced::widget::image::Handle::from_bytes(b.clone()));
   match &mut state.active_view {
     ActiveView::Skills(s) => skills_ctrl::refresh_characters(s, updated),
     ActiveView::Characters(s) => {
-      if let Some(bytes) = character.portrait_data() {
-        s.character_pane
-          .portrait_handles
-          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      if let Some(handle) = portrait_handle {
+        s.character_pane.portrait_handles.insert(*character.id(), handle);
       }
       if let Some(ci) = s.all_characters.iter().position(|c| *c.id() == *character.id()) {
         s.all_characters[ci] = character.clone();
       }
     }
     ActiveView::Assets(s) => {
-      if let Some(bytes) = character.portrait_data() {
-        s.abyssals
-          .portrait_handles
-          .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
+      if let Some(handle) = portrait_handle {
+        s.abyssals.portrait_handles.insert(*character.id(), handle);
+      }
+    }
+    ActiveView::Mail(s) => {
+      if let Some(handle) = portrait_handle {
+        s.portrait_handles.insert(*character.id(), handle);
       }
     }
     _ => {}
@@ -541,7 +546,7 @@ fn nav_to_character_detail_from_list(
 
 fn nav_to_skills_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
   state.active_nav = Nav::Skills;
-  let mut s = skills_ctrl::new(
+  let (mut s, groups_task) = skills_ctrl::new(
     state.characters.clone(),
     state.skills_left_pane_width,
     Some(char_id),
@@ -555,7 +560,7 @@ fn nav_to_skills_for_character(state: &mut State, char_id: i64, services: &Servi
     services,
   );
   state.active_view = ActiveView::Skills(s);
-  Some(iced::Task::none())
+  Some(groups_task.map(Message::Skills))
 }
 
 fn nav_to_wallet_for_character(state: &mut State, char_id: i64, services: &Services) -> Option<iced::Task<Message>> {
@@ -736,18 +741,23 @@ fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> ic
 }
 
 fn navigate_to_assets(state: &mut State, services: &Services) -> iced::Task<Message> {
-  let records = services
-    .data_store
-    .assets_for(state.characters.first().map(|c| *c.id()).unwrap_or(0));
-  let assets_state = assets_ctrl::from_nav_state(
+  let nav = state.assets_nav.clone();
+  let (mut assets_state, task) = assets_ctrl::new(
     state.characters.clone(),
     state.corporations.clone(),
-    &state.assets_nav,
+    services,
     state.assets_sidebar_width,
-    records,
+    nav.abyssals_filter_pane_width,
   );
+  assets_state.category = nav.category;
+  assets_state.expanded_containers = nav.expanded_containers;
+  assets_state.picker.selected = nav.picker_selection;
+  assets_state.search_query = nav.search_query;
+  assets_state.selected_loc = nav.selected_loc;
+  assets_state.sort_asc = nav.sort_asc;
+  assets_state.sort_col = nav.sort_col;
   state.active_view = ActiveView::Assets(assets_state);
-  iced::Task::none()
+  task.map(Message::Assets)
 }
 
 fn navigate_to_mail(state: &mut State, services: &Services) -> iced::Task<Message> {
@@ -786,7 +796,7 @@ fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> 
     }
     Nav::Skills => {
       let nav = state.skills_nav.clone();
-      let mut s = skills_ctrl::new(
+      let (mut s, task) = skills_ctrl::new(
         state.characters.clone(),
         state.skills_left_pane_width,
         Some(nav.selected_char_id),
@@ -794,7 +804,7 @@ fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> 
       );
       skills_ctrl::apply_nav_state(&mut s, &nav);
       swap_active_view(state, ActiveView::Skills(s));
-      iced::Task::none()
+      task.map(Message::Skills)
     }
     Nav::Wallet => navigate_to_wallet(state, services),
     _ => iced::Task::none(),

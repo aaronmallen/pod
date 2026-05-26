@@ -17,16 +17,14 @@ use pod_ui::{
 
 use crate::services::Services;
 
-/// Creates the initial skills state from the given characters.
-///
-/// Skill groups are seeded from the DataStore (empty until SyncService
-/// populates it), so no DB task is spawned on navigation.
+/// Creates the initial skills state from the given characters and a startup
+/// task that loads skill group definitions from the database.
 pub fn new(
   characters: Vec<Character>,
   left_pane_width: f32,
   selected_char_id: Option<i64>,
   services: &Services,
-) -> State {
+) -> (State, iced::Task<Message>) {
   let char_id = selected_char_id
     .or_else(|| characters.first().map(|c| *c.id()))
     .unwrap_or(0);
@@ -37,10 +35,17 @@ pub fn new(
     .map(build_queue_from_character)
     .unwrap_or_default();
   let picker = build_skills_picker(&characters, char_id);
-  let skill_groups = services.data_store.skills_for(char_id);
-  let mut state = build_initial_skills_state(characters, left_pane_width, picker, queue, char_skill_map, skill_groups);
+  let mut state = build_initial_skills_state(characters, left_pane_width, picker, queue, char_skill_map, vec![]);
   recompute_queue(&mut state);
-  state
+  let task = if let Some(db) = services.db.clone() {
+    iced::Task::perform(
+      async move { db.universe().item_types().find_skill_groups().await.unwrap_or_default() },
+      Message::SkillGroupsLoaded,
+    )
+  } else {
+    iced::Task::none()
+  };
+  (state, task)
 }
 
 /// Dispatches a skills message, rebuilding queue and skill map on character selection.

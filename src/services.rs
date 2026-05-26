@@ -5,7 +5,6 @@ pub mod bootstrap;
 pub mod cache_cleaner;
 pub mod character;
 pub mod corporation;
-pub mod data_store;
 pub mod menu;
 pub mod muta_market;
 pub mod oauth_callback;
@@ -22,7 +21,6 @@ pub mod window_state;
 #[derive(Clone)]
 pub struct Services {
   pub config: crate::config::Settings,
-  pub data_store: std::sync::Arc<data_store::DataStore>,
   pub db: Option<pod_db::Repo>,
   pub esi_client: Option<pod_esi::Client>,
   pub muta_market_client: muta_market::Client,

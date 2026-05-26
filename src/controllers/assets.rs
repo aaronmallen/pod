@@ -119,7 +119,7 @@ pub fn new(
 }
 
 /// Creates an assets state from a saved `AssetsNavState`, restoring all
-/// navigation filters and reading asset data from the DataStore.
+/// navigation filters with a pre-loaded asset record set.
 pub fn from_nav_state(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,

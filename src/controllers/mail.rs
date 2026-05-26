@@ -21,25 +21,83 @@ use pod_ui::{
 
 use crate::services::{Services, character as character_service};
 
-/// Creates a new mail state populated from the DataStore.
-///
-/// No background fetch is spawned here; mail syncs automatically via
-/// SyncService. An empty message list is shown until the store is
-/// populated.
+/// Creates a new mail state and a startup task that loads mail headers
+/// from the database.
 pub fn new(
   characters: Vec<Character>,
   services: &Services,
   folder_pane_width: f32,
   message_list_width: f32,
 ) -> (State, iced::Task<Message>) {
-  let mut state = build_initial_mail_state(&characters, folder_pane_width, message_list_width);
-  let messages: Vec<MailMessage> = characters
-    .iter()
-    .flat_map(|c| services.data_store.mail_for(*c.id()))
+  let state = build_initial_mail_state(&characters, folder_pane_width, message_list_width);
+  let task = if let Some(db) = services.db.clone() {
+    iced::Task::perform(
+      async move { load_mail_from_db(characters, db).await },
+      Message::MailHeadersLoaded,
+    )
+  } else {
+    iced::Task::none()
+  };
+  (state, task)
+}
+
+async fn load_mail_from_db(characters: Vec<Character>, db: pod_db::Repo) -> Result<Vec<MailMessage>, String> {
+  let snoozed_rows = db.characters().all_snoozed_mails().await.unwrap_or_default();
+  let snoozed_lookup: std::collections::HashMap<(i64, i64), String> = snoozed_rows
+    .into_iter()
+    .map(|r| ((r.character_id, r.mail_id), r.snooze_until))
     .collect();
-  state.messages = messages;
-  recompute_unread_counts(&mut state);
-  (state, iced::Task::none())
+  let mut all: Vec<MailMessage> = Vec::new();
+  for character in &characters {
+    let rows = db.characters().mail_headers(*character.id()).await.unwrap_or_default();
+    let messages: Vec<MailMessage> = rows
+      .into_iter()
+      .map(|row| build_mail_message_db_only(row, character.name(), &snoozed_lookup))
+      .collect();
+    all.extend(messages);
+  }
+  Ok(all)
+}
+
+fn build_mail_message_db_only(
+  row: MailHeader,
+  character_name: &str,
+  snoozed_lookup: &std::collections::HashMap<(i64, i64), String>,
+) -> MailMessage {
+  let is_sent = row.from_id == Some(row.character_id);
+  let from_name = if is_sent {
+    character_name.to_string()
+  } else {
+    row.from_id.map(|id| id.to_string()).unwrap_or_default()
+  };
+  let snoozed = snoozed_lookup.get(&(row.character_id, row.mail_id)).cloned();
+  let preview = row.preview.unwrap_or_default();
+  let (body, body_loaded) = parse_stored_body(&row.body);
+  MailMessage {
+    body,
+    body_loaded,
+    character_id: row.character_id,
+    date_label: date_bucket_label(&row.timestamp),
+    folder: if is_sent { "sent" } else { "inbox" }.to_string(),
+    from_corp: false,
+    from_id: row.from_id,
+    from_name,
+    from_system: false,
+    from_tone: 0,
+    has_attachment: false,
+    id: format!("{}-{}", row.character_id, row.mail_id),
+    important: false,
+    labels: Vec::new(),
+    mail_id: row.mail_id,
+    pinned: false,
+    preview,
+    recipients_display: row.recipients_display,
+    snoozed,
+    starred: false,
+    subject: row.subject,
+    time: format_timestamp_label(&row.timestamp),
+    unread: !row.is_read && !is_sent,
+  }
 }
 
 /// Restores folder and message selection from saved navigation state.

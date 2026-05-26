@@ -3,7 +3,7 @@
 //! `SyncService` drives continuous ESI polling for all enrolled characters.
 //! It runs as an iced subscription that lives for the lifetime of the app,
 //! re-fetching every endpoint once its `x-cached-seconds` timer has elapsed
-//! and writing results into `DataStore` while emitting `SyncEvent` messages
+//! and writing results to the database while emitting `SyncEvent` messages
 //! into the iced update loop.
 //!
 //! Scheduling is rate-limit-aware: each `(SyncDataType, character_id)` pair

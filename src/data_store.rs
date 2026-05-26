@@ -13,4 +13,11 @@ impl DataStore {
   pub fn load() -> Self {
     Self {}
   }
+
+  /// Returns cached mail messages for the given character.
+  ///
+  /// Always empty until SyncService populates the store.
+  pub fn mail_for(&self, _character_id: i64) -> Vec<pod_ui::views::mail::MailMessage> {
+    vec![]
+  }
 }

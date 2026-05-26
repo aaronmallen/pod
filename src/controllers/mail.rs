@@ -10,31 +10,44 @@ use pod_ui::{
     character_picker::{CharacterEntry, PickerSelection},
     compose_panel,
   },
-  views::mail::{
-    ComposeRecipient, DraggingPane, Folder, MailAccount, MailMessage, Message, State, folder_pane, message_list_pane,
-    reading_pane, snooze_picker,
+  views::{
+    mail::{
+      ComposeRecipient, DraggingPane, Folder, MailAccount, MailMessage, Message, State, folder_pane, message_list_pane,
+      reading_pane, snooze_picker,
+    },
+    main_window::MailNavState,
   },
 };
 
 use crate::services::{Services, character as character_service};
 
-/// Creates a new mail state and kicks off a background header fetch.
+/// Creates a new mail state populated from the DataStore.
+///
+/// No background fetch is spawned here; mail syncs automatically via
+/// SyncService. An empty message list is shown until the store is
+/// populated.
 pub fn new(
   characters: Vec<Character>,
   services: &Services,
   folder_pane_width: f32,
   message_list_width: f32,
 ) -> (State, iced::Task<Message>) {
-  let state = build_initial_mail_state(&characters, folder_pane_width, message_list_width);
-  let task = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-    iced::Task::perform(
-      async move { fetch_mail_headers_and_prefetch(characters, esi, db).await },
-      Message::MailHeadersLoaded,
-    )
-  } else {
-    iced::Task::none()
-  };
-  (state, task)
+  let mut state = build_initial_mail_state(&characters, folder_pane_width, message_list_width);
+  let messages: Vec<MailMessage> = characters
+    .iter()
+    .flat_map(|c| services.data_store.mail_for(*c.id()))
+    .collect();
+  state.messages = messages;
+  recompute_unread_counts(&mut state);
+  (state, iced::Task::none())
+}
+
+/// Restores folder and message selection from saved navigation state.
+pub fn restore_nav_state(state: &mut State, nav: &MailNavState) {
+  if let Some(folder) = nav.selected_folder.clone() {
+    state.selected_folder = folder;
+  }
+  state.selected_message_id = nav.selected_message_id.clone();
 }
 
 /// Returns a task that checks for expired snoozes and emits `SnoozedExpired`.

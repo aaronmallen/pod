@@ -61,6 +61,18 @@ pub enum Message {
   Wallet(wallet::Message),
 }
 
+/// Preserved navigation state for the mail view.
+///
+/// Saved when the user leaves the mail view and restored on return so
+/// folder selection and message reading position survive navigation.
+#[derive(Clone, Debug, Default)]
+pub struct MailNavState {
+  /// The folder that was selected when the user navigated away.
+  pub selected_folder: Option<mail::Folder>,
+  /// The message ID that was open in the reading pane.
+  pub selected_message_id: Option<String>,
+}
+
 pub struct State {
   pub abyssals_filter_pane_width: f32,
   pub active_nav: Nav,
@@ -78,6 +90,8 @@ pub struct State {
   pub feat_wallet: bool,
   pub hovered_nav: Option<Nav>,
   pub mail_folder_pane_width: f32,
+  /// Preserved mail folder/message selection across navigation.
+  pub mail_nav: MailNavState,
   pub mail_message_list_width: f32,
   /// Expired snooze pairs queued while the mail view is inactive.
   ///

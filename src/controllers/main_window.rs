@@ -108,6 +108,7 @@ pub fn new(
     hovered_nav: None,
     mail_folder_pane_width: mail_folder_pane_width.unwrap_or(240.0),
     mail_message_list_width: mail_message_list_width.unwrap_or(380.0),
+    mail_nav: pod_ui::views::main_window::MailNavState::default(),
     pending_snooze_expired: Vec::new(),
     refresh_successes: 0,
     skills_left_pane_width: skills_left_pane_width.unwrap_or(700.0),
@@ -775,12 +776,14 @@ fn navigate_to_assets(state: &mut State, services: &Services) -> iced::Task<Mess
 }
 
 fn navigate_to_mail(state: &mut State, services: &Services) -> iced::Task<Message> {
-  let (s, task) = mail_ctrl::new(
+  let nav = state.mail_nav.clone();
+  let (mut s, task) = mail_ctrl::new(
     state.characters.clone(),
     services,
     state.mail_folder_pane_width,
     state.mail_message_list_width,
   );
+  mail_ctrl::restore_nav_state(&mut s, &nav);
   swap_active_view(state, ActiveView::Mail(s));
   let pending = std::mem::take(&mut state.pending_snooze_expired);
   if pending.is_empty() {
@@ -837,11 +840,21 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
 }
 
 /// Replaces `state.active_view` with `new_view`; saves the prior view to
-/// `cached_assets_state` if it was an Assets view.
+/// `cached_assets_state` if it was an Assets view, and saves mail nav
+/// state if it was the Mail view.
 fn swap_active_view(state: &mut State, new_view: ActiveView) {
   let prev = std::mem::replace(&mut state.active_view, new_view);
-  if let ActiveView::Assets(s) = prev {
-    state.cached_assets_state = Some(s);
+  match prev {
+    ActiveView::Assets(s) => {
+      state.cached_assets_state = Some(s);
+    }
+    ActiveView::Mail(s) => {
+      state.mail_nav = pod_ui::views::main_window::MailNavState {
+        selected_folder: Some(s.selected_folder),
+        selected_message_id: s.selected_message_id,
+      };
+    }
+    _ => {}
   }
 }
 
@@ -1050,6 +1063,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
@@ -1110,6 +1124,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
@@ -1153,6 +1168,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
@@ -1203,6 +1219,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
@@ -1242,6 +1259,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,
@@ -1333,6 +1351,7 @@ mod tests {
         hovered_nav: None,
         mail_folder_pane_width: 0.0,
         mail_message_list_width: 0.0,
+        mail_nav: pod_ui::views::main_window::MailNavState::default(),
         pending_snooze_expired: Vec::new(),
         refresh_successes: 0,
         skills_left_pane_width: 0.0,

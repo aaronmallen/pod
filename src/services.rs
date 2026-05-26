@@ -19,6 +19,7 @@ pub mod window_state;
 #[derive(Clone)]
 pub struct Services {
   pub config: crate::config::Settings,
+  pub data_store: std::sync::Arc<crate::data_store::DataStore>,
   pub db: Option<pod_db::Repo>,
   pub esi_client: Option<pod_esi::Client>,
   pub muta_market_client: muta_market::Client,

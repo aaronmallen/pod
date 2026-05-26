@@ -4,11 +4,14 @@
 
 mod config;
 mod controllers;
+mod data_store;
 mod services;
+mod sync_service;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use controllers::{about_window, main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
+use data_store::DataStore;
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
@@ -18,6 +21,7 @@ use pod_ui::{
   views::{assets, mail, main_window, skills, splash, wallet},
 };
 use services::{Services, menu};
+use sync_service::{SyncEvent, SyncService};
 
 pub const ESI_CLIENT_ID: &str = "8fa6e582375c4633a100e9c0ffd37224";
 
@@ -34,6 +38,7 @@ struct App {
   about_window: Option<(window::Id, about_window::State)>,
   characters: Vec<Character>,
   config: config::Settings,
+  data_store: Arc<DataStore>,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
   muta_market_client: services::muta_market::Client,
@@ -44,6 +49,7 @@ struct App {
   plan_windows: HashMap<window::Id, skill_plan_window::State>,
   restart_required: Option<String>,
   step_label: String,
+  sync_service: SyncService,
   update_dismissed_for: Option<String>,
   update_state: services::updater::UpdateState,
   window_id: Option<window::Id>,
@@ -62,11 +68,13 @@ enum Message {
   AboutWindow(about_window::Message),
   BackgroundSync(services::bootstrap::Message),
   Bootstrap(services::bootstrap::Message),
+  ForceRefresh,
   Main(Box<main_ctrl::Message>),
   Menu(menu::MenuMessage),
   OAuthCallback(String, String),
   SkillPlan(window::Id, skill_plan_window::Message),
   Splash(splash_ctrl::Message),
+  Sync(SyncEvent),
   Tick,
   UpdateBanner(app_banner::Message),
   Updater(services::updater::Message),
@@ -102,6 +110,7 @@ impl Default for App {
       about_window: None,
       characters: Vec::new(),
       config: config::Settings::default(),
+      data_store: Arc::new(DataStore::load()),
       db: None,
       esi_client: None,
       muta_market_client: services::muta_market::Client::new(),
@@ -111,6 +120,7 @@ impl Default for App {
       plan_windows: HashMap::new(),
       restart_required: None,
       step_label: "Opening database\u{2026}".to_string(),
+      sync_service: SyncService::new(),
       update_dismissed_for: None,
       update_state: services::updater::UpdateState::default(),
       window_id: None,
@@ -215,12 +225,14 @@ fn subscription(app: &App) -> Subscription<Message> {
   let plan_subs = plan_window_subscriptions(&app.plan_windows);
   let menu_sub = menu::subscription().map(Message::Menu);
   let oauth_sub = services::oauth_callback::subscription().map(|(code, state)| Message::OAuthCallback(code, state));
+  let sync_sub = app.sync_service.subscription().map(Message::Sync);
 
   Subscription::batch(
     std::iter::once(window_events)
       .chain(std::iter::once(tick))
       .chain(std::iter::once(menu_sub))
       .chain(std::iter::once(oauth_sub))
+      .chain(std::iter::once(sync_sub))
       .chain(plan_subs),
   )
 }
@@ -299,7 +311,12 @@ fn update_other(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::AboutWindow(msg) => update_about_window(app, msg),
     Message::BackgroundSync(msg) => update_background_sync(app, msg),
+    Message::ForceRefresh => {
+      app.sync_service.force_refresh_all();
+      Task::none()
+    }
     Message::Menu(msg) => update_menu(app, msg),
+    Message::Sync(_event) => Task::none(),
     msg => update_secondary(app, msg),
   }
 }
@@ -365,6 +382,7 @@ fn apply_synced_character(app: &mut App, character: Box<Character>) -> Task<Mess
   main_ctrl::apply_synced_character(state, *character);
   let services = Services {
     config: app.config.clone(),
+    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -379,6 +397,7 @@ fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
   };
   let services = Services {
     config: app.config.clone(),
+    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -447,6 +466,7 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
   };
   let services = Services {
     config: app.config.clone(),
+    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -485,6 +505,7 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
   let is_save_completed = matches!(&msg, skill_plan_window::Message::SaveCompleted);
   let services = Services {
     config: app.config.clone(),
+    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),
@@ -641,6 +662,7 @@ fn init_main_ctrl(
 fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<Message> {
   let services = Services {
     config: app.config.clone(),
+    data_store: app.data_store.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
     muta_market_client: app.muta_market_client.clone(),

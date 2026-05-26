@@ -12,7 +12,7 @@ use controllers::{about_window, main_window as main_ctrl, skill_plan_window, spl
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
-  components::update_banner,
+  components::app_banner,
   plan_math::BaseAttrs,
   style::{spacing::layout, typography::bytes as font_bytes},
   views::{assets, mail, main_window, skills, splash, wallet},
@@ -68,7 +68,7 @@ enum Message {
   SkillPlan(window::Id, skill_plan_window::Message),
   Splash(splash_ctrl::Message),
   Tick,
-  UpdateBanner(update_banner::Message),
+  UpdateBanner(app_banner::Message),
   Updater(services::updater::Message),
   WindowCloseRequested(window::Id),
   WindowMoved(window::Id, Point),
@@ -84,7 +84,7 @@ enum SplashMessage {
 }
 
 enum UpdaterMessage {
-  Banner(update_banner::Message),
+  Banner(app_banner::Message),
   Updater(services::updater::Message),
 }
 
@@ -714,14 +714,12 @@ fn handle_banner_dismiss(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-fn handle_banner_message(app: &mut App, msg: update_banner::Message) -> Task<Message> {
+fn handle_banner_message(app: &mut App, msg: app_banner::Message) -> Task<Message> {
   match msg {
-    update_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
-    update_banner::Message::DismissPressed => handle_banner_dismiss(app),
-    update_banner::Message::RestartPressed => {
-      Task::done(Message::Updater(services::updater::Message::RestartRequested))
-    }
-    update_banner::Message::RetryPressed => {
+    app_banner::Message::ApplyPressed => Task::done(Message::Updater(services::updater::Message::ApplyRequested)),
+    app_banner::Message::DismissPressed => handle_banner_dismiss(app),
+    app_banner::Message::RestartPressed => Task::done(Message::Updater(services::updater::Message::RestartRequested)),
+    app_banner::Message::RetryPressed => {
       app.update_dismissed_for = None;
       Task::done(Message::Updater(services::updater::Message::CheckRequested))
     }
@@ -972,7 +970,7 @@ fn view_main_phase<'a>(app: &'a App, state: &'a main_ctrl::State) -> Element<'a,
     .map(|m| Message::Main(Box::new(m)));
   match resolve_banner_state(app) {
     Some(bs) => iced::widget::column([
-      update_banner::Component::new(bs).render().map(Message::UpdateBanner),
+      app_banner::Component::new(bs).render().map(Message::UpdateBanner),
       content,
     ])
     .into(),
@@ -997,38 +995,38 @@ fn view(app: &App, window_id: window::Id) -> Element<'_, Message> {
   }
 }
 
-fn banner_for_update_available(v: &str, dismissed: &Option<String>) -> Option<update_banner::BannerState> {
+fn banner_for_update_available(v: &str, dismissed: &Option<String>) -> Option<app_banner::AppBannerState> {
   if dismissed.as_deref() == Some(v) {
     None
   } else {
-    Some(update_banner::BannerState::UpdateAvailable(v.to_owned()))
+    Some(app_banner::AppBannerState::UpdateAvailable(v.to_owned()))
   }
 }
 
-fn progress_banner(state: &services::updater::UpdateState) -> update_banner::BannerState {
+fn progress_banner(state: &services::updater::UpdateState) -> app_banner::AppBannerState {
   use services::updater::UpdateState;
   match state {
-    UpdateState::Downloading => update_banner::BannerState::Downloading,
-    _ => update_banner::BannerState::ReadyToRestart,
+    UpdateState::Downloading => app_banner::AppBannerState::Downloading,
+    _ => app_banner::AppBannerState::ReadyToRestart,
   }
 }
 
 fn banner_state(
   state: &services::updater::UpdateState,
   update_dismissed_for: &Option<String>,
-) -> Option<update_banner::BannerState> {
+) -> Option<app_banner::AppBannerState> {
   use services::updater::UpdateState;
   match state {
     UpdateState::Idle => None,
     UpdateState::UpdateAvailable(v) => banner_for_update_available(v, update_dismissed_for),
     UpdateState::Downloading | UpdateState::ReadyToRestart => Some(progress_banner(state)),
-    UpdateState::Error(e) => Some(update_banner::BannerState::Error(e.clone())),
+    UpdateState::Error(e) => Some(app_banner::AppBannerState::Error(e.clone())),
   }
 }
 
-fn resolve_banner_state(app: &App) -> Option<update_banner::BannerState> {
+fn resolve_banner_state(app: &App) -> Option<app_banner::AppBannerState> {
   if let Some(msg) = &app.restart_required {
-    return Some(update_banner::BannerState::RestartRequired(msg.clone()));
+    return Some(app_banner::AppBannerState::RestartRequired(msg.clone()));
   }
   banner_state(&app.update_state, &app.update_dismissed_for)
 }

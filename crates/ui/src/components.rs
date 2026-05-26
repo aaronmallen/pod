@@ -1,3 +1,4 @@
+pub mod app_banner;
 pub mod avatar;
 pub mod backdrop;
 pub mod badge;
@@ -29,8 +30,8 @@ pub mod splash_status;
 pub mod status_bar;
 pub mod tab_strip;
 pub mod toast;
-pub mod update_banner;
 
+pub use app_banner::{AppBannerState, Component as AppBanner};
 pub use avatar::Component as Avatar;
 pub use backdrop::Component as Backdrop;
 pub use badge::{Component as Badge, CountBadge, GlyphBadge, StatusBadge};
@@ -62,4 +63,3 @@ pub use splash_status::Component as SplashStatus;
 pub use status_bar::Component as StatusBar;
 pub use tab_strip::Component as TabStrip;
 pub use toast::Component as Toast;
-pub use update_banner::Component as UpdateBanner;

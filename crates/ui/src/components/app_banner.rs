@@ -22,7 +22,7 @@ pub enum Message {
 
 /// Display state passed to the banner component.
 #[derive(Clone, Debug)]
-pub enum BannerState {
+pub enum AppBannerState {
   /// Update is downloading and installing.
   Downloading,
   /// Download or install failed; carries a brief error description.
@@ -35,14 +35,14 @@ pub enum BannerState {
   UpdateAvailable(String),
 }
 
-/// Horizontal top-of-window banner driven by [`BannerState`].
+/// Horizontal top-of-window banner driven by [`AppBannerState`].
 pub struct Component {
-  state: BannerState,
+  state: AppBannerState,
 }
 
 impl Component {
   /// Creates the banner for the given display state.
-  pub fn new(state: BannerState) -> Self {
+  pub fn new(state: AppBannerState) -> Self {
     Self {
       state,
     }
@@ -59,13 +59,13 @@ impl Component {
   }
 }
 
-fn banner_inner(state: BannerState) -> Element<'static, Message> {
+fn banner_inner(state: AppBannerState) -> Element<'static, Message> {
   match state {
-    BannerState::Downloading => render_downloading(),
-    BannerState::Error(msg) => render_error(msg),
-    BannerState::ReadyToRestart => render_ready_to_restart(),
-    BannerState::RestartRequired(msg) => render_restart_required(msg),
-    BannerState::UpdateAvailable(version) => render_update_available(version),
+    AppBannerState::Downloading => render_downloading(),
+    AppBannerState::Error(msg) => render_error(msg),
+    AppBannerState::ReadyToRestart => render_ready_to_restart(),
+    AppBannerState::RestartRequired(msg) => render_restart_required(msg),
+    AppBannerState::UpdateAvailable(version) => render_update_available(version),
   }
 }
 

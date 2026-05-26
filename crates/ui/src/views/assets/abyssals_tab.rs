@@ -61,6 +61,8 @@ pub enum Message {
   CloseTypeModal,
   /// The active filter was cleared.
   FilterReset,
+  /// The MutaMarket logo or price was clicked — open mutamarket.com.
+  OpenMutamarket,
   /// The module-type picker modal was opened.
   OpenTypeModal,
   /// Cursor moved during filter pane drag (cursor x position).

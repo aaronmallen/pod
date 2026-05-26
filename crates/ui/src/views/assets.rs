@@ -935,6 +935,9 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
       state.abyssals.stat_range_filters.clear();
       state.abyssals.visible_count = 50;
     }
+    abyssals_tab::Message::OpenMutamarket => {
+      let _ = open::that_detached("https://mutamarket.com");
+    }
     abyssals_tab::Message::OpenTypeModal => {
       state.abyssals.modal_open = true;
     }
@@ -961,7 +964,7 @@ fn update_abyssals_tab(state: &mut State, msg: abyssals_tab::Message) {
         .abyssals
         .iter()
         .filter(|item| {
-          if selected.is_some_and(|id| item.type_id != id) {
+          if selected.is_some_and(|id| item.source_type_id != id) {
             return false;
           }
           for (attr_id, (min_val, max_val)) in filters {

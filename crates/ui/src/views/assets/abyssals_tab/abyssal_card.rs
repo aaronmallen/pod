@@ -4,13 +4,16 @@ use std::collections::HashMap;
 
 use iced::{
   Background, Border, Element, Length, Padding, Theme,
-  widget::{Space, column, container, image, row, text},
+  widget::{Space, column, container, image, mouse_area, row, text},
 };
 use pod_model::AbyssalViewModel;
 
 use super::Message;
 use crate::{
-  components::avatar::{self, AvatarKind},
+  components::{
+    Icon,
+    avatar::{self, AvatarKind},
+  },
   format,
   style::{
     color,
@@ -58,14 +61,24 @@ fn abyssal_card_header<'a>(
       ])
       .width(Length::Fill)
       .into(),
-      column([text(price_label)
-        .font(mono::MEDIUM)
-        .size(14.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::ACCENT),
-        })
-        .into()])
-      .align_x(iced::alignment::Horizontal::Right)
+      mouse_area(
+        row([
+          Icon::mutamarket()
+            .size(14.0)
+            .color(iced::Color::from_rgb(0.961, 0.624, 0.039))
+            .render::<Message>(),
+          Space::new().width(5.0).into(),
+          text(price_label)
+            .font(mono::MEDIUM)
+            .size(14.0)
+            .style(|_: &Theme| iced::widget::text::Style {
+              color: Some(color::text::ACCENT),
+            })
+            .into(),
+        ])
+        .align_y(iced::alignment::Vertical::Center),
+      )
+      .on_press(Message::OpenMutamarket)
       .into(),
     ])
     .align_y(iced::alignment::Vertical::Center),
@@ -86,7 +99,7 @@ fn abyssal_card_stats(item: &AbyssalViewModel) -> Element<'_, Message> {
     .iter()
     .map(|s| super::stat_row::Component::new(s).render())
     .collect();
-  container(column(stat_rows).spacing(2.0))
+  container(column(stat_rows))
     .padding(Padding {
       top: 6.0,
       bottom: 14.0,
@@ -94,6 +107,8 @@ fn abyssal_card_stats(item: &AbyssalViewModel) -> Element<'_, Message> {
       right: 16.0,
     })
     .width(Length::Fill)
+    .height(Length::Fill)
+    .clip(true)
     .into()
 }
 
@@ -176,6 +191,7 @@ fn abyssal_card<'a>(
   let footer = abyssal_card_footer(item, char_name, portrait);
   container(column([header, stats_area, footer]))
     .width(Length::Fill)
+    .height(606.0)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {

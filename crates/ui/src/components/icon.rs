@@ -53,6 +53,10 @@ impl Component {
     Self::from_bytes(include_bytes!("../../../../assets/icons/mail.svg"))
   }
 
+  pub fn mutamarket() -> Self {
+    Self::from_bytes(include_bytes!("../../../../assets/icons/mutamarket.svg"))
+  }
+
   pub fn notif_alliance() -> Self {
     Self::from_bytes(include_bytes!("../../../../assets/icons/notif-alliance.svg"))
   }

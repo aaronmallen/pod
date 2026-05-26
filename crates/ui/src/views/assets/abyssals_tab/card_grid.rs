@@ -28,7 +28,7 @@ fn item_passes_filter(
   selected_source_type_id: Option<i32>,
   stat_range_filters: &HashMap<i32, (f64, f64)>,
 ) -> bool {
-  if selected_source_type_id.is_some_and(|id| item.type_id != id) {
+  if selected_source_type_id.is_some_and(|id| item.source_type_id != id) {
     return false;
   }
   for (attr_id, (min_val, max_val)) in stat_range_filters {
@@ -62,15 +62,7 @@ fn build_card<'a>(
   type_icons: &'a HashMap<i32, iced::widget::image::Handle>,
   portrait: Option<iced::widget::image::Handle>,
 ) -> Element<'a, Message> {
-  container(super::abyssal_card::Component::new(item, char_name, type_icons, portrait).render())
-    .padding(Padding {
-      top: 0.0,
-      bottom: 16.0,
-      left: 0.0,
-      right: 0.0,
-    })
-    .width(Length::Fill)
-    .into()
+  super::abyssal_card::Component::new(item, char_name, type_icons, portrait).render()
 }
 
 fn char_name_for(state: &State, character_id: i64) -> &str {
@@ -127,7 +119,7 @@ fn card_grid<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
   }
 
   scrollable(
-    container(column(grid_rows).spacing(0.0))
+    container(column(grid_rows).spacing(spacing::SPACE_4))
       .padding(Padding {
         top: 20.0,
         bottom: 32.0,

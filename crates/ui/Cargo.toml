@@ -12,6 +12,7 @@ version = "0.1.0"
 [dependencies]
 chrono.workspace = true
 iced.workspace = true
+open.workspace = true
 pod-model.workspace = true
 
 [dev-dependencies]

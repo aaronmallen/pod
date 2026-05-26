@@ -39,7 +39,7 @@ impl<'a> Component<'a> {
 
     let name_el = text(stat.display_name.clone())
       .font(body::REGULAR)
-      .size(11.0)
+      .size(13.0)
       .style(|_: &Theme| iced::widget::text::Style {
         color: Some(color::text::SECONDARY),
       });
@@ -47,7 +47,7 @@ impl<'a> Component<'a> {
     let delta_line = format_delta_line(delta, stat.base_value, &stat.unit_suffix);
     let delta_el = text(delta_line)
       .font(mono::REGULAR)
-      .size(10.0)
+      .size(11.0)
       .style(move |_: &Theme| iced::widget::text::Style {
         color: Some(stat_color),
       });
@@ -89,7 +89,7 @@ impl<'a> Component<'a> {
     container(row([
       container(Space::new())
         .width(2.0)
-        .height(Length::Fill)
+        .height(28.0)
         .style(move |_| container::Style {
           background: Some(Background::Color(border_color)),
           ..container::Style::default()
@@ -99,12 +99,7 @@ impl<'a> Component<'a> {
       content.into(),
     ]))
     .width(Length::Fill)
-    .padding(Padding {
-      top: 5.0,
-      bottom: 5.0,
-      left: 0.0,
-      right: 0.0,
-    })
+    .center_y(Length::Fill)
     .into()
   }
 }

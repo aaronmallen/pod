@@ -93,7 +93,7 @@ export function Hero({ os, layout, accent, archChoice, onChangeArch, release, pl
             color: T.ink,
             textWrap: 'balance',
           } as React.CSSProperties}>
-            Your capsule,<br/>
+            Your EVE Online capsule,<br/>
             <span style={{ color: T.muted }}>on the desktop.</span>
           </h1>
 
@@ -103,7 +103,7 @@ export function Hero({ os, layout, accent, archChoice, onChangeArch, release, pl
             color: T.muted, maxWidth: 520,
             textWrap: 'pretty',
           } as React.CSSProperties}>
-            Pod is a native, offline-first companion for every pilot you fly.
+            Pod is a native EVE Online companion for every pilot you fly.
             Wallets, skills, fitting, mail and assets — across every character —
             in one keyboard-driven window.
           </p>

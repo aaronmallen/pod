@@ -60,7 +60,7 @@ export function Features({ accent }: Props) {
         <SectionHead
           eyebrow="In the box"
           title="Six windows, one binary."
-          line="Every Pod feature ships in every build. No add-ons, no plugins, no per-seat tier."
+          line="Every Pod feature for EVE Online ships in every build. No add-ons, no plugins, no per-seat tier."
         />
 
         <div style={{

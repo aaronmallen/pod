@@ -12,6 +12,9 @@ pub enum HandleResult {
   Bootstrap(iced::Task<bootstrap::Message>),
   /// A fatal error that the app cannot recover from; carries the error string.
   Fatal(String),
+  /// Database lockfile was held by the given hostname; non-fatal, but the
+  /// caller should surface a dismissible warning to the user.
+  LockWarning(String),
   /// Nothing to do.
   None,
   /// A splash animation task (maps to the top-level `Splash` message).
@@ -71,6 +74,7 @@ fn handle_bootstrap_later(
 ) -> HandleResult {
   match msg {
     bootstrap::Message::CharacterSynced(_) | bootstrap::Message::TokenRefreshFailed(_) => HandleResult::None,
+    bootstrap::Message::LockWarning(host) => HandleResult::LockWarning(host),
     bootstrap::Message::StepChanged(label) => apply_step_progress(state, step_label, label),
     msg => handle_bootstrap_ext(state, db, characters, esi_client, msg),
   }

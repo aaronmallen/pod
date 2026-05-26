@@ -22,6 +22,11 @@ pub enum Message {
   Error(String),
   /// A fatal error that requires the app to exit.
   FatalError(String),
+  /// Database lockfile is held by a different hostname; carries that hostname.
+  ///
+  /// This is non-fatal: the existing lock is overwritten and startup continues,
+  /// but the UI should surface a dismissible warning so the user is aware.
+  LockWarning(String),
   /// Static-data seeding finished; resume the normal post-DB flow.
   SeedingComplete(pod_db::Repo),
   /// DB is open but empty; static data must be seeded before continuing.
@@ -54,15 +59,28 @@ pub fn sync_characters(db: pod_db::Repo, esi_client: Client, characters: Vec<Cha
 }
 
 /// Asynchronously opens the Pod SQLite database, runs pending migrations, then
-/// always emits `SeedingRequired` so the SDE version check runs on every startup.
+/// emits `SeedingRequired` so the SDE version check runs on every startup.
+///
+/// If the database lockfile was held by a different hostname, `LockWarning` is
+/// emitted first so the UI can display a dismissible notice.
 pub fn run() -> Task<Message> {
-  Task::perform(
-    async { open_database().await.map_err(|e| e.to_string()) },
-    |result| match result {
-      Ok(db) => Message::SeedingRequired(db),
-      Err(e) => Message::FatalError(format!("Database error: {e}")),
-    },
-  )
+  let (tx, rx) = iced::futures::channel::mpsc::channel(4);
+  tokio::spawn(run_open_database(tx));
+  Task::stream(rx)
+}
+
+async fn run_open_database(mut tx: Tx) {
+  match open_database().await {
+    Ok((db, lock_host)) => {
+      if let Some(host) = lock_host {
+        let _ = tx.send(Message::LockWarning(host)).await;
+      }
+      let _ = tx.send(Message::SeedingRequired(db)).await;
+    }
+    Err(e) => {
+      let _ = tx.send(Message::FatalError(format!("Database error: {e}"))).await;
+    }
+  }
 }
 
 async fn run_minimal_boot(db: pod_db::Repo, mut tx: Tx) {
@@ -528,15 +546,16 @@ async fn propagate_skill_names(character: &mut Character, esi: &Client) {
   }
 }
 
-async fn open_database() -> Result<pod_db::Repo, String> {
+/// Opens the database and returns the repo plus any stale lock hostname.
+async fn open_database() -> Result<(pod_db::Repo, Option<String>), String> {
   let settings = crate::config::Settings::global();
   let path = settings.resolved_db_path();
   let network_db = settings.paths().resolved_network_db();
   let result = pod_db::open(&path, network_db).await.map_err(|e| e.to_string())?;
-  if let Some(host) = result.existing_lock_host {
+  if let Some(host) = result.existing_lock_host.as_deref() {
     tracing::warn!(host = %host, "database already open on another host");
   }
-  Ok(result.repo)
+  Ok((result.repo, result.existing_lock_host))
 }
 
 async fn cache_structure_names_from_assets(

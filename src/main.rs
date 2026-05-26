@@ -42,6 +42,9 @@ struct App {
   data_store: Arc<DataStore>,
   db: Option<pod_db::Repo>,
   esi_client: Option<pod_esi::Client>,
+  /// Non-fatal warning from the database lockfile check, surfaced as a toast
+  /// after the main window opens.
+  lock_warning: Option<String>,
   muta_market_client: services::muta_market::Client,
   oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   phase: AppPhase,
@@ -114,6 +117,7 @@ impl Default for App {
       data_store: Arc::new(DataStore::load()),
       db: None,
       esi_client: None,
+      lock_warning: None,
       muta_market_client: services::muta_market::Client::new(),
       oauth_callback_tx,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
@@ -571,6 +575,10 @@ fn handle_splash_bootstrap(app: &mut App, msg: services::bootstrap::Message) -> 
       tracing::error!("fatal startup error: {e}");
       iced::exit()
     }
+    splash_ctrl::HandleResult::LockWarning(host) => {
+      app.lock_warning = Some(format!("Pod may already be open on {host}"));
+      Task::none()
+    }
     splash_ctrl::HandleResult::None => Task::none(),
     splash_ctrl::HandleResult::Splash(t) => t.map(Message::Splash),
   }
@@ -587,7 +595,7 @@ fn apply_saved_geometry(app: &mut App, saved: &services::window_state::WindowGeo
 }
 
 fn collect_transition_tasks(
-  app: &App,
+  app: &mut App,
   splash_task: Task<Message>,
   splash_id: Option<window::Id>,
   init_task: Task<main_ctrl::Message>,
@@ -604,6 +612,11 @@ fn collect_transition_tasks(
   }
   if let Some(id) = splash_id {
     tasks.push(window::close(id));
+  }
+  if let Some(warning) = app.lock_warning.take() {
+    tasks.push(Task::done(Message::Main(Box::new(main_ctrl::Message::ShowToast(
+      warning,
+    )))));
   }
   Task::batch(tasks)
 }

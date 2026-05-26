@@ -1,7 +1,7 @@
 //! Abyssals tab — mutated module grid with stat rows and resizable filter sidebar.
 
 pub mod tier_badge;
-
+pub mod type_icon_tile;
 use std::collections::HashMap;
 
 use iced::{
@@ -84,89 +84,6 @@ pub enum Message {
   StatMinFilterChanged(i32, f64),
   /// A module source type was selected in the picker (None = all types).
   TypeSelected(Option<i32>),
-}
-
-fn hue_to_color(hue: f32, lightness: f32, saturation: f32) -> Color {
-  Color::from([
-    lightness + saturation * (hue.to_radians()).cos(),
-    lightness + saturation * (hue.to_radians() + 2.094).cos(),
-    lightness + saturation * (hue.to_radians() + 4.189).cos(),
-    1.0,
-  ])
-}
-
-fn monogram_tile(label: &str, seed: i32, width: f32, height: f32, font_size: f32) -> Element<'static, Message> {
-  let hue = (seed.unsigned_abs() % 360) as f32;
-  let col = hue_to_color(hue, 0.5, 0.3);
-  container(
-    text(label.to_string())
-      .font(mono::REGULAR)
-      .size(font_size)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(Color::WHITE),
-      }),
-  )
-  .width(width)
-  .height(height)
-  .center(Length::Fill)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(color::with_alpha(col, 0.8))),
-    border: Border {
-      radius: 6.0.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn word_initial(w: &str) -> char {
-  w.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?')
-}
-
-fn is_alphabetic_word(w: &&str) -> bool {
-  w.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
-}
-
-fn type_monogram(base_type_name: &str, type_id: i32) -> String {
-  let letters: String = base_type_name
-    .split_whitespace()
-    .filter(is_alphabetic_word)
-    .take(2)
-    .map(word_initial)
-    .collect();
-  if letters.is_empty() {
-    format!("{}", type_id % 100)
-  } else {
-    letters
-  }
-}
-
-fn type_icon_tile(
-  type_icons: &HashMap<i32, image::Handle>,
-  base_type_name: &str,
-  source_type_id: i32,
-  size: f32,
-) -> Element<'static, Message> {
-  let radius = if size >= 28.0 { 6.0 } else { 4.0 };
-  if let Some(handle) = type_icons.get(&source_type_id) {
-    container(image::Image::new(handle.clone()).width(size).height(size))
-      .width(size)
-      .height(size)
-      .style(move |_| container::Style {
-        border: Border {
-          radius: radius.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .clip(true)
-      .into()
-  } else {
-    let letters = type_monogram(base_type_name, source_type_id);
-    let font_size = if size >= 28.0 { 12.0 } else { 9.0 };
-    monogram_tile(&letters, source_type_id, size, size, font_size)
-  }
 }
 
 fn stat_roll_direction(stat: &AbyssalStatViewModel) -> Option<bool> {
@@ -325,7 +242,9 @@ fn abyssal_card_header<'a>(
     .unwrap_or_else(|| "\u{2014}".to_string());
   container(
     row([
-      type_icon_tile(type_icons, &item.base_type_name, item.source_type_id, 42.0),
+      type_icon_tile::Component::new(&item.base_type_name, item.source_type_id, 42.0, 42.0)
+        .icon(type_icons.get(&item.source_type_id).cloned())
+        .render(),
       Space::new().width(12.0).into(),
       column([
         row([

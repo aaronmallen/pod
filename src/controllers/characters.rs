@@ -2049,7 +2049,7 @@ mod tests {
     let (oauth_callback_tx, _) = tokio::sync::broadcast::channel(1);
     Services {
       config: crate::config::Settings::default(),
-      data_store: std::sync::Arc::new(crate::data_store::DataStore::load()),
+      data_store: std::sync::Arc::new(crate::services::data_store::DataStore::load()),
       db: None,
       esi_client: None,
       muta_market_client: crate::services::muta_market::Client::new(),

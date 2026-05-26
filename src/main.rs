@@ -4,14 +4,12 @@
 
 mod config;
 mod controllers;
-mod data_store;
 mod services;
-mod sync_service;
 
 use std::{collections::HashMap, sync::Arc};
 
 use controllers::{about_window, main_window as main_ctrl, skill_plan_window, splash as splash_ctrl};
-use data_store::DataStore;
+use services::{data_store::DataStore, sync_service::{SyncEvent, SyncService}};
 use iced::{Color, Element, Point, Size, Subscription, Task, window};
 use pod_model::Character;
 use pod_ui::{
@@ -21,7 +19,6 @@ use pod_ui::{
   views::{assets, mail, main_window, skills, splash, wallet},
 };
 use services::{Services, menu};
-use sync_service::{SyncEvent, SyncService};
 
 pub const ESI_CLIENT_ID: &str = "8fa6e582375c4633a100e9c0ffd37224";
 

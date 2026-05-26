@@ -45,7 +45,6 @@ struct App {
   /// Non-fatal warning from the database lockfile check, surfaced as a toast
   /// after the main window opens.
   lock_warning: Option<String>,
-  muta_market_client: services::muta_market::Client,
   oauth_callback_tx: tokio::sync::broadcast::Sender<(String, String)>,
   phase: AppPhase,
   plan_window_position: Option<Point>,
@@ -117,7 +116,6 @@ impl Default for App {
       db: None,
       esi_client: None,
       lock_warning: None,
-      muta_market_client: services::muta_market::Client::new(),
       oauth_callback_tx,
       phase: AppPhase::Splash(splash_ctrl::State::default()),
       plan_window_position: None,
@@ -396,7 +394,6 @@ fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   main_ctrl::reauth(&services).map(|m| Message::Main(Box::new(m)))
@@ -468,7 +465,6 @@ fn active_view_reload_task(app: &App, data_type: &str, character_id: i64) -> Tas
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let characters = state.characters.clone();
@@ -578,7 +574,6 @@ fn update_main(app: &mut App, msg: main_ctrl::Message) -> Task<Message> {
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let (task, new_config, restart_msg) = main_ctrl::update(state, msg, &services);
@@ -616,7 +611,6 @@ fn update_skill_plan(app: &mut App, window_id: window::Id, msg: skill_plan_windo
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   let Some(plan_state) = app.plan_windows.get_mut(&window_id) else {
@@ -765,14 +759,16 @@ fn init_main_ctrl(
   let (skills_w, mail_folder_w, mail_list_w) = pane_widths_from_geometry(g);
   let (wallet_w, assets_w, abyssals_filter_w) = rail_widths_from_geometry(g);
   main_ctrl::new(
-    app.characters.clone(),
+    main_ctrl::MainWindowParams {
+      characters: app.characters.clone(),
+      skills_left_pane_width: skills_w,
+      mail_folder_pane_width: mail_folder_w,
+      mail_message_list_width: mail_list_w,
+      wallet_right_rail_width: wallet_w,
+      assets_sidebar_width: assets_w,
+      abyssals_filter_pane_width: abyssals_filter_w,
+    },
     services,
-    skills_w,
-    mail_folder_w,
-    mail_list_w,
-    wallet_w,
-    assets_w,
-    abyssals_filter_w,
   )
 }
 
@@ -781,7 +777,6 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     config: app.config.clone(),
     db: app.db.clone(),
     esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
   if let Some(client) = app.esi_client.clone() {

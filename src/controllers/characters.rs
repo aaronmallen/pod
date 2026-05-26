@@ -22,6 +22,9 @@ use pod_ui::{
 
 use crate::services::{Services, character as character_service, corporation as corporation_service};
 
+/// Loaded tags result: entity ID paired with a list of (tag_id, name, color) tuples.
+type TagsResult = Option<(i64, Vec<(i32, String, Option<String>)>)>;
+
 /// Creates a new characters controller state and a startup task that loads tags per character.
 pub fn new(characters: Vec<Character>, services: &Services) -> (State, iced::Task<Message>) {
   let portrait_handles = characters
@@ -475,11 +478,7 @@ fn handle_tag_remove(state: &mut State, tag_id: i32, services: &Services) -> ice
   }
 }
 
-async fn fetch_removed_corporation_tags(
-  entity_id: i64,
-  new_ids: Vec<i32>,
-  db: pod_db::Repo,
-) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+async fn fetch_removed_corporation_tags(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> TagsResult {
   db.tags().set_corporation_tags(entity_id, new_ids).await.ok()?;
   let tags = db.tags().tags_for_corporation(entity_id).await.ok()?;
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
@@ -492,11 +491,7 @@ fn remove_corporation_tag_task(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Re
   )
 }
 
-async fn fetch_removed_character_tags(
-  entity_id: i64,
-  new_ids: Vec<i32>,
-  db: pod_db::Repo,
-) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+async fn fetch_removed_character_tags(entity_id: i64, new_ids: Vec<i32>, db: pod_db::Repo) -> TagsResult {
   db.tags().set_character_tags(entity_id, new_ids).await.ok()?;
   let tags = db.tags().tags_for_character(entity_id).await.ok()?;
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
@@ -537,7 +532,7 @@ async fn fetch_corporation_tags(
   tag_name: String,
   existing_ids: Vec<i32>,
   db: pod_db::Repo,
-) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+) -> TagsResult {
   let tag = db.tags().find_or_create(&tag_name).await.ok()?;
   let mut new_ids = existing_ids;
   add_tag_id_if_missing(&mut new_ids, tag.id);
@@ -546,14 +541,14 @@ async fn fetch_corporation_tags(
   Some((entity_id, tags.into_iter().map(|t| (t.id, t.name, t.color)).collect()))
 }
 
-fn corp_tags_loaded_message(result: Option<(i64, Vec<(i32, String, Option<String>)>)>) -> Message {
+fn corp_tags_loaded_message(result: TagsResult) -> Message {
   match result {
     Some((id, tags)) => Message::CorporationsTab(corporations_tab::Message::CorporationTagsLoaded(id, tags)),
     None => Message::TagsApplied,
   }
 }
 
-fn char_tags_loaded_message(result: Option<(i64, Vec<(i32, String, Option<String>)>)>) -> Message {
+fn char_tags_loaded_message(result: TagsResult) -> Message {
   match result {
     Some((id, tags)) => Message::CharactersTab(characters_tab::Message::CharacterTagsLoaded(id, tags)),
     None => Message::TagsApplied,
@@ -577,7 +572,7 @@ async fn fetch_character_tags(
   tag_name: String,
   existing_ids: Vec<i32>,
   db: pod_db::Repo,
-) -> Option<(i64, Vec<(i32, String, Option<String>)>)> {
+) -> TagsResult {
   let tag = db.tags().find_or_create(&tag_name).await.ok()?;
   let mut new_ids = existing_ids;
   add_tag_id_if_missing(&mut new_ids, tag.id);
@@ -879,7 +874,7 @@ async fn fetch_locations(
   results
 }
 
-async fn inject_skill_names_from_db(skills: &mut Vec<CharacterSkill>, db: &pod_db::Repo) {
+async fn inject_skill_names_from_db(skills: &mut [CharacterSkill], db: &pod_db::Repo) {
   let type_ids: Vec<i32> = skills.iter().map(|s| s.skill_id).collect();
   let Ok(types) = db.universe().item_types().find_by_ids(&type_ids).await else {
     return;
@@ -2051,7 +2046,6 @@ mod tests {
       config: crate::config::Settings::default(),
       db: None,
       esi_client: None,
-      muta_market_client: crate::services::muta_market::Client::new(),
       oauth_callback_tx,
     }
   }

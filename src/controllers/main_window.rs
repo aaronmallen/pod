@@ -64,17 +64,28 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
   }
 }
 
+/// Layout-pane widths and initial data needed to create the main window state.
+pub struct MainWindowParams {
+  pub characters: Vec<Character>,
+  pub skills_left_pane_width: Option<f32>,
+  pub mail_folder_pane_width: Option<f32>,
+  pub mail_message_list_width: Option<f32>,
+  pub wallet_right_rail_width: Option<f32>,
+  pub assets_sidebar_width: Option<f32>,
+  pub abyssals_filter_pane_width: Option<f32>,
+}
+
 /// Creates a new shell state and a startup task that initializes the default view.
-pub fn new(
-  characters: Vec<Character>,
-  services: &Services,
-  skills_left_pane_width: Option<f32>,
-  mail_folder_pane_width: Option<f32>,
-  mail_message_list_width: Option<f32>,
-  wallet_right_rail_width: Option<f32>,
-  assets_sidebar_width: Option<f32>,
-  abyssals_filter_pane_width: Option<f32>,
-) -> (State, iced::Task<Message>) {
+pub fn new(params: MainWindowParams, services: &Services) -> (State, iced::Task<Message>) {
+  let MainWindowParams {
+    characters,
+    skills_left_pane_width,
+    mail_folder_pane_width,
+    mail_message_list_width,
+    wallet_right_rail_width,
+    assets_sidebar_width,
+    abyssals_filter_pane_width,
+  } = params;
   let features = services.config.features();
   let (chars_state, chars_task) = characters_ctrl::new(characters.clone(), services);
   let state = State {

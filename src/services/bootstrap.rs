@@ -124,7 +124,7 @@ async fn load_boot_characters(db: &pod_db::Repo, tx: &mut Tx) -> Option<Vec<Char
   }
 }
 
-fn enrich_characters_with_portraits(characters: &mut Vec<Character>) {
+fn enrich_characters_with_portraits(characters: &mut [Character]) {
   for character in characters.iter_mut() {
     if let Some(bytes) = crate::services::portraits::load(*character.id()) {
       *character.portrait_data_mut() = Some(bytes);

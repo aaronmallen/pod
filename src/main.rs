@@ -380,6 +380,7 @@ fn apply_synced_character(app: &mut App, character: Box<Character>) -> Task<Mess
   if let Some(idx) = app.characters.iter().position(|c| *c.id() == *character.id()) {
     app.characters[idx] = (*character).clone();
   }
+  app.sync_service.set_characters(app.characters.clone());
   let AppPhase::Main(state) = &mut app.phase else {
     return Task::none();
   };
@@ -702,6 +703,13 @@ fn handle_splash_transition(app: &mut App, splash_task: Task<Message>) -> Task<M
     muta_market_client: app.muta_market_client.clone(),
     oauth_callback_tx: app.oauth_callback_tx.clone(),
   };
+  if let Some(client) = app.esi_client.clone() {
+    app.sync_service.set_esi_client(client);
+  }
+  app.sync_service.set_characters(app.characters.clone());
+  if let Some(db) = app.db.clone() {
+    app.sync_service.set_db(db);
+  }
   let saved = services::window_state::load();
   let (target_width, target_height, position_valid, position) = compute_transition_geometry(&saved);
   let (main_state, init_task) = init_main_ctrl(app, &services, &saved);

@@ -30,20 +30,54 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// ESI data categories that the sync service polls per character.
 ///
-/// Each variant corresponds to a distinct ESI endpoint family. The `label`
-/// method returns the string key used in `SyncEvent` payloads.
+/// Each variant corresponds to a distinct ESI endpoint family.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SyncDataType {
+  /// Character assets list (`esi-assets.read_assets`).
+  CharacterAssets,
+  /// Character location (`esi-location.read_location`).
+  CharacterLocation,
+  /// Character contracts (`esi-contracts.read_character_contracts`).
+  Contracts,
+  /// Character mail (`esi-mail.read_mail`).
+  Mail,
+  /// Character skill queue and trained skills (`esi-skills.read_skills`).
+  Skills,
   /// Character wallet balance (`esi-wallet.read_character_wallet`).
   WalletBalance,
+  /// Character wallet journal (`esi-wallet.read_character_wallet`).
+  WalletJournal,
+  /// Character wallet transactions (`esi-wallet.read_character_wallet`).
+  WalletTransactions,
 }
 
 impl SyncDataType {
   /// Returns the string identifier emitted in `SyncEvent` payloads.
   pub fn label(self) -> &'static str {
     match self {
+      Self::CharacterAssets => "character_assets",
+      Self::CharacterLocation => "character_location",
+      Self::Contracts => "contracts",
+      Self::Mail => "mail",
+      Self::Skills => "skills",
       Self::WalletBalance => "wallet_balance",
+      Self::WalletJournal => "wallet_journal",
+      Self::WalletTransactions => "wallet_transactions",
     }
+  }
+
+  /// Returns all data types that the scheduler polls each tick.
+  fn all() -> &'static [SyncDataType] {
+    &[
+      SyncDataType::CharacterAssets,
+      SyncDataType::CharacterLocation,
+      SyncDataType::Contracts,
+      SyncDataType::Mail,
+      SyncDataType::Skills,
+      SyncDataType::WalletBalance,
+      SyncDataType::WalletJournal,
+      SyncDataType::WalletTransactions,
+    ]
   }
 }
 
@@ -164,6 +198,7 @@ struct SchedulerState {
 struct WorkerBundle {
   characters: Arc<Mutex<Vec<Character>>>,
   client: pod_esi::Client,
+  db: Arc<pod_db::Repo>,
   scheduler: Arc<Mutex<SchedulerState>>,
 }
 
@@ -217,6 +252,7 @@ impl SchedulerState {
 /// an immediate re-sync.
 pub struct SyncService {
   characters: Arc<Mutex<Vec<Character>>>,
+  db: Option<Arc<pod_db::Repo>>,
   esi_client: Option<pod_esi::Client>,
   scheduler: Arc<Mutex<SchedulerState>>,
 }
@@ -226,9 +262,17 @@ impl SyncService {
   pub fn new() -> Self {
     Self {
       characters: Arc::new(Mutex::new(Vec::new())),
+      db: None,
       esi_client: None,
       scheduler: Arc::new(Mutex::new(SchedulerState::default())),
     }
+  }
+
+  /// Attaches the database repository, enabling DB writes from sync tasks.
+  ///
+  /// Called after bootstrap finishes opening the database.
+  pub fn set_db(&mut self, db: pod_db::Repo) {
+    self.db = Some(Arc::new(db));
   }
 
   /// Replaces the enrolled character list.
@@ -257,16 +301,20 @@ impl SyncService {
   /// Returns an iced subscription that continuously polls ESI endpoints.
   ///
   /// The subscription runs for the lifetime of the app and emits `SyncEvent`
-  /// messages into the iced update loop. When no ESI client is available the
-  /// subscription completes immediately without emitting anything.
+  /// messages into the iced update loop. When no ESI client or DB is
+  /// available the subscription completes immediately without emitting anything.
   pub fn subscription(&self) -> Subscription<SyncEvent> {
     let Some(client) = self.esi_client.clone() else {
+      return Subscription::none();
+    };
+    let Some(db) = self.db.clone() else {
       return Subscription::none();
     };
     iced::advanced::subscription::from_recipe(SyncRecipe {
       bundle: WorkerBundle {
         characters: Arc::clone(&self.characters),
         client,
+        db,
         scheduler: Arc::clone(&self.scheduler),
       },
     })
@@ -300,7 +348,7 @@ impl iced::advanced::subscription::Recipe for SyncRecipe {
     let bundle = self.bundle;
     iced::stream::channel(256, async move |mut tx| {
       loop {
-        let events = run_tick(&bundle.client, &bundle.characters, &bundle.scheduler).await;
+        let events = run_tick(&bundle.client, &bundle.characters, &bundle.scheduler, &bundle.db).await;
         for event in events {
           if tx.send(event).await.is_err() {
             return;
@@ -319,6 +367,7 @@ async fn run_tick(
   client: &pod_esi::Client,
   characters: &Mutex<Vec<Character>>,
   scheduler: &Mutex<SchedulerState>,
+  db: &pod_db::Repo,
 ) -> Vec<SyncEvent> {
   let chars = characters.lock().expect("characters mutex poisoned").clone();
   if chars.is_empty() {
@@ -331,7 +380,7 @@ async fn run_tick(
       .iter()
       .filter(|c| !c.access_token().is_empty())
       .flat_map(|c| {
-        [SyncDataType::WalletBalance].iter().filter_map(|&dt| {
+        SyncDataType::all().iter().filter_map(|&dt| {
           let key = SlotKey {
             character_id: *c.id(),
             data_type: dt,
@@ -362,9 +411,10 @@ async fn run_tick(
     .into_iter()
     .map(|(char_id, token, dt)| {
       let client = client.clone();
+      let db = db.clone();
       tokio::spawn(
         async move {
-          let result = fetch_slot(&client, char_id, token, dt).await;
+          let result = fetch_slot(&client, &db, char_id, token, dt).await;
           (char_id, dt, result)
         }
         .in_current_span(),
@@ -456,54 +506,333 @@ enum SlotOutcome {
 /// Fetches a single slot and maps the ESI result to a `SlotOutcome`.
 async fn fetch_slot(
   client: &pod_esi::Client,
+  db: &pod_db::Repo,
   character_id: i64,
   token: String,
   data_type: SyncDataType,
 ) -> SlotOutcome {
   match data_type {
-    SyncDataType::WalletBalance => fetch_wallet_balance(client, character_id, token).await,
+    SyncDataType::CharacterAssets => fetch_character_assets(client, db, character_id, token).await,
+    SyncDataType::CharacterLocation => fetch_character_location(client, character_id, token).await,
+    SyncDataType::Contracts => fetch_contracts(client, db, character_id, token).await,
+    SyncDataType::Mail => fetch_mail(client, db, character_id, token).await,
+    SyncDataType::Skills => fetch_skills(client, db, character_id, token).await,
+    SyncDataType::WalletBalance => fetch_wallet_balance(client, db, character_id, token).await,
+    SyncDataType::WalletJournal => fetch_wallet_journal(client, db, character_id, token).await,
+    SyncDataType::WalletTransactions => fetch_wallet_transactions(client, db, character_id, token).await,
   }
 }
 
-/// Fetches the wallet balance for `character_id` and returns a `SlotOutcome`.
-///
-/// Uses a default cache TTL of 120 seconds (ESI `x-esi-error-limit-*` headers
-/// are handled transparently by the ESI HTTP client). The wallet balance
-/// endpoint does not expose `x-cached-seconds` in the response body, so we
-/// fall back to the documented 120 s value.
-async fn fetch_wallet_balance(client: &pod_esi::Client, character_id: i64, token: String) -> SlotOutcome {
+/// Builds a [`pod_esi::models::auth::Grant`] for the given character and token.
+fn make_grant(token: String, character_id: i64) -> pod_esi::models::auth::Grant {
   use std::time::{Duration, SystemTime};
 
-  use pod_esi::models::auth::Grant;
-
-  let grant = Grant::new(
+  pod_esi::models::auth::Grant::new(
     token,
     character_id,
     "",
     SystemTime::now() + Duration::from_secs(3600),
     "",
     Vec::new(),
-  );
+  )
+}
 
+/// Maps a `pod_esi::Error` to a `SlotOutcome`.
+fn map_esi_error(err: pod_esi::Error) -> SlotOutcome {
+  match err {
+    pod_esi::Error::RateLimit {
+      retry_after_secs,
+    } => SlotOutcome::RateLimit {
+      retry_after_secs,
+    },
+    pod_esi::Error::Api {
+      status, ..
+    } if status == 401 || status == 403 => SlotOutcome::AuthExpired,
+    pod_esi::Error::Api {
+      status, ..
+    } if status >= 500 => SlotOutcome::ServerError,
+    _ => SlotOutcome::ServerError,
+  }
+}
+
+/// Fetches character assets and writes them to the DB.
+async fn fetch_character_assets(
+  client: &pod_esi::Client,
+  db: &pod_db::Repo,
+  character_id: i64,
+  token: String,
+) -> SlotOutcome {
+  use pod_model::CharacterAsset;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.character_assets", character_id = character_id);
+  let result = client.character(&grant).assets().instrument(span).await;
+
+  match result {
+    Ok(raw) => {
+      let assets: Vec<CharacterAsset> = raw
+        .into_iter()
+        .map(|a| CharacterAsset {
+          character_id,
+          is_blueprint_copy: a.is_blueprint_copy,
+          is_singleton: a.is_singleton,
+          item_id: a.item_id,
+          location_flag: a.location_flag,
+          location_id: a.location_id,
+          location_type: a.location_type,
+          quantity: a.quantity,
+          type_id: a.type_id,
+          ..Default::default()
+        })
+        .collect();
+      let keep_ids: Vec<i64> = assets.iter().map(|a| a.item_id).collect();
+      if let Err(e) = db
+        .character_assets()
+        .upsert_character_assets(character_id, &assets)
+        .await
+      {
+        tracing::warn!("sync: failed to persist assets for character {character_id}: {e}");
+      }
+      if let Err(e) = db
+        .character_assets()
+        .delete_stale_character_assets(character_id, &keep_ids)
+        .await
+      {
+        tracing::warn!("sync: failed to delete stale assets for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 3600,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches the character's current location (read-only; no DB write for now).
+async fn fetch_character_location(client: &pod_esi::Client, character_id: i64, token: String) -> SlotOutcome {
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.character_location", character_id = character_id);
+  let result = client.character(&grant).location().instrument(span).await;
+
+  match result {
+    Ok(_location) => SlotOutcome::Success {
+      cached_secs: 5,
+    },
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches character contracts and writes them to the DB.
+async fn fetch_contracts(client: &pod_esi::Client, db: &pod_db::Repo, character_id: i64, token: String) -> SlotOutcome {
+  use pod_model::CharacterContract;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.contracts", character_id = character_id);
+  let result = client.character(&grant).contracts().instrument(span).await;
+
+  match result {
+    Ok(raw) => {
+      let contracts: Vec<CharacterContract> = raw
+        .into_iter()
+        .map(|c| CharacterContract {
+          acceptor_id: c.acceptor_id,
+          assignee_id: c.assignee_id,
+          character_id,
+          collateral: c.collateral,
+          contract_id: c.contract_id,
+          contract_type: c.r#type,
+          date_expired: c.date_expired,
+          date_issued: c.date_issued,
+          issuer_id: c.issuer_id,
+          price: c.price,
+          start_location_id: c.start_location_id,
+          status: c.status,
+          title: c.title.unwrap_or_default(),
+        })
+        .collect();
+      if let Err(e) = db.wallet().upsert_contracts(character_id, &contracts).await {
+        tracing::warn!("sync: failed to persist contracts for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 300,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches mail headers and writes them to the DB.
+async fn fetch_mail(client: &pod_esi::Client, db: &pod_db::Repo, character_id: i64, token: String) -> SlotOutcome {
+  use pod_model::MailHeader;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.mail", character_id = character_id);
+  let result = client.character(&grant).mail().instrument(span).await;
+
+  match result {
+    Ok(raw) => {
+      let headers: Vec<MailHeader> = raw
+        .into_iter()
+        .filter_map(|h| {
+          let mail_id = h.mail_id?;
+          let timestamp = h.timestamp?;
+          Some(MailHeader {
+            body: None,
+            character_id,
+            from_id: h.from,
+            is_read: h.is_read.unwrap_or(false),
+            mail_id,
+            preview: None,
+            recipients_display: h
+              .recipients
+              .as_deref()
+              .unwrap_or_default()
+              .iter()
+              .map(|r| r.recipient_id.to_string())
+              .collect::<Vec<_>>()
+              .join(", "),
+            subject: h.subject.unwrap_or_default(),
+            timestamp,
+          })
+        })
+        .collect();
+      if let Err(e) = db.mail().upsert_mail_headers(character_id, &headers).await {
+        tracing::warn!("sync: failed to persist mail headers for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 30,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches character skills and writes them to the DB.
+async fn fetch_skills(client: &pod_esi::Client, db: &pod_db::Repo, character_id: i64, token: String) -> SlotOutcome {
+  use crate::services::character as character_service;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.skills", character_id = character_id);
+  let result = client.character(&grant).skills().instrument(span).await;
+
+  match result {
+    Ok(esi_skills) => {
+      let skills = character_service::build_character_skills(character_id, esi_skills.skills, vec![]);
+      if let Err(e) = db.skills().upsert_character_skills(character_id, &skills).await {
+        tracing::warn!("sync: failed to persist skills for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 120,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches the wallet balance for `character_id` and writes it to the DB.
+///
+/// Uses a default cache TTL of 120 seconds (the documented ESI value for the
+/// wallet balance endpoint).
+async fn fetch_wallet_balance(
+  client: &pod_esi::Client,
+  db: &pod_db::Repo,
+  character_id: i64,
+  token: String,
+) -> SlotOutcome {
+  let grant = make_grant(token, character_id);
   let span = tracing::debug_span!("sync.wallet_balance", character_id = character_id);
   let result = client.character(&grant).wallet_balance().instrument(span).await;
 
   match result {
-    Ok(_balance) => SlotOutcome::Success {
-      cached_secs: 120,
-    },
-    Err(pod_esi::Error::RateLimit {
-      retry_after_secs,
-    }) => SlotOutcome::RateLimit {
-      retry_after_secs,
-    },
-    Err(pod_esi::Error::Api {
-      status, ..
-    }) if status == 401 || status == 403 => SlotOutcome::AuthExpired,
-    Err(pod_esi::Error::Api {
-      status, ..
-    }) if status >= 500 => SlotOutcome::ServerError,
-    Err(_) => SlotOutcome::ServerError,
+    Ok(balance) => {
+      if let Err(e) = db.characters().update_wallet(character_id, Some(balance.0)).await {
+        tracing::warn!("sync: failed to persist wallet balance for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 120,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches the wallet journal for `character_id` and writes entries to the DB.
+async fn fetch_wallet_journal(
+  client: &pod_esi::Client,
+  db: &pod_db::Repo,
+  character_id: i64,
+  token: String,
+) -> SlotOutcome {
+  use pod_model::WalletJournalEntry;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.wallet_journal", character_id = character_id);
+  let result = client.character(&grant).wallet_journal().instrument(span).await;
+
+  match result {
+    Ok(raw) => {
+      let entries: Vec<WalletJournalEntry> = raw
+        .into_iter()
+        .map(|e| WalletJournalEntry {
+          amount: e.amount,
+          balance: e.balance,
+          character_id,
+          date: e.date,
+          description: e.description,
+          entry_id: e.id,
+          first_party_id: e.first_party_id,
+          ref_type: e.ref_type,
+          second_party_id: e.second_party_id,
+        })
+        .collect();
+      if let Err(e) = db.wallet().upsert_journal_entries(character_id, &entries).await {
+        tracing::warn!("sync: failed to persist wallet journal for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 3600,
+      }
+    }
+    Err(e) => map_esi_error(e),
+  }
+}
+
+/// Fetches wallet transactions for `character_id` and writes them to the DB.
+async fn fetch_wallet_transactions(
+  client: &pod_esi::Client,
+  db: &pod_db::Repo,
+  character_id: i64,
+  token: String,
+) -> SlotOutcome {
+  use pod_model::WalletTransaction;
+
+  let grant = make_grant(token, character_id);
+  let span = tracing::debug_span!("sync.wallet_transactions", character_id = character_id);
+  let result = client.character(&grant).wallet_transactions().instrument(span).await;
+
+  match result {
+    Ok(raw) => {
+      let txns: Vec<WalletTransaction> = raw
+        .into_iter()
+        .map(|t| WalletTransaction {
+          character_id,
+          client_id: t.client_id,
+          date: t.date,
+          is_buy: t.is_buy,
+          location_id: t.location_id,
+          quantity: t.quantity,
+          transaction_id: t.transaction_id,
+          type_id: t.type_id,
+          unit_price: t.unit_price,
+        })
+        .collect();
+      if let Err(e) = db.wallet().upsert_wallet_transactions(character_id, &txns).await {
+        tracing::warn!("sync: failed to persist wallet transactions for character {character_id}: {e}");
+      }
+      SlotOutcome::Success {
+        cached_secs: 3600,
+      }
+    }
+    Err(e) => map_esi_error(e),
   }
 }
 
@@ -758,8 +1087,52 @@ mod tests {
       use super::*;
 
       #[test]
+      fn it_returns_character_assets_label() {
+        assert_eq!(SyncDataType::CharacterAssets.label(), "character_assets");
+      }
+
+      #[test]
+      fn it_returns_character_location_label() {
+        assert_eq!(SyncDataType::CharacterLocation.label(), "character_location");
+      }
+
+      #[test]
+      fn it_returns_contracts_label() {
+        assert_eq!(SyncDataType::Contracts.label(), "contracts");
+      }
+
+      #[test]
+      fn it_returns_mail_label() {
+        assert_eq!(SyncDataType::Mail.label(), "mail");
+      }
+
+      #[test]
+      fn it_returns_skills_label() {
+        assert_eq!(SyncDataType::Skills.label(), "skills");
+      }
+
+      #[test]
       fn it_returns_wallet_balance_label() {
         assert_eq!(SyncDataType::WalletBalance.label(), "wallet_balance");
+      }
+
+      #[test]
+      fn it_returns_wallet_journal_label() {
+        assert_eq!(SyncDataType::WalletJournal.label(), "wallet_journal");
+      }
+
+      #[test]
+      fn it_returns_wallet_transactions_label() {
+        assert_eq!(SyncDataType::WalletTransactions.label(), "wallet_transactions");
+      }
+    }
+
+    mod all {
+      use super::*;
+
+      #[test]
+      fn it_returns_all_eight_variants() {
+        assert_eq!(SyncDataType::all().len(), 8);
       }
     }
   }

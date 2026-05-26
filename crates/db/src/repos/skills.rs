@@ -42,11 +42,16 @@ impl<'a> Repo<'a> {
       .into_iter()
       .map(|t| (t.id, t.name))
       .collect();
-    Ok(rows.into_iter().map(|r| {
-      let mut skill = CharacterSkill::from(r);
-      skill.skill_name = name_map.get(&skill.skill_id).cloned();
-      skill
-    }).collect())
+    Ok(
+      rows
+        .into_iter()
+        .map(|r| {
+          let mut skill = CharacterSkill::from(r);
+          skill.skill_name = name_map.get(&skill.skill_id).cloned();
+          skill
+        })
+        .collect(),
+    )
   }
 
   /// Upserts all skill rows for the given character.

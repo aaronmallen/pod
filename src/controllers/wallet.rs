@@ -157,7 +157,11 @@ fn map_journal_row(row: WalletJournalEntry) -> JournalEntry {
 /// Returns a task that reloads journal entries, transactions, and contracts
 /// from the database and emits the corresponding `Loaded` messages, refreshing
 /// an already-active wallet view.
-pub fn reload_task(characters: Vec<Character>, corporations: &[Corporation], services: &Services) -> iced::Task<Message> {
+pub fn reload_task(
+  characters: Vec<Character>,
+  corporations: &[Corporation],
+  services: &Services,
+) -> iced::Task<Message> {
   let Some(db) = services.db.clone() else {
     return iced::Task::none();
   };

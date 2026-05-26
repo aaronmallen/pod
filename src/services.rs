@@ -11,6 +11,7 @@ pub mod oauth_callback;
 pub mod portraits;
 pub mod prices;
 pub mod sde;
+pub mod sync_state;
 pub mod updater;
 pub mod window_state;
 

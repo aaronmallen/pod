@@ -53,6 +53,11 @@ impl Settings {
   pub fn set_log_dir(&mut self, path: Option<PathBuf>) {
     self.log_dir = path;
   }
+
+  /// Set the network database flag.
+  pub fn set_network_db(&mut self, value: bool) {
+    self.network_db = Some(value);
+  }
 }
 
 #[cfg(test)]

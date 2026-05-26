@@ -41,6 +41,7 @@ pub fn new(config: &crate::config::Settings) -> (State, iced::Task<Message>) {
       default_storage_path(&storage_tab::PathId::LogDir)
         .map(|p| p.display().to_string())
         .unwrap_or_default(),
+      storage_cfg.resolved_network_db(),
     ),
     tags: tags_tab::State::default(),
   };
@@ -314,7 +315,19 @@ fn handle_storage_tab_inner(state: &mut State, inner: storage_tab::Message, serv
       (iced::Task::none(), None, None)
     }
     storage_tab::Message::ResetPath(id) => handle_storage_reset_path(state, id, services),
+    storage_tab::Message::ToggleNetworkDb => handle_toggle_network_db(state, services),
   }
+}
+
+fn handle_toggle_network_db(state: &mut State, services: &Services) -> UpdateResult {
+  let new_value = !state.storage.network_db;
+  state.storage.network_db = new_value;
+  let mut paths = services.config.paths().clone();
+  paths.set_network_db(new_value);
+  let mut config = services.config.clone();
+  config.set_paths(paths);
+  crate::config::save(&config);
+  (iced::Task::none(), None, Some(config))
 }
 
 fn handle_features_tab(state: &mut State, inner: features_tab::Message) -> iced::Task<Message> {

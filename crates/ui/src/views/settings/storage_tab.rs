@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Space, button, column, container, row, text, text_input},
 };
 
@@ -40,6 +40,8 @@ pub enum Message {
   PathSelected(PathId, PathBuf),
   /// Reset the given path back to its platform default (None).
   ResetPath(PathId),
+  /// User toggled the network database checkbox.
+  ToggleNetworkDb,
 }
 
 /// State for a single path row in the storage panel.
@@ -68,10 +70,12 @@ pub struct State {
   pub log_dir: PathRowState,
   /// Platform-default log directory (shown as hint).
   pub log_default: String,
+  /// Whether the database is on a network drive (disables WAL mode).
+  pub network_db: bool,
 }
 
 impl State {
-  /// Initialise from optional saved paths and platform defaults.
+  /// Initialise from optional saved paths, platform defaults, and network flag.
   ///
   /// `*_default` strings should be the OS-resolved default for each
   /// path (i.e. what would be used when the override is `None`).
@@ -82,6 +86,7 @@ impl State {
     db_default: String,
     cache_default: String,
     log_default: String,
+    network_db: bool,
   ) -> Self {
     Self {
       cache_dir: PathRowState {
@@ -102,6 +107,7 @@ impl State {
         confirm_move: false,
       },
       log_default,
+      network_db,
     }
   }
 
@@ -225,6 +231,7 @@ fn storage_panel_body(state: &State) -> Element<'_, Message> {
       &state.db_dir,
       &state.db_default,
     ),
+    network_drive_row(state.network_db),
     path_row_separator(),
     path_row(
       "Cache",
@@ -267,6 +274,123 @@ fn path_row_separator() -> Element<'static, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn network_drive_row(checked: bool) -> Element<'static, Message> {
+  let checkbox = network_drive_checkbox(checked);
+
+  let label_el = text("Database is on a network drive")
+    .size(13.0)
+    .font(typography::body::MEDIUM)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+
+  let label_row: Element<'_, Message> = if checked {
+    let wal_badge: Element<'_, Message> = container(text("WAL OFF").size(10.0).font(typography::mono::REGULAR).style(
+      |_| iced::widget::text::Style {
+        color: Some(color::accent::GOLD),
+      },
+    ))
+    .padding(Padding {
+      top: 2.0,
+      bottom: 2.0,
+      left: 6.0,
+      right: 6.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent::GOLD_SUBTLE)),
+      border: iced::Border {
+        color: color::accent::GOLD_MUTED,
+        radius: 4.0.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into();
+    row([label_el.into(), Space::new().width(spacing::SPACE_2).into(), wal_badge])
+      .align_y(Vertical::Center)
+      .into()
+  } else {
+    label_el.into()
+  };
+
+  let desc_el = text(
+    "SQLite WAL mode is incompatible with NFS and some SMB mounts. \
+    When enabled, Pod uses journal_mode=DELETE instead, which is \
+    safe on network drives but slightly slower.",
+  )
+  .size(12.0)
+  .style(|_| iced::widget::text::Style {
+    color: Some(color::text::SECONDARY),
+  });
+
+  let text_col: Element<'_, Message> = column([label_row, Space::new().height(2.0).into(), desc_el.into()]).into();
+
+  let row_content: Element<'_, Message> = row([checkbox, Space::new().width(spacing::SPACE_3).into(), text_col])
+    .align_y(Vertical::Center)
+    .into();
+
+  container(row_content)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 10.0,
+      bottom: 10.0,
+      left: spacing::SPACE_7,
+      right: 0.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn network_drive_checkbox(checked: bool) -> Element<'static, Message> {
+  let check_mark: Element<'_, Message> = if checked {
+    text("\u{2713}")
+      .size(11.0)
+      .font(typography::body::MEDIUM)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::surface::BASE),
+      })
+      .into()
+  } else {
+    Space::new().width(14.0).height(14.0).into()
+  };
+
+  let bg_color = if checked {
+    color::accent::PLASMA
+  } else {
+    iced::Color::TRANSPARENT
+  };
+  let border_color = if checked {
+    color::accent::PLASMA
+  } else {
+    color::border::DEFAULT
+  };
+
+  button(
+    container(check_mark)
+      .width(14.0)
+      .height(14.0)
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .width(18.0)
+  .height(18.0)
+  .padding(Padding::ZERO)
+  .on_press(Message::ToggleNetworkDb)
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(bg_color)),
+    border: iced::Border {
+      color: border_color,
+      radius: 3.0.into(),
+      width: 1.0,
+    },
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn storage_info_note() -> Element<'static, Message> {

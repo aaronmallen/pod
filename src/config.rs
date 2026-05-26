@@ -36,10 +36,37 @@ pub struct Settings {
   /// Storage path overrides.
   #[getset(get = "pub")]
   #[serde(default)]
-  storage: storage::Settings,
+  paths: storage::Settings,
 }
 
 impl Settings {
+  /// Returns the platform-default ESI disk-cache directory.
+  ///
+  /// Resolves to `{cache_home}/pod`.
+  pub fn default_cache_dir() -> PathBuf {
+    dir_spec::cache_home()
+      .map(|p| p.join("pod"))
+      .expect("failed to resolve cache directory")
+  }
+
+  /// Returns the platform-default database directory.
+  ///
+  /// Resolves to `{data_home}/pod`.
+  pub fn default_db_dir() -> PathBuf {
+    dir_spec::data_home()
+      .map(|p| p.join("pod"))
+      .expect("failed to resolve user data directory")
+  }
+
+  /// Returns the platform-default rolling log directory.
+  ///
+  /// Resolves to `{state_home}/pod/logs`.
+  pub fn default_log_dir() -> PathBuf {
+    dir_spec::state_home()
+      .map(|p| p.join("pod").join("logs"))
+      .expect("cannot determine state home directory")
+  }
+
   /// Returns the global `Settings` instance, which must have been
   /// initialized with [`init_global`] before this is called.
   ///
@@ -50,38 +77,37 @@ impl Settings {
 
   /// Returns the resolved ESI disk-cache directory.
   ///
-  /// Uses `storage.cache_dir` if set; otherwise falls back to
-  /// `{cache_home}/pod`.
+  /// Uses `paths.cache_dir` if set; otherwise falls back to
+  /// [`Settings::default_cache_dir`].
   pub fn resolved_cache_dir(&self) -> PathBuf {
-    self.storage.cache_dir().clone().unwrap_or_else(|| {
-      dir_spec::cache_home()
-        .map(|p| p.join("pod"))
-        .expect("failed to resolve cache directory")
-    })
+    self.paths.cache_dir().clone().unwrap_or_else(Self::default_cache_dir)
   }
 
   /// Returns the resolved SQLite database path.
   ///
-  /// Uses `storage.db_dir` as the file path if set; otherwise falls
-  /// back to `{data_home}/pod/pod.db`.
+  /// Uses `paths.db_dir` as the file path if set; otherwise falls
+  /// back to `{default_db_dir}/pod.db`.
   pub fn resolved_db_path(&self) -> PathBuf {
-    self.storage.db_dir().clone().unwrap_or_else(|| {
-      dir_spec::data_home()
-        .map(|p| p.join("pod").join("pod.db"))
-        .expect("failed to resolve user data directory")
-    })
+    self
+      .paths
+      .db_dir()
+      .clone()
+      .unwrap_or_else(|| Self::default_db_dir().join("pod.db"))
   }
 
   /// Returns the resolved rolling log directory.
   ///
-  /// Uses `storage.log_dir` if set; otherwise falls back to
-  /// `{state_home}/pod/logs`.
+  /// Uses `paths.log_dir` if set; otherwise falls back to
+  /// [`Settings::default_log_dir`].
   pub fn resolved_log_dir(&self) -> PathBuf {
-    self.storage.log_dir().clone().unwrap_or_else(|| {
-      dir_spec::state_home()
-        .map(|p| p.join("pod/logs"))
-        .expect("cannot determine state home directory")
-    })
+    self.paths.log_dir().clone().unwrap_or_else(Self::default_log_dir)
+  }
+
+  /// Persists this configuration to disk.
+  ///
+  /// Delegates to [`crate::config::save`].
+  pub fn save(&self) {
+    crate::config::save(self);
   }
 
   /// Replace the feature flag configuration.
@@ -90,8 +116,8 @@ impl Settings {
   }
 
   /// Replace the storage path configuration.
-  pub fn set_storage(&mut self, storage: storage::Settings) {
-    self.storage = storage;
+  pub fn set_paths(&mut self, paths: storage::Settings) {
+    self.paths = paths;
   }
 }
 

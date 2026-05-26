@@ -12,7 +12,7 @@ use crate::services::Services;
 /// Creates initial settings state from the current config.
 pub fn new(config: &crate::config::Settings) -> (State, iced::Task<Message>) {
   let features = config.features();
-  let storage_cfg = config.storage();
+  let storage_cfg = config.paths();
   let state = State {
     active_category: Category::default(),
     features: features_tab::State {
@@ -117,19 +117,19 @@ fn handle_storage_browse(id: storage_tab::PathId) -> iced::Task<Message> {
 }
 
 fn current_storage_path(id: &storage_tab::PathId, config: &crate::config::Settings) -> Option<PathBuf> {
-  let storage = config.storage();
+  let paths = config.paths();
   match id {
-    storage_tab::PathId::CacheDir => storage.cache_dir().clone(),
-    storage_tab::PathId::DbDir => storage.db_dir().clone(),
-    storage_tab::PathId::LogDir => storage.log_dir().clone(),
+    storage_tab::PathId::CacheDir => paths.cache_dir().clone(),
+    storage_tab::PathId::DbDir => paths.db_dir().clone(),
+    storage_tab::PathId::LogDir => paths.log_dir().clone(),
   }
 }
 
 fn default_storage_path(id: &storage_tab::PathId) -> Option<PathBuf> {
   match id {
-    storage_tab::PathId::CacheDir => dir_spec::cache_home().map(|p| p.join("pod")),
-    storage_tab::PathId::DbDir => dir_spec::data_home().map(|p| p.join("pod")),
-    storage_tab::PathId::LogDir => dir_spec::state_home().map(|p| p.join("pod").join("logs")),
+    storage_tab::PathId::CacheDir => Some(crate::config::Settings::default_cache_dir()),
+    storage_tab::PathId::DbDir => Some(crate::config::Settings::default_db_dir()),
+    storage_tab::PathId::LogDir => Some(crate::config::Settings::default_log_dir()),
   }
 }
 
@@ -373,14 +373,14 @@ pub fn updated_storage_config(
   path: Option<PathBuf>,
   current: &crate::config::Settings,
 ) -> crate::config::Settings {
-  let mut storage = current.storage().clone();
+  let mut paths = current.paths().clone();
   match id {
-    storage_tab::PathId::CacheDir => storage.set_cache_dir(path),
-    storage_tab::PathId::DbDir => storage.set_db_dir(path),
-    storage_tab::PathId::LogDir => storage.set_log_dir(path),
+    storage_tab::PathId::CacheDir => paths.set_cache_dir(path),
+    storage_tab::PathId::DbDir => paths.set_db_dir(path),
+    storage_tab::PathId::LogDir => paths.set_log_dir(path),
   }
   let mut config = current.clone();
-  config.set_storage(storage);
+  config.set_paths(paths);
   crate::config::save(&config);
   config
 }

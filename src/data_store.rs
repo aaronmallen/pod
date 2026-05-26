@@ -5,8 +5,10 @@
 //! SyncService keeps fresh. For now it is a minimal stub so
 //! that downstream wiring can compile.
 
-use pod_ui::views::assets::AssetRecord;
-use pod_ui::views::wallet::{ContractEntry, JournalEntry, MarketEntry};
+use pod_ui::views::{
+  assets::AssetRecord,
+  wallet::{ContractEntry, JournalEntry, MarketEntry},
+};
 /// Shared in-memory store populated by `SyncService`.
 pub struct DataStore {}
 

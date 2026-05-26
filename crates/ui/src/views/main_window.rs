@@ -100,7 +100,6 @@ pub struct AssetsNavState {
   pub sort_col: assets::SortCol,
 }
 
-
 pub struct State {
   pub abyssals_filter_pane_width: f32,
   pub active_nav: Nav,

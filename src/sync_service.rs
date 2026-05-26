@@ -17,7 +17,7 @@ use std::{
   time::{Duration, Instant},
 };
 
-use iced::{Subscription, Task, futures::SinkExt as _};
+use iced::{Subscription, futures::SinkExt as _};
 use pod_model::Character;
 use tracing::Instrument as _;
 
@@ -159,6 +159,14 @@ struct SchedulerState {
   slots: HashMap<SlotKey, SlotState>,
 }
 
+/// Bundle of shared data passed into the scheduler subscription recipe.
+#[derive(Clone)]
+struct WorkerBundle {
+  characters: Arc<Mutex<Vec<Character>>>,
+  client: pod_esi::Client,
+  scheduler: Arc<Mutex<SchedulerState>>,
+}
+
 impl SchedulerState {
   /// Returns `true` when `key` is due for a fetch (or has never been fetched).
   fn is_due(&self, key: &SlotKey) -> bool {
@@ -173,17 +181,23 @@ impl SchedulerState {
   /// `x-cached-seconds` value.
   fn mark_completed(&mut self, key: SlotKey, cached_secs: u64) {
     let next = Instant::now() + Duration::from_secs(cached_secs);
-    self.slots.insert(key, SlotState {
-      next_allowed_at: next,
-    });
+    self.slots.insert(
+      key,
+      SlotState {
+        next_allowed_at: next,
+      },
+    );
   }
 
   /// Records a failed fetch with a back-off before the next attempt.
   fn mark_failed(&mut self, key: SlotKey, backoff_secs: u64) {
     let next = Instant::now() + Duration::from_secs(backoff_secs);
-    self.slots.insert(key, SlotState {
-      next_allowed_at: next,
-    });
+    self.slots.insert(
+      key,
+      SlotState {
+        next_allowed_at: next,
+      },
+    );
   }
 
   /// Resets all `next_allowed_at` timestamps to `now`, making every slot
@@ -249,27 +263,53 @@ impl SyncService {
     let Some(client) = self.esi_client.clone() else {
       return Subscription::none();
     };
-    let characters = Arc::clone(&self.characters);
-    let scheduler = Arc::clone(&self.scheduler);
-
-    Subscription::run_with_id(
-      "sync_service",
-      iced::futures::stream::unfold(
-        (client, characters, scheduler),
-        |(client, characters, scheduler)| async move {
-          let events = run_tick(&client, &characters, &scheduler).await;
-          tokio::time::sleep(POLL_INTERVAL).await;
-          Some((events, (client, characters, scheduler)))
-        },
-      )
-      .flat_map(|events| iced::futures::stream::iter(events)),
-    )
+    iced::advanced::subscription::from_recipe(SyncRecipe {
+      bundle: WorkerBundle {
+        characters: Arc::clone(&self.characters),
+        client,
+        scheduler: Arc::clone(&self.scheduler),
+      },
+    })
   }
 }
 
 impl Default for SyncService {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+/// Iced subscription recipe that drives the background scheduler loop.
+struct SyncRecipe {
+  bundle: WorkerBundle,
+}
+
+impl iced::advanced::subscription::Recipe for SyncRecipe {
+  type Output = SyncEvent;
+
+  fn hash(&self, state: &mut iced::advanced::subscription::Hasher) {
+    use std::hash::Hash as _;
+    "sync_service_recipe".hash(state);
+  }
+
+  fn stream(
+    self: Box<Self>,
+    _input: iced::advanced::subscription::EventStream,
+  ) -> iced::futures::stream::BoxStream<'static, SyncEvent> {
+    use iced::futures::StreamExt as _;
+    let bundle = self.bundle;
+    iced::stream::channel(256, async move |mut tx| {
+      loop {
+        let events = run_tick(&bundle.client, &bundle.characters, &bundle.scheduler).await;
+        for event in events {
+          if tx.send(event).await.is_err() {
+            return;
+          }
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+      }
+    })
+    .boxed()
   }
 }
 
@@ -335,6 +375,7 @@ async fn run_tick(
   let mut result_events: Vec<SyncEvent> = Vec::new();
   for handle in handles {
     let Ok((char_id, dt, outcome)) = handle.await else {
+      tracing::error!("sync: fetch task panicked or was cancelled");
       continue;
     };
     let key = SlotKey {
@@ -402,18 +443,14 @@ async fn run_tick(
 /// Outcome of fetching a single (endpoint, character) slot.
 #[derive(Debug)]
 enum SlotOutcome {
-  /// Fetch succeeded; ESI reported the cache TTL in seconds.
-  Success {
-    cached_secs: u64,
-  },
-  /// ESI returned a 420 or 429 rate-limit response.
-  RateLimit {
-    retry_after_secs: u64,
-  },
   /// The access token has expired or ESI returned 401/403.
   AuthExpired,
+  /// ESI returned a 420 or 429 rate-limit response.
+  RateLimit { retry_after_secs: u64 },
   /// ESI returned a 5xx server error.
   ServerError,
+  /// Fetch succeeded; ESI reported the cache TTL in seconds.
+  Success { cached_secs: u64 },
 }
 
 /// Fetches a single slot and maps the ESI result to a `SlotOutcome`.
@@ -434,13 +471,10 @@ async fn fetch_slot(
 /// are handled transparently by the ESI HTTP client). The wallet balance
 /// endpoint does not expose `x-cached-seconds` in the response body, so we
 /// fall back to the documented 120 s value.
-async fn fetch_wallet_balance(
-  client: &pod_esi::Client,
-  character_id: i64,
-  token: String,
-) -> SlotOutcome {
-  use pod_esi::models::auth::Grant;
+async fn fetch_wallet_balance(client: &pod_esi::Client, character_id: i64, token: String) -> SlotOutcome {
   use std::time::{Duration, SystemTime};
+
+  use pod_esi::models::auth::Grant;
 
   let grant = Grant::new(
     token,
@@ -452,11 +486,7 @@ async fn fetch_wallet_balance(
   );
 
   let span = tracing::debug_span!("sync.wallet_balance", character_id = character_id);
-  let result = client
-    .character(&grant)
-    .wallet_balance()
-    .instrument(span)
-    .await;
+  let result = client.character(&grant).wallet_balance().instrument(span).await;
 
   match result {
     Ok(_balance) => SlotOutcome::Success {
@@ -517,9 +547,12 @@ mod tests {
           character_id: 1,
           data_type: SyncDataType::WalletBalance,
         };
-        state.slots.insert(key.clone(), SlotState {
-          next_allowed_at: Instant::now() - Duration::from_secs(1),
-        });
+        state.slots.insert(
+          key.clone(),
+          SlotState {
+            next_allowed_at: Instant::now() - Duration::from_secs(1),
+          },
+        );
 
         assert!(state.is_due(&key));
       }

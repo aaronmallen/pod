@@ -1,4 +1,4 @@
-//! Wallet controller: startup and background data fetches.
+//! Wallet controller: navigation and DataStore-backed data reads.
 
 use std::{
   cmp::Reverse,
@@ -7,7 +7,7 @@ use std::{
 };
 
 use iced::widget::image;
-use pod_model::{Character, CharacterContract, Corporation, WalletJournalEntry, WalletTransaction};
+use pod_model::{Character, CharacterContract, Corporation, WalletTransaction};
 use pod_ui::{
   components::{
     CharacterPicker,
@@ -18,22 +18,42 @@ use pod_ui::{
   },
 };
 
-use crate::services::{Services, character as character_service, corporation as corporation_service};
+use crate::services::{Services, corporation as corporation_service};
 
-/// Creates the initial wallet state and kicks off background data fetches.
+/// Creates the initial wallet state from DataStore reads.
+///
+/// No background tasks are spawned; data comes from the DataStore stub.
+/// When the store is empty the view renders its empty/loading state.
 pub fn new(
   characters: Vec<Character>,
   corporations: Vec<Corporation>,
   services: &Services,
   right_rail_width: f32,
 ) -> (State, iced::Task<Message>) {
-  let state = build_wallet_state(&characters, &corporations, right_rail_width);
-  let tasks = if let (Some(esi), Some(db)) = (services.esi_client.clone(), services.db.clone()) {
-    build_initial_tasks(characters, corporations, esi, db)
-  } else {
-    iced::Task::none()
-  };
-  (state, tasks)
+  let mut state = build_wallet_state(&characters, &corporations, right_rail_width);
+  populate_from_data_store(&mut state, &characters, services);
+  recompute_derived(&mut state);
+  (state, iced::Task::none())
+}
+
+/// Reads wallet data for all characters from the DataStore and populates state.
+fn populate_from_data_store(state: &mut State, characters: &[Character], services: &Services) {
+  let ds = &services.data_store;
+  let mut journal: Vec<JournalEntry> = Vec::new();
+  let mut market: Vec<MarketEntry> = Vec::new();
+  let mut contracts: Vec<ContractEntry> = Vec::new();
+  for character in characters {
+    let id = *character.id();
+    journal.extend(ds.wallet_journal_for(id));
+    market.extend(ds.wallet_transactions_for(id));
+    contracts.extend(ds.contracts_for(id));
+  }
+  journal.sort_by_key(|e| e.ts_secs);
+  market.sort_by_key(|e| e.ts_secs);
+  contracts.sort_by_key(|e| e.ts_secs);
+  state.journal = journal;
+  state.market = market;
+  state.contracts = contracts;
 }
 
 /// Processes a wallet message, performing ESI fetches when a corporation is
@@ -125,28 +145,6 @@ fn log_filter_change_message(message: &Message) {
   }
 }
 
-async fn apply_esi_names(loc_ids: &[i64], names: &mut HashMap<i64, String>, esi: &pod_esi::Client) {
-  let unresolved: Vec<i64> = loc_ids.iter().filter(|id| !names.contains_key(id)).copied().collect();
-  if !unresolved.is_empty()
-    && let Ok(resolved) = esi.universe().names(&unresolved).await
-  {
-    for r in resolved {
-      names.insert(r.id, r.name);
-    }
-  }
-}
-
-async fn apply_station_names(loc_ids: &[i64], names: &mut HashMap<i64, String>, db: &pod_db::Repo) {
-  let station_ids = collect_station_ids(loc_ids);
-  if !station_ids.is_empty()
-    && let Ok(stations) = db.universe().stations().find_by_ids(&station_ids).await
-  {
-    for s in stations {
-      names.insert(*s.id() as i64, s.name().clone());
-    }
-  }
-}
-
 fn attach_icon_task(
   base: iced::Task<Message>,
   icon_type_ids: Option<Vec<i32>>,
@@ -231,55 +229,6 @@ fn build_corp_picker_entries(corporations: &[Corporation]) -> Vec<CorporationEnt
       }
     })
     .collect()
-}
-
-fn build_initial_tasks(
-  characters: Vec<Character>,
-  corporations: Vec<Corporation>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> iced::Task<Message> {
-  let chars_j = characters.clone();
-  let db_j = db.clone();
-  let esi_j = esi.clone();
-  let chars_t = characters.clone();
-  let db_t = db.clone();
-  let esi_t = esi.clone();
-  let corps_b = corporations.clone();
-  let db_b = db.clone();
-  let esi_b = esi.clone();
-  let chars_a = characters.clone();
-  let db_a = db.clone();
-  let chars_c = characters.clone();
-  let db_c = db.clone();
-  let esi_c = esi.clone();
-  let db_i = db.clone();
-  iced::Task::batch([
-    iced::Task::perform(
-      async move { fetch_journal(chars_j, esi_j, db_j).await },
-      Message::JournalLoaded,
-    ),
-    iced::Task::perform(
-      async move { fetch_transactions(chars_t, esi_t, db_t).await },
-      Message::TransactionsLoaded,
-    ),
-    iced::Task::perform(
-      async move { fetch_all_corp_totals(corps_b, esi_b, db_b).await },
-      Message::AllCorpBalancesLoaded,
-    ),
-    iced::Task::perform(
-      async move { fetch_asset_values(chars_a, db_a).await },
-      Message::AssetValuesLoaded,
-    ),
-    iced::Task::perform(
-      async move { fetch_contracts(chars_c, esi_c, db_c).await },
-      Message::ContractsLoaded,
-    ),
-    iced::Task::perform(
-      async move { load_all_cached_icons(db_i).await },
-      Message::ItemIconsLoaded,
-    ),
-  ])
 }
 
 fn build_net_worth_series(journal: &[JournalEntry]) -> Vec<f64> {
@@ -403,118 +352,6 @@ fn compute_icon_type_ids(message: &Message, state: &State) -> Option<Vec<i32>> {
   if ids.is_empty() { None } else { Some(ids) }
 }
 
-#[tracing::instrument(skip_all)]
-async fn fetch_all_corp_totals(
-  corporations: Vec<Corporation>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> Vec<(i64, f64)> {
-  let mut totals = Vec::new();
-  for corp in &corporations {
-    let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
-      continue;
-    };
-    let grant = corporation_service::refresh_grant(corp, &token);
-    let corp_id = *corp.id();
-    let corp_esi = esi.corporation(corp_id);
-    let corp_client = corp_esi.auth(&grant);
-    if let Ok(wallets) = corp_client.wallets().await {
-      let total: f64 = wallets.iter().map(|w| w.balance).sum();
-      totals.push((corp_id, total));
-    }
-  }
-  totals
-}
-
-#[tracing::instrument(skip_all)]
-async fn fetch_asset_values(characters: Vec<Character>, db: pod_db::Repo) -> Vec<(i64, f64)> {
-  let char_ids = collect_char_ids(&characters);
-  if char_ids.is_empty() {
-    return Vec::new();
-  }
-
-  let asset_rows = db
-    .characters()
-    .assets_for_character_ids(&char_ids)
-    .await
-    .unwrap_or_default();
-
-  if asset_rows.is_empty() {
-    return Vec::new();
-  }
-
-  let type_ids: Vec<i32> = asset_rows.iter().map(|a| a.type_id).collect();
-  let prices = db.prices().latest_prices(&type_ids).await.unwrap_or_default();
-
-  let mut totals: HashMap<i64, f64> = HashMap::new();
-  for asset in &asset_rows {
-    let price = prices.get(&asset.type_id).copied().unwrap_or(0.0);
-    let value = price * asset.quantity as f64;
-    *totals.entry(asset.character_id).or_insert(0.0) += value;
-  }
-  totals.into_iter().collect()
-}
-
-fn collect_char_ids(characters: &[Character]) -> Vec<i64> {
-  characters.iter().map(|c| *c.id()).collect()
-}
-
-async fn sync_contracts_from_esi(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
-  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
-    return;
-  };
-  let grant = character_service::refresh_grant(character, &token);
-  let char_client = esi.character(&grant);
-  if let Ok(contracts) = char_client.contracts().await {
-    let db_rows: Vec<_> = contracts
-      .iter()
-      .map(|c| CharacterContract {
-        character_id: *character.id(),
-        contract_id: c.contract_id,
-        contract_type: c.r#type.clone(),
-        status: c.status.clone(),
-        title: c.title.clone().unwrap_or_default(),
-        issuer_id: c.issuer_id,
-        assignee_id: c.assignee_id,
-        acceptor_id: c.acceptor_id,
-        price: c.price,
-        collateral: c.collateral,
-        date_issued: c.date_issued.clone(),
-        date_expired: c.date_expired.clone(),
-        start_location_id: c.start_location_id,
-      })
-      .collect();
-    let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
-  }
-}
-
-async fn load_contract_entries(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) -> Vec<ContractEntry> {
-  let Ok(rows) = db.characters().contracts(*character.id()).await else {
-    return Vec::new();
-  };
-  let names = resolve_entity_names(&rows, esi).await;
-  let locations = resolve_location_names(&rows, esi, db).await;
-  rows
-    .into_iter()
-    .map(|row| build_contract_entry(row, &names, &locations))
-    .collect()
-}
-
-#[tracing::instrument(skip_all)]
-async fn fetch_contracts(
-  characters: Vec<Character>,
-  esi: pod_esi::Client,
-  db: pod_db::Repo,
-) -> Result<Vec<ContractEntry>, String> {
-  let mut all: Vec<ContractEntry> = Vec::new();
-  for character in &characters {
-    sync_contracts_from_esi(character, &esi, &db).await;
-    all.extend(load_contract_entries(character, &esi, &db).await);
-  }
-  all.sort_by_key(|e| e.ts_secs);
-  Ok(all)
-}
-
 async fn build_corp_market_entries(
   raw_txns: Vec<pod_esi::models::corporation::CorporationWalletTransaction>,
   corp_id: i64,
@@ -573,109 +410,6 @@ async fn fetch_corp_data(
   (divisions, journal, market)
 }
 
-async fn sync_journal_from_esi(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
-  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
-    return;
-  };
-  let grant = character_service::refresh_grant(character, &token);
-  let char_client = esi.character(&grant);
-  if let Ok(entries) = char_client.wallet_journal().await {
-    let db_rows: Vec<_> = entries
-      .iter()
-      .map(|e| WalletJournalEntry {
-        character_id: *character.id(),
-        entry_id: e.id,
-        ref_type: e.ref_type.clone(),
-        amount: e.amount,
-        balance: e.balance,
-        date: e.date.clone(),
-        description: e.description.clone(),
-        first_party_id: e.first_party_id,
-        second_party_id: e.second_party_id,
-      })
-      .collect();
-    let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
-  }
-}
-
-fn map_journal_db_row(row: WalletJournalEntry) -> JournalEntry {
-  let ts = parse_iso_to_unix(&row.date);
-  JournalEntry {
-    id: format!("{}-{}", row.character_id, row.entry_id),
-    who: row.character_id,
-    entry_type: row.ref_type,
-    delta: row.amount.unwrap_or(0.0),
-    ts_secs: secs_ago(ts),
-    reference: row.description,
-    party: format_party_id(row.first_party_id.or(row.second_party_id)),
-    location: String::new(),
-  }
-}
-
-#[tracing::instrument(skip_all)]
-async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
-  let mut all: Vec<JournalEntry> = Vec::new();
-  for character in &characters {
-    sync_journal_from_esi(character, &esi, &db).await;
-    if let Ok(rows) = db.characters().journal_entries(*character.id()).await {
-      all.extend(rows.into_iter().map(map_journal_db_row));
-    }
-  }
-  all.sort_by_key(|e| e.ts_secs);
-  all
-}
-
-#[tracing::instrument(skip_all)]
-async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
-  let mut all: Vec<MarketEntry> = Vec::new();
-  for character in &characters {
-    sync_char_esi_transactions(character, &esi, &db).await;
-    append_char_db_transactions(character, &db, &mut all).await;
-  }
-  all.sort_by_key(|e| e.ts_secs);
-  all
-}
-
-async fn sync_char_esi_transactions(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) {
-  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
-    return;
-  };
-  let grant = character_service::refresh_grant(character, &token);
-  let char_client = esi.character(&grant);
-  if let Ok(txns) = char_client.wallet_transactions().await {
-    let db_rows: Vec<_> = txns
-      .iter()
-      .map(|t| WalletTransaction {
-        character_id: *character.id(),
-        transaction_id: t.transaction_id,
-        type_id: t.type_id,
-        quantity: t.quantity,
-        unit_price: t.unit_price,
-        is_buy: t.is_buy,
-        date: t.date.clone(),
-        location_id: t.location_id,
-        client_id: t.client_id,
-      })
-      .collect();
-    let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
-  }
-}
-
-async fn append_char_db_transactions(character: &Character, db: &pod_db::Repo, all: &mut Vec<MarketEntry>) {
-  if let Ok(rows) = db.characters().transactions(*character.id()).await {
-    let type_ids: Vec<i32> = rows
-      .iter()
-      .map(|r| r.type_id)
-      .collect::<HashSet<_>>()
-      .into_iter()
-      .collect();
-    let type_names = load_type_names(&type_ids, db).await;
-    for row in rows {
-      all.push(map_txn_row(row, &type_names));
-    }
-  }
-}
-
 #[tracing::instrument(skip(esi, db))]
 async fn fetch_type_icons(type_ids: Vec<i32>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
   let cached = db
@@ -725,17 +459,6 @@ fn journal_matches(j: &JournalEntry, corp_selected: bool, who: Option<i64>, sign
     return false;
   }
   true
-}
-
-async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, Vec<u8>)> {
-  db.universe()
-    .type_icons()
-    .find_all()
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(type_id, _variant, data)| (type_id, data))
-    .collect()
 }
 
 async fn load_type_names(type_ids: &[i32], db: &pod_db::Repo) -> HashMap<i32, String> {
@@ -962,50 +685,6 @@ fn recompute_series(state: &mut State) {
   state.net_worth_series = build_net_worth_series(&entries);
   state.chart_series = trim_series_to_days(&state.net_worth_series, state.timeframe.days());
   state.net_worth_change = net_worth_change(&state.chart_series);
-}
-
-fn collect_contract_entity_ids(rows: &[CharacterContract]) -> Vec<i64> {
-  rows
-    .iter()
-    .flat_map(|r| [r.acceptor_id, r.assignee_id])
-    .filter(|&id| id != 0)
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect()
-}
-
-async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
-  let ids = collect_contract_entity_ids(rows);
-  if ids.is_empty() {
-    return HashMap::new();
-  }
-  match esi.universe().names(&ids).await {
-    Ok(resolved) => resolved.into_iter().map(|r| (r.id, r.name)).collect(),
-    Err(e) => {
-      tracing::warn!("wallet: ESI name resolution failed for contracts: {e}");
-      HashMap::new()
-    }
-  }
-}
-
-async fn resolve_location_names(
-  rows: &[CharacterContract],
-  esi: &pod_esi::Client,
-  db: &pod_db::Repo,
-) -> HashMap<i64, String> {
-  let loc_ids: Vec<i64> = rows
-    .iter()
-    .filter_map(|r| r.start_location_id)
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect();
-  if loc_ids.is_empty() {
-    return HashMap::new();
-  }
-  let mut names: HashMap<i64, String> = HashMap::new();
-  apply_station_names(&loc_ids, &mut names, db).await;
-  apply_esi_names(&loc_ids, &mut names, esi).await;
-  names
 }
 
 fn secs_ago(ts: i64) -> u64 {

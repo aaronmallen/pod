@@ -97,6 +97,7 @@ pub fn new(
     active_view: ActiveView::Characters(chars_state),
     assets_sidebar_width: assets_sidebar_width.unwrap_or(232.0),
     cached_assets_state: None,
+    cached_wallet_state: None,
     characters,
     corporations: Vec::new(),
     esi_connected: true,
@@ -830,18 +831,24 @@ fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> 
       swap_active_view(state, ActiveView::Skills(s));
       iced::Task::none()
     }
-    Nav::Wallet => {
-      let (s, task) = wallet_ctrl::new(
-        state.characters.clone(),
-        state.corporations.clone(),
-        services,
-        state.wallet_right_rail_width,
-      );
-      swap_active_view(state, ActiveView::Wallet(s));
-      task.map(Message::Wallet)
-    }
+    Nav::Wallet => navigate_to_wallet(state, services),
     _ => iced::Task::none(),
   }
+}
+
+fn navigate_to_wallet(state: &mut State, services: &Services) -> iced::Task<Message> {
+  if let Some(cached) = state.cached_wallet_state.take() {
+    swap_active_view(state, ActiveView::Wallet(cached));
+    return iced::Task::none();
+  }
+  let (s, task) = wallet_ctrl::new(
+    state.characters.clone(),
+    state.corporations.clone(),
+    services,
+    state.wallet_right_rail_width,
+  );
+  swap_active_view(state, ActiveView::Wallet(s));
+  task.map(Message::Wallet)
 }
 
 fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Task<Message> {
@@ -856,7 +863,8 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
 }
 
 /// Replaces `state.active_view` with `new_view`; saves the prior view's
-/// nav state (assets cache, mail nav, skills nav) before replacing.
+/// nav state (assets cache, mail nav, skills nav, wallet cache) before
+/// replacing.
 fn swap_active_view(state: &mut State, new_view: ActiveView) {
   let prev = std::mem::replace(&mut state.active_view, new_view);
   match prev {
@@ -872,6 +880,9 @@ fn swap_active_view(state: &mut State, new_view: ActiveView) {
     ActiveView::Skills(s) => {
       state.skills_nav = pod_ui::views::skills::NavState::from_state(&s);
       state.skills_left_pane_width = s.left_pane_width;
+    }
+    ActiveView::Wallet(s) => {
+      state.cached_wallet_state = Some(s);
     }
     _ => {}
   }
@@ -1071,6 +1082,7 @@ mod tests {
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
         cached_assets_state: None,
+        cached_wallet_state: None,
         characters: vec![character],
         corporations: Vec::new(),
         esi_connected: false,
@@ -1136,6 +1148,7 @@ mod tests {
         active_view: ActiveView::Characters(chars_view),
         assets_sidebar_width: 232.0,
         cached_assets_state: None,
+        cached_wallet_state: None,
         characters: vec![Character::new(1, "Alpha")],
         corporations: Vec::new(),
         esi_connected: false,
@@ -1184,6 +1197,7 @@ mod tests {
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
         cached_assets_state: Some(cached),
+        cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
         esi_connected: false,
@@ -1239,6 +1253,7 @@ mod tests {
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
         cached_assets_state: None,
+        cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
         esi_connected: false,
@@ -1283,6 +1298,7 @@ mod tests {
         active_view: ActiveView::Assets(assets_state),
         assets_sidebar_width: 0.0,
         cached_assets_state: None,
+        cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
         esi_connected: false,
@@ -1379,6 +1395,7 @@ mod tests {
         active_view: ActiveView::Settings(settings::State::default()),
         assets_sidebar_width: 232.0,
         cached_assets_state: None,
+        cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
         esi_connected: false,

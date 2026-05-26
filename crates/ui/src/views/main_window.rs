@@ -81,6 +81,8 @@ pub struct State {
   pub assets_sidebar_width: f32,
   /// Preserved assets view state for instant restore on navigation return.
   pub cached_assets_state: Option<assets::State>,
+  /// Preserved wallet view state for instant restore on navigation return.
+  pub cached_wallet_state: Option<wallet::State>,
   pub characters: Vec<Character>,
   pub corporations: Vec<Corporation>,
   pub esi_connected: bool,

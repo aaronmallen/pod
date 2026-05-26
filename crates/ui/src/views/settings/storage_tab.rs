@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use iced::{
-  Background, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{Space, button, column, container, row, text, text_input},
 };
@@ -373,6 +373,7 @@ fn path_row<'a>(
 
   let input = text_input("Platform default", &row_state.draft)
     .size(13.0)
+    .font(typography::body::REGULAR)
     .padding(Padding {
       top: 7.0,
       bottom: 7.0,
@@ -380,7 +381,19 @@ fn path_row<'a>(
       right: 10.0,
     })
     .on_input(move |s| Message::Edited(id_edit.clone(), s))
-    .on_submit(Message::Commit(id_commit));
+    .on_submit(Message::Commit(id_commit))
+    .style(|_, _| text_input::Style {
+      background: Background::Color(iced::Color::TRANSPARENT),
+      border: Border {
+        color: color::border::SUBTLE,
+        radius: 5.0.into(),
+        width: 1.0,
+      },
+      icon: color::text::SECONDARY,
+      placeholder: color::text::TERTIARY,
+      value: color::text::PRIMARY,
+      selection: color::state::SELECTION,
+    });
 
   let default_hint = text(format!("Default: {default_path}"))
     .size(10.0)

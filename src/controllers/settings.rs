@@ -32,6 +32,15 @@ pub fn new(config: &crate::config::Settings) -> (State, iced::Task<Message>) {
       storage_cfg.db_dir().as_ref(),
       storage_cfg.cache_dir().as_ref(),
       storage_cfg.log_dir().as_ref(),
+      default_storage_path(&storage_tab::PathId::DbDir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_default(),
+      default_storage_path(&storage_tab::PathId::CacheDir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_default(),
+      default_storage_path(&storage_tab::PathId::LogDir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_default(),
     ),
     tags: tags_tab::State::default(),
   };
@@ -296,6 +305,10 @@ fn handle_storage_tab_inner(state: &mut State, inner: storage_tab::Message, serv
     }
     storage_tab::Message::ConfirmMove(id) => handle_storage_confirm_move(state, id, services),
     storage_tab::Message::ConfirmSkip(id) => handle_storage_confirm_skip(state, id, services),
+    storage_tab::Message::Edited(id, text) => {
+      state.storage.row_mut(&id).draft = text;
+      (iced::Task::none(), None, None)
+    }
     storage_tab::Message::PathSelected(id, path) => {
       handle_storage_path_selected(state, id.clone(), path);
       (iced::Task::none(), None, None)

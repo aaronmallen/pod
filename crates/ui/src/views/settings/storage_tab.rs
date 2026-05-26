@@ -13,11 +13,11 @@ use crate::style::{color, spacing, typography};
 /// Which storage path is being edited in the UI.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PathId {
-  /// Directory that holds `pod.db`.
+  /// Directory for the ESI HTTP cache (`XDG_CACHE_HOME`).
   CacheDir,
-  /// Directory for rolling log files.
+  /// Directory that holds `pod.db` (`XDG_DATA_HOME`).
   DbDir,
-  /// Directory for the ESI HTTP cache.
+  /// Directory for rolling log files (`XDG_STATE_HOME`).
   LogDir,
 }
 
@@ -34,6 +34,8 @@ pub enum Message {
   ConfirmSkip(PathId),
   /// User cancelled the pending path change.
   ConfirmCancel(PathId),
+  /// User typed in the path text input.
+  Edited(PathId, String),
   /// OS picker returned a folder path.
   PathSelected(PathId, PathBuf),
   /// Reset the given path back to its platform default (None).
@@ -54,33 +56,52 @@ pub struct PathRowState {
 /// Runtime state for the storage settings panel.
 #[derive(Clone, Debug, Default)]
 pub struct State {
-  /// State for the database directory row.
-  pub cache_dir: PathRowState,
-  /// State for the log directory row.
-  pub db_dir: PathRowState,
   /// State for the ESI cache directory row.
+  pub cache_dir: PathRowState,
+  /// Platform-default ESI cache directory (shown as hint).
+  pub cache_default: String,
+  /// State for the database directory row.
+  pub db_dir: PathRowState,
+  /// Platform-default database directory (shown as hint).
+  pub db_default: String,
+  /// State for the log directory row.
   pub log_dir: PathRowState,
+  /// Platform-default log directory (shown as hint).
+  pub log_default: String,
 }
 
 impl State {
-  /// Initialise from optional saved paths (None = platform default).
-  pub fn from_paths(db_dir: Option<&PathBuf>, cache_dir: Option<&PathBuf>, log_dir: Option<&PathBuf>) -> Self {
+  /// Initialise from optional saved paths and platform defaults.
+  ///
+  /// `*_default` strings should be the OS-resolved default for each
+  /// path (i.e. what would be used when the override is `None`).
+  pub fn from_paths(
+    db_dir: Option<&PathBuf>,
+    cache_dir: Option<&PathBuf>,
+    log_dir: Option<&PathBuf>,
+    db_default: String,
+    cache_default: String,
+    log_default: String,
+  ) -> Self {
     Self {
       cache_dir: PathRowState {
         draft: cache_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         previous: cache_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         confirm_move: false,
       },
+      cache_default,
       db_dir: PathRowState {
         draft: db_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         previous: db_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         confirm_move: false,
       },
+      db_default,
       log_dir: PathRowState {
         draft: log_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         previous: log_dir.map(|p| p.display().to_string()).unwrap_or_default(),
         confirm_move: false,
       },
+      log_default,
     }
   }
 
@@ -100,6 +121,23 @@ impl State {
       PathId::DbDir => &self.db_dir,
       PathId::LogDir => &self.log_dir,
     }
+  }
+
+  /// Return the platform-default string for `id`.
+  pub fn default_for(&self, id: &PathId) -> &str {
+    match id {
+      PathId::CacheDir => &self.cache_default,
+      PathId::DbDir => &self.db_default,
+      PathId::LogDir => &self.log_default,
+    }
+  }
+
+  /// Count how many paths are currently overriding the platform default.
+  pub fn customized_count(&self) -> usize {
+    [&self.cache_dir, &self.db_dir, &self.log_dir]
+      .iter()
+      .filter(|r| !r.draft.is_empty())
+      .count()
   }
 }
 
@@ -123,7 +161,7 @@ impl<'a> Component<'a> {
 }
 
 fn render_storage_panel(state: &State) -> Element<'_, Message> {
-  let header = storage_panel_header();
+  let header = storage_panel_header(state);
   let inner_header_border = container(Space::new().width(Length::Fill).height(1.0))
     .width(Length::Fill)
     .height(1.0)
@@ -138,28 +176,43 @@ fn render_storage_panel(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-fn storage_panel_header() -> Element<'static, Message> {
-  let title = text("Storage").size(18.0).color(color::text::PRIMARY);
+fn storage_panel_header(state: &State) -> Element<'_, Message> {
+  let count = state.customized_count();
+  let count_label = if count == 0 {
+    "All defaults".to_string()
+  } else {
+    format!("{count} of 3 customized")
+  };
+
+  let title_row: Element<'_, Message> = row([
+    text("Storage").size(18.0).color(color::text::PRIMARY).into(),
+    Space::new().width(Length::Fill).into(),
+    text(count_label)
+      .size(11.0)
+      .font(typography::mono::REGULAR)
+      .style(|_| iced::widget::text::Style {
+        color: Some(color::text::MUTED),
+      })
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .into();
+
   let desc = text(
-    "Override the default locations for Pod\u{2019}s database, \
+    "Override the XDG / platform default locations for Pod\u{2019}s database, \
     cache, and log files. Changes take effect after restarting Pod.",
   )
   .size(13.0)
   .color(color::text::SECONDARY);
-  column([
-    row([title.into(), Space::new().width(Length::Fill).into()])
-      .align_y(Vertical::Center)
-      .into(),
-    Space::new().height(4.0).into(),
-    desc.into(),
-  ])
-  .padding(Padding {
-    top: 24.0,
-    bottom: spacing::SPACE_3_5,
-    left: 36.0,
-    right: 36.0,
-  })
-  .into()
+
+  column([title_row, Space::new().height(4.0).into(), desc.into()])
+    .padding(Padding {
+      top: 24.0,
+      bottom: spacing::SPACE_3_5,
+      left: 36.0,
+      right: 36.0,
+    })
+    .into()
 }
 
 fn storage_panel_body(state: &State) -> Element<'_, Message> {
@@ -167,23 +220,31 @@ fn storage_panel_body(state: &State) -> Element<'_, Message> {
     path_row(
       "Database",
       "Directory that holds pod.db (the main data store)",
+      "XDG_DATA_HOME",
       PathId::DbDir,
       &state.db_dir,
+      &state.db_default,
     ),
     path_row_separator(),
     path_row(
       "Cache",
       "Directory for the ESI HTTP response cache",
+      "XDG_CACHE_HOME",
       PathId::CacheDir,
       &state.cache_dir,
+      &state.cache_default,
     ),
     path_row_separator(),
     path_row(
       "Logs",
       "Directory for rolling diagnostic log files",
+      "XDG_STATE_HOME",
       PathId::LogDir,
       &state.log_dir,
+      &state.log_default,
     ),
+    path_row_separator(),
+    storage_info_note(),
   ];
 
   iced::widget::scrollable(column(rows).width(Length::Fill).padding(Padding {
@@ -208,19 +269,46 @@ fn path_row_separator() -> Element<'static, Message> {
     .into()
 }
 
+fn storage_info_note() -> Element<'static, Message> {
+  let note = text(
+    "Tilde (~) is not expanded \u{2014} use absolute paths. \
+    Missing directories are created automatically. \
+    Changing a path does not move existing data; use Browse to trigger migration.",
+  )
+  .size(11.0)
+  .style(|_| iced::widget::text::Style {
+    color: Some(color::text::MUTED),
+  });
+
+  container(note)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_4,
+      bottom: 0.0,
+      left: 0.0,
+      right: 0.0,
+    })
+    .into()
+}
+
 fn path_row<'a>(
   label: &'static str,
   description: &'static str,
+  xdg_var: &'static str,
   id: PathId,
   row_state: &'a PathRowState,
+  default_path: &'a str,
 ) -> Element<'a, Message> {
   if row_state.confirm_move {
     return path_row_confirm(label, id);
   }
 
+  let is_custom = !row_state.draft.is_empty();
+
   let id_browse = id.clone();
   let id_reset = id.clone();
   let id_commit = id.clone();
+  let id_edit = id.clone();
 
   let label_el = text(label)
     .size(14.0)
@@ -228,12 +316,60 @@ fn path_row<'a>(
     .style(|_| iced::widget::text::Style {
       color: Some(color::text::PRIMARY),
     });
+
+  let xdg_el = text(xdg_var)
+    .size(10.0)
+    .font(typography::mono::REGULAR)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::MUTED),
+    });
+
   let desc_el = text(description).size(12.0).style(|_| iced::widget::text::Style {
     color: Some(color::text::SECONDARY),
   });
-  let meta_col: Element<'_, Message> = column([label_el.into(), Space::new().height(2.0).into(), desc_el.into()])
-    .width(Length::FillPortion(2))
-    .into();
+
+  let label_row: Element<'_, Message> = row([
+    label_el.into(),
+    Space::new().width(spacing::SPACE_2).into(),
+    xdg_el.into(),
+  ])
+  .align_y(Vertical::Center)
+  .into();
+
+  let mut meta_items: Vec<Element<'_, Message>> = vec![label_row, Space::new().height(2.0).into(), desc_el.into()];
+
+  if is_custom {
+    let chip: Element<'_, Message> =
+      container(
+        text("custom")
+          .size(10.0)
+          .font(typography::mono::REGULAR)
+          .style(|_| iced::widget::text::Style {
+            color: Some(color::accent::GOLD),
+          }),
+      )
+      .padding(Padding {
+        top: 2.0,
+        bottom: 2.0,
+        left: 6.0,
+        right: 6.0,
+      })
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::GOLD_SUBTLE)),
+        border: iced::Border {
+          color: color::accent::GOLD_MUTED,
+          radius: 4.0.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into();
+
+    meta_items.push(Space::new().height(4.0).into());
+    meta_items.push(chip);
+  }
+
+  let meta_col: Element<'_, Message> = column(meta_items).width(Length::FillPortion(2)).into();
 
   let input = text_input("Platform default", &row_state.draft)
     .size(13.0)
@@ -243,7 +379,18 @@ fn path_row<'a>(
       left: 10.0,
       right: 10.0,
     })
+    .on_input(move |s| Message::Edited(id_edit.clone(), s))
     .on_submit(Message::Commit(id_commit));
+
+  let default_hint = text(format!("Default: {default_path}"))
+    .size(10.0)
+    .font(typography::mono::REGULAR)
+    .style(|_| iced::widget::text::Style {
+      color: Some(color::text::TERTIARY),
+    });
+
+  let input_col: Element<'_, Message> =
+    column([input.into(), Space::new().height(3.0).into(), default_hint.into()]).into();
 
   let browse_btn = button(
     text("Browse\u{2026}")
@@ -274,7 +421,7 @@ fn path_row<'a>(
     ..button::Style::default()
   });
 
-  let reset_btn =
+  let reset_btn = if is_custom {
     button(
       text("Reset")
         .size(12.0)
@@ -302,10 +449,36 @@ fn path_row<'a>(
       },
       text_color: color::text::SECONDARY,
       ..button::Style::default()
-    });
+    })
+  } else {
+    button(
+      text("Reset")
+        .size(12.0)
+        .font(typography::body::REGULAR)
+        .style(|_| iced::widget::text::Style {
+          color: Some(color::text::TERTIARY),
+        }),
+    )
+    .padding(Padding {
+      top: 6.0,
+      bottom: 6.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      border: iced::Border {
+        color: color::border::SUBTLE,
+        radius: 5.0.into(),
+        width: 1.0,
+      },
+      text_color: color::text::TERTIARY,
+      ..button::Style::default()
+    })
+  };
 
   let controls: Element<'_, Message> = row([
-    input.into(),
+    input_col,
     Space::new().width(spacing::SPACE_2).into(),
     browse_btn.into(),
     Space::new().width(spacing::SPACE_2).into(),

@@ -69,8 +69,9 @@ pub struct AssetRecord {
 }
 
 /// Item category display filter.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Category {
+  #[default]
   All,
   Ship,
   Module,
@@ -150,8 +151,9 @@ pub enum Tab {
 }
 
 /// Sort column for the inventory table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SortCol {
+  #[default]
   Name,
   Category,
   Qty,

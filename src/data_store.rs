@@ -5,8 +5,8 @@
 //! SyncService keeps fresh. For now it is a minimal stub so
 //! that downstream wiring can compile.
 
+use pod_ui::views::assets::AssetRecord;
 use pod_ui::views::wallet::{ContractEntry, JournalEntry, MarketEntry};
-
 /// Shared in-memory store populated by `SyncService`.
 pub struct DataStore {}
 
@@ -14,6 +14,13 @@ impl DataStore {
   /// Loads (or initialises) the data store from persistent storage.
   pub fn load() -> Self {
     Self {}
+  }
+
+  /// Returns the asset records for the given character.
+  ///
+  /// Stub — `SyncService` will populate this in a later task.
+  pub fn assets_for(&self, _character_id: i64) -> Vec<AssetRecord> {
+    vec![]
   }
 
   /// Returns contracts for the given character.

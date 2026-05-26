@@ -383,15 +383,7 @@ fn apply_synced_character(app: &mut App, character: Box<Character>) -> Task<Mess
     return Task::none();
   };
   main_ctrl::apply_synced_character(state, *character);
-  let services = Services {
-    config: app.config.clone(),
-    data_store: app.data_store.clone(),
-    db: app.db.clone(),
-    esi_client: app.esi_client.clone(),
-    muta_market_client: app.muta_market_client.clone(),
-    oauth_callback_tx: app.oauth_callback_tx.clone(),
-  };
-  main_ctrl::refresh_cached_assets_if_needed(state, &services).map(|m| Message::Main(Box::new(m)))
+  Task::none()
 }
 
 fn handle_token_refresh_failed(app: &mut App) -> Task<Message> {

@@ -2,7 +2,7 @@
 
 use iced::{Subscription, widget::image};
 use pod_model::{Character, CharacterSkill, Corporation};
-pub use pod_ui::views::main_window::{ActiveView, Message, Nav, State};
+pub use pod_ui::views::main_window::{ActiveView, AssetsNavState, Message, Nav, State};
 use pod_ui::{
   components::{character_picker, status_bar},
   views::{assets, character_detail, characters, mail, settings, skills, wallet},
@@ -57,25 +57,6 @@ pub fn apply_synced_character(state: &mut State, character: Character) {
     }
     _ => {}
   }
-  if let Some(cached) = state.cached_assets_state.as_mut()
-    && let Some(bytes) = character.portrait_data()
-  {
-    cached
-      .abyssals
-      .portrait_handles
-      .insert(*character.id(), image::Handle::from_bytes(bytes.clone()));
-  }
-}
-
-/// Spawns a background asset reload to keep `cached_assets_state` fresh.
-///
-/// Called after a character sync so the next Assets restore shows current data.
-/// Returns `Task::none()` when no cache exists or assets is already active.
-pub fn refresh_cached_assets_if_needed(state: &State, services: &Services) -> iced::Task<Message> {
-  if state.cached_assets_state.is_none() || matches!(state.active_view, ActiveView::Assets(_)) {
-    return iced::Task::none();
-  }
-  assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services).map(Message::Assets)
 }
 
 /// Creates a new shell state and a startup task that initializes the default view.
@@ -95,8 +76,11 @@ pub fn new(
     abyssals_filter_pane_width: abyssals_filter_pane_width.unwrap_or(220.0),
     active_nav: Nav::Characters,
     active_view: ActiveView::Characters(chars_state),
+    assets_nav: AssetsNavState {
+      abyssals_filter_pane_width: abyssals_filter_pane_width.unwrap_or(220.0),
+      ..AssetsNavState::default()
+    },
     assets_sidebar_width: assets_sidebar_width.unwrap_or(232.0),
-    cached_assets_state: None,
     cached_wallet_state: None,
     characters,
     corporations: Vec::new(),
@@ -269,30 +253,13 @@ fn show_toast(state: &mut State, msg: String) -> iced::Task<Message> {
   )
 }
 
-fn apply_assets_loaded_to_cache(state: &mut State, result: &Result<Vec<pod_ui::views::assets::AssetRecord>, String>) {
-  if let Some(cached) = state.cached_assets_state.as_mut() {
-    if let Ok(records) = result {
-      cached.assets = records.clone();
-    }
-    cached.loading = false;
-  }
-}
-
 fn try_handle_assets_early_exit(
-  state: &mut State,
+  _state: &mut State,
   msg: &assets::Message,
   services: &Services,
 ) -> Option<iced::Task<Message>> {
   if let assets::Message::ReauthorizeCharacter(_) = msg {
     return Some(trigger_reauth(services));
-  }
-  // When assets is not the active view, an AssetsLoaded from a background
-  // refresh should update the cache rather than be discarded.
-  if let assets::Message::AssetsLoaded(result) = msg
-    && !matches!(state.active_view, ActiveView::Assets(_))
-  {
-    apply_assets_loaded_to_cache(state, result);
-    return Some(iced::Task::none());
   }
   None
 }
@@ -769,20 +736,18 @@ fn update_mail(state: &mut State, msg: mail::Message, services: &Services) -> ic
 }
 
 fn navigate_to_assets(state: &mut State, services: &Services) -> iced::Task<Message> {
-  if let Some(cached) = state.cached_assets_state.take() {
-    let refresh = assets_ctrl::background_reload(state.characters.clone(), state.corporations.clone(), services);
-    state.active_view = ActiveView::Assets(cached);
-    return refresh.map(Message::Assets);
-  }
-  let (s, task) = assets_ctrl::new(
+  let records = services
+    .data_store
+    .assets_for(state.characters.first().map(|c| *c.id()).unwrap_or(0));
+  let assets_state = assets_ctrl::from_nav_state(
     state.characters.clone(),
     state.corporations.clone(),
-    services,
+    &state.assets_nav,
     state.assets_sidebar_width,
-    state.abyssals_filter_pane_width,
+    records,
   );
-  state.active_view = ActiveView::Assets(s);
-  task.map(Message::Assets)
+  state.active_view = ActiveView::Assets(assets_state);
+  iced::Task::none()
 }
 
 fn navigate_to_mail(state: &mut State, services: &Services) -> iced::Task<Message> {
@@ -862,14 +827,14 @@ fn update_navigate(state: &mut State, nav: Nav, services: &Services) -> iced::Ta
   }
 }
 
-/// Replaces `state.active_view` with `new_view`; saves the prior view's
-/// nav state (assets cache, mail nav, skills nav, wallet cache) before
+/// Replaces `state.active_view` with `new_view`; saves Assets navigation
+/// state to `assets_nav`, mail nav, skills nav, and wallet cache before
 /// replacing.
 fn swap_active_view(state: &mut State, new_view: ActiveView) {
   let prev = std::mem::replace(&mut state.active_view, new_view);
   match prev {
     ActiveView::Assets(s) => {
-      state.cached_assets_state = Some(s);
+      save_assets_nav_state(state, &s);
     }
     ActiveView::Mail(s) => {
       state.mail_nav = pod_ui::views::main_window::MailNavState {
@@ -886,6 +851,25 @@ fn swap_active_view(state: &mut State, new_view: ActiveView) {
     }
     _ => {}
   }
+}
+
+fn save_assets_nav_state(state: &mut State, s: &assets::State) {
+  use pod_ui::components::character_picker::PickerSelection;
+  let picker_selection = match (s.selected_character(), s.selected_corporation()) {
+    (Some(id), _) => PickerSelection::Character(id),
+    (_, Some(id)) => PickerSelection::Corporation(id),
+    _ => PickerSelection::All,
+  };
+  state.assets_nav = AssetsNavState {
+    abyssals_filter_pane_width: s.abyssals.filter_pane_width,
+    category: s.category.clone(),
+    expanded_containers: s.expanded_containers.clone(),
+    picker_selection,
+    search_query: s.search_query.clone(),
+    selected_loc: s.selected_loc.clone(),
+    sort_asc: s.sort_asc,
+    sort_col: s.sort_col.clone(),
+  };
 }
 
 fn update_refresh_all(state: &mut State, services: &Services) -> iced::Task<Message> {
@@ -1080,8 +1064,8 @@ mod tests {
         abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
+        assets_nav: AssetsNavState::default(),
         assets_sidebar_width: 232.0,
-        cached_assets_state: None,
         cached_wallet_state: None,
         characters: vec![character],
         corporations: Vec::new(),
@@ -1146,8 +1130,8 @@ mod tests {
         abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Characters,
         active_view: ActiveView::Characters(chars_view),
+        assets_nav: AssetsNavState::default(),
         assets_sidebar_width: 232.0,
-        cached_assets_state: None,
         cached_wallet_state: None,
         characters: vec![Character::new(1, "Alpha")],
         corporations: Vec::new(),
@@ -1183,107 +1167,6 @@ mod tests {
     }
   }
 
-  mod apply_assets_loaded_to_cache {
-    use super::*;
-
-    fn make_empty_assets_state() -> assets::State {
-      assets::new(vec![], vec![], 232.0, 220.0)
-    }
-
-    fn make_main_state_with_cache(cached: assets::State) -> State {
-      State {
-        abyssals_filter_pane_width: 220.0,
-        active_nav: Nav::Settings,
-        active_view: ActiveView::Settings(settings::State::default()),
-        assets_sidebar_width: 232.0,
-        cached_assets_state: Some(cached),
-        cached_wallet_state: None,
-        characters: Vec::new(),
-        corporations: Vec::new(),
-        esi_connected: false,
-        eve_time: String::new(),
-        feat_asset_tracking: false,
-        feat_mail: false,
-        feat_skill_monitoring: false,
-        feat_wallet: false,
-        hovered_nav: None,
-        mail_folder_pane_width: 0.0,
-        mail_message_list_width: 0.0,
-        mail_nav: pod_ui::views::main_window::MailNavState::default(),
-        pending_snooze_expired: Vec::new(),
-        refresh_successes: 0,
-        registry_has_server_error: false,
-        registry_in_flight: Vec::new(),
-        registry_last_synced_at: None,
-        skills_left_pane_width: 0.0,
-        skills_nav: Default::default(),
-        sync: status_bar::SyncState::default(),
-        toast: None,
-        wallet_right_rail_width: 0.0,
-      }
-    }
-
-    #[test]
-    fn it_clears_loading_flag_on_ok_result() {
-      let mut cached = make_empty_assets_state();
-      cached.loading = true;
-      let mut state = make_main_state_with_cache(cached);
-
-      apply_assets_loaded_to_cache(&mut state, &Ok(vec![]));
-
-      assert!(!state.cached_assets_state.as_ref().unwrap().loading);
-    }
-
-    #[test]
-    fn it_clears_loading_flag_on_err_result() {
-      let mut cached = make_empty_assets_state();
-      cached.loading = true;
-      let mut state = make_main_state_with_cache(cached);
-
-      apply_assets_loaded_to_cache(&mut state, &Err("db error".to_string()));
-
-      assert!(!state.cached_assets_state.as_ref().unwrap().loading);
-    }
-
-    #[test]
-    fn it_is_noop_when_no_cached_state() {
-      let mut state = State {
-        abyssals_filter_pane_width: 220.0,
-        active_nav: Nav::Settings,
-        active_view: ActiveView::Settings(settings::State::default()),
-        assets_sidebar_width: 232.0,
-        cached_assets_state: None,
-        cached_wallet_state: None,
-        characters: Vec::new(),
-        corporations: Vec::new(),
-        esi_connected: false,
-        eve_time: String::new(),
-        feat_asset_tracking: false,
-        feat_mail: false,
-        feat_skill_monitoring: false,
-        feat_wallet: false,
-        hovered_nav: None,
-        mail_folder_pane_width: 0.0,
-        mail_message_list_width: 0.0,
-        mail_nav: pod_ui::views::main_window::MailNavState::default(),
-        pending_snooze_expired: Vec::new(),
-        refresh_successes: 0,
-        registry_has_server_error: false,
-        registry_in_flight: Vec::new(),
-        registry_last_synced_at: None,
-        skills_left_pane_width: 0.0,
-        skills_nav: Default::default(),
-        sync: status_bar::SyncState::default(),
-        toast: None,
-        wallet_right_rail_width: 0.0,
-      };
-
-      apply_assets_loaded_to_cache(&mut state, &Ok(vec![]));
-
-      assert!(state.cached_assets_state.is_none());
-    }
-  }
-
   mod save_sidebar_width_if_drag_end {
     use pretty_assertions::assert_eq;
 
@@ -1296,8 +1179,8 @@ mod tests {
         abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Assets,
         active_view: ActiveView::Assets(assets_state),
+        assets_nav: AssetsNavState::default(),
         assets_sidebar_width: 0.0,
-        cached_assets_state: None,
         cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
@@ -1393,8 +1276,8 @@ mod tests {
         abyssals_filter_pane_width: 220.0,
         active_nav: Nav::Settings,
         active_view: ActiveView::Settings(settings::State::default()),
+        assets_nav: AssetsNavState::default(),
         assets_sidebar_width: 232.0,
-        cached_assets_state: None,
         cached_wallet_state: None,
         characters: Vec::new(),
         corporations: Vec::new(),
@@ -1422,23 +1305,26 @@ mod tests {
     }
 
     #[test]
-    fn it_saves_assets_state_to_cache_when_previous_view_was_assets() {
+    fn it_saves_nav_state_when_previous_view_was_assets() {
       let mut state = make_state();
-      state.active_view = ActiveView::Assets(assets::new(vec![], vec![], 232.0, 220.0));
+      let mut assets_state = assets::new(vec![], vec![], 232.0, 220.0);
+      assets_state.search_query = "tritanium".to_string();
+      state.active_view = ActiveView::Assets(assets_state);
 
       swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
 
-      assert!(state.cached_assets_state.is_some());
+      assert_eq!(state.assets_nav.search_query, "tritanium");
       assert!(matches!(state.active_view, ActiveView::Settings(_)));
     }
 
     #[test]
-    fn it_does_not_touch_cache_when_previous_view_was_not_assets() {
+    fn it_does_not_change_nav_state_when_previous_view_was_not_assets() {
       let mut state = make_state();
+      state.assets_nav.search_query = "original".to_string();
 
       swap_active_view(&mut state, ActiveView::Settings(settings::State::default()));
 
-      assert!(state.cached_assets_state.is_none());
+      assert_eq!(state.assets_nav.search_query, "original");
     }
   }
 }

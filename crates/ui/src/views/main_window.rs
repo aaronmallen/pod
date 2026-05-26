@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use iced::{
   Element, Length,
   widget::{column, mouse_area, row, stack},
@@ -6,7 +8,7 @@ use pod_model::{Character, Corporation};
 pub use skills::NavState as SkillsNavState;
 
 use crate::{
-  components::{self, Icon, NavButton},
+  components::{self, Icon, NavButton, character_picker::PickerSelection},
   views::{assets, character_detail, characters, mail, settings, skills, wallet},
 };
 
@@ -74,13 +76,38 @@ pub struct MailNavState {
   pub selected_message_id: Option<String>,
 }
 
+/// Preserved navigation state for the Assets view.
+///
+/// Saved when the user navigates away from Assets and restored on return,
+/// so filters, search, sort, and expanded containers survive tab switches.
+#[derive(Clone, Debug, Default)]
+pub struct AssetsNavState {
+  /// Abyssals filter pane width in pixels.
+  pub abyssals_filter_pane_width: f32,
+  /// Active category filter.
+  pub category: assets::Category,
+  /// Set of expanded container item IDs.
+  pub expanded_containers: HashSet<i64>,
+  /// Currently selected character or corporation.
+  pub picker_selection: PickerSelection,
+  /// Search query text.
+  pub search_query: String,
+  /// Selected sidebar location filter.
+  pub selected_loc: Option<String>,
+  /// Whether the sort direction is ascending.
+  pub sort_asc: bool,
+  /// Active sort column.
+  pub sort_col: assets::SortCol,
+}
+
+
 pub struct State {
   pub abyssals_filter_pane_width: f32,
   pub active_nav: Nav,
   pub active_view: ActiveView,
+  /// Preserved Assets view navigation state (filters, sort, search).
+  pub assets_nav: AssetsNavState,
   pub assets_sidebar_width: f32,
-  /// Preserved assets view state for instant restore on navigation return.
-  pub cached_assets_state: Option<assets::State>,
   /// Preserved wallet view state for instant restore on navigation return.
   pub cached_wallet_state: Option<wallet::State>,
   pub characters: Vec<Character>,

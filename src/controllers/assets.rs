@@ -4,9 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
 use pod_model::{Character, Corporation, Station};
-use pod_ui::views::assets::{
-  self, AssetRecord, AssetValuesData, CategoryValue, CharacterStructureCell, Message, State, StockpileItemStatus,
-  StockpileWithStatus, TopItem,
+use pod_ui::views::{
+  assets::{
+    self, AssetRecord, AssetValuesData, CategoryValue, CharacterStructureCell, Message, State, StockpileItemStatus,
+    StockpileWithStatus, TopItem,
+  },
+  main_window::AssetsNavState,
 };
 
 use crate::services::{Services, character as character_service};
@@ -115,6 +118,28 @@ pub fn new(
   (state, task)
 }
 
+/// Creates an assets state from a saved `AssetsNavState`, restoring all
+/// navigation filters and reading asset data from the DataStore.
+pub fn from_nav_state(
+  characters: Vec<Character>,
+  corporations: Vec<Corporation>,
+  nav: &AssetsNavState,
+  sidebar_width: f32,
+  records: Vec<AssetRecord>,
+) -> State {
+  let mut state = assets::new(characters, corporations, sidebar_width, nav.abyssals_filter_pane_width);
+  state.assets = records;
+  state.category = nav.category.clone();
+  state.expanded_containers = nav.expanded_containers.clone();
+  state.loading = false;
+  state.picker.selected = nav.picker_selection.clone();
+  state.search_query = nav.search_query.clone();
+  state.selected_loc = nav.selected_loc.clone();
+  state.sort_asc = nav.sort_asc;
+  state.sort_col = nav.sort_col.clone();
+  state
+}
+
 /// Creates a stockpile and refreshes the list.
 pub async fn create_stockpile(
   db: pod_db::Repo,
@@ -161,24 +186,6 @@ pub async fn delete_stockpile(db: pod_db::Repo, id: i64) -> Vec<StockpileWithSta
     tracing::warn!("assets: stockpile delete failed — id: {id}, error: {e}");
   }
   load_stockpiles_with_status(db).await
-}
-
-/// Spawns a background DB reload of all assets without creating new view state.
-///
-/// Used to keep `cached_assets_state` fresh after a background character sync.
-pub fn background_reload(
-  characters: Vec<Character>,
-  corporations: Vec<Corporation>,
-  services: &Services,
-) -> iced::Task<Message> {
-  let Some(db) = services.db.clone() else {
-    return iced::Task::none();
-  };
-  let esi = services.esi_client.clone();
-  iced::Task::perform(
-    load_all_assets_from_db(db, characters, corporations, esi),
-    Message::AssetsLoaded,
-  )
 }
 
 fn category_name_to_key(name: &str) -> &'static str {

@@ -1,5 +1,7 @@
 //! Abyssals tab — mutated module grid with stat rows and resizable filter sidebar.
 
+pub mod tier_badge;
+
 use std::collections::HashMap;
 
 use iced::{
@@ -82,66 +84,6 @@ pub enum Message {
   StatMinFilterChanged(i32, f64),
   /// A module source type was selected in the picker (None = all types).
   TypeSelected(Option<i32>),
-}
-
-fn glorified_tier_color(lower: &str) -> Option<Color> {
-  if lower.contains("unstable") {
-    Some(Color::from_rgb(0.741, 0.490, 0.133))
-  } else if lower.contains("gravid") {
-    Some(Color::from_rgb(0.588, 0.349, 0.792))
-  } else if lower.contains("decayed") {
-    Some(Color::from_rgb(0.247, 0.557, 0.859))
-  } else {
-    None
-  }
-}
-
-fn base_tier_color(lower: &str) -> Color {
-  if lower.contains("unstable") {
-    Color::from_rgb(0.878, 0.459, 0.349)
-  } else if lower.contains("gravid") {
-    Color::from_rgb(0.612, 0.408, 0.839)
-  } else {
-    Color::from_rgb(0.247, 0.600, 0.780)
-  }
-}
-
-fn tier_badge_color(tier: &str) -> Color {
-  let lower = tier.to_lowercase();
-  if lower.contains("glorified") {
-    glorified_tier_color(&lower).unwrap_or_else(|| base_tier_color(&lower))
-  } else {
-    base_tier_color(&lower)
-  }
-}
-
-fn tier_badge(tier: &str) -> Element<'static, Message> {
-  let col = tier_badge_color(tier);
-  let tier_label = tier.to_uppercase();
-  container(
-    text(tier_label)
-      .font(mono::REGULAR)
-      .size(9.0)
-      .style(move |_: &Theme| iced::widget::text::Style {
-        color: Some(col),
-      }),
-  )
-  .padding(Padding {
-    top: 2.0,
-    bottom: 2.0,
-    left: 7.0,
-    right: 7.0,
-  })
-  .style(move |_| container::Style {
-    background: Some(Background::Color(color::with_alpha(col, 0.12))),
-    border: Border {
-      color: color::with_alpha(col, 0.45),
-      radius: 3.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  })
-  .into()
 }
 
 fn hue_to_color(hue: f32, lightness: f32, saturation: f32) -> Color {
@@ -394,7 +336,7 @@ fn abyssal_card_header<'a>(
               color: Some(color::text::PRIMARY),
             })
             .into(),
-          tier_badge(&item.mutaplasmid_tier),
+          tier_badge::Component::new(&item.mutaplasmid_tier).render(),
           Space::new().width(Length::Fill).into(),
         ])
         .align_y(iced::alignment::Vertical::Center)
@@ -2526,31 +2468,6 @@ mod tests {
     #[test]
     fn it_formats_values_with_two_significant_decimals() {
       assert_eq!(format_stat_value(4.75, " GJ"), "4.75 GJ");
-    }
-  }
-
-  mod tier_badge_color {
-    use super::*;
-
-    #[test]
-    fn it_returns_a_color_for_decayed() {
-      let col = tier_badge_color("Decayed");
-
-      assert!(col.r + col.g + col.b > 0.0);
-    }
-
-    #[test]
-    fn it_returns_a_color_for_unstable() {
-      let col = tier_badge_color("Unstable");
-
-      assert!(col.r > 0.5);
-    }
-
-    #[test]
-    fn it_returns_a_color_for_glorified_unstable() {
-      let col = tier_badge_color("Glorified Unstable");
-
-      assert!(col.r + col.g + col.b > 0.0);
     }
   }
 }

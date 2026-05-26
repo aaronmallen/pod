@@ -529,8 +529,14 @@ async fn propagate_skill_names(character: &mut Character, esi: &Client) {
 }
 
 async fn open_database() -> Result<pod_db::Repo, String> {
-  let path = crate::config::Settings::global().resolved_db_path();
-  pod_db::open(&path).await.map_err(|e| e.to_string())
+  let settings = crate::config::Settings::global();
+  let path = settings.resolved_db_path();
+  let network_db = settings.paths().resolved_network_db();
+  let result = pod_db::open(&path, network_db).await.map_err(|e| e.to_string())?;
+  if let Some(host) = result.existing_lock_host {
+    tracing::warn!(host = %host, "database already open on another host");
+  }
+  Ok(result.repo)
 }
 
 async fn cache_structure_names_from_assets(

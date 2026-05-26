@@ -15,20 +15,49 @@ pub mod stockpiles;
 pub mod tags;
 mod universe;
 
+use std::path::PathBuf;
+
 use sea_orm::DatabaseConnection;
 
 /// Root repository holding a database connection and providing access to sub-repos.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Root {
   connection: DatabaseConnection,
+  lockfile_path: Option<PathBuf>,
+}
+
+impl Clone for Root {
+  fn clone(&self) -> Self {
+    Self {
+      connection: self.connection.clone(),
+      lockfile_path: None,
+    }
+  }
+}
+
+impl Drop for Root {
+  fn drop(&mut self) {
+    if let Some(ref path) = self.lockfile_path {
+      let _ = std::fs::remove_file(path);
+    }
+  }
 }
 
 impl Root {
   /// Creates a new `Root` repository bound to the given database connection.
-  pub fn new(connection: DatabaseConnection) -> Self {
+  ///
+  /// If `lockfile_path` is `Some`, the lockfile at that path is removed when
+  /// this repository is dropped.
+  pub fn new(connection: DatabaseConnection, lockfile_path: Option<PathBuf>) -> Self {
     Self {
       connection,
+      lockfile_path,
     }
+  }
+
+  /// Returns a reference to the underlying database connection.
+  pub(crate) fn connection(&self) -> &DatabaseConnection {
+    &self.connection
   }
 
   /// Returns an abyssals sub-repository.

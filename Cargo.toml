@@ -42,6 +42,7 @@ cargo-packager-updater = "0.2"
 chrono = { features = ["serde"], version = "0.4" }
 dir_spec = "0.5"
 figment = { features = ["toml"], version = "0.10" }
+gethostname = "1"
 getset = "0.1"
 libsqlite3-sys = { features = ["bundled"], version = "0" }
 muda = "0.19"

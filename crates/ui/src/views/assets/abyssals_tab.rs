@@ -1,5 +1,6 @@
 //! Abyssals tab — mutated module grid with stat rows and resizable filter sidebar.
 
+pub mod abyssal_card;
 pub mod filter_sidebar;
 pub mod module_type_picker;
 pub mod stat_ranges_panel;
@@ -10,9 +11,8 @@ pub mod type_icon_tile;
 use std::collections::HashMap;
 
 use iced::{
-  Background, Border, Element, Length, Padding, Point, Size, Theme, mouse,
+  Element, Length, Padding, Point, Size, Theme, mouse,
   widget::{
-    Space,
     canvas::{self, Action, Frame, Geometry, Path, Stroke},
     column, container, image, row, scrollable, stack, text,
   },
@@ -21,14 +21,7 @@ use pod_model::{AbyssalCategory, AbyssalStatViewModel, AbyssalViewModel};
 
 use self::module_type_picker::{ModalEntry, ModalRow, ModalSection};
 use super::State;
-use crate::{
-  components::avatar::{self, AvatarKind},
-  format,
-  style::{
-    color,
-    typography::{body, mono},
-  },
-};
+use crate::style::{color, typography::body};
 
 const UNIT_SUFFIX_TABLE: &[(i32, &str)] = &[
   (71, " GJ"),
@@ -93,176 +86,6 @@ pub(super) fn format_stat_value(value: f64, unit_suffix: &str) -> String {
   let formatted = format!("{:.2}", value);
   let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
   format!("{}{unit_suffix}", trimmed)
-}
-
-fn abyssal_card_header<'a>(
-  item: &'a AbyssalViewModel,
-  type_icons: &HashMap<i32, image::Handle>,
-) -> Element<'a, Message> {
-  let price_label = item
-    .muta_price_isk
-    .map(format::fmt_isk)
-    .unwrap_or_else(|| "\u{2014}".to_string());
-  container(
-    row([
-      type_icon_tile::Component::new(&item.base_type_name, item.source_type_id, 42.0, 42.0)
-        .icon(type_icons.get(&item.source_type_id).cloned())
-        .render(),
-      Space::new().width(12.0).into(),
-      column([
-        row([
-          text(item.base_type_name.clone())
-            .font(body::MEDIUM)
-            .size(13.0)
-            .style(|_: &Theme| iced::widget::text::Style {
-              color: Some(color::text::PRIMARY),
-            })
-            .into(),
-          tier_badge::Component::new(&item.mutaplasmid_tier).render(),
-          Space::new().width(Length::Fill).into(),
-        ])
-        .align_y(iced::alignment::Vertical::Center)
-        .spacing(8.0)
-        .into(),
-        Space::new().height(2.0).into(),
-        text(format!("{} Mutaplasmid", item.mutaplasmid_tier))
-          .font(body::REGULAR)
-          .size(11.0)
-          .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(color::text::SECONDARY),
-          })
-          .into(),
-      ])
-      .width(Length::Fill)
-      .into(),
-      column([text(price_label)
-        .font(mono::MEDIUM)
-        .size(14.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::ACCENT),
-        })
-        .into()])
-      .align_x(iced::alignment::Horizontal::Right)
-      .into(),
-    ])
-    .align_y(iced::alignment::Vertical::Center),
-  )
-  .padding(Padding {
-    top: 14.0,
-    bottom: 12.0,
-    left: 16.0,
-    right: 16.0,
-  })
-  .width(Length::Fill)
-  .into()
-}
-
-fn abyssal_card_stats(item: &AbyssalViewModel) -> Element<'_, Message> {
-  let stat_rows: Vec<Element<'_, Message>> = item
-    .stats
-    .iter()
-    .map(|s| stat_row::Component::new(s).render())
-    .collect();
-  container(column(stat_rows).spacing(2.0))
-    .padding(Padding {
-      top: 6.0,
-      bottom: 14.0,
-      left: 16.0,
-      right: 16.0,
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-fn abyssal_card_footer<'a>(
-  item: &'a AbyssalViewModel,
-  char_name: &'a str,
-  portrait: Option<image::Handle>,
-) -> Element<'a, Message> {
-  let avatar = avatar::Component::new(
-    char_name,
-    (item.character_id.unsigned_abs() % 360) as u16,
-    18.0,
-    AvatarKind::Person,
-  )
-  .portrait(portrait)
-  .render::<Message>();
-  let mut row_items: Vec<Element<'_, Message>> = vec![
-    avatar,
-    Space::new().width(8.0).into(),
-    text(char_name.to_string())
-      .font(body::REGULAR)
-      .size(11.0)
-      .style(|_: &Theme| iced::widget::text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-  ];
-  if !item.location.is_empty() {
-    row_items.push(Space::new().width(8.0).into());
-    row_items.push(
-      text("\u{00b7}")
-        .size(11.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::TERTIARY),
-        })
-        .into(),
-    );
-    row_items.push(Space::new().width(8.0).into());
-    row_items.push(
-      text(item.location.clone())
-        .font(mono::REGULAR)
-        .size(10.0)
-        .style(|_: &Theme| iced::widget::text::Style {
-          color: Some(color::text::TERTIARY),
-        })
-        .width(Length::Fill)
-        .into(),
-    );
-  } else {
-    row_items.push(Space::new().width(Length::Fill).into());
-  }
-  container(row(row_items).align_y(iced::alignment::Vertical::Center))
-    .padding(Padding {
-      top: 10.0,
-      bottom: 10.0,
-      left: 16.0,
-      right: 16.0,
-    })
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::border::SUBTLE,
-        width: 1.0,
-        ..Border::default()
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn abyssal_card<'a>(
-  item: &'a AbyssalViewModel,
-  char_name: &'a str,
-  type_icons: &HashMap<i32, image::Handle>,
-  portrait: Option<image::Handle>,
-) -> Element<'a, Message> {
-  let header = abyssal_card_header(item, type_icons);
-  let stats_area = abyssal_card_stats(item);
-  let footer = abyssal_card_footer(item, char_name, portrait);
-  container(column([header, stats_area, footer]))
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::border::SUBTLE,
-        radius: 10.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
 }
 
 fn item_passes_filter(
@@ -349,7 +172,7 @@ fn card_grid<'a>(state: &'a State) -> Element<'a, Message> {
     .map(|item| {
       let char_name = char_name_map.get(&item.character_id).copied().unwrap_or("");
       let portrait = state.abyssals.portrait_handles.get(&item.character_id).cloned();
-      container(abyssal_card(item, char_name, type_icons, portrait))
+      container(abyssal_card::Component::new(item, char_name, type_icons, portrait).render())
         .padding(Padding {
           top: 0.0,
           bottom: 16.0,

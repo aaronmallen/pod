@@ -924,6 +924,7 @@ impl Default for AbyssalsState {
 /// Builder for the abyssals tab.
 pub struct Component<'a> {
   state: &'a State,
+  window_width: f32,
 }
 
 impl<'a> Component<'a> {
@@ -931,7 +932,14 @@ impl<'a> Component<'a> {
   pub fn new(state: &'a State) -> Self {
     Self {
       state,
+      window_width: 1200.0,
     }
+  }
+
+  /// Sets the available window width used by the card grid.
+  pub fn window_width(mut self, width: f32) -> Self {
+    self.window_width = width;
+    self
   }
 
   /// Renders the abyssals tab into an iced element.
@@ -939,7 +947,8 @@ impl<'a> Component<'a> {
     let state = self.state;
     let sidebar_el = filter_sidebar::Component::new(state).render();
     let drag_handle = filter_sidebar::drag_handle();
-    let grid_el = card_grid::Component::new(state).render();
+    let grid_width = (self.window_width - state.abyssals.filter_pane_width).max(0.0);
+    let grid_el = card_grid::Component::new(state).window_width(grid_width).render();
 
     let base = row([sidebar_el, drag_handle, grid_el])
       .width(Length::Fill)

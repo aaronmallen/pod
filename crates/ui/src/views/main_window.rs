@@ -257,7 +257,7 @@ fn render_rail(state: &State) -> Element<'_, Message> {
 
 fn render_active_view(state: &State, window_width: f32, window_height: f32) -> Element<'_, Message> {
   match &state.active_view {
-    ActiveView::Assets(s) => assets::Component::new(s).render().map(Message::Assets),
+    ActiveView::Assets(s) => render_assets(s, window_width),
     ActiveView::Settings(s) => settings::Component::new(s).render().map(Message::Settings),
     v => render_active_view_with_size(v, window_width, window_height),
   }
@@ -278,6 +278,13 @@ fn render_active_view_sized(view: &ActiveView, window_width: f32) -> Element<'_,
     ActiveView::Wallet(s) => render_wallet(s, window_width),
     _ => unreachable!(),
   }
+}
+
+fn render_assets(s: &assets::State, window_width: f32) -> Element<'_, Message> {
+  assets::Component::new(s)
+    .window_width(window_width)
+    .render()
+    .map(Message::Assets)
 }
 
 fn render_character_detail(s: &character_detail::State) -> Element<'_, Message> {

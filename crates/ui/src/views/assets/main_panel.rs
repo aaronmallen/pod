@@ -71,8 +71,8 @@ fn tab_from_index(i: usize) -> Tab {
   }
 }
 
-fn render_active_tab(state: &State) -> Element<'_, Message> {
-  render_primary_tab(state).unwrap_or_else(|| render_secondary_tab(state))
+fn render_active_tab(state: &State, window_width: f32) -> Element<'_, Message> {
+  render_primary_tab(state).unwrap_or_else(|| render_secondary_tab(state, window_width))
 }
 
 fn render_primary_tab(state: &State) -> Option<Element<'_, Message>> {
@@ -83,9 +83,12 @@ fn render_primary_tab(state: &State) -> Option<Element<'_, Message>> {
   }
 }
 
-fn render_secondary_tab(state: &State) -> Element<'_, Message> {
+fn render_secondary_tab(state: &State, window_width: f32) -> Element<'_, Message> {
   match state.active_tab {
-    Tab::Abyssals => Abyssals::new(state).render().map(Message::AbyssalsTab),
+    Tab::Abyssals => Abyssals::new(state)
+      .window_width(window_width)
+      .render()
+      .map(Message::AbyssalsTab),
     Tab::Tracker => Tracker::new(state).render().map(Message::TrackerTab),
     _ => Values::new(state).render().map(Message::ValuesTab),
   }
@@ -127,6 +130,7 @@ fn pane_drag_handle() -> Element<'static, Message> {
 /// Builder for the main panel (tab strip + active tab body).
 pub struct Component<'a> {
   state: &'a State,
+  window_width: f32,
 }
 
 impl<'a> Component<'a> {
@@ -134,14 +138,21 @@ impl<'a> Component<'a> {
   pub fn new(state: &'a State) -> Self {
     Self {
       state,
+      window_width: 1200.0,
     }
+  }
+
+  /// Sets the available window width passed down to responsive tabs.
+  pub fn window_width(mut self, width: f32) -> Self {
+    self.window_width = width;
+    self
   }
 
   /// Renders the main panel into an iced element.
   pub fn render(self) -> Element<'a, Message> {
     let state = self.state;
     let tabs_el = tab_strip_el(state);
-    let body = render_active_tab(state);
+    let body = render_active_tab(state, self.window_width);
     column([tabs_el, body]).width(Length::Fill).height(Length::Fill).into()
   }
 }

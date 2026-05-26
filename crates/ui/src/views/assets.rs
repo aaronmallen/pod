@@ -1318,9 +1318,9 @@ pub fn struct_glyph(kind: &str) -> &'static str {
     .unwrap_or("⊟")
 }
 
-fn render_base<'a>(state: &'a State) -> Element<'a, Message> {
+fn render_base<'a>(state: &'a State, window_width: f32) -> Element<'a, Message> {
   let header_el = Header::new(state).render();
-  let main_el = MainPanel::new(state).render();
+  let main_el = MainPanel::new(state).window_width(window_width).render();
   container(column([header_el, main_el]))
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1371,6 +1371,7 @@ fn render_scope_missing<'a>(state: &'a State) -> Option<Element<'a, Message>> {
 /// Builder for the assets view.
 pub struct Component<'a> {
   state: &'a State,
+  window_width: f32,
 }
 
 impl<'a> Component<'a> {
@@ -1378,7 +1379,14 @@ impl<'a> Component<'a> {
   pub fn new(state: &'a State) -> Self {
     Self {
       state,
+      window_width: 1200.0,
     }
+  }
+
+  /// Sets the available window width used by responsive sub-panels.
+  pub fn window_width(mut self, width: f32) -> Self {
+    self.window_width = width;
+    self
   }
 
   /// Renders the full assets window into an iced element.
@@ -1387,7 +1395,7 @@ impl<'a> Component<'a> {
     if let Some(el) = render_scope_missing(state) {
       return el;
     }
-    let base = render_base(state);
+    let base = render_base(state, self.window_width);
     let mut layers: Vec<Element<'_, Message>> = vec![base];
     if let Some(d) = render_drag_overlay(state) {
       layers.push(d);

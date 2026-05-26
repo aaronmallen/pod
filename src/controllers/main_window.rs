@@ -807,10 +807,11 @@ fn navigate_to_simple_view(state: &mut State, nav: Nav, services: &Services) -> 
     }
     Nav::Skills => {
       let nav = state.skills_nav.clone();
+      let char_id = (nav.selected_char_id != 0).then_some(nav.selected_char_id);
       let (mut s, task) = skills_ctrl::new(
         state.characters.clone(),
         state.skills_left_pane_width,
-        Some(nav.selected_char_id),
+        char_id,
         services,
       );
       skills_ctrl::apply_nav_state(&mut s, &nav);

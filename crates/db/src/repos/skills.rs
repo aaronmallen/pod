@@ -1,11 +1,16 @@
 //! Repository for character skills.
 
+use std::collections::HashMap;
+
 use pod_model::CharacterSkill;
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::OnConflict};
 
 use crate::{
   Error,
-  entities::character_skill::{ActiveModel, Column, Entity},
+  entities::{
+    character_skill::{ActiveModel, Column, Entity},
+    item_type::{Column as TypeColumn, Entity as TypeEntity},
+  },
 };
 
 /// Repository for character skill read and write operations.
@@ -21,14 +26,27 @@ impl<'a> Repo<'a> {
     }
   }
 
-  /// Returns all skill rows for the given character.
+  /// Returns all skill rows for the given character, with skill names resolved from `item_types`.
   #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn skills_for_character(&self, character_id: i64) -> Result<Vec<CharacterSkill>, Error> {
     let rows = Entity::find()
       .filter(Column::CharacterId.eq(character_id))
       .all(self.db)
       .await?;
-    Ok(rows.into_iter().map(CharacterSkill::from).collect())
+    let skill_ids: Vec<i32> = rows.iter().map(|r| r.skill_id).collect();
+    let name_map: HashMap<i32, String> = TypeEntity::find()
+      .filter(TypeColumn::Id.is_in(skill_ids))
+      .all(self.db)
+      .await
+      .unwrap_or_default()
+      .into_iter()
+      .map(|t| (t.id, t.name))
+      .collect();
+    Ok(rows.into_iter().map(|r| {
+      let mut skill = CharacterSkill::from(r);
+      skill.skill_name = name_map.get(&skill.skill_id).cloned();
+      skill
+    }).collect())
   }
 
   /// Upserts all skill rows for the given character.

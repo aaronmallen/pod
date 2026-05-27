@@ -140,7 +140,7 @@ fn build_contract_entry(
     names
       .get(&counterparty_id)
       .cloned()
-      .expect("counterparty name must be resolved by ESI")
+      .unwrap_or_else(|| format!("#{counterparty_id}"))
   } else {
     String::new()
   };
@@ -412,34 +412,33 @@ async fn fetch_contracts(
 ) -> Result<Vec<ContractEntry>, String> {
   let mut all: Vec<ContractEntry> = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    if let Ok(contracts) = char_client.contracts().await {
-      let db_rows: Vec<_> = contracts
-        .iter()
-        .map(|c| CharacterContract {
-          character_id: *character.id(),
-          contract_id: c.contract_id,
-          contract_type: c.r#type.clone(),
-          status: c.status.clone(),
-          title: c.title.clone().unwrap_or_default(),
-          issuer_id: c.issuer_id,
-          assignee_id: c.assignee_id,
-          acceptor_id: c.acceptor_id,
-          price: c.price,
-          collateral: c.collateral,
-          date_issued: c.date_issued.clone(),
-          date_expired: c.date_expired.clone(),
-          start_location_id: c.start_location_id,
-        })
-        .collect();
-      let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
+    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+      let grant = character_service::refresh_grant(character, &token);
+      let char_client = esi.character(&grant);
+      if let Ok(contracts) = char_client.contracts().await {
+        let db_rows: Vec<_> = contracts
+          .iter()
+          .map(|c| CharacterContract {
+            character_id: *character.id(),
+            contract_id: c.contract_id,
+            contract_type: c.r#type.clone(),
+            status: c.status.clone(),
+            title: c.title.clone().unwrap_or_default(),
+            issuer_id: c.issuer_id,
+            assignee_id: c.assignee_id,
+            acceptor_id: c.acceptor_id,
+            price: c.price,
+            collateral: c.collateral,
+            date_issued: c.date_issued.clone(),
+            date_expired: c.date_expired.clone(),
+            start_location_id: c.start_location_id,
+          })
+          .collect();
+        let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
+      }
     }
     if let Ok(rows) = db.characters().contracts(*character.id()).await {
-      let names = resolve_entity_names(&rows, &esi).await?;
+      let names = resolve_entity_names(&rows, &esi).await;
       let locations = resolve_location_names(&rows, &esi, &db).await;
       for row in rows {
         all.push(build_contract_entry(row, &names, &locations));
@@ -503,27 +502,26 @@ async fn fetch_corp_data(
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
   let mut all: Vec<JournalEntry> = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    if let Ok(entries) = char_client.wallet_journal().await {
-      let db_rows: Vec<_> = entries
-        .iter()
-        .map(|e| WalletJournalEntry {
-          character_id: *character.id(),
-          entry_id: e.id,
-          ref_type: e.ref_type.clone(),
-          amount: e.amount,
-          balance: e.balance,
-          date: e.date.clone(),
-          description: e.description.clone(),
-          first_party_id: e.first_party_id,
-          second_party_id: e.second_party_id,
-        })
-        .collect();
-      let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
+    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+      let grant = character_service::refresh_grant(character, &token);
+      let char_client = esi.character(&grant);
+      if let Ok(entries) = char_client.wallet_journal().await {
+        let db_rows: Vec<_> = entries
+          .iter()
+          .map(|e| WalletJournalEntry {
+            character_id: *character.id(),
+            entry_id: e.id,
+            ref_type: e.ref_type.clone(),
+            amount: e.amount,
+            balance: e.balance,
+            date: e.date.clone(),
+            description: e.description.clone(),
+            first_party_id: e.first_party_id,
+            second_party_id: e.second_party_id,
+          })
+          .collect();
+        let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
+      }
     }
     if let Ok(rows) = db.characters().journal_entries(*character.id()).await {
       for row in rows {
@@ -549,27 +547,26 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
   let mut all: Vec<MarketEntry> = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
-      continue;
-    };
-    let grant = character_service::refresh_grant(character, &token);
-    let char_client = esi.character(&grant);
-    if let Ok(txns) = char_client.wallet_transactions().await {
-      let db_rows: Vec<_> = txns
-        .iter()
-        .map(|t| WalletTransaction {
-          character_id: *character.id(),
-          transaction_id: t.transaction_id,
-          type_id: t.type_id,
-          quantity: t.quantity,
-          unit_price: t.unit_price,
-          is_buy: t.is_buy,
-          date: t.date.clone(),
-          location_id: t.location_id,
-          client_id: t.client_id,
-        })
-        .collect();
-      let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
+    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+      let grant = character_service::refresh_grant(character, &token);
+      let char_client = esi.character(&grant);
+      if let Ok(txns) = char_client.wallet_transactions().await {
+        let db_rows: Vec<_> = txns
+          .iter()
+          .map(|t| WalletTransaction {
+            character_id: *character.id(),
+            transaction_id: t.transaction_id,
+            type_id: t.type_id,
+            quantity: t.quantity,
+            unit_price: t.unit_price,
+            is_buy: t.is_buy,
+            date: t.date.clone(),
+            location_id: t.location_id,
+            client_id: t.client_id,
+          })
+          .collect();
+        let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
+      }
     }
     if let Ok(rows) = db.characters().transactions(*character.id()).await {
       let type_ids: Vec<i32> = rows
@@ -690,7 +687,7 @@ fn map_corp_txn_entry(
   let item = type_names
     .get(&t.type_id)
     .cloned()
-    .expect("item type must exist in SDE");
+    .unwrap_or_else(|| format!("Unknown type {}", t.type_id));
   MarketEntry {
     id: format!("corp-{corp_id}-{division}-{}", t.transaction_id),
     who: corp_id,
@@ -716,7 +713,7 @@ fn map_txn_row(row: WalletTransaction, type_names: &HashMap<i32, String>) -> Mar
   let item = type_names
     .get(&row.type_id)
     .cloned()
-    .expect("item type must exist in SDE");
+    .unwrap_or_else(|| format!("Unknown type {}", row.type_id));
   MarketEntry {
     id: format!("{}-{}", row.character_id, row.transaction_id),
     who: row.character_id,
@@ -860,10 +857,7 @@ fn recompute_series(state: &mut State) {
   };
 }
 
-async fn resolve_entity_names(
-  rows: &[CharacterContract],
-  esi: &pod_esi::Client,
-) -> Result<HashMap<i64, String>, String> {
+async fn resolve_entity_names(rows: &[CharacterContract], esi: &pod_esi::Client) -> HashMap<i64, String> {
   let ids: Vec<i64> = rows
     .iter()
     .flat_map(|r| [r.acceptor_id, r.assignee_id])
@@ -872,23 +866,14 @@ async fn resolve_entity_names(
     .into_iter()
     .collect();
   if ids.is_empty() {
-    return Ok(HashMap::new());
+    return HashMap::new();
   }
-  let resolved: HashMap<i64, String> = esi
-    .universe()
-    .names(&ids)
-    .await
-    .map_err(|e| format!("ESI name resolution failed: {e}"))?
-    .into_iter()
-    .map(|r| (r.id, r.name))
-    .collect();
-  let still_missing: Vec<i64> = ids.into_iter().filter(|id| !resolved.contains_key(id)).collect();
-  if still_missing.is_empty() {
-    Ok(resolved)
-  } else {
-    Err(format!(
-      "could not resolve ESI names for contract counterparty IDs: {still_missing:?}"
-    ))
+  match esi.universe().names(&ids).await {
+    Ok(resolved) => resolved.into_iter().map(|r| (r.id, r.name)).collect(),
+    Err(e) => {
+      tracing::warn!("wallet: ESI name resolution failed for contracts: {e}");
+      HashMap::new()
+    }
   }
 }
 

@@ -7,6 +7,17 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.7]
+
+### Fixed
+
+- Opening the wallet no longer hangs indefinitely when EVE's servers are slow or unresponsive — connections
+  now time out after 30 seconds instead of blocking forever.
+- The wallet now shows your cached journal, transactions, and contracts even when EVE's login service is
+  unavailable or your session needs re-authentication.
+- The wallet and contracts view no longer crash with a fatal error when certain data fields are missing or
+  malformed in a server response.
+
 ## [0.4.6]
 
 ### Changed
@@ -205,7 +216,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.6...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.7...HEAD
+[0.4.7]: https://github.com/aaronmallen/pod/compare/0.4.6...0.4.7
 [0.4.6]: https://github.com/aaronmallen/pod/compare/0.4.5...0.4.6
 [0.4.5]: https://github.com/aaronmallen/pod/compare/0.4.4...0.4.5
 [0.4.4]: https://github.com/aaronmallen/pod/compare/0.4.3...0.4.4

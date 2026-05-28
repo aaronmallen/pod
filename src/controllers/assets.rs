@@ -548,16 +548,6 @@ fn build_item_index(rows: &[RawAssetRow]) -> HashMap<i64, (i64, String, String, 
 }
 
 /// Returns the set of item IDs that are containers (i.e. other items are located inside them).
-fn build_is_container_set(item_index: &HashMap<i64, (i64, String, String, i32)>) -> HashSet<i64> {
-  let mut set = HashSet::new();
-  for (loc_id, loc_type, _, _) in item_index.values() {
-    if loc_type == "item" {
-      set.insert(*loc_id);
-    }
-  }
-  set
-}
-
 /// Resolves solar-system name and constellation-id maps for structure-referenced systems.
 async fn load_structure_sys_maps(
   db: &pod_db::Repo,

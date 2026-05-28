@@ -371,13 +371,16 @@ async fn esi_resolve_missing_structures(
 
 /// Builds a map of structure_id → char_ids that can see it, for the missing subset.
 fn build_struct_chars(missing: &[i64], locs: &[(i64, i64)]) -> HashMap<i64, Vec<i64>> {
-  let mut struct_chars: HashMap<i64, Vec<i64>> = HashMap::new();
+  let mut struct_chars: HashMap<i64, HashSet<i64>> = HashMap::new();
   for &(loc_id, char_id) in locs {
     if missing.contains(&loc_id) {
-      struct_chars.entry(loc_id).or_default().push(char_id);
+      struct_chars.entry(loc_id).or_default().insert(char_id);
     }
   }
   struct_chars
+    .into_iter()
+    .map(|(loc_id, char_set)| (loc_id, char_set.into_iter().collect()))
+    .collect()
 }
 
 /// Attempts to resolve one structure via ESI, trying each candidate character.

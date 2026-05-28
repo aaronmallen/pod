@@ -19,6 +19,7 @@ use crate::{
 /// Messages produced by the market tab.
 #[derive(Clone, Debug)]
 pub enum Message {
+  LoadMore,
   SideFilterChanged(SideFilter),
 }
 
@@ -220,11 +221,31 @@ impl<'a> Component<'a> {
 
   /// Renders the market table into an iced element.
   pub fn render(self) -> Element<'a, Message> {
+    use iced::widget::button;
+
     let icons = &self.state.item_icons;
-    DataTable::new(self.state.filtered_market.iter(), |e, _, _| {
+    let visible: Vec<_> = self.state.filtered_market.iter()
+      .take(self.state.visible_market_count)
+      .collect();
+
+    let table = DataTable::new(visible.into_iter(), |e, _, _| {
       entry_row(e, icons.get(&e.type_id).cloned())
     })
     .empty_message("No market entries match your filter.")
-    .render()
+    .render();
+
+    let mut children: Vec<Element<'a, Message>> = vec![table];
+
+    if self.state.filtered_market.len() > self.state.visible_market_count {
+      children.push(
+        container(button("Load More").on_press(Message::LoadMore))
+          .width(Length::Fill)
+          .center_x(Length::Fill)
+          .padding(16.0)
+          .into()
+      );
+    }
+
+    column(children).into()
   }
 }

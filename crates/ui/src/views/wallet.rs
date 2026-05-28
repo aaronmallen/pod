@@ -215,6 +215,9 @@ pub struct State {
   pub side_filter: SideFilter,
   pub sign_filter: SignFilter,
   pub timeframe: Timeframe,
+  pub visible_market_count: usize,
+  pub visible_journal_count: usize,
+  pub visible_contracts_count: usize,
 }
 
 impl State {
@@ -479,6 +482,9 @@ fn update_journal_tab(state: &mut State, msg: journal_tab::Message) {
 
 fn update_market_tab(state: &mut State, msg: market_tab::Message) {
   match msg {
+    market_tab::Message::LoadMore => {
+      state.visible_market_count += 50;
+    }
     market_tab::Message::SideFilterChanged(side) => {
       state.side_filter = side;
     }

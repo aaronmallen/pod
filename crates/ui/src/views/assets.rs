@@ -735,6 +735,12 @@ fn apply_data_loaded(state: &mut State, message: Message) {
       eprintln!("assets: failed to load: {e}");
       state.loading = false;
     }
+    Message::ContainerAssetsLoaded(container_id, Ok(assets)) => {
+      state.loaded_container_assets.insert(container_id, assets);
+    }
+    Message::ContainerAssetsLoaded(container_id, Err(e)) => {
+      eprintln!("assets: failed to load container {}: {e}", container_id);
+    }
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
     Message::NavHistoryLoaded(history) => update_nav_history(state, history),
     Message::StockpilesLoaded(piles) => {

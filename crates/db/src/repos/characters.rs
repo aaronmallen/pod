@@ -595,6 +595,34 @@ impl<'a> Repo<'a> {
     Ok(rows)
   }
 
+  /// Returns only top-level assets (not inside containers) for the given character IDs.
+  pub async fn top_level_assets_for_character_ids(
+    &self,
+    char_ids: &[i64],
+  ) -> Result<Vec<crate::entities::character_asset::Model>, Error> {
+    let rows = AssetEntity::find()
+      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
+      .filter(AssetColumn::LocationType.ne("item"))
+      .all(self.db)
+      .await?;
+    Ok(rows)
+  }
+
+  /// Returns all assets inside the given container location for a character.
+  pub async fn container_assets(
+    &self,
+    character_id: i64,
+    container_location_id: i64,
+  ) -> Result<Vec<crate::entities::character_asset::Model>, Error> {
+    let rows = AssetEntity::find()
+      .filter(AssetColumn::CharacterId.eq(character_id))
+      .filter(AssetColumn::LocationId.eq(container_location_id))
+      .filter(AssetColumn::LocationType.eq("item"))
+      .all(self.db)
+      .await?;
+    Ok(rows)
+  }
+
   /// Upserts character contracts for the given character.
   #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_contracts(&self, character_id: i64, contracts: &[CharacterContract]) -> Result<(), Error> {

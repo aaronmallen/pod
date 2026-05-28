@@ -909,7 +909,7 @@ fn collect_structure_locs(
 
 async fn load_char_asset_rows(db: &pod_db::Repo, char_ids: &[i64]) -> Vec<RawAssetRow> {
   db.characters()
-    .assets_for_character_ids(char_ids)
+    .top_level_assets_for_character_ids(char_ids)
     .await
     .unwrap_or_default()
     .into_iter()
@@ -1019,6 +1019,71 @@ async fn load_corp_asset_rows(
 
 async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, String, Vec<u8>)> {
   db.universe().type_icons().find_all().await.unwrap_or_default()
+}
+
+/// Loads all assets inside a specific container for a character.
+/// Used for lazy-loading container contents when the user expands a container.
+pub async fn load_container_assets(
+  db: pod_db::Repo,
+  character_id: i64,
+  container_location_id: i64,
+) -> Result<Vec<AssetRecord>, String> {
+  let rows: Vec<RawAssetRow> = db
+    .characters()
+    .container_assets(character_id, container_location_id)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|a| RawAssetRow {
+      character_id: a.character_id,
+      is_active_ship: a.is_active_ship,
+      is_blueprint_copy: a.is_blueprint_copy,
+      is_singleton: a.is_singleton,
+      item_id: a.item_id,
+      location_flag: a.location_flag,
+      location_id: a.location_id,
+      location_type: a.location_type,
+      quantity: a.quantity,
+      ship_name: a.ship_name,
+      type_id: a.type_id,
+    })
+    .collect();
+
+  if rows.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  // Minimal processing: just convert to AssetRecords without full map building
+  // Caller will need to update names/prices after loading
+  Ok(
+    rows
+      .into_iter()
+      .map(|a| AssetRecord {
+        category_key: String::new(),
+        character_id: a.character_id,
+        container_id: 0,
+        container_path: String::new(),
+        constellation_id: 0,
+        constellation_name: String::new(),
+        depth: 0,
+        group_name: String::new(),
+        icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
+        is_container: false,
+        is_singleton: a.is_singleton,
+        item_id: a.item_id,
+        location_id: a.location_id,
+        location_name: format!("Container {}", a.location_id),
+        quantity: a.quantity as i64,
+        region_id: 0,
+        region_name: String::new(),
+        system_name: String::new(),
+        type_id: a.type_id,
+        type_name: String::new(),
+        unit_price: 0.0,
+        volume: 0.0,
+      })
+      .collect(),
+  )
 }
 
 async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatus> {

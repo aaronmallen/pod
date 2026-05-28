@@ -1057,34 +1057,45 @@ pub async fn load_container_assets(
     return Ok(Vec::new());
   }
 
-  // Minimal processing: just convert to AssetRecords without full map building
-  // Caller will need to update names/prices after loading
+  // Load type names for the container assets
+  let type_ids: Vec<i32> = rows.iter().map(|a| a.type_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+  let type_rows = db
+    .universe()
+    .item_types()
+    .find_by_ids(&type_ids)
+    .await
+    .unwrap_or_default();
+  let type_name_map: std::collections::HashMap<i32, String> = type_rows.iter().map(|r| (r.id, r.name.clone())).collect();
+
   Ok(
     rows
       .into_iter()
-      .map(|a| AssetRecord {
-        category_key: String::new(),
-        character_id: a.character_id,
-        container_id: 0,
-        container_path: String::new(),
-        constellation_id: 0,
-        constellation_name: String::new(),
-        depth: 0,
-        group_name: String::new(),
-        icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
-        is_container: false,
-        is_singleton: a.is_singleton,
-        item_id: a.item_id,
-        location_id: a.location_id,
-        location_name: format!("Container {}", a.location_id),
-        quantity: a.quantity as i64,
-        region_id: 0,
-        region_name: String::new(),
-        system_name: String::new(),
-        type_id: a.type_id,
-        type_name: String::new(),
-        unit_price: 0.0,
-        volume: 0.0,
+      .map(|a| {
+        let type_name = type_name_map.get(&a.type_id).cloned().unwrap_or_default();
+        AssetRecord {
+          category_key: String::new(),
+          character_id: a.character_id,
+          container_id: 0,
+          container_path: String::new(),
+          constellation_id: 0,
+          constellation_name: String::new(),
+          depth: 0,
+          group_name: String::new(),
+          icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
+          is_container: false,
+          is_singleton: a.is_singleton,
+          item_id: a.item_id,
+          location_id: a.location_id,
+          location_name: format!("Container {}", a.location_id),
+          quantity: a.quantity as i64,
+          region_id: 0,
+          region_name: String::new(),
+          system_name: String::new(),
+          type_id: a.type_id,
+          type_name,
+          unit_price: 0.0,
+          volume: 0.0,
+        }
       })
       .collect(),
   )

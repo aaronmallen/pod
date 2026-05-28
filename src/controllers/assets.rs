@@ -951,12 +951,16 @@ async fn load_all_assets_from_db(
   let type_ids = unique_ids(rows.iter().map(|a| a.type_id));
   let station_ids = station_location_ids(&rows);
   let space_sys_ids = space_system_location_ids(&rows);
+
+  // Query which items have children (containers) since we only loaded top-level assets
+  let container_item_ids = db.characters().container_item_ids(&char_ids).await.unwrap_or_default();
+  let is_container_set: std::collections::HashSet<i64> = container_item_ids.into_iter().collect();
+
   let mut station_map = load_station_map(&db, &station_ids).await;
   if let Some(ref esi_client) = esi {
     fetch_missing_stations(&db, esi_client, &station_ids, &mut station_map).await;
   }
   let item_index = build_item_index(&rows);
-  let is_container_set = build_is_container_set(&item_index);
   let structure_locs = collect_structure_locs(&rows, &item_index);
   let maps = build_asset_maps(
     &db,

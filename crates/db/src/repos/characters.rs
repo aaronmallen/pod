@@ -623,6 +623,25 @@ impl<'a> Repo<'a> {
     Ok(rows)
   }
 
+  /// Returns the IDs of items that have children (containers) for given character IDs.
+  pub async fn container_item_ids(
+    &self,
+    char_ids: &[i64],
+  ) -> Result<Vec<i64>, Error> {
+    let rows = AssetEntity::find()
+      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
+      .filter(AssetColumn::LocationType.eq("item"))
+      .all(self.db)
+      .await?;
+    let container_ids: Vec<i64> = rows
+      .into_iter()
+      .map(|a| a.location_id)
+      .collect::<std::collections::HashSet<_>>()
+      .into_iter()
+      .collect();
+    Ok(container_ids)
+  }
+
   /// Upserts character contracts for the given character.
   #[tracing::instrument(level = "trace", skip(self), fields(character_id = character_id))]
   pub async fn upsert_contracts(&self, character_id: i64, contracts: &[CharacterContract]) -> Result<(), Error> {

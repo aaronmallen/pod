@@ -129,11 +129,17 @@ impl<'a> Client<'a> {
   }
 
   /// Builds a [`Grant`] from a [`TokenResponse`] by decoding the JWT claims.
+  ///
+  /// The expiry is taken from the access token's `exp` claim — the authoritative
+  /// server-issued expiration — rather than derived from the local clock.
   fn build_grant(&self, resp: TokenResponse) -> Result<Grant, Error> {
     let character_id = Self::parse_character_id(&resp.access_token)?;
     let claims = Self::decode_jwt_claims(&resp.access_token)?;
     let scopes = extract_scopes(claims.scp);
-    let expires_at = SystemTime::now() + Duration::from_secs(resp.expires_in);
+    let exp = claims
+      .exp
+      .ok_or_else(|| Error::Authentication("access token missing exp claim".into()))?;
+    let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(exp);
     Ok(Grant::new(
       resp.access_token,
       character_id,
@@ -159,13 +165,14 @@ impl<'a> Client<'a> {
 #[derive(Deserialize)]
 struct TokenResponse {
   access_token: String,
-  expires_in: u64,
   refresh_token: String,
 }
 
 /// Subset of JWT claims present in EVE SSO access tokens.
 #[derive(Deserialize)]
 struct JwtClaims {
+  /// Expiration time as seconds since the Unix epoch.
+  exp: Option<u64>,
   name: String,
   scp: Option<serde_json::Value>,
   sub: String,
@@ -205,9 +212,12 @@ fn pad_base64url(stripped: &str) -> String {
 mod tests {
   use super::*;
 
+  /// Fixed `exp` claim used by test tokens: 2100-01-01T00:00:00Z.
+  const TEST_EXP: u64 = 4_102_444_800;
+
   fn make_jwt_with_scp(sub: &str, name: &str, scp: &str) -> String {
     let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
-    let payload_json = format!(r#"{{"sub":"{sub}","name":"{name}","scp":{scp}}}"#);
+    let payload_json = format!(r#"{{"sub":"{sub}","name":"{name}","scp":{scp},"exp":{TEST_EXP}}}"#);
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_json);
     format!("{header}.{payload}.fakesig")
   }
@@ -232,7 +242,6 @@ mod tests {
       let token = make_jwt("CHARACTER:EVE:99887766", "Test Char");
       let resp = TokenResponse {
         access_token: token.clone(),
-        expires_in: 1200,
         refresh_token: "rt".to_owned(),
       };
 
@@ -242,6 +251,10 @@ mod tests {
       assert_eq!(grant.character_name(), "Test Char");
       assert_eq!(grant.scopes(), &vec!["esi-skills.read_skills.v1".to_owned()]);
       assert_eq!(grant.refresh_token(), "rt");
+      assert_eq!(
+        grant.expires_at(),
+        &(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(TEST_EXP))
+      );
     }
 
     #[test]
@@ -255,7 +268,6 @@ mod tests {
       );
       let resp = TokenResponse {
         access_token: token.clone(),
-        expires_in: 1200,
         refresh_token: "rt2".to_owned(),
       };
 
@@ -270,12 +282,11 @@ mod tests {
       let esi = make_esi_client();
       let auth = Client::new(&esi);
       let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
-      let payload_json = r#"{"sub":"CHARACTER:EVE:22222222","name":"No Scopes","scp":null}"#;
+      let payload_json = r#"{"sub":"CHARACTER:EVE:22222222","name":"No Scopes","scp":null,"exp":4102444800}"#;
       let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_json);
       let token = format!("{header}.{payload}.fakesig");
       let resp = TokenResponse {
         access_token: token,
-        expires_in: 1200,
         refresh_token: "rt3".to_owned(),
       };
 
@@ -290,7 +301,23 @@ mod tests {
       let auth = Client::new(&esi);
       let resp = TokenResponse {
         access_token: "not-a-jwt".to_owned(),
-        expires_in: 1200,
+        refresh_token: "rt".to_owned(),
+      };
+
+      let result = auth.build_grant(resp);
+
+      assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_returns_error_when_exp_claim_is_missing() {
+      let esi = make_esi_client();
+      let auth = Client::new(&esi);
+      let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
+      let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(r#"{"sub":"CHARACTER:EVE:33333333","name":"No Exp","scp":null}"#);
+      let resp = TokenResponse {
+        access_token: format!("{header}.{payload}.fakesig"),
         refresh_token: "rt".to_owned(),
       };
 

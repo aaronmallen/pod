@@ -244,10 +244,30 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
     let id = *id;
     return handle_assets_stockpile_delete(s, msg, id, services);
   }
+  if let assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id)) = &msg {
+    return handle_container_toggle(s, *container_id, services);
+  }
   let base_task = assets::update(s, msg).map(Message::Assets);
   let task = build_assets_follow_up_tasks(base_task, should_refresh_values, new_items, s, chars_snapshot, services);
   save_sidebar_width_if_drag_end(state, is_drag_end);
   task
+}
+
+fn handle_container_toggle(s: &mut assets::State, container_id: i64, services: &Services) -> iced::Task<Message> {
+  // First update the UI state to toggle the container
+  let base_task = assets::update(s, assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id))).map(Message::Assets);
+
+  // If container is now expanded and not already loaded, spawn a load task
+  if s.expanded_containers.contains(&container_id) && !s.loaded_container_assets.contains_key(&container_id) {
+    if let Some(db) = services.db.clone() {
+      // For now, we can only load if we know which character owns the container
+      // This is a limitation we'll need to address - we might need to search across all characters
+      // For now, just return the base task (container will show as expanded but empty)
+      return base_task;
+    }
+  }
+
+  base_task
 }
 
 fn handle_assets_refresh_nav_history(s: &mut assets::State, services: &Services) -> iced::Task<Message> {

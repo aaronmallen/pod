@@ -224,6 +224,9 @@ fn save_sidebar_width_if_drag_end(state: &mut State, is_drag_end: bool) {
 }
 
 fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -> iced::Task<Message> {
+  if let assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(cid)) = &msg {
+    tracing::info!("assets: toggle container {cid}");
+  }
   if let Some(task) = try_handle_assets_early_exit(state, &msg, services) {
     return task;
   }
@@ -258,11 +261,16 @@ fn handle_container_toggle(s: &mut assets::State, container_id: i64, services: &
   let base_task = assets::update(s, assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id))).map(Message::Assets);
 
   // If container is now expanded and not already loaded, spawn a load task
-  if s.expanded_containers.contains(&container_id) && !s.loaded_container_assets.contains_key(&container_id) {
+  let is_expanded = s.expanded_containers.contains(&container_id);
+  let is_loaded = s.loaded_container_assets.contains_key(&container_id);
+  tracing::info!("handle_container_toggle: container_id={container_id}, expanded={is_expanded}, loaded={is_loaded}");
+
+  if is_expanded && !is_loaded {
     // Find the container in the loaded assets to get its character_id
     if let Some(container) = s.assets.iter().find(|a| a.item_id == container_id) {
       let char_id = container.character_id;
       let cid = container_id;
+      tracing::info!("handle_container_toggle: spawning load task for container {cid}, char_id={char_id}");
       if let Some(db) = services.db.clone() {
         return iced::Task::perform(
           async move {

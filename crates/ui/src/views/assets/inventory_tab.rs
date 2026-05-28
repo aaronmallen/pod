@@ -8,6 +8,7 @@ use iced::{
   Background, Border, Color, ContentFit, Element, Length, Padding, Theme,
   widget::{Space, button, column, container, image, row, scrollable, text},
 };
+use tracing;
 
 use super::{AssetRecord, Category, SortCol, State, asset_value, asset_volume, fmt_qty, fmt_vol};
 use crate::{
@@ -347,6 +348,7 @@ fn asset_grotesk_cell(value: String, size: f32, color: Color, width: f32) -> Ele
 }
 
 fn container_toggle(item_id: i64, expanded: bool) -> Element<'static, Message> {
+  tracing::debug!("inventory_tab: rendering toggle button for container {item_id}, expanded={expanded}");
   button(
     text(if expanded { "▼" } else { "▶" })
       .font(mono::REGULAR)

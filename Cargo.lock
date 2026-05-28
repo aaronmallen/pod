@@ -4971,6 +4971,7 @@ dependencies = [
  "iced",
  "pod-model",
  "pretty_assertions",
+ "tracing",
 ]
 
 [[package]]

@@ -13,6 +13,7 @@ version = "0.1.0"
 chrono.workspace = true
 iced.workspace = true
 pod-model.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

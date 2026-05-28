@@ -340,17 +340,15 @@ async fn resolve_structure_names(
     }
   }
 
-  let still_missing: Vec<i64> = unique_struct_ids
-    .into_iter()
-    .filter(|id| !result.contains_key(id))
-    .collect();
-  if still_missing.is_empty() {
-    Ok(result)
-  } else {
-    Err(format!(
-      "could not resolve ESI names for structure IDs: {still_missing:?}"
-    ))
+  // A forbidden (403) or otherwise unresolvable structure must not blank the entire
+  // asset list. Fall back to showing its raw ID. The fallback is in-memory only (never
+  // written to the cache), so resolution is retried on the next load once access returns.
+  for id in unique_struct_ids {
+    result
+      .entry(id)
+      .or_insert_with(|| (format!("Unknown Structure ({id})"), 0));
   }
+  Ok(result)
 }
 
 /// Queries ESI for each missing structure, trying available characters in turn.

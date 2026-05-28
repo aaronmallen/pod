@@ -286,6 +286,7 @@ pub struct AssetValuesData {
 #[derive(Clone, Debug)]
 pub enum Message {
   AssetsLoaded(Result<Vec<AssetRecord>, String>),
+  ContainerAssetsLoaded(i64, Result<Vec<AssetRecord>, String>),
   InventoryTab(inventory_tab::Message),
   ItemIconsLoaded(Vec<(i32, String, Vec<u8>)>),
   LoadMoreAssets,
@@ -321,6 +322,7 @@ pub struct State {
   pub item_icons: HashMap<(i32, String), image::Handle>,
   pub last_drag_x: f32,
   pub loading: bool,
+  pub loaded_container_assets: HashMap<i64, Vec<AssetRecord>>,
   pub nav_history: Vec<(NaiveDate, f64)>,
   pub nav_series: Vec<f64>,
   pub picker: CharacterPicker,
@@ -436,6 +438,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_w
     item_icons: HashMap::new(),
     last_drag_x: 0.0,
     loading: true,
+    loaded_container_assets: HashMap::new(),
     nav_history: Vec::new(),
     nav_series: Vec::new(),
     picker,

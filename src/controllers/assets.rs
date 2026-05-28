@@ -1075,7 +1075,7 @@ pub async fn load_container_assets(
           container_path: String::new(),
           constellation_id: 0,
           constellation_name: String::new(),
-          depth: 0,
+          depth: 1,
           group_name,
           icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
           is_container: false,

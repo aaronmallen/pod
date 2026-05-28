@@ -634,18 +634,20 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) -> iced:
       iced::Task::none()
     }
     inventory_tab::Message::ToggleContainer(id) => {
-      tracing::info!("assets::update_inventory_tab: toggle container {id}");
-      if state.expanded_containers.insert(id) == false {
-        // Container was just expanded, load its contents if not already loaded
-        tracing::info!("assets::update_inventory_tab: container {id} was newly expanded");
+      tracing::info!("assets::update_inventory_tab: toggle container {id}, currently in set: {}", state.expanded_containers.contains(&id));
+      let was_already_in_set = state.expanded_containers.contains(&id);
+      if was_already_in_set {
+        // Container was expanded, remove it (collapse)
+        state.expanded_containers.remove(&id);
+        tracing::info!("assets::update_inventory_tab: container {id} removed (collapsed)");
+      } else {
+        // Container was not in set, add it (expand)
+        state.expanded_containers.insert(id);
+        tracing::info!("assets::update_inventory_tab: container {id} added (expanded)");
         if !state.loaded_container_assets.contains_key(&id) {
           // For now, we can't easily load it without knowing the character_id and db
           // This will need to be wired up from the controller instead
         }
-      } else {
-        // Container was expanded, remove it
-        tracing::info!("assets::update_inventory_tab: container {id} was collapsed");
-        state.expanded_containers.remove(&id);
       }
       iced::Task::none()
     }

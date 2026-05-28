@@ -262,9 +262,14 @@ fn build_recipient_map(
   let mut map = std::collections::HashMap::new();
   for h in esi_headers {
     if let (Some(mail_id), Some(recipients)) = (h.mail_id, &h.recipients) {
-      let ids: Vec<i64> = recipients.iter().map(|r| r.recipient_id).collect();
+      let ids: Vec<i64> = recipients
+        .iter()
+        .map(|r| r.recipient_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
       if !ids.is_empty() {
-        map.insert(mail_id, ids);
+        map.entry(mail_id).or_insert(ids);
       }
     }
   }

@@ -7,6 +7,16 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.8]
+
+### Fixed
+
+- Your character, wallet, skill, and asset data now keeps updating reliably the whole time the app is open — the app
+  refreshes your EVE sign-in just before it expires instead of occasionally using it after it has already lapsed.
+- Your assets no longer appear completely empty when you own items in a structure your character can't access (such
+  as a citadel you've lost docking rights to) — that location now shows as "Unknown Structure" and the rest of your
+  assets load normally.
+
 ## [0.4.7]
 
 ### Fixed
@@ -216,7 +226,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.7...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.8...HEAD
+[0.4.8]: https://github.com/aaronmallen/pod/compare/0.4.7...0.4.8
 [0.4.7]: https://github.com/aaronmallen/pod/compare/0.4.6...0.4.7
 [0.4.6]: https://github.com/aaronmallen/pod/compare/0.4.5...0.4.6
 [0.4.5]: https://github.com/aaronmallen/pod/compare/0.4.4...0.4.5

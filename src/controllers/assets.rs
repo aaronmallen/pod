@@ -1020,11 +1020,11 @@ async fn load_all_cached_icons(db: pod_db::Repo) -> Vec<(i32, String, Vec<u8>)> 
 pub async fn load_container_assets(
   db: pod_db::Repo,
   character_id: i64,
-  container_location_id: i64,
+  container_item_id: i64,
 ) -> Result<Vec<AssetRecord>, String> {
   let rows: Vec<RawAssetRow> = db
     .characters()
-    .container_assets(character_id, container_location_id)
+    .container_assets(character_id, container_item_id)
     .await
     .unwrap_or_default()
     .into_iter()
@@ -1071,7 +1071,7 @@ pub async fn load_container_assets(
         AssetRecord {
           category_key: cat_key.to_string(),
           character_id: a.character_id,
-          container_id: 0,
+          container_id: container_item_id,
           container_path: String::new(),
           constellation_id: 0,
           constellation_name: String::new(),

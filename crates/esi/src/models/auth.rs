@@ -1,8 +1,12 @@
 //! OAuth2 grant model returned after successful EVE SSO authentication.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use getset::Getters;
+
+/// How long before its true expiry an access token is treated as expired, so it
+/// gets refreshed before any in-flight request can outlive it.
+const EXPIRY_LEEWAY: Duration = Duration::from_secs(60);
 
 /// An active OAuth2 grant holding tokens and character metadata returned by EVE SSO.
 #[derive(Clone, Debug, Getters)]
@@ -47,9 +51,10 @@ impl Grant {
     }
   }
 
-  /// Returns `true` if the access token has expired.
+  /// Returns `true` if the access token has expired or is within [`EXPIRY_LEEWAY`]
+  /// of expiring.
   pub fn is_expired(&self) -> bool {
-    SystemTime::now() >= self.expires_at
+    SystemTime::now() + EXPIRY_LEEWAY >= self.expires_at
   }
 }
 
@@ -88,6 +93,20 @@ mod tests {
           12345,
           "Test Character",
           SystemTime::UNIX_EPOCH,
+          "refresh",
+          vec![],
+        );
+
+        assert_eq!(grant.is_expired(), true);
+      }
+
+      #[test]
+      fn it_returns_true_when_within_the_refresh_leeway() {
+        let grant = Grant::new(
+          "token",
+          12345,
+          "Test Character",
+          SystemTime::now() + Duration::from_secs(30),
           "refresh",
           vec![],
         );

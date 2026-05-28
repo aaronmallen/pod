@@ -135,10 +135,11 @@ impl Model {
     }
   }
 
-  /// Returns `true` if the access token has expired.
+  /// Returns `true` if the access token has expired or is within
+  /// [`crate::ACCESS_TOKEN_EXPIRY_LEEWAY`] of expiring.
   pub fn access_token_expired(&self) -> bool {
     let expires_at = UNIX_EPOCH + Duration::from_secs(self.token_expires_at as u64);
-    SystemTime::now() >= expires_at
+    SystemTime::now() + crate::ACCESS_TOKEN_EXPIRY_LEEWAY >= expires_at
   }
 
   /// Returns the skill currently being trained, if any.

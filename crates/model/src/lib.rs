@@ -83,6 +83,10 @@ pub use stockpile_item::StockpileItem;
 pub use wallet_journal_entry::Model as WalletJournalEntry;
 pub use wallet_transaction::Model as WalletTransaction;
 
+/// How long before its true expiry an access token is treated as expired, so it
+/// gets refreshed before any in-flight request can outlive it.
+pub(crate) const ACCESS_TOKEN_EXPIRY_LEEWAY: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Returns the subset of `required` scopes that are absent from `granted`.
 pub fn missing_scopes(granted: &[&str], required: &[&'static str]) -> Vec<&'static str> {
   required.iter().copied().filter(|s| !granted.contains(s)).collect()

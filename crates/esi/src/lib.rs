@@ -223,8 +223,15 @@ impl ClientBuilder {
   /// Builds the [`Client`], returning an error if validation fails.
   pub fn build(self) -> Result<Client, Error> {
     self.validate().map_err(|e| Error::Internal(e.to_string()))?;
+    let user_agent = format!(
+      "Pod/{} ({}; {}; +{})",
+      env!("CARGO_PKG_VERSION"),
+      std::env::consts::OS,
+      std::env::consts::ARCH,
+      env!("CARGO_PKG_REPOSITORY")
+    );
     let inner = reqwest::Client::builder()
-      .user_agent(concat!("pod/", env!("CARGO_PKG_VERSION")))
+      .user_agent(user_agent)
       .timeout(std::time::Duration::from_secs(30))
       .build()
       .map_err(Error::Http)?;

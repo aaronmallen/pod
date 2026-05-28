@@ -7,6 +7,12 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.9]
+
+### Fixed
+
+- Wallet and Asset performance improvements
+
 ## [0.4.8]
 
 ### Fixed
@@ -226,7 +232,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.8...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.9...HEAD
+[0.4.9]: https://github.com/aaronmallen/pod/compare/0.4.8...0.4.9
 [0.4.8]: https://github.com/aaronmallen/pod/compare/0.4.7...0.4.8
 [0.4.7]: https://github.com/aaronmallen/pod/compare/0.4.6...0.4.7
 [0.4.6]: https://github.com/aaronmallen/pod/compare/0.4.5...0.4.6

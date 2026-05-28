@@ -143,16 +143,21 @@ fn skill_from_active_entry(character_id: i64, a: &SkillQueueEntry) -> CharacterS
 
 /// Ensures the character's access token is valid, refreshing via ESI if it has expired.
 ///
-/// Returns `Some(token)` on success or `None` if the refresh failed (caller should skip
-/// the character silently).
-pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db: &pod_db::Repo) -> Option<String> {
+/// Returns `Some((access_token, expires_at))` on success — where `expires_at` is the
+/// Unix-second expiry from the token's JWT — or `None` if the refresh failed (caller
+/// should skip the character silently).
+pub async fn ensure_valid_token(
+  character: &Character,
+  esi: &pod_esi::Client,
+  db: &pod_db::Repo,
+) -> Option<(String, i64)> {
   if !character.access_token_expired() {
     tracing::debug!(
       "auth: token valid for character {} ({}), skipping refresh",
       character.id(),
       character.name()
     );
-    return Some(character.access_token().clone());
+    return Some((character.access_token().clone(), *character.token_expires_at()));
   }
 
   let expires_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*character.token_expires_at() as u64);
@@ -211,7 +216,7 @@ pub async fn ensure_valid_token(character: &Character, esi: &pod_esi::Client, db
     character.id(),
     character.name()
   );
-  Some(new_grant.access_token().clone())
+  Some((new_grant.access_token().clone(), new_expires_at))
 }
 
 /// Decodes the payload of an EVE SSO JWT access token and returns the granted

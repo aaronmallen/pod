@@ -396,7 +396,7 @@ async fn resolve_single_structure(
     let Some(character) = char_map.get(&char_id) else {
       continue;
     };
-    let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+    let Some((token, _)) = character_service::ensure_valid_token(character, esi, db).await else {
       tracing::warn!("assets: token unavailable for character {char_id}, skipping structure {struct_id}");
       continue;
     };

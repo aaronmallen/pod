@@ -142,7 +142,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
   let span = tracing::info_span!("sync_character", character_id = char_id);
 
   async {
-    let token = match character_service::ensure_valid_token(&character, &esi, &db).await {
+    let (token, expires_at) = match character_service::ensure_valid_token(&character, &esi, &db).await {
       Some(t) => t,
       None => {
         tracing::warn!("background sync: skipping {name} — token refresh failed");
@@ -150,7 +150,7 @@ async fn sync_one_character(mut character: Character, esi: Client, db: pod_db::R
       }
     };
     character.set_access_token(token.clone());
-    character.set_token_expires_at(chrono::Utc::now().timestamp() + 1199);
+    character.set_token_expires_at(expires_at);
     character_service::backfill_granted_scopes(&mut character, &token, &db).await;
     let grant = character_service::refresh_grant(&character, &token);
 

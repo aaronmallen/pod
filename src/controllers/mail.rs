@@ -88,7 +88,7 @@ async fn apply_snooze_label(
     .iter()
     .find(|c| *c.id() == character_id)
     .ok_or_else(|| "Character not found".to_string())?;
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
     return Err("Token refresh failed".to_string());
   };
   let grant = character_service::refresh_grant(character, &token);
@@ -341,7 +341,7 @@ async fn fetch_mail_body(
   let Some(character) = characters.iter().find(|c| *c.id() == character_id) else {
     return (msg_id, Vec::new());
   };
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
     return (msg_id, Vec::new());
   };
   let grant = character_service::refresh_grant(character, &token);
@@ -365,7 +365,7 @@ async fn fetch_character_mail(
   db: &pod_db::Repo,
   snoozed_lookup: &std::collections::HashMap<(i64, i64), String>,
 ) -> Result<Vec<MailMessage>, String> {
-  let Some(token) = character_service::ensure_valid_token(character, esi, db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(character, esi, db).await else {
     return Ok(Vec::new());
   };
   let grant = character_service::refresh_grant(character, &token);
@@ -594,7 +594,7 @@ async fn search_recipients(
   let Some(character) = characters.first() else {
     return Vec::new();
   };
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
     return Vec::new();
   };
   let grant = character_service::refresh_grant(character, &token);
@@ -638,7 +638,7 @@ async fn send_composed_mail(
     .iter()
     .find(|c| *c.id() == from_id)
     .ok_or_else(|| "Sending character not found".to_string())?;
-  let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
     return Err("Failed to refresh auth token".to_string());
   };
   let grant = character_service::refresh_grant(character, &token);
@@ -873,7 +873,7 @@ fn update_delete(state: &mut State, services: &Services) -> iced::Task<Message> 
           // best-effort; mail may reappear until next sync if either fails
           let _ = db.characters().delete_mail_header(character_id, mail_id).await;
           if let Some(character) = chars.iter().find(|c| *c.id() == character_id)
-            && let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await
+            && let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await
           {
             let grant = character_service::refresh_grant(character, &token);
             // best-effort; mail may reappear until next sync if either fails

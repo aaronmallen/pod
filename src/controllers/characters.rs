@@ -741,7 +741,7 @@ async fn fetch_locations(
 ) -> Vec<(i64, Option<String>, Option<bool>)> {
   let mut results = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+    let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
       continue;
     };
     let grant = character_service::refresh_grant(character, &token);
@@ -776,7 +776,7 @@ async fn fetch_skill_queues(
 ) -> Vec<(i64, Vec<CharacterSkill>, Vec<TrainingQueueEntry>)> {
   let mut results = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+    let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
       continue;
     };
     let grant = character_service::refresh_grant(character, &token);
@@ -804,7 +804,7 @@ async fn fetch_skill_queues(
 async fn fetch_wallets(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<(i64, Option<f64>)> {
   let mut results = Vec::new();
   for character in &characters {
-    let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await else {
+    let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await else {
       continue;
     };
     let grant = character_service::refresh_grant(character, &token);

@@ -412,7 +412,7 @@ async fn fetch_contracts(
 ) -> Result<Vec<ContractEntry>, String> {
   let mut all: Vec<ContractEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
       let grant = character_service::refresh_grant(character, &token);
       let char_client = esi.character(&grant);
       if let Ok(contracts) = char_client.contracts().await {
@@ -502,7 +502,7 @@ async fn fetch_corp_data(
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
   let mut all: Vec<JournalEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
       let grant = character_service::refresh_grant(character, &token);
       let char_client = esi.character(&grant);
       if let Ok(entries) = char_client.wallet_journal().await {
@@ -547,7 +547,7 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
   let mut all: Vec<MarketEntry> = Vec::new();
   for character in &characters {
-    if let Some(token) = character_service::ensure_valid_token(character, &esi, &db).await {
+    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
       let grant = character_service::refresh_grant(character, &token);
       let char_client = esi.character(&grant);
       if let Ok(txns) = char_client.wallet_transactions().await {

@@ -485,7 +485,7 @@ async fn load_clones(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<Vec<pod_model::CharacterClone>, String> {
-  let Some(token) = character_service::ensure_valid_token(&character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(&character, &esi, &db).await else {
     return Err("token refresh failed".into());
   };
   let grant = character_service::refresh_grant(&character, &token);
@@ -655,7 +655,7 @@ async fn load_contacts(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<(Vec<pod_model::CharacterContact>, Vec<pod_model::CharacterContactLabel>), String> {
-  let Some(token) = character_service::ensure_valid_token(&character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(&character, &esi, &db).await else {
     return Err("token refresh failed".into());
   };
   let grant = character_service::refresh_grant(&character, &token);
@@ -731,7 +731,7 @@ async fn load_killlog(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<Vec<pod_model::CharacterKillEntry>, String> {
-  let Some(token) = character_service::ensure_valid_token(&character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(&character, &esi, &db).await else {
     return Err("token refresh failed".into());
   };
   let grant = character_service::refresh_grant(&character, &token);
@@ -931,7 +931,7 @@ async fn load_notifications(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<Vec<pod_model::CharacterNotification>, String> {
-  let Some(token) = character_service::ensure_valid_token(&character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(&character, &esi, &db).await else {
     return Err("token refresh failed".into());
   };
   let grant = character_service::refresh_grant(&character, &token);
@@ -1001,7 +1001,7 @@ async fn load_standings(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<Vec<pod_model::CharacterStanding>, String> {
-  let Some(token) = character_service::ensure_valid_token(&character, &esi, &db).await else {
+  let Some((token, _)) = character_service::ensure_valid_token(&character, &esi, &db).await else {
     return Err("token refresh failed".into());
   };
   let grant = character_service::refresh_grant(&character, &token);

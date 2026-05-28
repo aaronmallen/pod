@@ -482,8 +482,11 @@ fn update_journal_tab(state: &mut State, msg: journal_tab::Message) {
 
 fn update_market_tab(state: &mut State, msg: market_tab::Message) {
   match msg {
-    market_tab::Message::LoadMore => {
-      state.visible_market_count += 50;
+    market_tab::Message::ScrollUpdate(y) => {
+      let total = state.filtered_market.len();
+      if y > 0.8 && state.visible_market_count < total {
+        state.visible_market_count += 50;
+      }
     }
     market_tab::Message::SideFilterChanged(side) => {
       state.side_filter = side;

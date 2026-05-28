@@ -270,7 +270,10 @@ fn asset_icon_cell<'a>(
   icons: &'a HashMap<(i32, String), image::Handle>,
 ) -> Element<'a, Message> {
   const SIZE: f32 = 24.0;
-  if let Some(handle) = icons.get(&(type_id, variant.to_string())) {
+  let handle = icons
+    .get(&(type_id, variant.to_string()))
+    .or_else(|| icons.get(&(type_id, "icon".to_string())));
+  if let Some(handle) = handle {
     container(
       image(handle.clone())
         .width(SIZE)

@@ -607,18 +607,44 @@ fn update_sort_changed(state: &mut State, col: SortCol) {
   }
 }
 
-fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) {
+fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) -> iced::Task<Message> {
   match msg {
-    inventory_tab::Message::CategoryChanged(cat) => update_category_changed(state, cat),
-    inventory_tab::Message::HelpPopOver(inner) => update_help_pop_over_inner(state, inner),
-    inventory_tab::Message::HelpToggle => update_help_toggle(state),
-    inventory_tab::Message::ScrollUpdate(y) => update_scroll_update(state, y),
-    inventory_tab::Message::SearchChanged(q) => update_search_changed(state, q),
-    inventory_tab::Message::SortChanged(col) => update_sort_changed(state, col),
+    inventory_tab::Message::CategoryChanged(cat) => {
+      update_category_changed(state, cat);
+      iced::Task::none()
+    }
+    inventory_tab::Message::HelpPopOver(inner) => {
+      update_help_pop_over_inner(state, inner);
+      iced::Task::none()
+    }
+    inventory_tab::Message::HelpToggle => {
+      update_help_toggle(state);
+      iced::Task::none()
+    }
+    inventory_tab::Message::ScrollUpdate(y) => {
+      update_scroll_update(state, y);
+      iced::Task::none()
+    }
+    inventory_tab::Message::SearchChanged(q) => {
+      update_search_changed(state, q);
+      iced::Task::none()
+    }
+    inventory_tab::Message::SortChanged(col) => {
+      update_sort_changed(state, col);
+      iced::Task::none()
+    }
     inventory_tab::Message::ToggleContainer(id) => {
-      if !state.expanded_containers.remove(&id) {
-        state.expanded_containers.insert(id);
+      if state.expanded_containers.insert(id) == false {
+        // Container was just expanded, load its contents if not already loaded
+        if !state.loaded_container_assets.contains_key(&id) {
+          // For now, we can't easily load it without knowing the character_id and db
+          // This will need to be wired up from the controller instead
+        }
+      } else {
+        // Container was expanded, remove it
+        state.expanded_containers.remove(&id);
       }
+      iced::Task::none()
     }
   }
 }
@@ -878,10 +904,7 @@ fn update_tracker_tab(state: &mut State, msg: tracker_tab::Message) {
 /// Processes an assets message and returns a task.
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
-    Message::InventoryTab(msg) => {
-      update_inventory_tab(state, msg);
-      iced::Task::none()
-    }
+    Message::InventoryTab(msg) => update_inventory_tab(state, msg),
     Message::PaneDrag(x) => {
       update_pane_drag(state, x);
       iced::Task::none()

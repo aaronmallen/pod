@@ -443,11 +443,19 @@ fn build_tree_rows<'a>(
   sorted: Vec<&'a AssetRecord>,
   all_assets: &'a [AssetRecord],
   expanded: &HashSet<i64>,
+  loaded_containers: &'a std::collections::HashMap<i64, Vec<AssetRecord>>,
 ) -> Vec<&'a AssetRecord> {
   let mut children_map: HashMap<i64, Vec<&'a AssetRecord>> = HashMap::new();
+  // First, add children from all_assets (for nested containers that were loaded inline)
   for a in all_assets {
     if a.container_id != 0 {
       children_map.entry(a.location_id).or_default().push(a);
+    }
+  }
+  // Then, add lazily-loaded container contents
+  for (container_item_id, assets) in loaded_containers {
+    for a in assets {
+      children_map.entry(*container_item_id).or_default().push(a);
     }
   }
   for children in children_map.values_mut() {
@@ -510,7 +518,7 @@ impl<'a> Component<'a> {
       let all_assets = state.all_assets();
       let visible = state.visible_count.min(sorted.len());
       let page: Vec<&AssetRecord> = sorted[..visible].to_vec();
-      let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers);
+      let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers, &state.loaded_container_assets);
       let data_rows: Vec<Element<'_, Message>> = tree_rows
         .into_iter()
         .map(|a| {

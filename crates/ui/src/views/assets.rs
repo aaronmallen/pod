@@ -298,6 +298,7 @@ pub enum Message {
   Picker(character_picker::Message),
   ReauthorizeCharacter(i64),
   RefreshNavHistory,
+  SearchResultsLoaded(Vec<AssetRecord>),
   StockpilesLoaded(Vec<StockpileWithStatus>),
   StockpilesTab(stockpiles_tab::Message),
   TabSelected(Tab),
@@ -327,6 +328,7 @@ pub struct State {
   pub nav_series: Vec<f64>,
   pub picker: CharacterPicker,
   pub search_query: String,
+  pub search_results: Option<Vec<AssetRecord>>,
   pub selected_loc: Option<String>,
   pub sidebar_width: f32,
   pub sort_asc: bool,
@@ -378,7 +380,13 @@ impl State {
     let query = AssetFilterQuery::parse(&self.search_query).with_me(char_id);
     let loc = self.selected_loc.clone();
 
-    self.assets.iter().filter(move |a| {
+    let assets_to_filter = if let Some(ref search_results) = self.search_results {
+      search_results
+    } else {
+      &self.assets
+    };
+
+    assets_to_filter.iter().filter(move |a| {
       let owner_id = corp_id.or(char_id);
       asset_filter_predicate(a, owner_id, cat_key, loc.as_deref(), &query)
     })
@@ -443,6 +451,7 @@ pub fn new(characters: Vec<Character>, corporations: Vec<Corporation>, sidebar_w
     nav_series: Vec::new(),
     picker,
     search_query: String::new(),
+    search_results: None,
     selected_loc: None,
     sidebar_width,
     sort_asc: true,
@@ -596,6 +605,10 @@ fn update_scroll_update(state: &mut State, y: f32) {
 fn update_search_changed(state: &mut State, q: String) {
   state.search_query = q;
   state.visible_count = 100;
+  if state.search_query.is_empty() {
+    state.search_results = None;
+    state.expanded_containers.clear();
+  }
 }
 
 fn update_sort_changed(state: &mut State, col: SortCol) {
@@ -774,6 +787,14 @@ fn apply_data_loaded(state: &mut State, message: Message) {
     }
     Message::ItemIconsLoaded(icons) => load_item_icons(state, icons),
     Message::NavHistoryLoaded(history) => update_nav_history(state, history),
+    Message::SearchResultsLoaded(results) => {
+      state.search_results = Some(results.clone());
+      for asset in &results {
+        if asset.container_id > 0 {
+          state.expanded_containers.insert(asset.container_id);
+        }
+      }
+    }
     Message::StockpilesLoaded(piles) => {
       state.stockpiles = piles;
     }

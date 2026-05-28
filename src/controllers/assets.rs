@@ -1097,6 +1097,93 @@ pub async fn load_container_assets(
   )
 }
 
+pub async fn search_assets_db(
+  db: pod_db::Repo,
+  character_ids: &[i64],
+  query: &str,
+) -> Vec<AssetRecord> {
+  if character_ids.is_empty() || query.is_empty() {
+    return Vec::new();
+  }
+
+  let rows: Vec<RawAssetRow> = db
+    .characters()
+    .search_assets(character_ids, query)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|a| RawAssetRow {
+      character_id: a.character_id,
+      is_active_ship: a.is_active_ship,
+      is_blueprint_copy: a.is_blueprint_copy,
+      is_singleton: a.is_singleton,
+      item_id: a.item_id,
+      location_flag: a.location_flag,
+      location_id: a.location_id,
+      location_type: a.location_type,
+      quantity: a.quantity,
+      ship_name: a.ship_name,
+      type_id: a.type_id,
+    })
+    .collect();
+
+  if rows.is_empty() {
+    return Vec::new();
+  }
+
+  let type_ids: Vec<i32> = rows.iter().map(|a| a.type_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+  let (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map) =
+    load_type_maps(&db, &type_ids).await;
+
+  rows
+    .into_iter()
+    .map(|a| {
+      let type_name = type_name_map.get(&a.type_id).cloned().unwrap_or_default();
+      let volume = type_volume_map.get(&a.type_id).copied().unwrap_or(0.0);
+      let group_id = type_group_map.get(&a.type_id).copied();
+      let group_name = group_id
+        .and_then(|g| group_name_map.get(&g))
+        .cloned()
+        .unwrap_or_default();
+      let cat_key = group_id
+        .and_then(|g| type_cat_map.get(&g).copied())
+        .and_then(|c| cat_key_map.get(&c).copied())
+        .unwrap_or("commodity");
+
+      let container_id = if a.location_type == "item" {
+        a.location_id
+      } else {
+        0
+      };
+
+      AssetRecord {
+        category_key: cat_key.to_string(),
+        character_id: a.character_id,
+        container_id,
+        container_path: String::new(),
+        constellation_id: 0,
+        constellation_name: String::new(),
+        depth: if container_id > 0 { 1 } else { 0 },
+        group_name,
+        icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
+        is_container: false,
+        is_singleton: a.is_singleton,
+        item_id: a.item_id,
+        location_id: a.location_id,
+        location_name: String::new(),
+        quantity: a.quantity as i64,
+        region_id: 0,
+        region_name: String::new(),
+        system_name: String::new(),
+        type_id: a.type_id,
+        type_name,
+        unit_price: 0.0,
+        volume,
+      }
+    })
+    .collect()
+}
+
 async fn load_stockpiles_with_status(db: pod_db::Repo) -> Vec<StockpileWithStatus> {
   let piles = match db.stockpiles().list_stockpiles().await {
     Ok(p) => p,

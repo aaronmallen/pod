@@ -247,6 +247,26 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
     let id = *id;
     return handle_assets_stockpile_delete(s, msg, id, services);
   }
+  if let assets::Message::InventoryTab(assets::inventory_tab::Message::SearchChanged(query)) = &msg {
+    let search_query = query.clone();
+    let base_task = assets::update(s, msg).map(Message::Assets);
+    if search_query.is_empty() {
+      return base_task;
+    }
+    let char_ids: Vec<i64> = s.characters.iter().map(|c| *c.id()).collect();
+    if let Some(db) = services.db.clone() {
+      return iced::Task::batch([
+        base_task,
+        iced::Task::perform(
+          async move {
+            assets_ctrl::search_assets_db(db, &char_ids, &search_query).await
+          },
+          |result| Message::Assets(assets::Message::SearchResultsLoaded(result)),
+        ),
+      ]);
+    }
+    return base_task;
+  }
   if let assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id)) = &msg {
     return handle_container_toggle(s, *container_id, services);
   }

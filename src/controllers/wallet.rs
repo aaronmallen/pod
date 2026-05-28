@@ -357,18 +357,31 @@ async fn fetch_all_corp_totals(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Vec<(i64, f64)> {
+  let handles = corporations.iter().map(|corp| {
+    let c = corp.clone();
+    let esi_clone = esi.clone();
+    let db_clone = db.clone();
+    tokio::spawn(async move {
+      let Some(token) = corporation_service::ensure_valid_token(&c, &esi_clone, &db_clone).await else {
+        return None;
+      };
+      let grant = corporation_service::refresh_grant(&c, &token);
+      let corp_id = *c.id();
+      let corp_esi = esi_clone.corporation(corp_id);
+      let corp_client = corp_esi.auth(&grant);
+      if let Ok(wallets) = corp_client.wallets().await {
+        let total: f64 = wallets.iter().map(|w| w.balance).sum();
+        Some((corp_id, total))
+      } else {
+        None
+      }
+    })
+  });
+
   let mut totals = Vec::new();
-  for corp in &corporations {
-    let Some(token) = corporation_service::ensure_valid_token(corp, &esi, &db).await else {
-      continue;
-    };
-    let grant = corporation_service::refresh_grant(corp, &token);
-    let corp_id = *corp.id();
-    let corp_esi = esi.corporation(corp_id);
-    let corp_client = corp_esi.auth(&grant);
-    if let Ok(wallets) = corp_client.wallets().await {
-      let total: f64 = wallets.iter().map(|w| w.balance).sum();
-      totals.push((corp_id, total));
+  for handle in handles {
+    if let Ok(Some(result)) = handle.await {
+      totals.push(result);
     }
   }
   totals
@@ -410,33 +423,45 @@ async fn fetch_contracts(
   esi: pod_esi::Client,
   db: pod_db::Repo,
 ) -> Result<Vec<ContractEntry>, String> {
+  let handles = characters.iter().map(|character| {
+    let char = character.clone();
+    let esi_clone = esi.clone();
+    let db_clone = db.clone();
+    tokio::spawn(async move {
+      if let Some((token, _)) = character_service::ensure_valid_token(&char, &esi_clone, &db_clone).await {
+        let grant = character_service::refresh_grant(&char, &token);
+        let char_client = esi_clone.character(&grant);
+        if let Ok(contracts) = char_client.contracts().await {
+          let db_rows: Vec<_> = contracts
+            .iter()
+            .map(|c| CharacterContract {
+              character_id: *char.id(),
+              contract_id: c.contract_id,
+              contract_type: c.r#type.clone(),
+              status: c.status.clone(),
+              title: c.title.clone().unwrap_or_default(),
+              issuer_id: c.issuer_id,
+              assignee_id: c.assignee_id,
+              acceptor_id: c.acceptor_id,
+              price: c.price,
+              collateral: c.collateral,
+              date_issued: c.date_issued.clone(),
+              date_expired: c.date_expired.clone(),
+              start_location_id: c.start_location_id,
+            })
+            .collect();
+          let _ = db_clone.characters().upsert_contracts(*char.id(), &db_rows).await;
+        }
+      }
+    })
+  });
+
+  for handle in handles {
+    let _ = handle.await;
+  }
+
   let mut all: Vec<ContractEntry> = Vec::new();
   for character in &characters {
-    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(contracts) = char_client.contracts().await {
-        let db_rows: Vec<_> = contracts
-          .iter()
-          .map(|c| CharacterContract {
-            character_id: *character.id(),
-            contract_id: c.contract_id,
-            contract_type: c.r#type.clone(),
-            status: c.status.clone(),
-            title: c.title.clone().unwrap_or_default(),
-            issuer_id: c.issuer_id,
-            assignee_id: c.assignee_id,
-            acceptor_id: c.acceptor_id,
-            price: c.price,
-            collateral: c.collateral,
-            date_issued: c.date_issued.clone(),
-            date_expired: c.date_expired.clone(),
-            start_location_id: c.start_location_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_contracts(*character.id(), &db_rows).await;
-      }
-    }
     if let Ok(rows) = db.characters().contracts(*character.id()).await {
       let names = resolve_entity_names(&rows, &esi).await;
       let locations = resolve_location_names(&rows, &esi, &db).await;
@@ -466,24 +491,25 @@ async fn fetch_corp_data(
   let grant = corporation_service::refresh_grant(corp, &token);
   let corp_esi = esi.corporation(corp_id);
   let corp_client = corp_esi.auth(&grant);
-  let divisions: Vec<(u8, f64)> = corp_client
-    .wallets()
-    .await
+
+  let (wallets_result, journal_result, txns_result) = tokio::join!(
+    corp_client.wallets(),
+    corp_client.wallet_journal(i32::from(division)),
+    corp_client.wallet_transactions(i32::from(division))
+  );
+
+  let divisions: Vec<(u8, f64)> = wallets_result
     .unwrap_or_default()
     .into_iter()
     .map(|w| (w.division as u8, w.balance))
     .collect();
-  let journal: Vec<JournalEntry> = corp_client
-    .wallet_journal(i32::from(division))
-    .await
+  let journal: Vec<JournalEntry> = journal_result
     .unwrap_or_default()
     .into_iter()
     .map(|e| map_corp_journal_entry(e, corp_id, division))
     .collect();
-  let raw_txns = corp_client
-    .wallet_transactions(i32::from(division))
-    .await
-    .unwrap_or_default();
+
+  let raw_txns = txns_result.unwrap_or_default();
   let corp_type_ids: Vec<i32> = raw_txns
     .iter()
     .map(|t| t.type_id)
@@ -500,29 +526,41 @@ async fn fetch_corp_data(
 
 #[tracing::instrument(skip_all)]
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
+  let handles = characters.iter().map(|character| {
+    let char = character.clone();
+    let esi_clone = esi.clone();
+    let db_clone = db.clone();
+    tokio::spawn(async move {
+      if let Some((token, _)) = character_service::ensure_valid_token(&char, &esi_clone, &db_clone).await {
+        let grant = character_service::refresh_grant(&char, &token);
+        let char_client = esi_clone.character(&grant);
+        if let Ok(entries) = char_client.wallet_journal().await {
+          let db_rows: Vec<_> = entries
+            .iter()
+            .map(|e| WalletJournalEntry {
+              character_id: *char.id(),
+              entry_id: e.id,
+              ref_type: e.ref_type.clone(),
+              amount: e.amount,
+              balance: e.balance,
+              date: e.date.clone(),
+              description: e.description.clone(),
+              first_party_id: e.first_party_id,
+              second_party_id: e.second_party_id,
+            })
+            .collect();
+          let _ = db_clone.characters().upsert_journal_entries(*char.id(), &db_rows).await;
+        }
+      }
+    })
+  });
+
+  for handle in handles {
+    let _ = handle.await;
+  }
+
   let mut all: Vec<JournalEntry> = Vec::new();
   for character in &characters {
-    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(entries) = char_client.wallet_journal().await {
-        let db_rows: Vec<_> = entries
-          .iter()
-          .map(|e| WalletJournalEntry {
-            character_id: *character.id(),
-            entry_id: e.id,
-            ref_type: e.ref_type.clone(),
-            amount: e.amount,
-            balance: e.balance,
-            date: e.date.clone(),
-            description: e.description.clone(),
-            first_party_id: e.first_party_id,
-            second_party_id: e.second_party_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_journal_entries(*character.id(), &db_rows).await;
-      }
-    }
     if let Ok(rows) = db.characters().journal_entries(*character.id()).await {
       for row in rows {
         let ts = parse_iso_to_unix(&row.date);
@@ -545,29 +583,41 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
 
 #[tracing::instrument(skip_all)]
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
+  let handles = characters.iter().map(|character| {
+    let char = character.clone();
+    let esi_clone = esi.clone();
+    let db_clone = db.clone();
+    tokio::spawn(async move {
+      if let Some((token, _)) = character_service::ensure_valid_token(&char, &esi_clone, &db_clone).await {
+        let grant = character_service::refresh_grant(&char, &token);
+        let char_client = esi_clone.character(&grant);
+        if let Ok(txns) = char_client.wallet_transactions().await {
+          let db_rows: Vec<_> = txns
+            .iter()
+            .map(|t| WalletTransaction {
+              character_id: *char.id(),
+              transaction_id: t.transaction_id,
+              type_id: t.type_id,
+              quantity: t.quantity,
+              unit_price: t.unit_price,
+              is_buy: t.is_buy,
+              date: t.date.clone(),
+              location_id: t.location_id,
+              client_id: t.client_id,
+            })
+            .collect();
+          let _ = db_clone.characters().upsert_transactions(*char.id(), &db_rows).await;
+        }
+      }
+    })
+  });
+
+  for handle in handles {
+    let _ = handle.await;
+  }
+
   let mut all: Vec<MarketEntry> = Vec::new();
   for character in &characters {
-    if let Some((token, _)) = character_service::ensure_valid_token(character, &esi, &db).await {
-      let grant = character_service::refresh_grant(character, &token);
-      let char_client = esi.character(&grant);
-      if let Ok(txns) = char_client.wallet_transactions().await {
-        let db_rows: Vec<_> = txns
-          .iter()
-          .map(|t| WalletTransaction {
-            character_id: *character.id(),
-            transaction_id: t.transaction_id,
-            type_id: t.type_id,
-            quantity: t.quantity,
-            unit_price: t.unit_price,
-            is_buy: t.is_buy,
-            date: t.date.clone(),
-            location_id: t.location_id,
-            client_id: t.client_id,
-          })
-          .collect();
-        let _ = db.characters().upsert_transactions(*character.id(), &db_rows).await;
-      }
-    }
     if let Ok(rows) = db.characters().transactions(*character.id()).await {
       let type_ids: Vec<i32> = rows
         .iter()

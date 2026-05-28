@@ -19,6 +19,7 @@ use crate::{
     character_contract::{ActiveModel as ContractActive, Column as ContractColumn, Entity as ContractEntity},
     character_skill::{self, ActiveModel as SkillActive, Column as SkillColumn, Entity as SkillEntity},
     entity_tag::{Column as EntityTagColumn, Entity as EntityTagEntity},
+    item_type::{Column as ItemTypeColumn, Entity as ItemTypeEntity},
     mail_header::{ActiveModel as MailHeaderActive, Column as MailHeaderColumn, Entity as MailHeaderEntity},
     snoozed_mail::{
       ActiveModel as SnoozedActive, Column as SnoozedColumn, Entity as SnoozedEntity, Model as SnoozedModel,
@@ -640,6 +641,37 @@ impl<'a> Repo<'a> {
       .into_iter()
       .collect();
     Ok(container_ids)
+  }
+
+  /// Searches assets by item type name across all given character IDs, including items in containers.
+  pub async fn search_assets(
+    &self,
+    char_ids: &[i64],
+    query: &str,
+  ) -> Result<Vec<crate::entities::character_asset::Model>, Error> {
+    if char_ids.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let matching_types = ItemTypeEntity::find()
+      .filter(ItemTypeColumn::Name.contains(query))
+      .filter(ItemTypeColumn::Published.eq(true))
+      .all(self.db)
+      .await?;
+
+    if matching_types.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let type_ids: Vec<i32> = matching_types.iter().map(|t| t.id).collect();
+
+    let rows = AssetEntity::find()
+      .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
+      .filter(AssetColumn::TypeId.is_in(type_ids))
+      .all(self.db)
+      .await?;
+
+    Ok(rows)
   }
 
   /// Upserts character contracts for the given character.

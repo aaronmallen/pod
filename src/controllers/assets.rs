@@ -1047,30 +1047,36 @@ pub async fn load_container_assets(
     return Ok(Vec::new());
   }
 
-  // Load type names for the container assets
+  // Load type metadata for the container assets
   let type_ids: Vec<i32> = rows.iter().map(|a| a.type_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
-  let type_rows = db
-    .universe()
-    .item_types()
-    .find_by_ids(&type_ids)
-    .await
-    .unwrap_or_default();
-  let type_name_map: std::collections::HashMap<i32, String> = type_rows.iter().map(|r| (r.id, r.name.clone())).collect();
+  let (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map) =
+    load_type_maps(&db, &type_ids).await;
 
   Ok(
     rows
       .into_iter()
       .map(|a| {
         let type_name = type_name_map.get(&a.type_id).cloned().unwrap_or_default();
+        let volume = type_volume_map.get(&a.type_id).copied().unwrap_or(0.0);
+        let group_id = type_group_map.get(&a.type_id).copied();
+        let group_name = group_id
+          .and_then(|g| group_name_map.get(&g))
+          .cloned()
+          .unwrap_or_default();
+        let cat_key = group_id
+          .and_then(|g| type_cat_map.get(&g).copied())
+          .and_then(|c| cat_key_map.get(&c).copied())
+          .unwrap_or("commodity");
+
         AssetRecord {
-          category_key: String::new(),
+          category_key: cat_key.to_string(),
           character_id: a.character_id,
           container_id: 0,
           container_path: String::new(),
           constellation_id: 0,
           constellation_name: String::new(),
           depth: 0,
-          group_name: String::new(),
+          group_name,
           icon_variant: icon_variant(a.is_blueprint_copy).to_string(),
           is_container: false,
           is_singleton: a.is_singleton,
@@ -1084,7 +1090,7 @@ pub async fn load_container_assets(
           type_id: a.type_id,
           type_name,
           unit_price: 0.0,
-          volume: 0.0,
+          volume,
         }
       })
       .collect(),

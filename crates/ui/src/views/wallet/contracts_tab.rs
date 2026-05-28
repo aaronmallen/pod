@@ -16,9 +16,11 @@ use crate::{
   views::wallet::{ContractEntry, State, WalletCharacter, mappings, ts_label},
 };
 
-/// Messages produced by the contracts tab (reserved for future interactions).
+/// Messages produced by the contracts tab.
 #[derive(Clone, Debug)]
-pub enum Message {}
+pub enum Message {
+  ScrollUpdate(f32),
+}
 
 const COL_STATUS: f32 = 130.0;
 const COL_TYPE: f32 = 120.0;
@@ -431,10 +433,20 @@ impl<'a> Component<'a> {
 
   /// Renders the contracts table into an iced element.
   pub fn render(self) -> Element<'a, Message> {
+    use iced::widget::scrollable;
+
     let chars = &self.state.characters;
-    DataTable::new(self.state.filtered_contracts.iter(), |e, _, _| entry_row(e, chars))
-      .header(header_row())
-      .empty_message("No contracts match your filter.")
-      .render()
+    let visible: Vec<_> = self.state.filtered_contracts.iter()
+      .take(self.state.visible_contracts_count)
+      .collect();
+
+    scrollable(
+      DataTable::new(visible.into_iter(), |e, _, _| entry_row(e, chars))
+        .header(header_row())
+        .empty_message("No contracts match your filter.")
+        .render()
+    )
+    .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
+    .into()
   }
 }

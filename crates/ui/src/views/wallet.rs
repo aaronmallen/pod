@@ -395,6 +395,7 @@ fn effective_right_rail_width(state: &State, window_width: f32) -> f32 {
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::CharacterPicker(msg) => update_character_picker(state, msg),
+    Message::ContractsTab(msg) => update_contracts_tab(state, msg),
     Message::CorpDataLoaded {
       divisions,
       journal,
@@ -474,8 +475,25 @@ fn update_journal_loaded(state: &mut State, entries: Vec<JournalEntry>) {
 
 fn update_journal_tab(state: &mut State, msg: journal_tab::Message) {
   match msg {
+    journal_tab::Message::ScrollUpdate(y) => {
+      let total = state.filtered_journal.len();
+      if y > 0.8 && state.visible_journal_count < total {
+        state.visible_journal_count += 50;
+      }
+    }
     journal_tab::Message::SignFilterChanged(sign) => {
       state.sign_filter = sign;
+    }
+  }
+}
+
+fn update_contracts_tab(state: &mut State, msg: contracts_tab::Message) {
+  match msg {
+    contracts_tab::Message::ScrollUpdate(y) => {
+      let total = state.filtered_contracts.len();
+      if y > 0.8 && state.visible_contracts_count < total {
+        state.visible_contracts_count += 50;
+      }
     }
   }
 }
@@ -541,7 +559,7 @@ fn update_simple_data(state: &mut State, msg: Message) {
 
 fn update_simple_display(state: &mut State, msg: Message) {
   match msg {
-    Message::ContractsTab(_) | Message::ReauthorizeCharacter(_) => {}
+    Message::ReauthorizeCharacter(_) => {}
     Message::DivisionSelected(d) => update_division_selected(state, d),
     Message::SearchChanged(q) => update_search_changed(state, q),
     Message::TabSelected(t) => update_tab_selected(state, t),

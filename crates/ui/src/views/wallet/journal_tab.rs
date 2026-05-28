@@ -19,6 +19,7 @@ use crate::{
 /// Messages produced by the journal tab.
 #[derive(Clone, Debug)]
 pub enum Message {
+  ScrollUpdate(f32),
   SignFilterChanged(SignFilter),
 }
 
@@ -127,8 +128,18 @@ impl<'a> Component<'a> {
 
   /// Renders the journal table into an iced element.
   pub fn render(self) -> Element<'a, Message> {
-    DataTable::new(self.state.filtered_journal.iter(), |entry, _, _| entry_row(entry))
-      .empty_message("No journal entries match your filter.")
-      .render()
+    use iced::widget::scrollable;
+
+    let visible: Vec<_> = self.state.filtered_journal.iter()
+      .take(self.state.visible_journal_count)
+      .collect();
+
+    scrollable(
+      DataTable::new(visible.into_iter(), |entry, _, _| entry_row(entry))
+        .empty_message("No journal entries match your filter.")
+        .render()
+    )
+    .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
+    .into()
   }
 }

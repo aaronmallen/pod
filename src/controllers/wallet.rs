@@ -318,7 +318,7 @@ fn build_wallet_state(characters: &[Character], corporations: &[Corporation], ri
     search_query: String::new(),
     side_filter: SideFilter::All,
     sign_filter: SignFilter::All,
-    timeframe: Timeframe::M3,
+    timeframe: Timeframe::M1,
     visible_market_count: 100,
     visible_journal_count: 100,
     visible_contracts_count: 100,

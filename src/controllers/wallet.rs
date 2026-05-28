@@ -361,10 +361,7 @@ async fn fetch_all_corp_totals(
   db: pod_db::Repo,
 ) -> Vec<(i64, f64)> {
   let mut seen = HashSet::new();
-  let unique_corps: Vec<Corporation> = corporations.iter()
-    .filter(|c| seen.insert(*c.id()))
-    .cloned()
-    .collect();
+  let unique_corps: Vec<Corporation> = corporations.iter().filter(|c| seen.insert(*c.id())).cloned().collect();
 
   let handles = unique_corps.iter().map(|corp| {
     let c = corp.clone();
@@ -433,10 +430,7 @@ async fn fetch_contracts(
   db: pod_db::Repo,
 ) -> Result<Vec<ContractEntry>, String> {
   let mut seen = HashSet::new();
-  let unique_chars: Vec<Character> = characters.iter()
-    .filter(|c| seen.insert(*c.id()))
-    .cloned()
-    .collect();
+  let unique_chars: Vec<Character> = characters.iter().filter(|c| seen.insert(*c.id())).cloned().collect();
 
   let handles = unique_chars.iter().map(|character| {
     let char = character.clone();
@@ -542,10 +536,7 @@ async fn fetch_corp_data(
 #[tracing::instrument(skip_all)]
 async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<JournalEntry> {
   let mut seen = HashSet::new();
-  let unique_chars: Vec<Character> = characters.iter()
-    .filter(|c| seen.insert(*c.id()))
-    .cloned()
-    .collect();
+  let unique_chars: Vec<Character> = characters.iter().filter(|c| seen.insert(*c.id())).cloned().collect();
 
   let handles = unique_chars.iter().map(|character| {
     let char = character.clone();
@@ -605,10 +596,7 @@ async fn fetch_journal(characters: Vec<Character>, esi: pod_esi::Client, db: pod
 #[tracing::instrument(skip_all)]
 async fn fetch_transactions(characters: Vec<Character>, esi: pod_esi::Client, db: pod_db::Repo) -> Vec<MarketEntry> {
   let mut seen = HashSet::new();
-  let unique_chars: Vec<Character> = characters.iter()
-    .filter(|c| seen.insert(*c.id()))
-    .cloned()
-    .collect();
+  let unique_chars: Vec<Character> = characters.iter().filter(|c| seen.insert(*c.id())).cloned().collect();
 
   let handles = unique_chars.iter().map(|character| {
     let char = character.clone();

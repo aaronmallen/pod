@@ -436,7 +436,10 @@ impl<'a> Component<'a> {
     use iced::widget::scrollable;
 
     let chars = &self.state.characters;
-    let visible: Vec<_> = self.state.filtered_contracts.iter()
+    let visible: Vec<_> = self
+      .state
+      .filtered_contracts
+      .iter()
       .take(self.state.visible_contracts_count)
       .collect();
 
@@ -444,7 +447,7 @@ impl<'a> Component<'a> {
       DataTable::new(visible.into_iter(), |e, _, _| entry_row(e, chars))
         .header(header_row())
         .empty_message("No contracts match your filter.")
-        .render()
+        .render(),
     )
     .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
     .into()

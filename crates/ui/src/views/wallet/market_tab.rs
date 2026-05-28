@@ -224,7 +224,10 @@ impl<'a> Component<'a> {
     use iced::widget::scrollable;
 
     let icons = &self.state.item_icons;
-    let visible: Vec<_> = self.state.filtered_market.iter()
+    let visible: Vec<_> = self
+      .state
+      .filtered_market
+      .iter()
       .take(self.state.visible_market_count)
       .collect();
 
@@ -233,7 +236,7 @@ impl<'a> Component<'a> {
         entry_row(e, icons.get(&e.type_id).cloned())
       })
       .empty_message("No market entries match your filter.")
-      .render()
+      .render(),
     )
     .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
     .into()

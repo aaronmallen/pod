@@ -258,9 +258,7 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
       return iced::Task::batch([
         base_task,
         iced::Task::perform(
-          async move {
-            assets_ctrl::search_assets_db(db, &char_ids, &search_query).await
-          },
+          async move { assets_ctrl::search_assets_db(db, &char_ids, &search_query).await },
           |result| Message::Assets(assets::Message::SearchResultsLoaded(result)),
         ),
       ]);
@@ -278,7 +276,11 @@ fn update_assets(state: &mut State, msg: assets::Message, services: &Services) -
 
 fn handle_container_toggle(s: &mut assets::State, container_id: i64, services: &Services) -> iced::Task<Message> {
   // First update the UI state to toggle the container
-  let base_task = assets::update(s, assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id))).map(Message::Assets);
+  let base_task = assets::update(
+    s,
+    assets::Message::InventoryTab(assets::inventory_tab::Message::ToggleContainer(container_id)),
+  )
+  .map(Message::Assets);
 
   // If container is now expanded and not already loaded, spawn a load task
   let is_expanded = s.expanded_containers.contains(&container_id);
@@ -293,9 +295,7 @@ fn handle_container_toggle(s: &mut assets::State, container_id: i64, services: &
       tracing::info!("handle_container_toggle: spawning load task for container {cid}, char_id={char_id}");
       if let Some(db) = services.db.clone() {
         return iced::Task::perform(
-          async move {
-            assets_ctrl::load_container_assets(db, char_id, cid).await
-          },
+          async move { assets_ctrl::load_container_assets(db, char_id, cid).await },
           move |result| Message::Assets(assets::Message::ContainerAssetsLoaded(cid, result)),
         );
       }

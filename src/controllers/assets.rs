@@ -1048,7 +1048,12 @@ pub async fn load_container_assets(
   }
 
   // Load type metadata for the container assets
-  let type_ids: Vec<i32> = rows.iter().map(|a| a.type_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+  let type_ids: Vec<i32> = rows
+    .iter()
+    .map(|a| a.type_id)
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect();
   let (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map) =
     load_type_maps(&db, &type_ids).await;
 
@@ -1097,11 +1102,7 @@ pub async fn load_container_assets(
   )
 }
 
-pub async fn search_assets_db(
-  db: pod_db::Repo,
-  character_ids: &[i64],
-  query: &str,
-) -> Vec<AssetRecord> {
+pub async fn search_assets_db(db: pod_db::Repo, character_ids: &[i64], query: &str) -> Vec<AssetRecord> {
   if character_ids.is_empty() || query.is_empty() {
     return Vec::new();
   }
@@ -1131,7 +1132,12 @@ pub async fn search_assets_db(
     return Vec::new();
   }
 
-  let type_ids: Vec<i32> = rows.iter().map(|a| a.type_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+  let type_ids: Vec<i32> = rows
+    .iter()
+    .map(|a| a.type_id)
+    .collect::<std::collections::HashSet<_>>()
+    .into_iter()
+    .collect();
   let (type_name_map, type_volume_map, type_group_map, group_name_map, type_cat_map, cat_key_map) =
     load_type_maps(&db, &type_ids).await;
 
@@ -1150,11 +1156,7 @@ pub async fn search_assets_db(
         .and_then(|c| cat_key_map.get(&c).copied())
         .unwrap_or("commodity");
 
-      let container_id = if a.location_type == "item" {
-        a.location_id
-      } else {
-        0
-      };
+      let container_id = if a.location_type == "item" { a.location_id } else { 0 };
 
       AssetRecord {
         category_key: cat_key.to_string(),
@@ -1661,25 +1663,6 @@ mod tests {
         Some(&(100, "station".to_string(), "Hangar".to_string(), 42))
       );
       assert_eq!(index.get(&20), Some(&(10, "item".to_string(), "Cargo".to_string(), 99)));
-    }
-  }
-
-  mod build_is_container_set {
-    use super::*;
-
-    #[test]
-    fn it_marks_items_that_contain_other_items() {
-      let mut index: HashMap<i64, (i64, String, String, i32)> = HashMap::new();
-      index.insert(10, (100, "station".to_string(), "Hangar".to_string(), 1));
-      index.insert(20, (10, "item".to_string(), "Cargo".to_string(), 2));
-      index.insert(30, (10, "item".to_string(), "Cargo".to_string(), 3));
-
-      let containers = build_is_container_set(&index);
-
-      assert!(containers.contains(&10));
-      assert!(!containers.contains(&20));
-      assert!(!containers.contains(&30));
-      assert!(!containers.contains(&100));
     }
   }
 

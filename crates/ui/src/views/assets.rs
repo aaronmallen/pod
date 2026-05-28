@@ -647,7 +647,10 @@ fn update_inventory_tab(state: &mut State, msg: inventory_tab::Message) -> iced:
       iced::Task::none()
     }
     inventory_tab::Message::ToggleContainer(id) => {
-      tracing::info!("assets::update_inventory_tab: toggle container {id}, currently in set: {}", state.expanded_containers.contains(&id));
+      tracing::info!(
+        "assets::update_inventory_tab: toggle container {id}, currently in set: {}",
+        state.expanded_containers.contains(&id)
+      );
       let was_already_in_set = state.expanded_containers.contains(&id);
       if was_already_in_set {
         // Container was expanded, remove it (collapse)

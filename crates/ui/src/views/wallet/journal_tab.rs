@@ -130,14 +130,17 @@ impl<'a> Component<'a> {
   pub fn render(self) -> Element<'a, Message> {
     use iced::widget::scrollable;
 
-    let visible: Vec<_> = self.state.filtered_journal.iter()
+    let visible: Vec<_> = self
+      .state
+      .filtered_journal
+      .iter()
       .take(self.state.visible_journal_count)
       .collect();
 
     scrollable(
       DataTable::new(visible.into_iter(), |entry, _, _| entry_row(entry))
         .empty_message("No journal entries match your filter.")
-        .render()
+        .render(),
     )
     .on_scroll(|vp| Message::ScrollUpdate(vp.relative_offset().y))
     .into()

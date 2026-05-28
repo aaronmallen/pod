@@ -523,7 +523,12 @@ impl<'a> Component<'a> {
       let all_assets = state.all_assets();
       let visible = state.visible_count.min(sorted.len());
       let page: Vec<&AssetRecord> = sorted[..visible].to_vec();
-      let tree_rows = build_tree_rows(page, all_assets, &state.expanded_containers, &state.loaded_container_assets);
+      let tree_rows = build_tree_rows(
+        page,
+        all_assets,
+        &state.expanded_containers,
+        &state.loaded_container_assets,
+      );
       let data_rows: Vec<Element<'_, Message>> = tree_rows
         .into_iter()
         .map(|a| {

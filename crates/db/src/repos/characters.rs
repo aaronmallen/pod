@@ -625,10 +625,7 @@ impl<'a> Repo<'a> {
   }
 
   /// Returns the IDs of items that have children (containers) for given character IDs.
-  pub async fn container_item_ids(
-    &self,
-    char_ids: &[i64],
-  ) -> Result<Vec<i64>, Error> {
+  pub async fn container_item_ids(&self, char_ids: &[i64]) -> Result<Vec<i64>, Error> {
     let rows = AssetEntity::find()
       .filter(AssetColumn::CharacterId.is_in(char_ids.to_vec()))
       .filter(AssetColumn::LocationType.eq("item"))

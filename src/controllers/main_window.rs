@@ -259,11 +259,18 @@ fn handle_container_toggle(s: &mut assets::State, container_id: i64, services: &
 
   // If container is now expanded and not already loaded, spawn a load task
   if s.expanded_containers.contains(&container_id) && !s.loaded_container_assets.contains_key(&container_id) {
-    if let Some(db) = services.db.clone() {
-      // For now, we can only load if we know which character owns the container
-      // This is a limitation we'll need to address - we might need to search across all characters
-      // For now, just return the base task (container will show as expanded but empty)
-      return base_task;
+    // Find the container in the loaded assets to get its character_id
+    if let Some(container) = s.assets.iter().find(|a| a.item_id == container_id) {
+      let char_id = container.character_id;
+      let cid = container_id;
+      if let Some(db) = services.db.clone() {
+        return iced::Task::perform(
+          async move {
+            assets_ctrl::load_container_assets(db, char_id, cid).await
+          },
+          move |result| Message::Assets(assets::Message::ContainerAssetsLoaded(cid, result)),
+        );
+      }
     }
   }
 

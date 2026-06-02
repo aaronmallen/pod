@@ -80,7 +80,7 @@ features = [
   "sqlite-use-returning-for-3_35",
   "with-json",
 ]
-version = "2.0.0-rc"
+version = "2.0.0-rc.40"
 
 [workspace.dependencies.sea-orm-migration]
 features = ["runtime-tokio-rustls", "sqlx-sqlite"]

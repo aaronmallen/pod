@@ -84,7 +84,7 @@ version = "2.0.0-rc"
 
 [workspace.dependencies.sea-orm-migration]
 features = ["runtime-tokio-rustls", "sqlx-sqlite"]
-version = "2.0.0-rc"
+version = "2.0.0-rc.40"
 
 [dependencies]
 arboard.workspace = true

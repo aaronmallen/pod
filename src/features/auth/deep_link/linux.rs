@@ -36,11 +36,28 @@ fn register_scheme() {
 
 fn write_handler() -> std::io::Result<()> {
   let applications_dir = resolve_applications_dir()?;
-  let exec = std::env::current_exe()?;
+  let exec = handler_exec()?;
   write_desktop_entry(&applications_dir, &exec)?;
   update_desktop_database(&applications_dir);
 
   Ok(())
+}
+
+/// The path the OS should launch to route a deep link.
+///
+/// Inside an AppImage `current_exe()` points into the ephemeral `/tmp/.mount_*`
+/// FUSE mount, which is gone once the app exits — a handler baked with that path
+/// silently fails on the next launch. The AppImage runtime exports `$APPIMAGE`
+/// with the persistent path to the bundle itself, so prefer it when present.
+fn handler_exec() -> std::io::Result<PathBuf> {
+  match resolve_handler_exec(std::env::var_os("APPIMAGE")) {
+    Some(exec) => Ok(exec),
+    None => std::env::current_exe(),
+  }
+}
+
+fn resolve_handler_exec(appimage: Option<std::ffi::OsString>) -> Option<PathBuf> {
+  appimage.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
 fn write_desktop_entry(applications_dir: &Path, exec: &Path) -> std::io::Result<()> {
@@ -110,6 +127,31 @@ mod tests {
       let exec = PathBuf::from("/opt/pod/pod");
 
       assert_eq!(desktop_entry(&exec), desktop_entry(&exec));
+    }
+  }
+
+  mod resolve_handler_exec {
+    use std::ffi::OsString;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_the_appimage_path_when_set() {
+      let resolved = resolve_handler_exec(Some(OsString::from("/home/me/Pod.AppImage")));
+
+      assert_eq!(resolved, Some(PathBuf::from("/home/me/Pod.AppImage")));
+    }
+
+    #[test]
+    fn it_falls_back_to_current_exe_when_appimage_is_unset() {
+      assert_eq!(resolve_handler_exec(None), None);
+    }
+
+    #[test]
+    fn it_falls_back_to_current_exe_when_appimage_is_empty() {
+      assert_eq!(resolve_handler_exec(Some(OsString::new())), None);
     }
   }
 

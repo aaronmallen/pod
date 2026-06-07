@@ -140,7 +140,10 @@ mod tests {
       let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous").fetch_one(&db.0).await.unwrap();
       let temp_store: i64 = sqlx::query_scalar("PRAGMA temp_store").fetch_one(&db.0).await.unwrap();
 
-      assert_eq!(cache_size, -262144, "256MB page cache holds the seed transaction in memory");
+      assert_eq!(
+        cache_size, -262144,
+        "256MB page cache holds the seed transaction in memory"
+      );
       assert_eq!(synchronous, 1, "NORMAL synchronous (1) trims fsync round-trips");
       assert_eq!(temp_store, 2, "MEMORY temp store (2) keeps temp b-trees off the drive");
     }

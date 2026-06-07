@@ -67,10 +67,11 @@ cat >flatpak/dev.aaronmallen.pod.desktop <<'EOF'
 [Desktop Entry]
 Name=Pod
 Comment=Capsuleer manager for EVE Online.
-Exec=pod
+Exec=pod %u
 Icon=dev.aaronmallen.pod
 Type=Application
 Categories=Utility;
+MimeType=x-scheme-handler/eveauth-pod;
 EOF
 
 cat >flatpak/dev.aaronmallen.pod.appdata.xml <<'EOF'

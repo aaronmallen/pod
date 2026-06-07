@@ -1,0 +1,1430 @@
+use std::{
+  collections::HashMap,
+  fs, io,
+  path::{Path, PathBuf},
+};
+
+use iced::{
+  Background, Border, Element, Length, Padding,
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, Stack, button, container, scrollable, text, text_input},
+};
+
+use super::Outcome;
+use crate::{
+  config::Settings,
+  ui::{
+    components::{backdrop, rule, status},
+    style::{color, control, radius, shadow, spacing, typography},
+  },
+};
+
+const PANEL_SIDE_PADDING: f32 = 36.0;
+const DESCRIPTION_MAX_WIDTH: f32 = 620.0;
+const CHECKBOX_SIZE: f32 = 18.0;
+const CONFIRM_MODAL_WIDTH: f32 = 460.0;
+
+#[derive(Clone, Debug)]
+pub enum Message {
+  Browse(PathKind),
+  CancelMove,
+  ConfirmMove,
+  DismissError,
+  NetworkToggled(bool),
+  PathEdited(PathKind, String),
+  PathSubmitted(PathKind),
+  ResetToDefault(PathKind),
+  RevealLogDir,
+  SkipMove,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PathKind {
+  Cache,
+  Database,
+  Log,
+}
+
+impl PathKind {
+  const ALL: [PathKind; 3] = [PathKind::Database, PathKind::Log, PathKind::Cache];
+
+  fn default_dir(self) -> PathBuf {
+    match self {
+      PathKind::Cache => crate::config::cache_dir(),
+      PathKind::Database => crate::config::data_dir(),
+      PathKind::Log => crate::config::log_dir(),
+    }
+  }
+
+  fn description(self) -> &'static str {
+    match self {
+      PathKind::Cache => "Portraits, item icons, and other ESI image cache. Safe to clear; rebuilt on demand.",
+      PathKind::Database => "Local SQLite database — character cache, mail bodies, market snapshots, and skill plans.",
+      PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; capped at 30 days.",
+    }
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      PathKind::Cache => "Pod Cache",
+      PathKind::Database => "Pod DB",
+      PathKind::Log => "Pod Logs",
+    }
+  }
+
+  fn override_dir(self, settings: &Settings) -> Option<PathBuf> {
+    let storage = settings.storage();
+    match self {
+      PathKind::Cache => storage.cache_dir().clone(),
+      PathKind::Database => storage.db_dir().clone(),
+      PathKind::Log => storage.log_dir().clone(),
+    }
+  }
+
+  fn resolved_dir(self, settings: &Settings) -> PathBuf {
+    let storage = settings.storage();
+    match self {
+      PathKind::Cache => storage.resolved_cache_dir(),
+      PathKind::Database => storage.resolved_db_dir(),
+      PathKind::Log => storage.resolved_log_dir(),
+    }
+  }
+
+  fn set_override(self, settings: &mut Settings, dir: Option<PathBuf>) {
+    let storage = settings.storage_mut();
+    match self {
+      PathKind::Cache => storage.set_cache_dir(dir),
+      PathKind::Database => storage.set_db_dir(dir),
+      PathKind::Log => storage.set_log_dir(dir),
+    };
+  }
+
+  fn xdg_label(self) -> &'static str {
+    match self {
+      PathKind::Cache => "$XDG_CACHE_HOME / pod",
+      PathKind::Database => "$XDG_DATA_HOME / pod",
+      PathKind::Log => "$XDG_STATE_HOME / pod / logs",
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingMove {
+  from: PathBuf,
+  kind: PathKind,
+  to: PathBuf,
+}
+
+#[derive(Debug, Default)]
+pub struct State {
+  drafts: HashMap<PathKind, String>,
+  error: Option<String>,
+  pending: Option<PendingMove>,
+}
+
+impl State {
+  pub fn from_settings(settings: &Settings) -> Self {
+    State {
+      drafts: PathKind::ALL
+        .into_iter()
+        .map(|kind| (kind, kind.resolved_dir(settings).display().to_string()))
+        .collect(),
+      ..State::default()
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Decision {
+  Confirm,
+  NoChange,
+  Repoint,
+}
+
+fn sync_draft(state: &mut State, kind: PathKind, settings: &Settings) {
+  state
+    .drafts
+    .insert(kind, kind.resolved_dir(settings).display().to_string());
+}
+
+fn decide(from: &Path, to: &Path) -> Decision {
+  if paths_equal(from, to) {
+    return Decision::NoChange;
+  }
+  if dir_has_contents(from) {
+    Decision::Confirm
+  } else {
+    Decision::Repoint
+  }
+}
+
+fn paths_equal(a: &Path, b: &Path) -> bool {
+  match (fs::canonicalize(a), fs::canonicalize(b)) {
+    (Ok(a), Ok(b)) => a == b,
+    _ => a == b,
+  }
+}
+
+fn dir_has_contents(dir: &Path) -> bool {
+  match fs::read_dir(dir) {
+    Ok(mut entries) => entries.next().is_some(),
+    Err(_) => false,
+  }
+}
+
+fn relocate(from: &Path, to: &Path) -> io::Result<()> {
+  if let Some(parent) = to.parent() {
+    fs::create_dir_all(parent)?;
+  }
+  if !to.exists() {
+    match fs::rename(from, to) {
+      Ok(()) => return Ok(()),
+      Err(error) if error.raw_os_error() == Some(libc_exdev()) => {}
+      Err(error) => return Err(error),
+    }
+  }
+  if let Err(error) = copy_dir_all(from, to) {
+    let _ = fs::remove_dir_all(to);
+    return Err(error);
+  }
+  fs::remove_dir_all(from)
+}
+
+/// EXDEV (errno 18): rename refused because source and destination are on different
+/// filesystems, which triggers the copy-then-delete fallback in relocate.
+fn libc_exdev() -> i32 {
+  18
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
+  fs::create_dir_all(dst)?;
+  for entry in fs::read_dir(src)? {
+    let entry = entry?;
+    let kind = entry.file_type()?;
+    let target = dst.join(entry.file_name());
+    if kind.is_dir() {
+      copy_dir_all(&entry.path(), &target)?;
+    } else {
+      fs::copy(entry.path(), &target)?;
+    }
+  }
+  Ok(())
+}
+
+fn ensure_writable(dir: &Path) -> io::Result<()> {
+  let mut anchor = dir;
+  while !anchor.exists() {
+    match anchor.parent() {
+      Some(parent) => anchor = parent,
+      None => break,
+    }
+  }
+  let probe = anchor.join(".pod-write-probe");
+  fs::write(&probe, b"")?;
+  let _ = fs::remove_file(&probe);
+  Ok(())
+}
+
+fn begin_change(kind: PathKind, to: PathBuf, settings: &mut Settings) -> Result<Option<PendingMove>, String> {
+  let from = kind.resolved_dir(settings);
+  match decide(&from, &to) {
+    Decision::NoChange => Ok(None),
+    Decision::Repoint => {
+      ensure_writable(&to).map_err(|error| format!("Can't use {}: {error}", to.display()))?;
+      commit_override(kind, to, settings);
+      Ok(None)
+    }
+    Decision::Confirm => {
+      ensure_writable(&to).map_err(|error| format!("Can't use {}: {error}", to.display()))?;
+      Ok(Some(PendingMove {
+        kind,
+        from,
+        to,
+      }))
+    }
+  }
+}
+
+fn commit_override(kind: PathKind, to: PathBuf, settings: &mut Settings) {
+  if paths_equal(&to, &kind.default_dir()) {
+    kind.set_override(settings, None);
+  } else {
+    kind.set_override(settings, Some(to));
+  }
+}
+
+fn finish_move(pending: PendingMove, settings: &mut Settings) -> Result<(), String> {
+  relocate(&pending.from, &pending.to).map_err(|error| {
+    format!(
+      "Couldn't move {} → {}: {error}",
+      pending.from.display(),
+      pending.to.display()
+    )
+  })?;
+  commit_override(pending.kind, pending.to, settings);
+  Ok(())
+}
+
+pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
+  match message {
+    Message::Browse(kind) => {
+      state.error = None;
+      let Some(to) = pick_folder(kind, settings) else {
+        return Outcome::None;
+      };
+      state.drafts.insert(kind, to.display().to_string());
+      apply_destination(state, kind, to, settings)
+    }
+    Message::CancelMove => {
+      if let Some(pending) = state.pending.take() {
+        sync_draft(state, pending.kind, settings);
+      }
+      Outcome::None
+    }
+    Message::ConfirmMove => {
+      let Some(pending) = state.pending.take() else {
+        return Outcome::None;
+      };
+      let kind = pending.kind;
+      match finish_move(pending, settings) {
+        Ok(()) => {
+          sync_draft(state, kind, settings);
+          Outcome::Persist
+        }
+        Err(error) => {
+          state.error = Some(error);
+          Outcome::None
+        }
+      }
+    }
+    Message::DismissError => {
+      state.error = None;
+      Outcome::None
+    }
+    Message::NetworkToggled(value) => {
+      settings.storage_mut().set_network(value);
+      Outcome::Persist
+    }
+    Message::PathEdited(kind, value) => {
+      state.drafts.insert(kind, value);
+      Outcome::None
+    }
+    Message::PathSubmitted(kind) => {
+      state.error = None;
+      let draft = state.drafts.get(&kind).cloned().unwrap_or_default();
+      if draft.trim().is_empty() {
+        sync_draft(state, kind, settings);
+        return Outcome::None;
+      }
+      let outcome = apply_destination(state, kind, PathBuf::from(draft.trim()), settings);
+      if state.pending.is_none() && state.error.is_none() {
+        sync_draft(state, kind, settings);
+      }
+      outcome
+    }
+    Message::ResetToDefault(kind) => {
+      state.error = None;
+      let to = kind.default_dir();
+      state.drafts.insert(kind, to.display().to_string());
+      apply_destination(state, kind, to, settings)
+    }
+    Message::RevealLogDir => {
+      state.error = None;
+      let dir = settings.storage().resolved_log_dir();
+      let _ = fs::create_dir_all(&dir);
+      if let Err(err) = open::that_detached(&dir) {
+        state.error = Some(format!("Couldn't open {}: {err}", dir.display()));
+      }
+      Outcome::None
+    }
+    Message::SkipMove => {
+      let Some(pending) = state.pending.take() else {
+        return Outcome::None;
+      };
+      let kind = pending.kind;
+      commit_override(pending.kind, pending.to, settings);
+      sync_draft(state, kind, settings);
+      Outcome::Persist
+    }
+  }
+}
+
+fn apply_destination(state: &mut State, kind: PathKind, to: PathBuf, settings: &mut Settings) -> Outcome {
+  match begin_change(kind, to, settings) {
+    Ok(Some(pending)) => {
+      state.pending = Some(pending);
+      Outcome::None
+    }
+    Ok(None) => Outcome::Persist,
+    Err(error) => {
+      state.error = Some(error);
+      Outcome::None
+    }
+  }
+}
+
+fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
+  let mut dialog = rfd::FileDialog::new().set_title(format!("Select {} folder", kind.label()));
+  let start = kind.resolved_dir(settings);
+  if start.is_dir() {
+    dialog = dialog.set_directory(&start);
+  }
+  dialog.pick_folder()
+}
+
+pub fn badge(settings: &Settings) -> String {
+  let storage = settings.storage();
+  let customized = [storage.db_dir(), storage.log_dir(), storage.cache_dir()]
+    .into_iter()
+    .filter(|override_| override_.is_some())
+    .count();
+  if customized == 0 {
+    "default".to_owned()
+  } else {
+    format!("{customized} custom")
+  }
+}
+
+pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
+  let header = panel_header(settings);
+  let body = path_body(state, settings);
+
+  let base: Element<'a, Message> = Column::with_children(vec![header, body])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+
+  match state.pending.as_ref() {
+    Some(pending) => Stack::with_children(vec![
+      base,
+      backdrop::backdrop(Message::CancelMove),
+      confirm_move_modal(pending),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into(),
+    None => base,
+  }
+}
+
+fn panel_header(settings: &Settings) -> Element<'_, Message> {
+  let title = text("Storage")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+  let blurb = text(
+    "Where Pod keeps its files on disk. Paths follow platform conventions by default — change them \
+      to put Pod's data on a different volume or share it between installs. The daemon picks up \
+      changes on next launch.",
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::MD)
+  .style(|_| text::Style {
+    color: Some(color::text::SECONDARY),
+  });
+  let identity = Column::with_children(vec![title.into(), blurb.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let top = Row::with_children(vec![identity.into(), customized_badge(settings)])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3_5);
+
+  let band = container(top).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_6,
+    right: PANEL_SIDE_PADDING,
+    bottom: spacing::SPACE_3_5,
+    left: PANEL_SIDE_PADDING,
+  });
+
+  Column::with_children(vec![band.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn customized_badge(settings: &Settings) -> Element<'_, Message> {
+  let custom = PathKind::ALL
+    .into_iter()
+    .filter(|kind| kind.override_dir(settings).is_some())
+    .count();
+  let (dot_color, label) = if custom > 0 {
+    (
+      color::accent::PLASMA,
+      format!("{custom} of {} customized", PathKind::ALL.len()),
+    )
+  } else {
+    (color::status::ONLINE, "All defaults".to_owned())
+  };
+
+  Row::with_children(vec![
+    status::dot(dot_color),
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2)
+  .into()
+}
+
+fn path_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(error) = state.error.as_ref() {
+    children.push(error_banner(error));
+  }
+  for kind in PathKind::ALL {
+    children.push(path_card(state, kind, settings));
+    if kind == PathKind::Database {
+      children.push(network_drive_row(*settings.storage().network()));
+    }
+  }
+
+  let inner = container(Column::with_children(children).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: PANEL_SIDE_PADDING,
+      bottom: spacing::SPACE_6,
+      left: PANEL_SIDE_PADDING,
+    });
+
+  scrollable(inner)
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> Element<'a, Message> {
+  let overridden = kind.override_dir(settings).is_some();
+  let default = kind.default_dir();
+
+  let mut header_row: Vec<Element<'_, Message>> = vec![
+    text(kind.label())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ];
+  if overridden {
+    header_row.push(custom_badge());
+  }
+  header_row.push(Space::new().width(Length::Fill).into());
+  header_row.push(
+    text(kind.xdg_label())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+  );
+  let header = Row::with_children(header_row)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3);
+
+  let description = container(
+    text(kind.description())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .max_width(DESCRIPTION_MAX_WIDTH);
+
+  let value = state.drafts.get(&kind).map(String::as_str).unwrap_or_default();
+  let field = text_input("Enter a folder path\u{2026}", value)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+    })
+    .width(Length::Fill)
+    .on_input(move |next| Message::PathEdited(kind, next))
+    .on_submit(Message::PathSubmitted(kind))
+    .style(path_input_style);
+
+  let browse = button(
+    text("Browse\u{2026}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::Browse(kind))
+  .style(control::ghost_button);
+
+  let mut reset = button(
+    text("Default")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .style(control::ghost_button);
+  if overridden {
+    reset = reset.on_press(Message::ResetToDefault(kind));
+  }
+
+  let mut control_children: Vec<Element<'_, Message>> = vec![field.into(), browse.into()];
+  if kind == PathKind::Log {
+    let reveal = button(
+      text("Reveal\u{2026}")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD),
+    )
+    .padding(control::padding())
+    .on_press(Message::RevealLogDir)
+    .style(control::ghost_button);
+    control_children.push(reveal.into());
+  }
+  control_children.push(reset.into());
+
+  let controls = Row::with_children(control_children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  let footnote = Row::with_children(vec![
+    text("default")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+    text(default.display().to_string())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let cell = container(
+    Column::with_children(vec![
+      header.into(),
+      description.into(),
+      controls.into(),
+      footnote.into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_6 - 4.0,
+    right: 0.0,
+    bottom: spacing::SPACE_6 - 4.0,
+    left: 0.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn custom_badge<'a>() -> Element<'a, Message> {
+  container(
+    text("custom")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: spacing::UNIT + 2.0,
+    bottom: 1.0,
+    left: spacing::UNIT + 2.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
+  let box_fill = if checked {
+    color::accent::PLASMA
+  } else {
+    iced::Color::TRANSPARENT
+  };
+  let box_border = if checked {
+    color::accent::PLASMA
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.18)
+  };
+  let check: Element<'a, Message> = if checked {
+    text("\u{2713}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::surface::NAVIGATION),
+      })
+      .into()
+  } else {
+    Space::new().into()
+  };
+  let checkbox = container(container(check).center_x(Length::Fill).center_y(Length::Fill))
+    .width(Length::Fixed(CHECKBOX_SIZE))
+    .height(Length::Fixed(CHECKBOX_SIZE))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(box_fill)),
+      border: Border {
+        color: box_border,
+        width: 1.0,
+        radius: radius::SUBTLE.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let mut label_row: Vec<Element<'a, Message>> = vec![
+    text("This path is on a network drive")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ];
+  if checked {
+    label_row.push(wal_off_badge());
+  }
+  let label = Row::with_children(label_row)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5);
+
+  let explanation = container(
+    text(
+      "Disables SQLite WAL mode for the Pod DB. WAL relies on shared-memory coordination that NFS, \
+        SMB, and other network filesystems don't implement reliably — leaving it on can corrupt the \
+        database. Pod falls back to journal_mode=DELETE (slower writes, but safe over the wire).",
+    )
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::text::SECONDARY),
+    }),
+  )
+  .max_width(580.0);
+
+  let copy = Column::with_children(vec![label.into(), explanation.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![checkbox.into(), copy.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Top);
+
+  let cell = container(
+    button(row)
+      .padding(0)
+      .width(Length::Fill)
+      .on_press(Message::NetworkToggled(!checked))
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(iced::Color::TRANSPARENT)),
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: 0.0,
+    bottom: spacing::SPACE_6 - 6.0,
+    left: spacing::SPACE_6 + 4.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn wal_off_badge<'a>() -> Element<'a, Message> {
+  container(
+    text("WAL off")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::accent::PLASMA),
+      }),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: spacing::UNIT + 2.0,
+    bottom: 1.0,
+    left: spacing::UNIT + 2.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn error_banner(message: &str) -> Element<'_, Message> {
+  let copy = text(message.to_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::status::DANGER),
+    })
+    .width(Length::Fill);
+
+  let dismiss = button(
+    text("Dismiss")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM),
+  )
+  .padding(Padding {
+    top: spacing::UNIT,
+    right: spacing::SPACE_2,
+    bottom: spacing::UNIT,
+    left: spacing::SPACE_2,
+  })
+  .on_press(Message::DismissError)
+  .style(control::ghost_button);
+
+  container(
+    Row::with_children(vec![copy.into(), dismiss.into()])
+      .align_y(Vertical::Center)
+      .spacing(spacing::SPACE_3),
+  )
+  .width(Length::Fill)
+  .padding(spacing::SPACE_3)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::status::DANGER, 0.08))),
+    border: Border {
+      color: color::with_alpha(color::status::DANGER, 0.3),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
+  let eyebrow = text("Relocate store")
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(|_| text::Style {
+      color: Some(color::accent::PLASMA),
+    });
+  let title = text(format!("Move {} to the new folder?", pending.kind.label()))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+  let body = text(
+    "Pod can move the existing files to the new location, or just repoint here and leave the old \
+      files where they are. The change applies on the next launch.",
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::MD)
+  .style(|_| text::Style {
+    color: Some(color::text::SECONDARY),
+  });
+
+  let from_to =
+    Column::with_children(vec![path_line("from", &pending.from), path_line("to", &pending.to)]).spacing(spacing::UNIT);
+
+  let header = container(
+    Column::with_children(vec![eyebrow.into(), title.into(), body.into(), from_to.into()]).spacing(spacing::SPACE_2),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_6,
+    right: spacing::SPACE_6,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_6,
+  });
+
+  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
+    .padding(control::padding())
+    .on_press(Message::CancelMove)
+    .style(control::ghost_button);
+  let skip = button(
+    text("Skip \u{2014} repoint only")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::SkipMove)
+  .style(control::ghost_button);
+  let move_button = button(
+    text("Move files")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::ConfirmMove)
+  .style(control::primary_button);
+
+  let footer = container(
+    Row::with_children(vec![
+      Space::new().width(Length::Fill).into(),
+      cancel.into(),
+      skip.into(),
+      move_button.into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3,
+    right: spacing::SPACE_6,
+    bottom: spacing::SPACE_6,
+    left: spacing::SPACE_6,
+  });
+
+  let card = container(
+    Column::with_children(vec![header.into(), rule::horizontal_alpha(0.18), footer.into()]).width(Length::Fill),
+  )
+  .width(Length::Fixed(CONFIRM_MODAL_WIDTH))
+  .clip(true)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.18),
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    shadow: shadow::CARD,
+    ..container::Style::default()
+  });
+
+  container(card)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(spacing::SPACE_6)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn path_line<'a>(label: &'a str, dir: &Path) -> Element<'a, Message> {
+  Row::with_children(vec![
+    container(
+      text(label)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(|_| text::Style {
+          color: Some(color::text::TERTIARY),
+        }),
+    )
+    .width(Length::Fixed(40.0))
+    .into(),
+    text(dir.display().to_string())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn path_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
+  let border = match status {
+    text_input::Status::Focused {
+      ..
+    } => color::accent::PLASMA,
+    _ => color::with_alpha(color::text::PRIMARY, 0.1),
+  };
+  text_input::Style {
+    background: Background::Color(color::surface::SUNKEN),
+    border: Border {
+      color: border,
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    icon: color::text::SECONDARY,
+    placeholder: color::text::TERTIARY,
+    value: color::text::PRIMARY,
+    selection: color::with_alpha(color::accent::PLASMA, 0.4),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use tempfile::tempdir;
+
+  use super::*;
+
+  fn state() -> State {
+    State::from_settings(&Settings::default())
+  }
+
+  mod badge {
+    use super::*;
+
+    #[test]
+    fn it_is_default_with_no_overrides() {
+      let settings = Settings::default();
+
+      assert_eq!(badge(&settings), "default");
+    }
+
+    #[test]
+    fn it_counts_each_directory_override() {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
+      settings.storage_mut().set_log_dir(Some(PathBuf::from("/var/pod/log")));
+      settings
+        .storage_mut()
+        .set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+
+      assert_eq!(badge(&settings), "3 custom");
+    }
+
+    #[test]
+    fn the_network_toggle_does_not_move_the_count() {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_network(true);
+
+      assert_eq!(badge(&settings), "default");
+    }
+  }
+
+  mod network_toggle {
+    use super::*;
+
+    #[test]
+    fn it_persists_the_network_flag() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::NetworkToggled(true), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(settings.storage().network());
+    }
+  }
+
+  mod manual_entry {
+    use super::*;
+
+    #[test]
+    fn editing_a_path_stores_a_draft_without_persisting() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(
+        &mut state,
+        Message::PathEdited(PathKind::Database, "/var/pod/db".to_owned()),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(
+        state.drafts.get(&PathKind::Database).map(String::as_str),
+        Some("/var/pod/db")
+      );
+    }
+
+    #[test]
+    fn submitting_a_typed_path_applies_it() {
+      let empty = tempdir().unwrap();
+      let dest = empty.path().join("typed");
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+      state.drafts.insert(PathKind::Database, dest.display().to_string());
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().db_dir(), Some(dest));
+    }
+
+    #[test]
+    fn submitting_a_typed_cache_path_applies_it() {
+      let empty = tempdir().unwrap();
+      let dest = empty.path().join("typed-cache");
+      let mut settings = Settings::default();
+      settings.storage_mut().set_cache_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+      state.drafts.insert(PathKind::Cache, dest.display().to_string());
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Cache), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().cache_dir(), Some(dest));
+    }
+
+    #[test]
+    fn submitting_a_blank_path_is_a_no_op() {
+      let mut state = state();
+      state.drafts.insert(PathKind::Database, "   ".to_owned());
+      let mut settings = Settings::default();
+      let before = settings.storage().db_dir().clone();
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(*settings.storage().db_dir(), before);
+    }
+  }
+
+  mod decide {
+    use super::*;
+
+    #[test]
+    fn the_same_path_is_a_no_change() {
+      let dir = tempdir().unwrap();
+
+      assert_eq!(decide(dir.path(), dir.path()), Decision::NoChange);
+    }
+
+    #[test]
+    fn an_empty_source_repoints_without_a_prompt() {
+      let from = tempdir().unwrap();
+      let to = tempdir().unwrap();
+
+      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Repoint);
+    }
+
+    #[test]
+    fn a_missing_source_repoints_without_a_prompt() {
+      let to = tempdir().unwrap();
+
+      assert_eq!(
+        decide(Path::new("/no/such/pod/source"), &to.path().join("new")),
+        Decision::Repoint
+      );
+    }
+
+    #[test]
+    fn a_populated_source_asks_to_confirm() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let to = tempdir().unwrap();
+
+      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Confirm);
+    }
+  }
+
+  mod begin_change {
+    use super::*;
+
+    #[test]
+    fn an_empty_source_commits_the_override_straight_through() {
+      let data = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(data.path().to_path_buf()));
+      let to = data.path().join("relocated");
+
+      let pending = begin_change(PathKind::Database, to.clone(), &mut settings).unwrap();
+
+      assert_eq!(pending, None, "an empty source needs no confirmation");
+      assert_eq!(*settings.storage().db_dir(), Some(to));
+    }
+
+    #[test]
+    fn a_populated_source_returns_a_pending_move_without_committing() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      let to = tempdir().unwrap();
+      let dest = to.path().join("relocated");
+
+      let pending = begin_change(PathKind::Database, dest.clone(), &mut settings)
+        .unwrap()
+        .expect("a populated source should raise a confirm");
+
+      assert_eq!(pending.kind, PathKind::Database);
+      assert_eq!(pending.to, dest);
+      assert_eq!(*settings.storage().db_dir(), Some(from.path().to_path_buf()));
+    }
+  }
+
+  mod move_flow {
+    use super::*;
+
+    fn populated_pending() -> (State, Settings, tempfile::TempDir, tempfile::TempDir, PathBuf) {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      let dest_root = tempdir().unwrap();
+      let dest = dest_root.path().join("relocated");
+
+      let mut state = state();
+      let outcome = apply_destination(&mut state, PathKind::Database, dest.clone(), &mut settings);
+
+      assert_eq!(outcome, Outcome::None, "raising the confirm does not persist yet");
+      assert!(state.pending.is_some());
+      (state, settings, from, dest_root, dest)
+    }
+
+    #[test]
+    fn confirm_move_relocates_the_files_and_commits() {
+      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
+
+      let outcome = update(&mut state, Message::ConfirmMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(state.pending.is_none());
+      assert!(dest.join("pod.db").exists(), "files moved to the destination");
+      assert!(!from.path().join("pod.db").exists(), "source emptied");
+      assert_eq!(*settings.storage().db_dir(), Some(dest));
+    }
+
+    #[test]
+    fn skip_move_repoints_without_moving_files() {
+      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
+
+      let outcome = update(&mut state, Message::SkipMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(state.pending.is_none());
+      assert!(
+        from.path().join("pod.db").exists(),
+        "skip leaves the old files in place"
+      );
+      assert!(!dest.join("pod.db").exists(), "skip moves nothing");
+      assert_eq!(*settings.storage().db_dir(), Some(dest));
+    }
+
+    #[test]
+    fn cancel_move_aborts_with_no_change() {
+      let (mut state, mut settings, from, _dest_root, _dest) = populated_pending();
+      let before = settings.storage().db_dir().clone();
+
+      let outcome = update(&mut state, Message::CancelMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending.is_none());
+      assert!(from.path().join("pod.db").exists(), "cancel touches nothing");
+      assert_eq!(
+        *settings.storage().db_dir(),
+        before,
+        "cancel leaves the override untouched"
+      );
+    }
+  }
+
+  mod reveal_log_dir {
+    use super::*;
+
+    #[test]
+    fn it_does_not_persist_or_raise_a_pending_move() {
+      let dir = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_log_dir(Some(dir.path().to_path_buf()));
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::RevealLogDir, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending.is_none());
+      assert_eq!(*settings.storage().log_dir(), Some(dir.path().to_path_buf()));
+    }
+  }
+
+  mod reset {
+    use super::*;
+
+    #[test]
+    fn reset_clears_the_override_when_the_source_is_empty() {
+      let empty = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::ResetToDefault(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().db_dir(), None, "reset clears the override");
+    }
+
+    #[test]
+    fn commit_override_clears_when_the_destination_is_the_default() {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
+
+      commit_override(PathKind::Database, PathKind::Database.default_dir(), &mut settings);
+
+      assert_eq!(*settings.storage().db_dir(), None);
+    }
+
+    #[test]
+    fn commit_override_pins_a_custom_destination() {
+      let mut settings = Settings::default();
+
+      commit_override(PathKind::Log, PathBuf::from("/var/pod/log"), &mut settings);
+
+      assert_eq!(*settings.storage().log_dir(), Some(PathBuf::from("/var/pod/log")));
+    }
+  }
+
+  mod relocate {
+    use super::*;
+
+    #[test]
+    fn it_moves_a_populated_tree_with_subdirectories() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"db").unwrap();
+      fs::write(from.path().join("pod.db-wal"), b"wal").unwrap();
+      fs::create_dir(from.path().join("images")).unwrap();
+      fs::write(from.path().join("images").join("1.png"), b"img").unwrap();
+      let dest_root = tempdir().unwrap();
+      let dest = dest_root.path().join("moved");
+
+      relocate(from.path(), &dest).unwrap();
+
+      assert!(dest.join("pod.db").exists());
+      assert!(dest.join("pod.db-wal").exists());
+      assert_eq!(fs::read(dest.join("images").join("1.png")).unwrap(), b"img");
+      assert!(
+        !from.path().exists(),
+        "the source tree is removed after a successful move"
+      );
+    }
+  }
+
+  mod copy_dir_all {
+    use super::*;
+
+    #[test]
+    fn it_copies_files_and_nested_directories() {
+      let src = tempdir().unwrap();
+      fs::write(src.path().join("top.txt"), b"top").unwrap();
+      fs::create_dir(src.path().join("nested")).unwrap();
+      fs::write(src.path().join("nested").join("inner.txt"), b"inner").unwrap();
+      let dst_root = tempdir().unwrap();
+      let dst = dst_root.path().join("copy");
+
+      super::super::copy_dir_all(src.path(), &dst).unwrap();
+
+      assert_eq!(fs::read(dst.join("top.txt")).unwrap(), b"top");
+      assert_eq!(fs::read(dst.join("nested").join("inner.txt")).unwrap(), b"inner");
+      assert!(src.path().exists(), "the source tree is left in place");
+    }
+
+    #[test]
+    fn a_missing_source_is_an_error() {
+      let dst = tempdir().unwrap();
+
+      let result = super::super::copy_dir_all(&PathBuf::from("/no/such/source/dir"), dst.path());
+
+      assert!(result.is_err());
+    }
+  }
+
+  mod error_handling {
+    use super::*;
+
+    #[test]
+    fn a_failed_move_keeps_the_old_override_and_surfaces_an_error() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      let mut state = state();
+      state.pending = Some(PendingMove {
+        kind: PathKind::Database,
+        from: PathBuf::from("/no/such/pod/source/dir"),
+        to: tempdir().unwrap().path().join("dest"),
+      });
+
+      let outcome = update(&mut state, Message::ConfirmMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::None, "a failed move does not persist");
+      assert!(state.error.is_some(), "the failure is surfaced");
+      assert_eq!(
+        *settings.storage().db_dir(),
+        Some(from.path().to_path_buf()),
+        "the old override is left intact"
+      );
+    }
+
+    #[test]
+    fn dismiss_error_clears_the_banner() {
+      let mut state = state();
+      state.error = Some("boom".to_owned());
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::DismissError, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.error.is_none());
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_default_panel() {
+      let settings = Settings::default();
+      let state = state();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_with_overrides_and_the_network_toggle() {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
+      settings.storage_mut().set_network(true);
+      let state = state();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_confirm_move_modal_when_pending() {
+      let settings = Settings::default();
+      let mut state = state();
+      state.pending = Some(PendingMove {
+        kind: PathKind::Database,
+        from: PathBuf::from("/old/pod"),
+        to: PathBuf::from("/new/pod"),
+      });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_error_banner() {
+      let settings = Settings::default();
+      let mut state = state();
+      state.error = Some("Can't use /bad: permission denied".to_owned());
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+  }
+}

@@ -1,0 +1,276 @@
+use iced::{
+  Background, Border, Element, Length, Padding, Point,
+  widget::{Column, Space, button, container, text},
+};
+
+use crate::ui::style::{color, radius, shadow, typography};
+
+pub const MENU_WIDTH: f32 = 220.0;
+const DIVIDER_INSET: f32 = 6.0;
+const DIVIDER_PAD_Y: f32 = 4.0;
+const PANEL_PAD: f32 = 4.0;
+const ROW_PAD_X: f32 = 10.0;
+const ROW_PAD_Y: f32 = 7.0;
+const TITLE_PAD_BOTTOM: f32 = 6.0;
+const TITLE_PAD_TOP: f32 = 8.0;
+const TITLE_PAD_X: f32 = 10.0;
+
+pub enum Item<MSG> {
+  Row {
+    danger: bool,
+    label: String,
+    on_press: Option<MSG>,
+  },
+  Separator,
+}
+
+impl<MSG> Item<MSG> {
+  pub fn action(label: impl Into<String>, on_press: MSG) -> Self {
+    Self::Row {
+      danger: false,
+      label: label.into(),
+      on_press: Some(on_press),
+    }
+  }
+
+  pub fn danger(label: impl Into<String>, on_press: MSG) -> Self {
+    Self::Row {
+      danger: true,
+      label: label.into(),
+      on_press: Some(on_press),
+    }
+  }
+
+  pub fn disabled(label: impl Into<String>) -> Self {
+    Self::Row {
+      danger: false,
+      label: label.into(),
+      on_press: None,
+    }
+  }
+
+  pub fn separator() -> Self {
+    Self::Separator
+  }
+}
+
+pub fn context_menu<'a, MSG>(title: &str, items: Vec<Item<MSG>>, cursor: Point) -> Element<'a, MSG>
+where
+  MSG: Clone + 'a,
+{
+  let mut rows: Vec<Element<'a, MSG>> = vec![menu_title(title)];
+  for item in items {
+    rows.push(match item {
+      Item::Separator => divider(),
+      Item::Row {
+        danger,
+        label,
+        on_press,
+      } => menu_row(danger, label, on_press),
+    });
+  }
+
+  let panel = container(Column::with_children(rows).width(Length::Fill))
+    .width(Length::Fixed(MENU_WIDTH))
+    .padding(PANEL_PAD)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      shadow: shadow::CARD,
+      ..container::Style::default()
+    });
+
+  let top = cursor.y.max(0.0);
+  let left = cursor.x.max(0.0);
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top,
+      left,
+      ..Padding::ZERO
+    })
+    .into()
+}
+
+fn divider<'a, MSG>() -> Element<'a, MSG>
+where
+  MSG: 'a,
+{
+  let line = container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.1))),
+      ..container::Style::default()
+    });
+
+  container(line)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: DIVIDER_PAD_Y,
+      right: DIVIDER_INSET,
+      bottom: DIVIDER_PAD_Y,
+      left: DIVIDER_INSET,
+    })
+    .into()
+}
+
+fn menu_row<'a, MSG>(danger: bool, label: String, on_press: Option<MSG>) -> Element<'a, MSG>
+where
+  MSG: Clone + 'a,
+{
+  let label_color = if danger {
+    color::status::DANGER
+  } else if on_press.is_none() {
+    color::text::TERTIARY
+  } else {
+    color::text::PRIMARY
+  };
+
+  let label = text(label)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(move |_| text::Style {
+      color: Some(label_color),
+    });
+
+  let mut row = button(label).width(Length::Fill).padding(Padding {
+    top: ROW_PAD_Y,
+    right: ROW_PAD_X,
+    bottom: ROW_PAD_Y,
+    left: ROW_PAD_X,
+  });
+  if let Some(message) = on_press {
+    row = row.on_press(message);
+  }
+  row.style(move |_, status| row_style(danger, status)).into()
+}
+
+fn menu_title<'a, MSG>(title: &str) -> Element<'a, MSG>
+where
+  MSG: 'a,
+{
+  container(
+    text(title.to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      }),
+  )
+  .padding(Padding {
+    top: TITLE_PAD_TOP,
+    right: TITLE_PAD_X,
+    bottom: TITLE_PAD_BOTTOM,
+    left: TITLE_PAD_X,
+  })
+  .into()
+}
+
+fn row_style(danger: bool, status: button::Status) -> button::Style {
+  let background = match status {
+    button::Status::Hovered | button::Status::Pressed => {
+      let wash = if danger {
+        color::status::DANGER
+      } else {
+        color::text::PRIMARY
+      };
+      Some(Background::Color(color::with_alpha(wash, 0.12)))
+    }
+    _ => None,
+  };
+  button::Style {
+    background,
+    text_color: if danger {
+      color::status::DANGER
+    } else {
+      color::text::PRIMARY
+    },
+    border: Border {
+      radius: radius::SUBTLE.into(),
+      ..Border::default()
+    },
+    ..button::Style::default()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod context_menu {
+    use iced::advanced::widget::Tree;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum Msg {
+      Copy,
+      Edit,
+      Remove,
+    }
+
+    #[test]
+    fn it_renders_a_title_actions_an_explicit_separator_and_a_danger_row() {
+      let items = vec![
+        Item::action("Copy name", Msg::Copy),
+        Item::action("Edit tags", Msg::Edit),
+        Item::separator(),
+        Item::danger("Remove from app", Msg::Remove),
+      ];
+
+      let menu: Element<'_, Msg> = context_menu("Test Pilot", items, Point::new(40.0, 60.0));
+      let tree = Tree::new(menu.as_widget());
+
+      assert_eq!(tree.children.len(), 5);
+    }
+
+    #[test]
+    fn it_renders_disabled_and_multi_separator_menus() {
+      let items = vec![
+        Item::action("Edit squad", Msg::Edit),
+        Item::action("Collapse", Msg::Copy),
+        Item::separator(),
+        Item::disabled("Move pilots to Unassigned"),
+        Item::separator(),
+        Item::danger("Delete squad", Msg::Remove),
+      ];
+
+      let menu: Element<'_, Msg> = context_menu("Supers", items, Point::new(40.0, 60.0));
+      let tree = Tree::new(menu.as_widget());
+
+      assert_eq!(tree.children.len(), 7);
+    }
+  }
+
+  mod row_style {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn a_hovered_row_washes_its_background_and_an_idle_row_has_none() {
+      let hovered = row_style(false, button::Status::Hovered);
+      let pressed = row_style(false, button::Status::Pressed);
+      let idle = row_style(false, button::Status::Active);
+
+      assert!(hovered.background.is_some());
+      assert!(pressed.background.is_some());
+      assert!(idle.background.is_none());
+    }
+
+    #[test]
+    fn a_danger_row_uses_the_danger_text_color() {
+      let danger = row_style(true, button::Status::Active);
+      let normal = row_style(false, button::Status::Active);
+
+      assert_eq!(danger.text_color, color::status::DANGER);
+      assert_eq!(normal.text_color, color::text::PRIMARY);
+    }
+  }
+}

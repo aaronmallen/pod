@@ -13,7 +13,7 @@ const SECTION_MAP: Record<string, { tag: string; tone: string }> = {
   Changed: { tag: 'CHANGE', tone: 'warning' },
 };
 
-function parseChangelog(content: string): { version: string; notes: Note[] } {
+function parseChangelog(content: string): { version: string; notice: string; notes: Note[] } {
   const lines = content.split('\n');
 
   let versionLine = -1;
@@ -39,6 +39,19 @@ function parseChangelog(content: string): { version: string; notes: Note[] } {
 
   const section = lines.slice(versionLine + 1, endLine);
 
+  // A leading blockquote (`> ...`) before any `###` section is the release notice — a prominent
+  // banner rendered above the itemized notes, not one of the items. Bold `**markers**` are stripped.
+  const noticeParts: string[] = [];
+  for (const line of section) {
+    if (line.startsWith('>')) {
+      noticeParts.push(line.replace(/^>\s?/, '').trim());
+      continue;
+    }
+    if (line.trim() === '' && noticeParts.length === 0) continue;
+    break;
+  }
+  const notice = noticeParts.join(' ').replace(/\*\*/g, '').trim();
+
   const notes: Note[] = [];
   let currentMeta: { tag: string; tone: string } | null = null;
 
@@ -61,7 +74,7 @@ function parseChangelog(content: string): { version: string; notes: Note[] } {
     }
   }
 
-  return { version, notes };
+  return { version, notice, notes };
 }
 
 function serialize(notes: Note[]): string {
@@ -77,9 +90,10 @@ function main(): void {
     '../../CHANGELOG.md',
   );
   const content = fs.readFileSync(changelogPath, 'utf8');
-  const { version, notes } = parseChangelog(content);
+  const { version, notice, notes } = parseChangelog(content);
 
   console.log(`Version: ${version}`);
+  console.log(`Notice: ${notice ? 'yes' : 'none'}`);
   console.log(`Entries: ${notes.length}`);
 
   const outDir = path.resolve(
@@ -91,6 +105,7 @@ function main(): void {
 
   const fileContent =
     `import type { Note } from '../types';\n\n` +
+    `export const NOTICE: string = ${JSON.stringify(notice)};\n\n` +
     `export const NOTES: Note[] = ${serialize(notes)};\n`;
 
   fs.writeFileSync(outFile, fileContent, 'utf8');

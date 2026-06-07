@@ -1,83 +1,41 @@
-use std::{
-  process::Command,
-  time::{SystemTime, UNIX_EPOCH},
-};
+use std::process::Command;
 
-fn build_date() -> String {
-  let secs = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map(|d| d.as_secs())
-    .unwrap_or(0);
-
-  let days = secs / 86400;
-  let mut year = 1970u32;
-  let mut remaining = days;
-
-  loop {
-    let days_in_year = if is_leap(year) { 366 } else { 365 };
-    if remaining < days_in_year {
-      break;
-    }
-    remaining -= days_in_year;
-    year += 1;
-  }
-
-  let month_lengths = [
-    31u64,
-    if is_leap(year) { 29 } else { 28 },
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
-  let mut month = 1u32;
-  for &len in &month_lengths {
-    if remaining < len {
-      break;
-    }
-    remaining -= len;
-    month += 1;
-  }
-  let day = remaining + 1;
-
-  format!("{:04}-{:02}-{:02}", year, month, day)
-}
-
-fn is_leap(year: u32) -> bool {
-  (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
-}
-
-fn git_sha() -> String {
-  Command::new("git")
+fn main() {
+  let git_sha = Command::new("git")
     .args(["rev-parse", "--short", "HEAD"])
     .output()
     .ok()
-    .and_then(|o| {
-      if o.status.success() {
-        String::from_utf8(o.stdout).ok()
-      } else {
-        None
-      }
-    })
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
-    .unwrap_or_else(|| "unknown".to_string())
+    .filter(|output| output.status.success())
+    .and_then(|output| String::from_utf8(output.stdout).ok())
+    .map(|sha| sha.trim().to_owned())
+    .filter(|sha| !sha.is_empty())
+    .unwrap_or_else(|| "unknown".to_owned());
+  println!("cargo:rustc-env=POD_GIT_SHA={git_sha}");
+
+  let build_date = build_date();
+  println!("cargo:rustc-env=POD_BUILD_DATE={build_date}");
+
+  println!("cargo:rerun-if-changed=.git/HEAD");
+  println!("cargo:rerun-if-changed=build.rs");
 }
 
-fn main() {
-  println!("cargo:rustc-env=BUILD_DATE={}", build_date());
-  println!("cargo:rustc-env=GIT_SHA={}", git_sha());
+fn build_date() -> String {
+  let secs = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs())
+    .unwrap_or(0);
+  let days = (secs / 86_400) as i64;
 
-  #[cfg(target_os = "windows")]
-  {
-    let mut res = winres::WindowsResource::new();
-    res.set_icon("assets/app-icons/icon.ico");
-    res.compile().expect("failed to embed Windows icon resource");
-  }
+  let z = days + 719_468;
+  let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+  let doe = z - era * 146_097;
+  let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+  let year = yoe + era * 400;
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  let mp = (5 * doy + 2) / 153;
+  let day = doy - (153 * mp + 2) / 5 + 1;
+  let month = if mp < 10 { mp + 3 } else { mp - 9 };
+  let year = if month <= 2 { year + 1 } else { year };
+
+  format!("{year:04}-{month:02}-{day:02}")
 }

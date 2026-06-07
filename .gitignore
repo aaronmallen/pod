@@ -1,7 +1,8 @@
+assets/images/items/*
+!assets/images/items/.no-icon
 coverage/
 node_modules/
 tmp/
-web/src/generated/release.ts
 
 # Environment and secrets
 !.env.example
@@ -9,6 +10,8 @@ web/src/generated/release.ts
 .env.*
 
 # Rust
+**/*.profraw
+**/*.profdata
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
@@ -29,8 +32,10 @@ Thumbs.db
 # LLMs
 .agents
 .claude
+.codegraph
 .codex
 .cursor
 .gemini
 .junie
 .opencode
+.mcp.json

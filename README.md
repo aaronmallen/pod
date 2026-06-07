@@ -16,6 +16,21 @@ and the in-game client, in one place:
 All character data is pulled live from the official [EVE Swagger Interface (ESI)](https://esi.evetech.net/) via OAuth2
 SSO.
 
+## Development
+
+Item icons (~19,740 64px PNGs) are **not** committed to the repository — they are generated fresh during the release
+pipeline and shipped inside each package. A fresh checkout therefore has no item icons: the app falls back to
+silhouettes, and the best-effort sync long-tail fills them in over time.
+
+If you want the real icons locally, generate them once (downloads the SDE and fetches each icon from the EVE image
+server):
+
+```sh
+mise run generate:item-images
+```
+
+The output lands in `assets/images/items/` and is gitignored. See [docs/dev](docs/dev) for the full development guide.
+
 ## Support development
 
 Pod is free and MIT-licensed. If you want to back development, the easiest way is in-game — send ISK to the **Pod

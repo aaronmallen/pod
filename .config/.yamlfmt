@@ -7,7 +7,6 @@ exclude:
   - node_modules
   - target
   - tmp
-  - web/aube-lock.yaml
 formatter:
   eof_newline: true
   line_ending: lf

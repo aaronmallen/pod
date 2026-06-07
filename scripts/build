@@ -1,21 +1,6 @@
 #!/usr/bin/env sh
 #MISE description="Build the project"
-#USAGE flag "--package" help="Scope the build to a package" {
-#USAGE   arg "<package>"
-#USAGE }
 
 set -e
 
-PACKAGE=""
-if [ -n "${usage_package}" ]; then
-  case "${usage_package}" in
-  pod-*) PACKAGE="${usage_package}" ;;
-  *) PACKAGE="pod-${usage_package}" ;;
-  esac
-fi
-
-if [ -n "${PACKAGE}" ]; then
-  cargo build --package "${PACKAGE}" --all-features
-else
-  cargo build --workspace --all-features
-fi
+cargo build --all-features

@@ -1,0 +1,268 @@
+pub fn parse(text: &str) -> Vec<(String, u64)> {
+  let mut totals: Vec<(String, u64)> = Vec::new();
+
+  for line in text.lines() {
+    let Some((name, quantity)) = parse_line(line) else {
+      continue;
+    };
+    match totals.iter_mut().find(|(existing, _)| existing == &name) {
+      Some((_, running)) => *running = running.saturating_add(quantity),
+      None => totals.push((name, quantity)),
+    }
+  }
+
+  totals
+}
+
+fn parse_line(line: &str) -> Option<(String, u64)> {
+  let line = line.trim();
+  if line.is_empty() {
+    return None;
+  }
+
+  let tokens: Vec<&str> = line.split_whitespace().collect();
+  let bare = || Some((line.to_owned(), 1));
+
+  let mut name_end = tokens.len();
+  let mut digits = String::new();
+  while name_end > 0 {
+    let token = tokens[name_end - 1];
+    if let Some(group) = parse_digit_group(token) {
+      digits.insert_str(0, &group);
+      name_end -= 1;
+    } else {
+      break;
+    }
+  }
+
+  if name_end == tokens.len()
+    && name_end > 0
+    && let Some(group) = parse_separated_quantity(tokens[name_end - 1])
+  {
+    digits = group;
+    name_end -= 1;
+  }
+
+  if name_end == 0 || digits.is_empty() {
+    return bare();
+  }
+
+  let Some(quantity) = digits.parse::<u64>().ok().filter(|&quantity| quantity > 0) else {
+    return bare();
+  };
+
+  let name = tokens[..name_end].join(" ");
+  Some((name, quantity))
+}
+
+fn parse_digit_group(token: &str) -> Option<String> {
+  if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
+    return None;
+  }
+  Some(token.to_owned())
+}
+
+fn parse_separated_quantity(token: &str) -> Option<String> {
+  let digits = token.strip_prefix(['x', 'X']).unwrap_or(token);
+  if digits.is_empty() {
+    return None;
+  }
+
+  let mut cleaned = String::with_capacity(digits.len());
+  for ch in digits.chars() {
+    match ch {
+      '0'..='9' => cleaned.push(ch),
+      ',' | '.' | '\'' | '\u{a0}' | '\u{202f}' | '_' => {}
+      _ => return None,
+    }
+  }
+
+  (!cleaned.is_empty()).then_some(cleaned)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod parse {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_a_tab_separated_line() {
+      assert_eq!(parse("Tritanium\t100"), vec![("Tritanium".to_owned(), 100)]);
+    }
+
+    #[test]
+    fn it_parses_a_single_space_separated_line() {
+      assert_eq!(parse("Tritanium 100"), vec![("Tritanium".to_owned(), 100)]);
+    }
+
+    #[test]
+    fn it_parses_a_multi_space_separated_line() {
+      assert_eq!(parse("Tritanium    1000"), vec![("Tritanium".to_owned(), 1000)]);
+    }
+
+    #[test]
+    fn it_parses_the_x_quantity_form() {
+      assert_eq!(parse("Tritanium x5"), vec![("Tritanium".to_owned(), 5)]);
+      assert_eq!(parse("Tritanium X5"), vec![("Tritanium".to_owned(), 5)]);
+    }
+
+    #[test]
+    fn it_defaults_a_bare_name_to_quantity_one() {
+      assert_eq!(parse("Tritanium"), vec![("Tritanium".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_defaults_a_multi_word_bare_name_to_quantity_one() {
+      assert_eq!(parse("Damage Control II"), vec![("Damage Control II".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_keeps_multi_word_names_with_a_trailing_quantity() {
+      assert_eq!(
+        parse("Medium Shield Extender II\t3"),
+        vec![("Medium Shield Extender II".to_owned(), 3)]
+      );
+    }
+
+    #[test]
+    fn it_tolerates_comma_thousands_separators() {
+      assert_eq!(parse("Tritanium 1,000"), vec![("Tritanium".to_owned(), 1000)]);
+      assert_eq!(parse("Tritanium 1,234,567"), vec![("Tritanium".to_owned(), 1_234_567)]);
+    }
+
+    #[test]
+    fn it_tolerates_period_thousands_separators() {
+      assert_eq!(parse("Tritanium 1.000"), vec![("Tritanium".to_owned(), 1000)]);
+    }
+
+    #[test]
+    fn it_tolerates_space_thousands_separators() {
+      assert_eq!(parse("Tritanium 1 000"), vec![("Tritanium".to_owned(), 1000)]);
+      assert_eq!(parse("Tritanium 1 234 567"), vec![("Tritanium".to_owned(), 1_234_567)]);
+    }
+
+    #[test]
+    fn it_tolerates_a_thin_space_thousands_separator_inside_a_token() {
+      assert_eq!(parse("Tritanium 1\u{202f}000"), vec![("Tritanium".to_owned(), 1000)]);
+    }
+
+    #[test]
+    fn it_ignores_blank_and_whitespace_only_lines() {
+      assert_eq!(
+        parse("Tritanium 5\n\n   \n\t\nPyerite 3"),
+        vec![("Tritanium".to_owned(), 5), ("Pyerite".to_owned(), 3)]
+      );
+    }
+
+    #[test]
+    fn it_trims_leading_and_trailing_whitespace() {
+      assert_eq!(parse("   Tritanium 5   "), vec![("Tritanium".to_owned(), 5)]);
+    }
+
+    #[test]
+    fn it_sums_duplicate_names_preserving_first_seen_order() {
+      assert_eq!(
+        parse("Tritanium 100\nPyerite 50\nTritanium 25"),
+        vec![("Tritanium".to_owned(), 125), ("Pyerite".to_owned(), 50)]
+      );
+    }
+
+    #[test]
+    fn it_sums_duplicates_across_quantity_forms() {
+      assert_eq!(
+        parse("Tritanium x10\nTritanium\t5\nTritanium"),
+        vec![("Tritanium".to_owned(), 16)]
+      );
+    }
+
+    #[test]
+    fn it_treats_a_zero_quantity_as_a_bare_name() {
+      assert_eq!(parse("Tritanium 0"), vec![("Tritanium 0".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_treats_a_negative_quantity_as_a_bare_name() {
+      assert_eq!(parse("Tritanium -5"), vec![("Tritanium -5".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_treats_a_garbage_trailing_token_as_part_of_the_name() {
+      assert_eq!(parse("Tritanium abc"), vec![("Tritanium abc".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_parses_a_realistic_mixed_multibuy_blob() {
+      let blob = "\
+Tritanium\t1,000,000
+Pyerite 250 000
+
+Mexallon x5
+Damage Control II
+Medium Shield Extender II    2
+Tritanium 500
+";
+
+      assert_eq!(
+        parse(blob),
+        vec![
+          ("Tritanium".to_owned(), 1_000_500),
+          ("Pyerite".to_owned(), 250_000),
+          ("Mexallon".to_owned(), 5),
+          ("Damage Control II".to_owned(), 1),
+          ("Medium Shield Extender II".to_owned(), 2),
+        ]
+      );
+    }
+  }
+
+  mod parse_digit_group {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_accepts_a_bare_digit_group() {
+      assert_eq!(parse_digit_group("000"), Some("000".to_owned()));
+      assert_eq!(parse_digit_group("42"), Some("42".to_owned()));
+    }
+
+    #[test]
+    fn it_rejects_non_digit_tokens() {
+      assert_eq!(parse_digit_group("x5"), None);
+      assert_eq!(parse_digit_group("1,000"), None);
+      assert_eq!(parse_digit_group("abc"), None);
+      assert_eq!(parse_digit_group(""), None);
+    }
+  }
+
+  mod parse_separated_quantity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_the_x_prefix_form() {
+      assert_eq!(parse_separated_quantity("x42"), Some("42".to_owned()));
+      assert_eq!(parse_separated_quantity("X42"), Some("42".to_owned()));
+    }
+
+    #[test]
+    fn it_strips_separators() {
+      assert_eq!(parse_separated_quantity("1,000"), Some("1000".to_owned()));
+      assert_eq!(parse_separated_quantity("1.000"), Some("1000".to_owned()));
+      assert_eq!(parse_separated_quantity("1'000"), Some("1000".to_owned()));
+    }
+
+    #[test]
+    fn it_rejects_non_numeric_tokens() {
+      assert_eq!(parse_separated_quantity("abc"), None);
+      assert_eq!(parse_separated_quantity("-5"), None);
+      assert_eq!(parse_separated_quantity("x"), None);
+      assert_eq!(parse_separated_quantity(""), None);
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "capacity": 0.0,
+  "description": "A cybernetic brain implant that boosts the pilot's Memory by 3 points.",
+  "dogma_attributes": [
+    { "attribute_id": 177, "value": 3.0 },
+    { "attribute_id": 331, "value": 6.0 }
+  ],
+  "group_id": 300,
+  "mass": 0.0,
+  "name": "Memory Augmentation - Basic",
+  "packaged_volume": 1.0,
+  "portion_size": 1,
+  "published": true,
+  "radius": 1.0,
+  "type_id": 9899,
+  "volume": 1.0
+}

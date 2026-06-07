@@ -1,0 +1,21 @@
+{
+  "capacity": 0.0,
+  "description": "Skill at handling turret based weapon systems. 2% Bonus to weapon turrets rate of fire per skill level.",
+  "dogma_attributes": [
+    { "attribute_id": 275, "value": 1.0 },
+    { "attribute_id": 180, "value": 167.0 },
+    { "attribute_id": 181, "value": 168.0 },
+    { "attribute_id": 277, "value": 277.0 },
+    { "attribute_id": 280, "value": 0.0 },
+    { "attribute_id": 290, "value": 0.0 }
+  ],
+  "group_id": 255,
+  "mass": 0.0,
+  "name": "Gunnery",
+  "packaged_volume": 0.0,
+  "portion_size": 1,
+  "published": true,
+  "radius": 1.0,
+  "type_id": 3300,
+  "volume": 0.0
+}

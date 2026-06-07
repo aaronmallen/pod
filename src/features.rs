@@ -1,0 +1,11 @@
+pub mod about;
+pub mod assets;
+pub mod auth;
+pub mod character_detail;
+pub mod character_manager;
+pub mod mail;
+pub mod settings;
+pub mod skill_plan_editor;
+pub mod skills;
+pub mod splash;
+pub mod wallet;

@@ -1,0 +1,231 @@
+#!/usr/bin/env sh
+#MISE description="Fetch 64px icons for all published item types into the committed asset set"
+#USAGE flag "--ids <ids>" help="Space-separated type IDs to fetch instead of the full SDE set (verification mode)"
+#USAGE flag "--concurrency <n>" help="Number of parallel fetch workers (default 16)"
+#USAGE flag "--out <dir>" help="Output directory (default assets/images/items)"
+#USAGE flag "--min-coverage <pct>" help="Minimum percent of published types that must resolve before a full-SDE run is a success (default 95)"
+
+set -e
+
+# Worker mode: fetch a single icon. Re-invoked by xargs (see the dispatch below)
+# so each id runs in its own process. Reads config from the exported env. Prints a
+# one-line status token (OK/EMPTY/SKIP/FAIL <id>) and exits 0 unless the fetch
+# hard-fails post-retry (exit 1), which xargs propagates as a nonzero summary.
+if [ "$1" = "__worker" ]; then
+  id="$2"
+  out="${OUT_DIR}/${id}.png"
+
+  if [ -s "${out}" ]; then
+    echo "SKIP ${id}"
+    exit 0
+  fi
+  if [ -f "${LEDGER}" ] && grep -qx "${id}" "${LEDGER}"; then
+    echo "SKIP ${id}"
+    exit 0
+  fi
+
+  url="https://images.evetech.net/types/${id}/icon?size=64"
+  attempt=0
+  backoff=1
+  while [ "${attempt}" -le "${MAX_RETRIES}" ]; do
+    tmp="$(mktemp "${OUT_DIR}/.tmp.${id}.XXXXXX")"
+    hdr="$(mktemp "${OUT_DIR}/.hdr.${id}.XXXXXX")"
+    code="$(curl -sS -o "${tmp}" -D "${hdr}" -w '%{http_code}' "${url}" 2>/dev/null)" || code="000"
+
+    case "${code}" in
+    200)
+      if [ -s "${tmp}" ]; then
+        mv "${tmp}" "${out}"
+        rm -f "${hdr}"
+        echo "OK ${id}"
+        exit 0
+      fi
+      ;; # empty body: fall through to the transient-retry path
+    400 | 404)
+      # 404 = no server-side image; 400 "bad category or variation" = the type has only
+      # blueprint/render variations and no plain icon. Blueprints serve under the bp/bpc
+      # variations, so fall back to the bp (original) render and commit it as the flat
+      # {id}.png. A blueprint copy renders differently, so it is also fetched under the bpc
+      # variation and committed as {id}_bpc.png; the inventory resolver prefers that file for a
+      # copy and falls back to the shared {id}.png. Only a type with no variation at all is
+      # recorded as no-icon.
+      rm -f "${tmp}" "${hdr}"
+      bp_url="https://images.evetech.net/types/${id}/bp?size=64"
+      bp_tmp="$(mktemp "${OUT_DIR}/.tmp.${id}.XXXXXX")"
+      bp_code="$(curl -sS -o "${bp_tmp}" -w '%{http_code}' "${bp_url}" 2>/dev/null)" || bp_code="000"
+      if [ "${bp_code}" = "200" ] && [ -s "${bp_tmp}" ]; then
+        mv "${bp_tmp}" "${out}"
+        # Best-effort: commit the distinct blueprint-copy render so copies don't borrow the
+        # original's icon. A miss just leaves the resolver falling back to the shared file.
+        bpc_url="https://images.evetech.net/types/${id}/bpc?size=64"
+        bpc_tmp="$(mktemp "${OUT_DIR}/.tmp.${id}.XXXXXX")"
+        bpc_code="$(curl -sS -o "${bpc_tmp}" -w '%{http_code}' "${bpc_url}" 2>/dev/null)" || bpc_code="000"
+        if [ "${bpc_code}" = "200" ] && [ -s "${bpc_tmp}" ]; then
+          mv "${bpc_tmp}" "${OUT_DIR}/${id}_bpc.png"
+        else
+          rm -f "${bpc_tmp}"
+        fi
+        echo "OK ${id}"
+        exit 0
+      fi
+      rm -f "${bp_tmp}"
+      case "${bp_code}" in
+      400 | 404)
+        echo "${id}" >>"${LEDGER}"
+        echo "EMPTY ${id}"
+        exit 0
+        ;;
+      *)
+        echo "FAIL ${id} (bp http ${bp_code})"
+        exit 1
+        ;;
+      esac
+      ;;
+    429 | 500 | 502 | 503 | 504 | 000) ;; # transient: retry below
+    *)
+      rm -f "${tmp}" "${hdr}"
+      echo "FAIL ${id} (http ${code})"
+      exit 1
+      ;;
+    esac
+
+    # Transient failure: honor Retry-After when present, else exponential backoff.
+    retry_after="$(awk 'tolower($1) == "retry-after:" { gsub(/\r/, "", $2); print $2; exit }' "${hdr}" 2>/dev/null || true)"
+    rm -f "${tmp}" "${hdr}"
+    attempt="$((attempt + 1))"
+    if [ "${attempt}" -gt "${MAX_RETRIES}" ]; then
+      break
+    fi
+    case "${retry_after}" in
+    '' | *[!0-9]*) delay="${backoff}" ;;
+    *) delay="${retry_after}" ;;
+    esac
+    if [ "${delay}" -gt 30 ]; then
+      delay=30
+    fi
+    sleep "${delay}"
+    backoff="$((backoff * 2))"
+  done
+
+  echo "FAIL ${id} (http ${code})"
+  exit 1
+fi
+
+concurrency="${usage_concurrency:-16}"
+min_coverage="${usage_min_coverage:-95}"
+out_dir="${usage_out:-assets/images/items}"
+max_retries=5
+
+mkdir -p "${out_dir}"
+ledger="${out_dir}/.no-icon"
+
+export OUT_DIR="${out_dir}"
+export LEDGER="${ledger}"
+export MAX_RETRIES="${max_retries}"
+
+# Resolve the set of type IDs to fetch: explicit --ids for verification, or the
+# full published-type list derived from the SDE.
+if [ -n "${usage_ids}" ]; then
+  ids="${usage_ids}"
+  echo "item-images: fetching ${ids} (explicit ids)"
+else
+  command -v yq >/dev/null 2>&1 || {
+    echo "error: yq is required (add it to .config/mise.toml [tools])" >&2
+    exit 1
+  }
+
+  work="$(mktemp -d)"
+  trap 'rm -rf "${work}"' EXIT
+
+  echo "item-images: downloading SDE..."
+  curl -fsSL -o "${work}/sde.zip" \
+    "https://developers.eveonline.com/static-data/eve-online-static-data-latest-yaml.zip"
+
+  echo "item-images: extracting..."
+  unzip -q "${work}/sde.zip" -d "${work}/sde"
+
+  # The SDE root is the directory containing categories.yaml (mirrors find_sde_root in src/clients/sde.rs).
+  root="${work}/sde"
+  if [ ! -f "${root}/categories.yaml" ]; then
+    root="$(dirname "$(find "${work}/sde" -name categories.yaml -print -quit)")"
+  fi
+  if [ ! -f "${root}/types.yaml" ]; then
+    echo "error: types.yaml not found under the extracted SDE" >&2
+    exit 1
+  fi
+
+  echo "item-images: resolving published type ids..."
+  ids="$(yq 'to_entries | map(select(.value.published)) | .[].key' "${root}/types.yaml")"
+fi
+
+total="$(printf '%s\n' ${ids} | grep -c .)"
+echo "item-images: ${total} type(s) to consider, concurrency=${concurrency}, out=${out_dir}"
+
+results="$(mktemp)"
+trap 'rm -f "${results}"; rm -rf "${work:-}"' EXIT
+
+# Run the workers, capturing every status line to ${results} while awk emits a live
+# running tally to stderr every 250 completions so a long full-set run shows progress.
+printf '%s\n' ${ids} |
+  xargs -P "${concurrency}" -I {} sh "$0" __worker {} |
+  awk -v total="${total}" -v results="${results}" '
+    { print > results }
+    /^OK /    { ok++ }
+    /^EMPTY / { empty++ }
+    /^SKIP /  { skip++ }
+    /^FAIL /  { fail++ }
+    {
+      done = ok + empty + skip + fail
+      if (done % 250 == 0) {
+        printf "item-images: %d/%d (fetched=%d skip=%d no-icon=%d fail=%d)\n", done, total, ok, skip, empty, fail > "/dev/stderr"
+      }
+    }
+  '
+
+# A no-icon ledger is most useful sorted and deduped across resumes.
+if [ -f "${ledger}" ]; then
+  sort -un "${ledger}" -o "${ledger}"
+fi
+
+fetched="$(grep -c '^OK ' "${results}" || true)"
+empty="$(grep -c '^EMPTY ' "${results}" || true)"
+skipped="$(grep -c '^SKIP ' "${results}" || true)"
+failed="$(grep -c '^FAIL ' "${results}" || true)"
+
+echo "item-images: done — fetched=${fetched} skipped=${skipped} no-icon=${empty} failed=${failed}"
+
+# Always surface the failures for diagnostics, then decide whether they're fatal.
+if [ "${failed}" -ne 0 ]; then
+  echo "warning: ${failed} type(s) failed after retries — re-run to resume" >&2
+  grep '^FAIL ' "${results}" | head -20 >&2 || true
+  if [ "${failed}" -gt 20 ]; then
+    echo "  ... and $((failed - 20)) more" >&2
+  fi
+fi
+
+# In --ids verification mode every requested icon must resolve; a single hard
+# failure is fatal. The coverage floor only makes sense for a full-SDE run.
+if [ -n "${usage_ids}" ]; then
+  if [ "${failed}" -ne 0 ]; then
+    echo "error: ${failed} of ${total} requested id(s) failed" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+# An empty type set means the SDE parse produced nothing — never a success.
+if [ "${total}" -eq 0 ]; then
+  echo "error: no published type ids resolved from the SDE; nothing to fetch" >&2
+  exit 1
+fi
+
+# Coverage-floor gate: tolerate scattered icon failures but fail the run when
+# coverage drops below the floor, which signals a genuine CDN outage rather than
+# the usual long tail of types without a published icon.
+resolved="$((total - failed))"
+if [ "$((resolved * 100))" -lt "$((min_coverage * total))" ]; then
+  echo "error: coverage ${resolved}/${total} is below the ${min_coverage}% floor — likely a CDN outage; not publishing this set" >&2
+  exit 1
+fi
+
+echo "item-images: coverage ${resolved}/${total} meets the ${min_coverage}% floor"

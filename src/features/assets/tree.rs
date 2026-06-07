@@ -1,0 +1,699 @@
+use iced::{
+  Background, Border, Color, Element, Length, Padding,
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, button, container, scrollable, text},
+};
+
+use super::{GeoNodeKey, GeoSelection, Message, Owner, Scope, State, fmt_count, fmt_isk, resolve_scope_owner};
+use crate::{
+  store::{
+    Database,
+    model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSystemNode, GeoTree},
+    repo::assets,
+  },
+  ui::{
+    components::{eyebrow::eyebrow, icon::Icon},
+    style::{color, spacing, typography},
+  },
+};
+
+const BASE_INDENT: f32 = spacing::SPACE_3;
+const INDENT_STEP: f32 = 12.0;
+const CARET_SLOT: f32 = 12.0;
+const CARET_ICON: f32 = 12.0;
+const TIER_SLOT: f32 = 16.0;
+const REGION_ICON: f32 = 13.0;
+const TIER_ICON: f32 = 15.0;
+const RAIL_WIDTH: f32 = 2.0;
+
+#[derive(Clone, Copy)]
+enum Tier {
+  All,
+  Constellation,
+  Region,
+  Station,
+  System,
+}
+
+impl Tier {
+  fn icon(self) -> Icon {
+    match self {
+      Self::All => Icon::tier_all(),
+      Self::Constellation => Icon::tier_constellation(),
+      Self::Region => Icon::tier_region(),
+      Self::Station => Icon::tier_station(),
+      Self::System => Icon::tier_system(),
+    }
+  }
+
+  fn icon_color(self, selected: bool) -> Color {
+    if selected {
+      return color::accent::PLASMA;
+    }
+    match self {
+      Self::Region => color::text::TERTIARY,
+      Self::All | Self::Constellation | Self::System => color::text::SECONDARY,
+      Self::Station => color::accent::PLASMA,
+    }
+  }
+
+  fn icon_size(self) -> f32 {
+    match self {
+      Self::Region => REGION_ICON,
+      _ => TIER_ICON,
+    }
+  }
+
+  fn is_context(self) -> bool {
+    matches!(self, Self::Region | Self::Constellation | Self::System)
+  }
+}
+
+pub(super) async fn load_geo_tree(
+  db: &Database,
+  scope: Scope,
+  roster: &[super::RosterPilot],
+  corporations: &[super::RosterCorp],
+) -> GeoTree {
+  let Some(owner) = resolve_scope_owner(scope, roster, corporations) else {
+    return GeoTree::default();
+  };
+  let rows = match &owner {
+    Owner::Character(id) => assets::geo_locations_for_character(db, *id).await,
+    Owner::Combined {
+      character_ids,
+      corporation_ids,
+    } => assets::geo_locations_for_combined(db, character_ids, corporation_ids).await,
+    Owner::Corporation(id) => assets::geo_locations_for_corporation(db, *id).await,
+  }
+  .unwrap_or_default();
+  GeoTree::from_locations(&rows)
+}
+
+pub(super) fn pane(state: &State) -> Element<'_, Message> {
+  let tree = state.geo_tree();
+  let header = container(
+    Row::with_children(vec![
+      eyebrow("Locations", Some(color::text::SECONDARY)),
+      Space::new().width(Length::Fill).into(),
+      eyebrow(
+        &format!("{} regions", fmt_count(tree.regions.len() as i64)),
+        Some(color::text::TERTIARY),
+      ),
+    ])
+    .width(Length::Fill)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3_5,
+  });
+
+  let mut rows: Vec<Element<'_, Message>> = vec![all_assets_row(matches!(state.geo_selected(), GeoSelection::All))];
+  for region in &tree.regions {
+    push_region(state, &mut rows, region);
+  }
+  for orphan in &tree.orphans {
+    rows.push(location_row(state, orphan, 0));
+  }
+
+  let body = scrollable(Column::with_children(rows).width(Length::Fill))
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+  Column::with_children(vec![header.into(), body.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn push_region<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, region: &'a GeoRegionNode) {
+  let key = GeoNodeKey::Region(region.region_id);
+  let selection = GeoSelection::Region(region.region_id);
+  let collapsed = state.geo_is_collapsed(key);
+  rows.push(node_row(RowSpec {
+    depth: 0,
+    tier: Tier::Region,
+    caret: Some((key, collapsed)),
+    name: &region.region_name,
+    metric: (region.value > 0.0).then(|| fmt_isk(region.value)),
+    sec: None,
+    selected: state.geo_selected() == selection,
+    on_press: Message::GeoNodeSelected(selection),
+  }));
+
+  if collapsed {
+    return;
+  }
+  for constellation in &region.constellations {
+    push_constellation(state, rows, constellation);
+  }
+}
+
+fn push_constellation<'a>(
+  state: &State,
+  rows: &mut Vec<Element<'a, Message>>,
+  constellation: &'a GeoConstellationNode,
+) {
+  let key = GeoNodeKey::Constellation(constellation.constellation_id);
+  let selection = GeoSelection::Constellation(constellation.constellation_id);
+  let collapsed = state.geo_is_collapsed(key);
+  rows.push(node_row(RowSpec {
+    depth: 1,
+    tier: Tier::Constellation,
+    caret: Some((key, collapsed)),
+    name: &constellation.constellation_name,
+    metric: (constellation.value > 0.0).then(|| fmt_isk(constellation.value)),
+    sec: None,
+    selected: state.geo_selected() == selection,
+    on_press: Message::GeoNodeSelected(selection),
+  }));
+
+  if collapsed {
+    return;
+  }
+  for system in &constellation.systems {
+    push_system(state, rows, system);
+  }
+}
+
+fn push_system<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, system: &'a GeoSystemNode) {
+  let selection = GeoSelection::System(system.system_id);
+  rows.push(node_row(RowSpec {
+    depth: 2,
+    tier: Tier::System,
+    caret: None,
+    name: &system.system_name,
+    metric: (system.value > 0.0).then(|| fmt_isk(system.value)),
+    sec: system.security_status,
+    selected: state.geo_selected() == selection,
+    on_press: Message::GeoNodeSelected(selection),
+  }));
+
+  for location in &system.locations {
+    rows.push(location_row(state, location, 3));
+  }
+}
+
+fn location_row<'a>(state: &State, location: &'a GeoLocationNode, depth: usize) -> Element<'a, Message> {
+  let label = location.location_label.as_deref().unwrap_or("Unknown location");
+  let selection = GeoSelection::Location(location.location_id);
+  node_row(RowSpec {
+    depth,
+    tier: Tier::Station,
+    caret: None,
+    name: label,
+    metric: (location.value > 0.0).then(|| fmt_isk(location.value)),
+    sec: None,
+    selected: state.geo_selected() == selection,
+    on_press: Message::GeoNodeSelected(selection),
+  })
+}
+
+fn all_assets_row<'a>(selected: bool) -> Element<'a, Message> {
+  node_row(RowSpec {
+    depth: 0,
+    tier: Tier::All,
+    caret: None,
+    name: "All assets",
+    metric: None,
+    sec: None,
+    selected,
+    on_press: Message::GeoNodeSelected(GeoSelection::All),
+  })
+}
+
+struct RowSpec<'a> {
+  depth: usize,
+  tier: Tier,
+  caret: Option<(GeoNodeKey, bool)>,
+  name: &'a str,
+  metric: Option<String>,
+  sec: Option<f64>,
+  selected: bool,
+  on_press: Message,
+}
+
+fn caret_slot<'a>(caret: Option<(GeoNodeKey, bool)>) -> Element<'a, Message> {
+  let inner: Element<'a, Message> = match caret {
+    Some((key, collapsed)) => {
+      let chevron = if collapsed {
+        Icon::chevron_right()
+      } else {
+        Icon::chevron()
+      };
+      button(chevron.size(CARET_ICON).color(color::text::TERTIARY).render())
+        .padding(0)
+        .on_press(Message::GeoNodeToggled(key))
+        .style(|_, _| button::Style::default())
+        .into()
+    }
+    None => Space::new().into(),
+  };
+  container(inner)
+    .width(Length::Fixed(CARET_SLOT))
+    .height(Length::Fixed(CARET_SLOT))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn tier_slot<'a>(tier: Tier, selected: bool) -> Element<'a, Message> {
+  container(
+    tier
+      .icon()
+      .size(tier.icon_size())
+      .color(tier.icon_color(selected))
+      .render(),
+  )
+  .width(Length::Fixed(TIER_SLOT))
+  .height(Length::Fixed(TIER_SLOT))
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn sec_pill<'a>(sec: f64) -> Element<'a, Message> {
+  let pill_color = if sec >= 0.5 {
+    color::status::ONLINE
+  } else if sec > 0.0 {
+    color::status::WARNING
+  } else {
+    color::status::DANGER
+  };
+  text(format!("{sec:.1}"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(move |_| text::Style {
+      color: Some(pill_color),
+    })
+    .into()
+}
+
+fn node_row(spec: RowSpec<'_>) -> Element<'_, Message> {
+  let RowSpec {
+    depth,
+    tier,
+    caret,
+    name,
+    metric,
+    sec,
+    selected,
+    on_press,
+  } = spec;
+  let indent = BASE_INDENT + depth as f32 * INDENT_STEP;
+
+  let name_color = if selected {
+    color::text::PRIMARY
+  } else if tier.is_context() {
+    color::text::SECONDARY
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.78)
+  };
+  let region = matches!(tier, Tier::Region);
+  let name_text = if region { name.to_uppercase() } else { name.to_owned() };
+
+  let mut content: Vec<Element<'_, Message>> = vec![
+    caret_slot(caret),
+    tier_slot(tier, selected),
+    container(
+      text(name_text)
+        .font(if region {
+          typography::body::MEDIUM
+        } else {
+          typography::body::REGULAR
+        })
+        .size(typography::size::SM)
+        .style(move |_| text::Style {
+          color: Some(name_color),
+        }),
+    )
+    .width(Length::Fill)
+    .into(),
+  ];
+
+  if let Some(sec) = sec {
+    content.push(sec_pill(sec));
+  }
+
+  if let Some(metric) = metric {
+    let metric_color = if selected {
+      color::accent::PLASMA
+    } else {
+      color::text::TERTIARY
+    };
+    content.push(
+      text(metric)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(move |_| text::Style {
+          color: Some(metric_color),
+        })
+        .into(),
+    );
+  }
+
+  let rail = container(Space::new())
+    .width(Length::Fixed(RAIL_WIDTH))
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if selected {
+        color::accent::PLASMA
+      } else {
+        Color::TRANSPARENT
+      })),
+      ..container::Style::default()
+    });
+
+  let body = container(
+    Row::with_children(content)
+      .spacing(spacing::UNIT + 2.0)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::UNIT + 1.0,
+    right: spacing::SPACE_3,
+    bottom: spacing::UNIT + 1.0,
+    left: indent,
+  });
+
+  button(Row::with_children(vec![rail.into(), body.into()]).align_y(Vertical::Center))
+    .width(Length::Fill)
+    .on_press(on_press)
+    .style(move |_, status| {
+      let background = if selected {
+        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
+      } else if matches!(status, button::Status::Hovered) {
+        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
+      } else {
+        None
+      };
+      button::Style {
+        background,
+        border: Border {
+          radius: 0.0.into(),
+          ..Border::default()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod render {
+    use super::*;
+    use crate::{
+      features::assets::{GeoNodeKey, State},
+      store::model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSystemNode},
+    };
+
+    fn location(location_id: i64, label: &str) -> GeoLocationNode {
+      GeoLocationNode {
+        item_count: 1,
+        location_id,
+        location_label: Some(label.to_owned()),
+        location_type: "station".to_owned(),
+        value: 1_000.0,
+      }
+    }
+
+    fn region(name: &str) -> GeoRegionNode {
+      GeoRegionNode {
+        constellations: vec![GeoConstellationNode {
+          constellation_id: 20_000_020,
+          constellation_name: "Kimotoro".to_owned(),
+          item_count: 12,
+          systems: vec![GeoSystemNode {
+            item_count: 12,
+            locations: vec![location(60_003_760, "Jita IV - Moon 4")],
+            security_status: Some(0.9),
+            system_id: 30_000_142,
+            system_name: "Jita".to_owned(),
+            value: 5_000.0,
+          }],
+          value: 5_000.0,
+        }],
+        item_count: 12,
+        region_id: 10_000_002,
+        region_name: name.to_owned(),
+        value: 5_000.0,
+      }
+    }
+
+    fn orphan() -> GeoLocationNode {
+      GeoLocationNode {
+        item_count: 1,
+        location_id: 1_022_000_000_000,
+        location_label: Some("Inaccessible Structure".to_owned()),
+        location_type: "structure".to_owned(),
+        value: 10.0,
+      }
+    }
+
+    #[test]
+    fn it_renders_the_geo_tree_pane_with_regions_and_orphans() {
+      let mut state = State::new();
+      state.set_geo_tree_for_test(GeoTree {
+        orphans: vec![orphan()],
+        regions: vec![region("The Forge")],
+      });
+
+      let _el: Element<'_, Message> = pane(&state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_an_expanded_region_with_its_descendants() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_geo_tree_for_test(GeoTree {
+        orphans: Vec::new(),
+        regions: vec![region("The Forge")],
+      });
+      let _ = crate::features::assets::update(&mut state, Message::GeoNodeToggled(GeoNodeKey::Region(10_000_002)), &db);
+
+      let _el: Element<'_, Message> = pane(&state);
+    }
+
+    #[test]
+    fn it_renders_an_empty_geo_tree_pane() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = pane(&state);
+    }
+  }
+
+  mod db {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      features::assets::RosterPilot,
+      store::{
+        self,
+        model::{
+          Alliance, Bloodline, Character, CharacterAsset, Constellation, Corporation, Gender, ItemCategory, ItemGroup,
+          Race, Region, SolarSystem, Station,
+        },
+        repo::{assets::replace_for_character, character::insert_with_org, sde},
+      },
+    };
+
+    const CHARACTER_ID: i64 = 42;
+    const CONSTELLATION_ID: i64 = 20_000_020;
+    const CORP_ID: i64 = 90_000_001;
+    const GROUP_ID: i64 = 25;
+    const REGION_ID: i64 = 10_000_002;
+    const STATION_ID: i64 = 60_003_760;
+    const SYSTEM_ID: i64 = 30_000_142;
+
+    async fn seed_character(db: &Database) {
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, CORP_ID, CHARACTER_ID, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(CORP_ID, "Test Corp", "TSC");
+      corp.set_ceo_id(CHARACTER_ID);
+      corp.set_creator_id(CHARACTER_ID);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, CORP_ID, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(CHARACTER_ID, 1, CORP_ID, 2, "2003-05-12", Gender::Male, "Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_station(db: &Database) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: REGION_ID,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: CONSTELLATION_ID,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: REGION_ID,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: CONSTELLATION_ID,
+          id: SYSTEM_ID,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_station(
+        db,
+        &Station {
+          id: STATION_ID,
+          max_dockable_ship_volume: 0.0,
+          name: "Jita IV - Moon 4".to_owned(),
+          office_rental_cost: 0.0,
+          owner: None,
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          race_id: None,
+          reprocessing_efficiency: 0.0,
+          reprocessing_stations_take: 0.0,
+          services: "[]".to_owned(),
+          system_id: SYSTEM_ID,
+          type_id: 587,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn seed_item_type(db: &Database, type_id: i64, name: &str) {
+      let category = ItemCategory {
+        id: GROUP_ID * 10,
+        icon_id: None,
+        name: "Ship".to_owned(),
+        published: true,
+      };
+      let group = ItemGroup {
+        category_id: category.id(),
+        icon_id: None,
+        id: GROUP_ID,
+        name: "Frigate".to_owned(),
+        published: true,
+      };
+      sde::upsert_item_category(db, &category).await.unwrap();
+      sde::upsert_item_group(db, &group).await.unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, icon_id, packaged_volume, volume) \
+        VALUES (?, ?, 'Test item', ?, 1, ?, 2.5, 10.0)",
+      )
+      .bind(type_id)
+      .bind(GROUP_ID)
+      .bind(name)
+      .bind(type_id + 1000)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    fn asset(item_id: i64, container_id: Option<i64>, is_container: bool) -> CharacterAsset {
+      CharacterAsset {
+        character_id: CHARACTER_ID,
+        container_id,
+        depth: container_id.map_or(0, |_| 1),
+        is_active_ship: false,
+        is_blueprint_copy: None,
+        is_container,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_owned(),
+        location_id: container_id.unwrap_or(STATION_ID),
+        location_type: container_id.map_or("station", |_| "item").to_owned(),
+        quantity: 1,
+        ship_name: None,
+        type_id: 587,
+      }
+    }
+
+    fn pilot() -> RosterPilot {
+      RosterPilot {
+        corp: "TSC".to_owned(),
+        id: CHARACTER_ID,
+        name: "Pilot".to_owned(),
+        portrait: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_geo_tree_with_only_locations_no_containers() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db).await;
+      seed_item_type(&db, 587, "Station Container").await;
+      seed_station(&db).await;
+      replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[asset(100, None, true), asset(101, Some(100), false)],
+      )
+      .await
+      .unwrap();
+
+      let tree = load_geo_tree(&db, Scope::Character(CHARACTER_ID), &[pilot()], &[]).await;
+
+      assert_eq!(tree.regions.len(), 1);
+      let region = &tree.regions[0];
+      assert_eq!(region.region_name, "The Forge");
+      let system = &region.constellations[0].systems[0];
+      assert_eq!(system.system_name, "Jita");
+      assert_eq!(
+        system.security_status,
+        Some(0.9),
+        "the system's security status threads from the geo query through to the tree node"
+      );
+      assert_eq!(
+        system.locations.iter().map(|l| l.location_id).collect::<Vec<_>>(),
+        [STATION_ID],
+        "the station is the only location node; the container item is not a sidebar row"
+      );
+      assert_eq!(
+        system.locations[0].item_count, 1,
+        "only the top-level item at the station counts; the nested child is excluded"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_builds_an_empty_tree_for_an_unresolvable_scope() {
+      let db = store::open_test().await.unwrap();
+
+      let tree = load_geo_tree(&db, Scope::Corporation(404), &[], &[]).await;
+
+      assert_eq!(tree, GeoTree::default());
+    }
+  }
+}

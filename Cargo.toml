@@ -1,124 +1,82 @@
 [package]
-authors.workspace = true
+authors = ["Aaron Allen <hello@aaronmallen.me>"]
 description = "A one-stop-shop capsuleer manager for EVE Online."
-edition.workspace = true
-homepage.workspace = true
-include = ["assets/*", "src/*", "LICENSE", "README.md"]
-license.workspace = true
+edition = "2024"
+homepage = "https://pod.aaronmallen.dev"
+include = [
+  "assets/*",
+  "migrations/*",
+  "src/*",
+  "test/*",
+  "LICENSE",
+  "README.md",
+]
+license = "MIT"
 name = "pod"
 publish = false
-repository.workspace = true
-version = "0.4.9"
+repository = "https://www.github.com/aaronmallen/pod"
+version = "0.5.0"
 
 [package.metadata.packager]
 category = "Utility"
-identifier = "dev.aaronmallen.pod"
 icons = [
-  "assets/app-icons/32x32.png",
-  "assets/app-icons/128x128.png",
-  "assets/app-icons/256x256.png",
-  "assets/app-icons/icon.icns",
-  "assets/app-icons/icon.ico",
+  "assets/images/identity/32x32.png",
+  "assets/images/identity/128x128.png",
+  "assets/images/identity/256x256.png",
+  "assets/images/identity/icon.icns",
+  "assets/images/identity/icon.ico",
 ]
+identifier = "dev.aaronmallen.pod"
 product-name = "Pod"
-resources = ["assets", "crates", "src", "Cargo.toml"]
+resources = ["assets"]
 
-[workspace]
-members = ["crates/*"]
-resolver = "3"
-
-[workspace.package]
-authors = ["Aaron Allen <hello@aaronmallen.me>"]
-edition = "2024"
-homepage = "https://pod.aaronmallen.dev"
-license = "MIT"
-repository = "https://www.github.com/aaronmallen/pod"
-
-[workspace.dependencies]
-arboard = "3"
-base64 = "0.22"
-bytes = "1"
-cargo-packager-updater = "0.2"
-chrono = { features = ["serde"], version = "0.4" }
-dir_spec = "0.5"
-figment = { features = ["toml"], version = "0.10" }
-getset = "0.1"
-libsqlite3-sys = { features = ["bundled"], version = "0" }
-muda = "0.19"
-open = "5"
-pod-db = { path = "crates/db", version = "0.1" }
-pod-esi = { features = ["pod-model"], path = "crates/esi", version = "0.1" }
-pod-model = { path = "crates/model", version = "0.1" }
-pod-ui = { path = "crates/ui", version = "0.1" }
-pretty_assertions = "1"
-rand = "0.10"
-reqwest = { features = ["form", "gzip", "json"], version = "0.13" }
-rfd = "0.17"
-serde = { features = ["derive"], version = "1" }
-serde_json = "1"
-serde_yaml = "0.9"
-sha2 = "0.11"
-thiserror = "2"
-tokio = { features = ["full"], version = "1" }
-toml = "1.1"
-tracing = "0.1"
-tracing-appender = "0.2"
-tracing-subscriber = { features = ["env-filter", "fmt"], version = "0.3" }
-url = "2"
-validator = { features = ["derive"], version = "0.20" }
-wiremock = "0.6"
-zip = { default-features = false, features = ["deflate"], version = "8" }
-
-[workspace.dependencies.iced]
-features = ["advanced", "canvas", "image", "svg", "tokio"]
-version = "0.14"
-
-[workspace.dependencies.sea-orm]
-features = [
-  "runtime-tokio-rustls",
-  "sqlx-sqlite",
-  "sqlite-use-returning-for-3_35",
-  "with-json",
-]
-version = "2.0.0-rc"
-
-[workspace.dependencies.sea-orm-migration]
-features = ["runtime-tokio-rustls", "sqlx-sqlite"]
-version = "2.0.0-rc"
-
-[dependencies]
-arboard.workspace = true
-base64.workspace = true
-cargo-packager-updater.workspace = true
-chrono.workspace = true
-dir_spec.workspace = true
-figment.workspace = true
-getset.workspace = true
-iced.workspace = true
-muda.workspace = true
-open.workspace = true
-pod-db.workspace = true
-pod-esi.workspace = true
-pod-model.workspace = true
-pod-ui.workspace = true
-reqwest.workspace = true
-rfd.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-serde_yaml.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-toml.workspace = true
-tracing.workspace = true
-tracing-appender.workspace = true
-tracing-subscriber.workspace = true
-zip.workspace = true
+[[package.metadata.packager.deep-link-protocols]]
+schemes = ["eveauth-pod"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+objc2-core-services = { features = ["AE"], version = "0.3" }
+objc2-foundation = { features = [
+  "NSAppleEventDescriptor",
+  "NSAppleEventManager",
+  "NSString",
+  "objc2-core-services",
+], version = "0.3" }
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
-winres = "0.1"
+[dependencies]
+base64 = "0.22"
+cargo-packager-updater = "0.2.3"
+chrono = "0.4"
+dir_spec = "0.5.2"
+figment = { features = ["toml"], version = "0.10.19" }
+getset = "0.1"
+interprocess = "2.4.2"
+muda = "0.19"
+open = "5"
+rand = "0.10"
+reqwest = { features = ["form", "gzip", "json"], version = "0.13" }
+rfd = "0.17"
+serde = "1"
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.11"
+tempfile = "3"
+thiserror = "2"
+tokio = { features = ["full"], version = "1" }
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-appender = "0.2"
+tracing-subscriber = { features = ["env-filter", "json"], version = "0.3.23" }
+zip = { default-features = false, features = ["deflate"], version = "8" }
+
+[dependencies.iced]
+features = ["advanced", "canvas", "image", "svg", "tokio"]
+version = "0.14"
+
+[dependencies.sqlx]
+features = ["migrate", "runtime-tokio", "sqlite", "sqlite-bundled"]
+version = "0.9"
 
 [dev-dependencies]
-pretty_assertions.workspace = true
+pretty_assertions = "1"
+wiremock = "0.6"

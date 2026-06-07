@@ -4,6 +4,6 @@
 
 set -e
 
-cargo sort --workspace --config .config/tomlfmt.toml
+cargo sort --config .config/tomlfmt.toml
 cargo +nightly fmt --all -- --config-path .config/rustfmt.toml
-cargo clippy --fix --allow-dirty --allow-staged
+cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged --allow-no-vcs

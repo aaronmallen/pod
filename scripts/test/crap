@@ -1,0 +1,246 @@
+#!/usr/bin/env sh
+#MISE description="Compute CRAP scores for all functions in the crate"
+
+set -e
+
+mkdir -p coverage/rust
+
+cargo llvm-cov nextest --all-features --no-fail-fast \
+  --no-tests pass || true
+cargo llvm-cov report --cobertura --output-path coverage/rust/cobertura.xml
+
+rust-code-analysis-cli --metrics --output-format json -p src \
+  >coverage/rust/metrics.json
+
+python3 - <<'PYEOF'
+import json
+import math
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+COBERTURA = "coverage/rust/cobertura.xml"
+METRICS   = "coverage/rust/metrics.json"
+
+def normalize_name(name):
+    name = re.sub(r'<[^>]*>', '', name)
+    name = re.sub(r"'[a-z_]+", '', name)
+    name = name.replace('impl ', '')
+    name = name.replace('.', '::')
+    name = re.sub(r'::\{closure#\d+\}', '', name)
+    name = re.sub(r'::h[0-9a-f]{16}$', '', name)
+    name = re.sub(r'\s+', '', name)
+    return name.strip('::')
+
+def crap(comp, cov_pct):
+    c = cov_pct / 100.0
+    return comp * comp * (1 - c) ** 3 + comp
+
+tree = ET.parse(COBERTURA)
+root = tree.getroot()
+
+# Per-file line coverage: filename -> {line_number: max hits across all entries for that line}.
+# Attributing coverage by LINE RANGE (rather than by demangled method name) is robust to llvm-cov
+# splitting a function's coverage across its body closures/generator. Matching by name picked the
+# first path-suffix hit — often an inner closure at 0% — which scored async/closure-bearing fns as
+# 0% even when fully tested. The same source line can appear more than once (a fn and a closure on
+# it), so a line counts as covered if ANY entry recorded a hit.
+file_lines = {}
+for pkg in root.iter('package'):
+    for cls in pkg.iter('class'):
+        filename = cls.get('filename', '')
+        lines = file_lines.setdefault(filename, {})
+        for ln in cls.findall('lines/line'):
+            n = int(ln.get('number', 0))
+            h = int(ln.get('hits', 0))
+            if n:
+                lines[n] = max(lines.get(n, 0), h)
+
+with open(METRICS) as fh:
+    raw = fh.read().strip()
+
+if raw.startswith('['):
+    file_metrics = json.loads(raw)
+else:
+    file_metrics = [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+def extract_functions(node, filepath):
+    results = []
+    kind = node.get('kind', '')
+    name = node.get('name', '')
+    metrics = node.get('metrics', {})
+    spaces = node.get('spaces', [])
+
+    if kind == 'function' and metrics:
+        cc_val = metrics.get('cyclomatic', {})
+        if isinstance(cc_val, dict):
+            cc = float(cc_val.get('sum', cc_val.get('average', 1)))
+        else:
+            cc = float(cc_val) if cc_val else 1
+        start_line = node.get('start_line', 0)
+        end_line   = node.get('end_line', 0)
+        results.append({
+            'file':       filepath,
+            'name':       name,
+            'norm':       normalize_name(name),
+            'cc':         max(1, int(round(cc))),
+            'start_line': start_line,
+            'end_line':   end_line,
+        })
+
+    for child in spaces:
+        results.extend(extract_functions(child, filepath))
+    return results
+
+rca_functions = []
+for entry in file_metrics:
+    if isinstance(entry, dict) and 'spaces' in entry:
+        fp = entry.get('name', '')
+        for space in entry['spaces']:
+            rca_functions.extend(extract_functions(space, fp))
+    elif isinstance(entry, dict):
+        fp = entry.get('name', '')
+        rca_functions.extend(extract_functions(entry, fp))
+
+def crate_from_path(path):
+    parts = path.replace('\\', '/').split('/')
+    if parts[0] == 'src':
+        return 'pod'
+    return parts[0]
+
+def line_map_for(fn_file):
+    for cf, lines in file_lines.items():
+        if fn_file.endswith(cf) or cf.endswith(fn_file):
+            return lines
+    return None
+
+results = []
+unmatched = 0
+
+for fn in rca_functions:
+    fn_file  = fn['file'].replace('\\', '/')
+    fn_start = fn['start_line']
+    fn_end   = fn['end_line']
+    crate    = crate_from_path(fn_file)
+
+    lines = line_map_for(fn_file)
+    span = [n for n in lines if fn_start <= n <= fn_end] if lines else []
+    if span:
+        covered = sum(1 for n in span if lines[n] > 0)
+        cov = 100.0 * covered / len(span)
+    else:
+        cov = 0.0
+        unmatched += 1
+
+    score = crap(fn['cc'], cov)
+    short_file = fn_file
+    if short_file.startswith('src/'):
+        short_file = short_file[len('src/'):]
+
+    results.append({
+        'crate': crate,
+        'file':  short_file,
+        'name':  fn['name'],
+        'cc':    fn['cc'],
+        'cov':   cov,
+        'crap':  score,
+    })
+
+if unmatched:
+    print(f"[crap] {unmatched} functions had no coverage match (defaulted to 0%)",
+          file=sys.stderr)
+
+results.sort(key=lambda r: r['crap'], reverse=True)
+top50 = results[:50]
+
+print()
+print("Table 1 — Function Detail (top 50 by CRAP score)")
+print()
+
+col_widths = {
+    'crate': max(5, max((len(r['crate']) for r in top50), default=5)),
+    'file':  max(4, max((len(r['file'])  for r in top50), default=4)),
+    'name':  max(8, max((len(r['name'])  for r in top50), default=8)),
+    'cc':    4,
+    'cov':   5,
+    'crap':  7,
+}
+
+header_fmt = (
+    f"{{:<{col_widths['crate']}}}  "
+    f"{{:<{col_widths['file']}}}  "
+    f"{{:<{col_widths['name']}}}  "
+    f"{{:>{col_widths['cc']}}}  "
+    f"{{:>{col_widths['cov']}}}  "
+    f"{{:>{col_widths['crap']}}}"
+)
+row_fmt = header_fmt
+
+header = header_fmt.format("Crate", "File", "Function", "CC", "Cov%", "CRAP")
+sep    = "-" * len(header)
+print(header)
+print(sep)
+for r in top50:
+    print(row_fmt.format(
+        r['crate'],
+        r['file'],
+        r['name'],
+        r['cc'],
+        f"{r['cov']:.1f}",
+        f"{r['crap']:.2f}",
+    ))
+
+from collections import defaultdict
+crate_data = defaultdict(list)
+for r in results:
+    crate_data[r['crate']].append(r['crap'])
+
+print()
+print("Table 2 — Crate Summary")
+print()
+
+summary = []
+for crate, scores in sorted(crate_data.items()):
+    avg  = sum(scores) / len(scores)
+    mx   = max(scores)
+    gt30 = sum(1 for s in scores if s > 30)
+    summary.append({
+        'crate': crate,
+        'count': len(scores),
+        'avg':   avg,
+        'max':   mx,
+        'gt30':  gt30,
+    })
+
+summary.sort(key=lambda r: r['max'], reverse=True)
+
+cw = {
+    'crate': max(5, max(len(r['crate']) for r in summary)),
+    'count': max(9, 9),
+    'avg':   max(8, 8),
+    'max':   max(8, 8),
+    'gt30':  max(10, 10),
+}
+
+h2_fmt = (
+    f"{{:<{cw['crate']}}}  "
+    f"{{:>{cw['count']}}}  "
+    f"{{:>{cw['avg']}}}  "
+    f"{{:>{cw['max']}}}  "
+    f"{{:>{cw['gt30']}}}"
+)
+
+h2 = h2_fmt.format("Crate", "Functions", "Avg CRAP", "Max CRAP", ">30 Count")
+print(h2)
+print("-" * len(h2))
+for r in summary:
+    print(h2_fmt.format(
+        r['crate'],
+        r['count'],
+        f"{r['avg']:.2f}",
+        f"{r['max']:.2f}",
+        r['gt30'],
+    ))
+print()
+PYEOF

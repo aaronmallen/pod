@@ -4,7 +4,6 @@
     ".idea",
     ".mise",
     ".mise-data",
-    "assets/fonts/",
     "coverage",
     "target",
     "tmp"

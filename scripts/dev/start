@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+#MISE description="Start the application"
+
+set -e
+
+scripts/build
+
+# On non-macOS, run the bare binary. Seamless eveauth-pod:// sign-in needs an OS-registered handler;
+# on macOS that comes from a bundle's Info.plist, and Windows/Linux additionally need single-instance
+# URL forwarding (not yet wired). So sign-in's callback only routes back on macOS for now.
+if [ "$(uname)" != "Darwin" ]; then
+  exec target/debug/pod
+fi
+
+# macOS: package a debug .app so LaunchServices registers the eveauth-pod:// scheme to it, then run
+# the bundled binary directly. Running the inner binary (rather than `open`) keeps stdout attached to
+# the terminal. If packaging fails (e.g. the cargo-packager config needs a tweak), fall back to the
+# bare binary so dev is never blocked — sign-in just won't complete until the bundle builds.
+if ! cargo-packager --formats app; then
+  echo "dev:start: packaging failed; running the unregistered binary (sign-in won't complete in dev)" >&2
+  exec target/debug/pod
+fi
+
+app="$(find target/debug -name 'Pod.app' -type d 2>/dev/null | head -1)"
+if [ -z "${app}" ]; then
+  app="$(find target -name 'Pod.app' -type d 2>/dev/null | head -1)"
+fi
+if [ -z "${app}" ]; then
+  echo "dev:start: packaged Pod.app not found; running the unregistered binary" >&2
+  exec target/debug/pod
+fi
+
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "${lsregister}" ]; then
+  "${lsregister}" -f "${app}"
+fi
+
+binary="$(find "${app}/Contents/MacOS" -type f -perm +111 2>/dev/null | head -1)"
+if [ -z "${binary}" ]; then
+  binary="target/debug/pod"
+fi
+exec "${binary}"

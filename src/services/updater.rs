@@ -1,134 +1,379 @@
-//! Background update-checking service.
+use std::time::Duration;
 
-use cargo_packager_updater::{Config, UpdaterBuilder, semver::Version};
-use iced::Task;
-use tracing::{info, warn};
+use cargo_packager_updater::{Config as UpdaterConfig, Error, Update, check_update, semver::Version, url::Url};
+use tokio::{
+  sync::{mpsc, watch},
+  time::{self, MissedTickBehavior},
+};
 
-const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
 
-const UPDATE_ENDPOINT: &str = "https://github.com/aaronmallen/pod/releases/latest/download/latest.json";
+const COMMAND_BUFFER: usize = 8;
 
-/// State of the in-app update lifecycle.
-#[derive(Clone, Debug, Default)]
-pub enum UpdateState {
-  /// App is downloading and installing the update.
-  Downloading,
-  /// Update failed; carries the error description.
-  Error(String),
-  #[default]
-  /// No update in progress.
-  Idle,
-  /// Update has been applied; app needs to restart.
-  ReadyToRestart,
-  /// A newer version is available; carries the version string.
-  UpdateAvailable(String),
-}
-
-/// Messages produced by the updater service.
 #[derive(Clone, Debug)]
-pub enum Message {
-  /// The update was downloaded and installed; app should restart to apply.
-  ApplyComplete,
-  /// The update download or installation failed.
-  ApplyFailed(String),
-  /// User requested to download and install the available update.
-  ApplyRequested,
-  /// Update check completed; `Some(version)` if a newer version is available.
-  CheckComplete(Option<String>),
-  /// Update check encountered a network or parse error.
-  CheckFailed,
-  /// A periodic or startup check has been triggered.
-  CheckRequested,
-  /// User requested the app to restart into the newly installed version.
-  RestartRequested,
+pub struct Config {
+  pub endpoints: Vec<Url>,
+  pub pubkey: String,
 }
 
-/// Returns the interval between periodic update checks.
-pub const fn check_interval() -> std::time::Duration {
-  CHECK_INTERVAL
+impl Config {
+  pub fn from_env() -> Option<Self> {
+    let pubkey = option_env!("POD_UPDATER_PUBKEY")?.trim().to_owned();
+    if pubkey.is_empty() {
+      return None;
+    }
+    let raw = option_env!("POD_UPDATER_ENDPOINT")?.trim();
+    let endpoint = Url::parse(raw).ok()?;
+    Some(Self {
+      endpoints: vec![endpoint],
+      pubkey,
+    })
+  }
+
+  fn into_updater_config(self) -> UpdaterConfig {
+    UpdaterConfig {
+      endpoints: self.endpoints,
+      pubkey: self.pubkey,
+      ..Default::default()
+    }
+  }
 }
 
-/// Downloads and silently installs the available update in a background thread.
-pub fn apply() -> Task<Message> {
-  Task::perform(apply_inner(), handle_apply_result)
+#[derive(Clone, Debug)]
+pub struct Handle {
+  commands: mpsc::Sender<Command>,
+  state: watch::Receiver<State>,
 }
 
-/// Spawns a background update check against the release manifest.
-pub fn check() -> Task<Message> {
-  Task::perform(check_inner(), handle_check_result)
+impl Handle {
+  pub fn apply(&self) {
+    let _ = self.commands.try_send(Command::Apply);
+  }
+
+  pub fn check(&self) {
+    let _ = self.commands.try_send(Command::Check);
+  }
+
+  pub fn restart(&self) {
+    let _ = self.commands.try_send(Command::Restart);
+  }
+
+  pub fn state(&self) -> State {
+    self.state.borrow().clone()
+  }
+
+  pub fn subscribe(&self) -> watch::Receiver<State> {
+    self.state.clone()
+  }
 }
 
-/// Relaunches the current executable then terminates the current process.
-pub fn restart() {
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum State {
+  Downloading {
+    version: String,
+  },
+  Error {
+    message: String,
+  },
+  #[default]
+  Idle,
+  ReadyToRestart {
+    version: String,
+  },
+  UpdateAvailable {
+    version: String,
+  },
+}
+
+impl State {
+  pub fn version(&self) -> Option<&str> {
+    match self {
+      State::UpdateAvailable {
+        version,
+      }
+      | State::Downloading {
+        version,
+      }
+      | State::ReadyToRestart {
+        version,
+      } => Some(version),
+      State::Idle
+      | State::Error {
+        ..
+      } => None,
+    }
+  }
+}
+
+#[derive(Debug)]
+enum Command {
+  Apply,
+  Check,
+  Restart,
+}
+
+struct Engine {
+  config: Config,
+  pending: Option<Update>,
+  state: watch::Sender<State>,
+}
+
+impl Engine {
+  async fn apply(&mut self) {
+    let Some(update) = self.pending.take() else {
+      tracing::debug!(target: "pod::updater", "apply requested with no pending update");
+      return;
+    };
+    let version = update.version.clone();
+    self.set(State::Downloading {
+      version: version.clone(),
+    });
+    let result = tokio::task::spawn_blocking(move || update.download_and_install()).await;
+    match result {
+      Ok(Ok(())) => {
+        tracing::info!(target: "pod::updater", %version, "update installed; restart pending");
+        self.set(State::ReadyToRestart {
+          version,
+        });
+      }
+      Ok(Err(error)) => {
+        tracing::warn!(target: "pod::updater", %error, "update install failed");
+        self.set(State::Error {
+          message: format!("update install failed: {error}"),
+        });
+      }
+      Err(error) => {
+        tracing::error!(target: "pod::updater", %error, "update install task panicked");
+        self.set(State::Error {
+          message: format!("update install task failed: {error}"),
+        });
+      }
+    }
+  }
+
+  fn apply_check_result(&mut self, result: Result<Result<Option<Update>, Error>, tokio::task::JoinError>) {
+    match result {
+      Ok(Ok(Some(update))) => {
+        tracing::info!(target: "pod::updater", version = %update.version, "update available");
+        self.set(State::UpdateAvailable {
+          version: update.version.clone(),
+        });
+        self.pending = Some(update);
+      }
+      Ok(Ok(None)) => {
+        tracing::debug!(target: "pod::updater", "no update available");
+        self.pending = None;
+        if matches!(*self.state.borrow(), State::UpdateAvailable { .. } | State::Idle) {
+          self.set(State::Idle);
+        }
+      }
+      Ok(Err(error)) => {
+        tracing::warn!(target: "pod::updater", %error, "update check failed");
+        self.set(State::Error {
+          message: format!("update check failed: {error}"),
+        });
+      }
+      Err(error) => {
+        tracing::error!(target: "pod::updater", %error, "update check task panicked");
+        self.set(State::Error {
+          message: format!("update check task failed: {error}"),
+        });
+      }
+    }
+  }
+
+  async fn check(&mut self) {
+    let current = match Version::parse(env!("CARGO_PKG_VERSION")) {
+      Ok(version) => version,
+      Err(error) => {
+        tracing::error!(target: "pod::updater", %error, "current version is not valid semver");
+        self.set(State::Error {
+          message: format!("invalid current version: {error}"),
+        });
+        return;
+      }
+    };
+    let config = self.config.clone().into_updater_config();
+    let result = tokio::task::spawn_blocking(move || check_update(current, config)).await;
+    self.apply_check_result(result);
+  }
+
+  fn restart(&self) {
+    if matches!(*self.state.borrow(), State::ReadyToRestart { .. }) {
+      tracing::info!(target: "pod::updater", "restarting into new release");
+      restart_process();
+    } else {
+      tracing::debug!(target: "pod::updater", "restart requested but no installed update is ready");
+    }
+  }
+
+  async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
+    let mut ticker = time::interval(CHECK_INTERVAL);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+      tokio::select! {
+        _ = ticker.tick() => self.check().await,
+        command = commands.recv() => match command {
+          Some(Command::Apply) => self.apply().await,
+          Some(Command::Check) => self.check().await,
+          Some(Command::Restart) => self.restart(),
+          None => break,
+        },
+      }
+    }
+  }
+
+  fn set(&self, state: State) {
+    let _ = self.state.send(state);
+  }
+}
+
+fn restart_process() {
   if let Ok(exe) = std::env::current_exe() {
     let _ = std::process::Command::new(exe).spawn();
   }
   std::process::exit(0);
 }
 
-async fn apply_inner() -> Result<(), String> {
-  tokio::task::spawn_blocking(|| {
-    let updater = build_updater().map_err(|e| e.to_string())?;
-    let update = updater
-      .check()
-      .map_err(|e| e.to_string())?
-      .ok_or_else(|| "no update available".to_string())?;
-    update.download_and_install().map_err(|e| e.to_string())
-  })
-  .await
-  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
-}
-
-async fn check_inner() -> Result<Option<String>, String> {
-  tokio::task::spawn_blocking(|| {
-    let updater = build_updater().map_err(|e| e.to_string())?;
-    updater
-      .check()
-      .map(|opt| opt.map(|u| u.version))
-      .map_err(|e| e.to_string())
-  })
-  .await
-  .unwrap_or_else(|e| Err(format!("task join error: {e}")))
-}
-
-fn handle_apply_result(result: Result<(), String>) -> Message {
-  match result {
-    Ok(()) => {
-      info!("update applied successfully");
-      Message::ApplyComplete
-    }
-    Err(e) => {
-      warn!(error = %e, "update apply failed");
-      Message::ApplyFailed(e)
-    }
-  }
-}
-
-fn handle_check_result(result: Result<Option<String>, String>) -> Message {
-  match result {
-    Ok(Some(version)) => {
-      info!(%version, "update available");
-      Message::CheckComplete(Some(version))
-    }
-    Ok(None) => {
-      info!("app is up to date");
-      Message::CheckComplete(None)
-    }
-    Err(e) => {
-      warn!(error = %e, "update check failed");
-      Message::CheckFailed
-    }
-  }
-}
-
-fn build_updater() -> Result<cargo_packager_updater::Updater, cargo_packager_updater::Error> {
-  let version: Version = env!("CARGO_PKG_VERSION")
-    .parse()
-    .expect("CARGO_PKG_VERSION is not valid semver");
-  let config = Config {
-    endpoints: vec![UPDATE_ENDPOINT.parse().expect("UPDATE_ENDPOINT is a valid URL")],
-    pubkey: option_env!("PACKAGER_PUBLIC_KEY").unwrap_or_default().to_string(),
-    windows: None,
+pub fn spawn(config: Config) -> Handle {
+  let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
+  let (state_tx, state_rx) = watch::channel(State::Idle);
+  let engine = Engine {
+    config,
+    pending: None,
+    state: state_tx,
   };
-  UpdaterBuilder::new(version, config).build()
+  tokio::spawn(engine.run(command_rx));
+  Handle {
+    commands: command_tx,
+    state: state_rx,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use pretty_assertions::assert_eq;
+  use tokio::sync::{mpsc, watch};
+
+  use super::*;
+
+  fn engine() -> (Engine, watch::Receiver<State>) {
+    let (state_tx, state_rx) = watch::channel(State::Idle);
+    let engine = Engine {
+      config: Config {
+        endpoints: vec![Url::parse("https://example.invalid/latest.json").unwrap()],
+        pubkey: "test-key".to_owned(),
+      },
+      pending: None,
+      state: state_tx,
+    };
+    (engine, state_rx)
+  }
+
+  #[test]
+  fn state_defaults_to_idle() {
+    assert_eq!(State::default(), State::Idle);
+  }
+
+  #[test]
+  fn state_exposes_target_version_only_when_relevant() {
+    assert_eq!(State::Idle.version(), None);
+    assert_eq!(
+      State::Error {
+        message: "boom".to_owned()
+      }
+      .version(),
+      None
+    );
+    assert_eq!(
+      State::UpdateAvailable {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
+    assert_eq!(
+      State::Downloading {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
+    assert_eq!(
+      State::ReadyToRestart {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
+  }
+
+  #[test]
+  fn set_publishes_state_to_watchers() {
+    let (engine, mut rx) = engine();
+    engine.set(State::UpdateAvailable {
+      version: "9.9.9".to_owned(),
+    });
+    assert!(rx.has_changed().unwrap());
+    assert_eq!(
+      *rx.borrow_and_update(),
+      State::UpdateAvailable {
+        version: "9.9.9".to_owned()
+      }
+    );
+  }
+
+  #[tokio::test]
+  async fn apply_without_pending_update_is_a_no_op() {
+    let (mut engine, rx) = engine();
+    engine.apply().await;
+    assert!(
+      !rx.has_changed().unwrap(),
+      "apply with no pending update must not transition state"
+    );
+  }
+
+  #[tokio::test]
+  async fn restart_does_nothing_when_not_ready() {
+    let (engine, _rx) = engine();
+    engine.restart();
+  }
+
+  #[tokio::test]
+  async fn handle_check_transitions_to_error_on_unreachable_endpoint() {
+    let handle = spawn(Config {
+      endpoints: vec![Url::parse("http://127.0.0.1:1/latest.json").unwrap()],
+      pubkey: "untrusted".to_owned(),
+    });
+    let mut state = handle.subscribe();
+    let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+      loop {
+        state.changed().await.unwrap();
+        let current = state.borrow().clone();
+        if !matches!(current, State::Idle) {
+          break current;
+        }
+      }
+    })
+    .await
+    .expect("updater should report a non-idle state quickly");
+    assert!(
+      matches!(outcome, State::Error { .. }),
+      "unreachable endpoint must surface as Error, got {outcome:?}"
+    );
+  }
+
+  #[tokio::test]
+  async fn handle_commands_do_not_panic_when_task_is_gone() {
+    let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
+    let (_state_tx, state_rx) = watch::channel(State::Idle);
+    let handle = Handle {
+      commands: command_tx,
+      state: state_rx,
+    };
+    drop(command_rx);
+    handle.check();
+    handle.apply();
+    handle.restart();
+  }
 }

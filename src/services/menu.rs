@@ -1,86 +1,149 @@
-//! Native menu bar service: builds the muda menu and provides an iced subscription.
+use std::sync::Mutex;
 
-use iced::Subscription;
-use muda::{
-  Menu, MenuItem, PredefinedMenuItem, Submenu,
-  accelerator::{Accelerator, CMD_OR_CTRL, Code},
-};
+use iced::{Subscription, futures::Stream};
+use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, accelerator};
 
-pub const ABOUT_ID: &str = "menu_about";
-pub const CHECK_UPDATES_ID: &str = "menu_check_updates";
-pub const CLEAR_CACHE_ID: &str = "menu_clear_cache";
-pub const QUIT_ID: &str = "menu_quit";
+pub const ABOUT_ID: &str = "pod.menu.about";
+pub const CHECK_UPDATES_ID: &str = "pod.menu.check_updates";
+pub const CLEAR_CACHE_ID: &str = "pod.menu.clear_cache";
+pub const QUIT_ID: &str = "pod.menu.quit";
 
-/// Messages produced by the native menu.
-#[derive(Clone, Debug)]
-#[allow(clippy::enum_variant_names)]
-pub enum MenuMessage {
-  AboutRequested,
-  CheckForUpdatesRequested,
-  ClearCacheRequested,
-  QuitRequested,
+static SENDER: Mutex<Option<iced::futures::channel::mpsc::Sender<MenuAction>>> = Mutex::new(None);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MenuAction {
+  About,
+  CheckUpdates,
+  ClearCache,
+  Quit,
 }
 
-/// Builds and registers the native menu bar. Call once on the main thread
-/// before the iced event loop starts.
-pub fn init() -> Menu {
-  let about = MenuItem::with_id(ABOUT_ID, "About Pod", true, None);
-  let check_updates = MenuItem::with_id(CHECK_UPDATES_ID, "Check for Updates\u{2026}", true, None);
-  let clear_cache = MenuItem::with_id(CLEAR_CACHE_ID, "Clear Cache", true, None);
-  let quit = MenuItem::with_id(
-    QUIT_ID,
-    "Quit Pod",
-    true,
-    Some(Accelerator::new(Some(CMD_OR_CTRL), Code::KeyQ)),
-  );
+pub fn action_for_id(id: &MenuId) -> Option<MenuAction> {
+  match id.as_ref() {
+    ABOUT_ID => Some(MenuAction::About),
+    CHECK_UPDATES_ID => Some(MenuAction::CheckUpdates),
+    CLEAR_CACHE_ID => Some(MenuAction::ClearCache),
+    QUIT_ID => Some(MenuAction::Quit),
+    _ => None,
+  }
+}
 
-  let pod_menu = Submenu::with_items(
-    "Pod",
-    true,
-    &[
-      &about,
-      &check_updates,
-      &PredefinedMenuItem::separator(),
-      &clear_cache,
-      &PredefinedMenuItem::separator(),
-      &quit,
-    ],
-  )
-  .expect("failed to build Pod submenu");
+pub fn init() {
+  let menu = match build() {
+    Ok(menu) => menu,
+    Err(error) => {
+      tracing::warn!(target: "pod::lifecycle", %error, "building the native menu failed");
+      return;
+    }
+  };
 
-  let menu = Menu::new();
-  menu.append(&pod_menu).expect("failed to append Pod submenu");
+  let menu = Box::leak(Box::new(menu));
 
   #[cfg(target_os = "macos")]
   menu.init_for_nsapp();
+  #[cfg(not(target_os = "macos"))]
+  let _ = menu;
 
-  menu
+  spawn_event_pump();
 }
 
-/// Iced subscription that polls the muda event channel and yields
-/// [`MenuMessage`] values for known item IDs.
-pub fn subscription() -> Subscription<MenuMessage> {
+pub fn subscription() -> Subscription<MenuAction> {
   Subscription::run(stream)
 }
 
-fn stream() -> impl iced::futures::Stream<Item = MenuMessage> {
-  iced::stream::channel(16, async |mut tx| {
-    use iced::futures::SinkExt as _;
+fn build() -> Result<Menu, muda::Error> {
+  let menu = Menu::new();
 
-    loop {
-      while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-        let msg = match event.id().0.as_str() {
-          ABOUT_ID => Some(MenuMessage::AboutRequested),
-          CHECK_UPDATES_ID => Some(MenuMessage::CheckForUpdatesRequested),
-          CLEAR_CACHE_ID => Some(MenuMessage::ClearCacheRequested),
-          QUIT_ID => Some(MenuMessage::QuitRequested),
-          _ => None,
-        };
-        if let Some(m) = msg {
-          let _ = tx.send(m).await;
+  let about = MenuItem::with_id(ABOUT_ID, "About Pod", true, None);
+  let check_updates = MenuItem::with_id(CHECK_UPDATES_ID, "Check for Updates…", true, None);
+  let clear_cache = MenuItem::with_id(CLEAR_CACHE_ID, "Clear Cache", true, None);
+
+  let quit_accelerator = accelerator::Accelerator::new(Some(accelerator::Modifiers::META), accelerator::Code::KeyQ);
+  let quit = MenuItem::with_id(QUIT_ID, "Quit", true, Some(quit_accelerator));
+
+  let app_menu = muda::Submenu::new("Pod", true);
+  app_menu.append_items(&[
+    &about,
+    &PredefinedMenuItem::separator(),
+    &check_updates,
+    &clear_cache,
+    &PredefinedMenuItem::separator(),
+    &quit,
+  ])?;
+  menu.append(&app_menu)?;
+
+  Ok(menu)
+}
+
+fn deliver(action: MenuAction) {
+  if let Ok(mut guard) = SENDER.lock()
+    && let Some(sender) = guard.as_mut()
+  {
+    let _ = sender.try_send(action);
+  }
+}
+
+fn spawn_event_pump() {
+  std::thread::Builder::new()
+    .name("pod-menu-events".into())
+    .spawn(|| {
+      let receiver = muda::MenuEvent::receiver();
+      while let Ok(event) = receiver.recv() {
+        if let Some(action) = action_for_id(&event.id) {
+          deliver(action);
         }
       }
-      tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    })
+    .ok();
+}
+
+fn stream() -> impl Stream<Item = MenuAction> {
+  iced::stream::channel(16, |tx: iced::futures::channel::mpsc::Sender<MenuAction>| async move {
+    if let Ok(mut guard) = SENDER.lock() {
+      *guard = Some(tx);
     }
+    std::future::pending::<()>().await;
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod action_for_id {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_the_about_id() {
+      assert_eq!(action_for_id(&MenuId::new(ABOUT_ID)), Some(MenuAction::About));
+    }
+
+    #[test]
+    fn it_maps_the_check_updates_id() {
+      assert_eq!(
+        action_for_id(&MenuId::new(CHECK_UPDATES_ID)),
+        Some(MenuAction::CheckUpdates)
+      );
+    }
+
+    #[test]
+    fn it_maps_the_clear_cache_id() {
+      assert_eq!(
+        action_for_id(&MenuId::new(CLEAR_CACHE_ID)),
+        Some(MenuAction::ClearCache)
+      );
+    }
+
+    #[test]
+    fn it_maps_the_quit_id() {
+      assert_eq!(action_for_id(&MenuId::new(QUIT_ID)), Some(MenuAction::Quit));
+    }
+
+    #[test]
+    fn it_returns_none_for_an_unknown_id() {
+      assert_eq!(action_for_id(&MenuId::new("pod.menu.unknown")), None);
+    }
+  }
 }

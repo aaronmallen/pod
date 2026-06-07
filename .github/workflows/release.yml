@@ -47,8 +47,27 @@ jobs:
           title: v$tag
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  generate-icons:
+    needs: wait-for-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+
+      - name: Generate item icons
+        run: mise run generate:item-images
+
+      - name: Upload item icons
+        uses: actions/upload-artifact@v4
+        with:
+          name: item-images
+          path: assets/images/items
+
   package-macos:
-    needs: create-release
+    needs:
+      - create-release
+      - generate-icons
     runs-on: macos-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -57,6 +76,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+
+      - name: Download item icons
+        uses: actions/download-artifact@v4
+        with:
+          name: item-images
+          path: assets/images/items
 
       - name: Add Rust targets
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
@@ -166,7 +191,9 @@ jobs:
           done
 
   package-windows:
-    needs: create-release
+    needs:
+      - create-release
+      - generate-icons
     runs-on: windows-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -175,6 +202,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+
+      - name: Download item icons
+        uses: actions/download-artifact@v4
+        with:
+          name: item-images
+          path: assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-pc-windows-msvc
@@ -226,7 +259,9 @@ jobs:
           }
 
   package-linux:
-    needs: create-release
+    needs:
+      - create-release
+      - generate-icons
     runs-on: ubuntu-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -235,6 +270,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+
+      - name: Download item icons
+        uses: actions/download-artifact@v4
+        with:
+          name: item-images
+          path: assets/images/items
 
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu

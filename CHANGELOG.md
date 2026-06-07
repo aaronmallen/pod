@@ -7,6 +7,35 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0]
+
+> **Heads up — Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
+> Updating clears your existing local Pod data and starts fresh, so the first time you open it you'll need to sign in
+> and re-authorize all of your characters again.
+
+### Added
+
+- A new Abyssals view in the assets tab lists your abyssal-rolled modules with their individual mutated stats, mutation
+  tier, estimated value, and location — filter the grid by module type or by a range on any stat to find an exact roll.
+- Squads let you group your characters into named, color-coded sets in the character manager, so a large roster stays
+  organized the way you actually fly.
+- Tags are now managed from a dedicated section in Settings, where you can create, rename, recolor, reorder, and delete
+  the labels you apply to your characters.
+- A new Storage section in Settings shows exactly where Pod keeps its database, logs, and image cache, and lets you
+  move any of them to another folder or drive — handy for keeping the database off a small system disk.
+- You can now build a stockpile by pasting an in-game multibuy list — Pod reads the item names and quantities, matches
+  them against EVE's item catalog, and shows a preview to reconcile against the stockpile before anything is saved.
+
+### Changed
+
+- Character sign-in now completes in your browser and hands you straight back to Pod through a system link, instead of
+  routing the EVE login through a local web server on a fixed port — no more firewall prompts or "port already in use"
+  failures, and it behaves consistently across macOS, Windows, and Linux.
+- Pod's background sync with EVE has been rebuilt so your character, wallet, asset, skill, and mail data stays current
+  more reliably, with less redundant traffic to EVE's servers.
+- The wallet's net-worth chart now breaks your total down into liquid ISK, asset value, and escrow, and lets you hover
+  any day on the timeline to read the exact value and composition at that point.
+
 ## [0.4.9]
 
 ### Fixed
@@ -232,7 +261,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.4.9...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/aaronmallen/pod/compare/0.4.9...0.5.0
 [0.4.9]: https://github.com/aaronmallen/pod/compare/0.4.8...0.4.9
 [0.4.8]: https://github.com/aaronmallen/pod/compare/0.4.7...0.4.8
 [0.4.7]: https://github.com/aaronmallen/pod/compare/0.4.6...0.4.7

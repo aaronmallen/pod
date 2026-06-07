@@ -1,0 +1,16 @@
+use getset::{CopyGetters, Getters};
+use sqlx::FromRow;
+
+#[derive(Clone, CopyGetters, Debug, Eq, FromRow, Getters, PartialEq)]
+pub struct Model {
+  #[getset(get_copy = "pub")]
+  pub character_id: i64,
+  #[getset(get_copy = "pub")]
+  pub mail_id: i64,
+  #[getset(get_copy = "pub")]
+  pub recipient_id: i64,
+  #[getset(get = "pub")]
+  pub recipient_name: String,
+  #[getset(get = "pub")]
+  pub recipient_type: String,
+}

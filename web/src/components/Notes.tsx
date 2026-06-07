@@ -1,5 +1,5 @@
 import { T } from '../tokens';
-import { NOTES } from '../generated/notes';
+import { NOTES, NOTICE } from '../generated/notes';
 import type { Release } from '../types';
 import { SectionHead } from './SectionHead';
 
@@ -54,6 +54,35 @@ export function Notes({ accent, release }: Props) {
           </a>
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {NOTICE && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'auto 1fr',
+            alignItems: 'start', gap: 16,
+            padding: '20px 20px',
+            marginBottom: 32,
+            background: 'rgba(217,178,82,0.10)',
+            border: `1px solid ${T.warning}55`,
+            borderLeft: `3px solid ${T.warning}`,
+            borderRadius: 10,
+          }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              padding: '3px 8px', borderRadius: 3,
+              background: 'rgba(217,178,82,0.12)', color: T.warning,
+              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              fontSize: 9, letterSpacing: '0.18em', textTransform: 'uppercase',
+              fontWeight: 500, minWidth: 48,
+              border: `1px solid ${T.warning}33`,
+            } as React.CSSProperties}>Notice</span>
+            <span style={{
+              fontFamily: '"Space Grotesk", sans-serif',
+              fontSize: 15, lineHeight: 1.55, color: T.ink, textWrap: 'pretty',
+            } as React.CSSProperties}>{NOTICE}</span>
+          </div>
+        )}
+
         <ul style={{
           listStyle: 'none', padding: 0, margin: 0,
           display: 'flex', flexDirection: 'column',
@@ -94,6 +123,7 @@ export function Notes({ accent, release }: Props) {
             );
           })}
         </ul>
+        </div>
       </div>
     </section>
   );

@@ -14,7 +14,7 @@ use iced::{
 };
 
 use super::{
-  Message, StockpileContextMenu, fmt_count, stockpile_multibuy,
+  Message, StockpileContextMenu, fmt_count, fmt_isk, stockpile_multibuy,
   stockpile_search::{self, MultibuyMatch, MultibuyResolution},
 };
 use crate::{
@@ -32,6 +32,7 @@ use crate::{
       context_menu::{self, Item},
       icon::Icon,
       icon_tile::icon_tile,
+      segmented::segment_button_style,
       text_input::TextInput,
     },
     style::{color, radius, spacing, typography},
@@ -83,6 +84,29 @@ impl StockpileCard {
       .collect()
   }
 
+  pub(super) fn multibuy_lines(&self, mode: MultibuyMode) -> Vec<(String, u64)> {
+    match mode {
+      MultibuyMode::Remaining => self.multibuy_deficit(),
+      MultibuyMode::Target => self.multibuy_target(),
+    }
+  }
+
+  pub(super) fn multibuy_target(&self) -> Vec<(String, u64)> {
+    self
+      .items
+      .iter()
+      .filter(|&item| item.target > 0)
+      .map(|item| (item.type_name.clone(), item.target as u64))
+      .collect()
+  }
+
+  pub(super) fn multibuy_value(&self, mode: MultibuyMode) -> f64 {
+    match mode {
+      MultibuyMode::Remaining => self.fill_isk,
+      MultibuyMode::Target => self.target_isk,
+    }
+  }
+
   fn is_full(&self) -> bool {
     self.items.iter().all(|item| item.have >= item.target)
   }
@@ -90,6 +114,13 @@ impl StockpileCard {
   fn short_items(&self) -> usize {
     self.items.iter().filter(|item| item.have < item.target).count()
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MultibuyMode {
+  Remaining,
+  #[default]
+  Target,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -877,8 +908,9 @@ fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
     .into()
 }
 
-pub(super) fn multibuy_export_overlay(card: &StockpileCard, copied: bool) -> Element<'_, Message> {
-  let lines = card.multibuy_deficit();
+pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, copied: bool) -> Element<'_, Message> {
+  let lines = card.multibuy_lines(mode);
+  let units: u64 = lines.iter().map(|(_, qty)| qty).sum();
 
   let header = Row::with_children(vec![
     text("Export to Multibuy")
@@ -890,6 +922,24 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, copied: bool) -> Ele
       .width(Length::Fill)
       .into(),
     multibuy_copy_button(card.id, copied, !lines.is_empty()),
+  ])
+  .align_y(Vertical::Center);
+
+  let controls = Row::with_children(vec![
+    multibuy_mode_toggle(mode),
+    Space::new().width(Length::Fill).into(),
+    text(format!(
+      "{} {} \u{b7} {} units",
+      fmt_count(lines.len() as i64),
+      if lines.len() == 1 { "line" } else { "lines" },
+      fmt_count(units as i64),
+    ))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(|_| text::Style {
+      color: Some(color::text::TERTIARY),
+    })
+    .into(),
   ])
   .align_y(Vertical::Center);
 
@@ -917,9 +967,14 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, copied: bool) -> Ele
   };
 
   let panel = container(
-    Column::with_children(vec![header.into(), body])
-      .spacing(spacing::SPACE_3)
-      .width(Length::Fill),
+    Column::with_children(vec![
+      header.into(),
+      controls.into(),
+      body,
+      multibuy_footer(card.multibuy_value(mode)),
+    ])
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill),
   )
   .width(Length::Fixed(IMPORT_PANEL_WIDTH))
   .padding(spacing::SPACE_6)
@@ -939,6 +994,71 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, copied: bool) -> Ele
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .into()
+}
+
+fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
+  Column::with_children(vec![
+    text("est. value (ESI avg)")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+    text(format!("{} ISK", fmt_isk(value)))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .into()
+}
+
+fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
+  let segment = |label: &'a str, value: MultibuyMode| {
+    let active = value == mode;
+    button(
+      text(label)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(move |_| text::Style {
+          color: Some(if active {
+            color::accent::PLASMA
+          } else {
+            color::text::SECONDARY
+          }),
+        }),
+    )
+    .padding(Padding {
+      top: spacing::UNIT + 1.0,
+      bottom: spacing::UNIT + 1.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(Message::StockpileMultibuyModeChanged(value))
+    .style(move |_, status| segment_button_style(active, status))
+    .into()
+  };
+
+  container(
+    Row::with_children(vec![
+      segment("Target", MultibuyMode::Target),
+      segment("Remaining", MultibuyMode::Remaining),
+    ])
+    .spacing(0.0),
+  )
+  .style(|_| container::Style {
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.12),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Element<'a, Message> {
@@ -1546,6 +1666,71 @@ mod tests {
     }
   }
 
+  mod multibuy_modes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(items: Vec<StockpileItemLine>, fill_isk: f64, target_isk: f64) -> StockpileCard {
+      StockpileCard {
+        character_id: None,
+        fill_isk,
+        id: 1,
+        items,
+        location_id: None,
+        location_name: None,
+        name: "Cache".to_owned(),
+        overall_pct: 0.0,
+        target_isk,
+      }
+    }
+
+    fn line(type_name: &str, have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_id: 0,
+        type_name: type_name.to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_lists_full_targets_in_target_mode() {
+      let card = card(vec![line("Tritanium", 400, 1000), line("Pyerite", 50, 50)], 0.0, 0.0);
+
+      assert_eq!(
+        card.multibuy_lines(MultibuyMode::Target),
+        vec![("Tritanium".to_owned(), 1000), ("Pyerite".to_owned(), 50)]
+      );
+    }
+
+    #[test]
+    fn it_omits_zero_target_items_in_target_mode() {
+      let card = card(vec![line("Tritanium", 0, 0), line("Pyerite", 0, 50)], 0.0, 0.0);
+
+      assert_eq!(card.multibuy_target(), vec![("Pyerite".to_owned(), 50)]);
+    }
+
+    #[test]
+    fn it_lists_only_shortfalls_in_remaining_mode() {
+      let card = card(vec![line("Tritanium", 400, 1000), line("Pyerite", 50, 50)], 0.0, 0.0);
+
+      assert_eq!(
+        card.multibuy_lines(MultibuyMode::Remaining),
+        vec![("Tritanium".to_owned(), 600)]
+      );
+    }
+
+    #[test]
+    fn it_reports_target_value_in_target_mode_and_fill_value_in_remaining_mode() {
+      let card = card(vec![line("Tritanium", 400, 1000)], 3600.0, 6000.0);
+
+      assert_eq!(card.multibuy_value(MultibuyMode::Target), 6000.0);
+      assert_eq!(card.multibuy_value(MultibuyMode::Remaining), 3600.0);
+    }
+  }
+
   mod short_items {
     use pretty_assertions::assert_eq;
 
@@ -1716,11 +1901,12 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_multibuy_export_overlay_with_a_deficit() {
+    fn it_renders_the_multibuy_export_overlay_in_both_modes() {
       let card = card_model();
 
-      let _el: Element<'_, Message> = multibuy_export_overlay(&card, false);
-      let _copied: Element<'_, Message> = multibuy_export_overlay(&card, true);
+      let _remaining: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, false);
+      let _target: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Target, false);
+      let _copied: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, true);
     }
 
     #[test]
@@ -1728,7 +1914,7 @@ mod tests {
       let mut card = card_model();
       card.items[0].have = card.items[0].target;
 
-      let _el: Element<'_, Message> = multibuy_export_overlay(&card, false);
+      let _el: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, false);
     }
   }
 }

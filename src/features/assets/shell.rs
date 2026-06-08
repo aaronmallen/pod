@@ -110,7 +110,7 @@ pub(super) fn shell(state: &State, _now: DateTime<Utc>) -> Element<'_, Message> 
     return Stack::with_children(vec![
       base.into(),
       backdrop::backdrop(Message::StockpileMultibuyExportClosed),
-      stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_copied()),
+      stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_mode(), state.stockpile_multibuy_copied()),
     ])
     .width(Length::Fill)
     .height(Length::Fill)

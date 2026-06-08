@@ -245,6 +245,7 @@ pub enum Message {
   StockpileMultibuyExportClosed,
   StockpileMultibuyExportCopied(i64),
   StockpileMultibuyExportOpened(i64),
+  StockpileMultibuyModeChanged(stockpiles::MultibuyMode),
   StockpileNew,
   StockpilesReloaded(Vec<stockpiles::StockpileCard>),
   TabSelected(Tab),
@@ -296,6 +297,7 @@ pub struct State {
   stockpile_expanded: HashSet<i64>,
   stockpile_multibuy_export: Option<i64>,
   stockpile_multibuy_copied: bool,
+  stockpile_multibuy_mode: stockpiles::MultibuyMode,
   abyssals: Vec<abyssals::AbyssalCard>,
   abyssal_source_types: Vec<abyssals::SourceTypeFilter>,
   abyssal_filters: abyssals::Filters,
@@ -340,6 +342,7 @@ impl State {
       stockpile_expanded: HashSet::new(),
       stockpile_multibuy_export: None,
       stockpile_multibuy_copied: false,
+      stockpile_multibuy_mode: stockpiles::MultibuyMode::default(),
       abyssals: Vec::new(),
       abyssal_source_types: Vec::new(),
       abyssal_filters: abyssals::Filters::default(),
@@ -452,6 +455,10 @@ impl State {
 
   pub(super) fn stockpile_multibuy_copied(&self) -> bool {
     self.stockpile_multibuy_copied
+  }
+
+  pub(super) fn stockpile_multibuy_mode(&self) -> stockpiles::MultibuyMode {
+    self.stockpile_multibuy_mode
   }
 
   pub(super) fn abyssals(&self) -> &[abyssals::AbyssalCard] {
@@ -696,6 +703,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StockpileMultibuyExportClosed
     | Message::StockpileMultibuyExportCopied(_)
     | Message::StockpileMultibuyExportOpened(_)
+    | Message::StockpileMultibuyModeChanged(_)
     | Message::StockpileNew
     | Message::StockpilesReloaded(_) => update_stockpile(state, message, db),
 
@@ -1069,6 +1077,12 @@ fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database
       state.stockpile_context_menu = None;
       state.stockpile_multibuy_export = Some(id);
       state.stockpile_multibuy_copied = false;
+      state.stockpile_multibuy_mode = stockpiles::MultibuyMode::default();
+      Task::none()
+    }
+    Message::StockpileMultibuyModeChanged(mode) => {
+      state.stockpile_multibuy_mode = mode;
+      state.stockpile_multibuy_copied = false;
       Task::none()
     }
     Message::StockpileMultibuyExportClosed => {
@@ -1080,7 +1094,7 @@ fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database
       let Some(card) = state.stockpiles.iter().find(|card| card.id == id) else {
         return Task::none();
       };
-      let text = stockpile_multibuy::serialize(&card.multibuy_deficit());
+      let text = stockpile_multibuy::serialize(&card.multibuy_lines(state.stockpile_multibuy_mode));
       state.stockpile_multibuy_copied = true;
       iced::clipboard::write(text)
     }

@@ -66,15 +66,11 @@ impl Client {
   }
 
   pub async fn get_bytes_uncached(&self, url: &str) -> Result<Vec<u8>, Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("GET", url, self.inner.get(url)).await?;
-    if let Some(err) = throttle_error(&resp) {
-      return Err(err);
-    }
-    if !(200..300).contains(&resp.status().as_u16()) {
-      return Err(Error::Http(resp.error_for_status().unwrap_err()));
-    }
-    Ok(resp.bytes().await?.to_vec())
+    self.get_bytes_uncached_inner(url, None).await
+  }
+
+  pub async fn get_bytes_uncached_with_timeout(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, Error> {
+    self.get_bytes_uncached_inner(url, Some(timeout)).await
   }
 
   pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, Error> {
@@ -152,6 +148,22 @@ impl Client {
 
   async fn apply_rate_limit(&self, url: &str) {
     enforce_rate_limit(&self.rate_limiters, url).await;
+  }
+
+  async fn get_bytes_uncached_inner(&self, url: &str, timeout: Option<Duration>) -> Result<Vec<u8>, Error> {
+    self.apply_rate_limit(url).await;
+    let mut req = self.inner.get(url);
+    if let Some(timeout) = timeout {
+      req = req.timeout(timeout);
+    }
+    let resp = send_logged("GET", url, req).await?;
+    if let Some(err) = throttle_error(&resp) {
+      return Err(err);
+    }
+    if !(200..300).contains(&resp.status().as_u16()) {
+      return Err(Error::Http(resp.error_for_status().unwrap_err()));
+    }
+    Ok(resp.bytes().await?.to_vec())
   }
 
   async fn get_cached_bytes(&self, url: &str, token: Option<&str>, serve_fresh: bool) -> Result<Vec<u8>, Error> {

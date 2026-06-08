@@ -3,12 +3,16 @@ use std::{
   io::{Read as _, Write as _},
   path::{Path, PathBuf},
   sync::Arc,
+  time::Duration,
 };
 
 use tempfile::TempDir;
 
 use crate::clients::{self, http};
 
+const SDE_DOWNLOAD_BACKOFF_BASE: Duration = Duration::from_millis(500);
+const SDE_DOWNLOAD_MAX_ATTEMPTS: u32 = 3;
+const SDE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const SDE_YAML_URL: &str = "https://developers.eveonline.com/static-data/eve-online-static-data-latest-yaml.zip";
 
 pub struct Client {
@@ -25,7 +29,7 @@ impl Client {
   }
 
   pub async fn download_and_extract(&self) -> Result<Sde, clients::Error> {
-    let bytes = self.http.get_bytes_uncached(&self.url).await?;
+    let bytes = self.download_bytes().await?;
     let temp_dir = tempfile::tempdir().map_err(|e| clients::Error::Internal(e.to_string()))?;
     let extract_dir = temp_dir.path().to_owned();
     extract_zip(bytes, extract_dir.clone()).await?;
@@ -36,6 +40,35 @@ impl Client {
       build_version,
       _temp_dir: temp_dir,
     })
+  }
+
+  async fn download_bytes(&self) -> Result<Vec<u8>, clients::Error> {
+    let mut attempt = 1;
+    loop {
+      match self
+        .http
+        .get_bytes_uncached_with_timeout(&self.url, SDE_DOWNLOAD_TIMEOUT)
+        .await
+      {
+        Ok(bytes) => return Ok(bytes),
+        Err(error) => {
+          if attempt >= SDE_DOWNLOAD_MAX_ATTEMPTS || !is_transient(&error) {
+            return Err(error);
+          }
+          let backoff = SDE_DOWNLOAD_BACKOFF_BASE * 2u32.pow(attempt - 1);
+          tracing::warn!(
+            target: "pod::sde",
+            url = %self.url,
+            attempt,
+            backoff_ms = backoff.as_millis() as u64,
+            %error,
+            "SDE download failed; retrying after backoff",
+          );
+          tokio::time::sleep(backoff).await;
+          attempt += 1;
+        }
+      }
+    }
   }
 
   #[cfg(test)]
@@ -118,6 +151,16 @@ async fn find_sde_root_in_subdirs(extract_dir: &Path) -> Option<PathBuf> {
     }
   }
   None
+}
+
+fn is_transient(error: &clients::Error) -> bool {
+  match error {
+    clients::Error::Http(e) => match e.status() {
+      Some(status) => status.is_server_error(),
+      None => e.is_timeout() || e.is_connect() || e.is_request() || e.is_decode() || e.is_body(),
+    },
+    _ => false,
+  }
 }
 
 fn parse_sde_build_from_yaml(data: &str) -> Option<String> {
@@ -250,6 +293,53 @@ mod tests {
       let client = Client::with_url(http, format!("{}/missing.zip", server.uri()));
 
       assert!(client.download_and_extract().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn it_retries_a_transient_failure_and_then_succeeds() {
+      let zip = build_zip(&[
+        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
+        ("_sde.yaml", b"sde:\n  buildNumber: 55555\n"),
+      ]);
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/sde.zip"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/sde.zip"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(zip, "application/zip"))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let client = Client::with_url(http, format!("{}/sde.zip", server.uri()));
+
+      let sde = client.download_and_extract().await.unwrap();
+
+      assert!(sde.root.join("categories.yaml").exists());
+      assert_eq!(sde.build_version.as_deref(), Some("55555"));
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_error_after_exhausting_retries() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/sde.zip"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(3)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let client = Client::with_url(http, format!("{}/sde.zip", server.uri()));
+
+      let result = client.download_and_extract().await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
     }
   }
 

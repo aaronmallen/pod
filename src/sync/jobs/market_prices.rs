@@ -40,7 +40,7 @@ mod tests {
 
   async fn mount_prices(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("GET"))
-      .and(path("/v1/markets/prices/"))
+      .and(path("/markets/prices/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -137,7 +137,7 @@ mod tests {
     async fn it_errors_and_persists_nothing_when_the_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/prices/"))
+        .and(path("/markets/prices/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;

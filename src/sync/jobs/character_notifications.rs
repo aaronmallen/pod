@@ -113,7 +113,7 @@ mod tests {
         }
       ]);
       Mock::given(method("GET"))
-        .and(path("/v6/characters/42/notifications/"))
+        .and(path("/characters/42/notifications/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&server)
         .await;
@@ -143,7 +143,7 @@ mod tests {
     async fn it_aborts_without_writing_when_the_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v6/characters/42/notifications/"))
+        .and(path("/characters/42/notifications/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -167,7 +167,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v6/characters/42/notifications/"))
+        .and(path("/characters/42/notifications/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

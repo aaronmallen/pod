@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn detail(&self, killmail_id: i64, hash: &str) -> Result<Killmail, clients::Error> {
-    let url = self.esi.url(&format!("v1/killmails/{killmail_id}/{hash}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("killmails/{killmail_id}/{hash}/"));
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -24,7 +24,7 @@ impl<'a> Client<'a> {
 mod tests {
   use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{header, method, path},
   };
 
   use super::*;
@@ -56,7 +56,8 @@ mod tests {
         ]
       }"#;
       Mock::given(method("GET"))
-        .and(path("/v1/killmails/100/abc123/"))
+        .and(path("/killmails/100/abc123/"))
+        .and(header("X-Compatibility-Date", "2026-06-08"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -83,7 +84,7 @@ mod tests {
         "victim": {"ship_type_id": 35832}
       }"#;
       Mock::given(method("GET"))
-        .and(path("/v1/killmails/200/def456/"))
+        .and(path("/killmails/200/def456/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;

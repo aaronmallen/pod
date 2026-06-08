@@ -164,7 +164,7 @@ mod tests {
       let esi_server = MockServer::start().await;
       mount_json(
         &esi_server,
-        "/v1/killmails/100/killhash/",
+        "/killmails/100/killhash/",
         serde_json::json!({
           "killmail_id": 100,
           "killmail_time": "2024-01-01T00:00:00Z",
@@ -176,7 +176,7 @@ mod tests {
       .await;
       mount_json(
         &esi_server,
-        "/v1/killmails/200/losshash/",
+        "/killmails/200/losshash/",
         serde_json::json!({
           "killmail_id": 200,
           "killmail_time": "2024-02-01T00:00:00Z",
@@ -232,7 +232,7 @@ mod tests {
       let esi_server = MockServer::start().await;
       mount_json(
         &esi_server,
-        "/v1/killmails/100/goodhash/",
+        "/killmails/100/goodhash/",
         serde_json::json!({
           "killmail_id": 100,
           "killmail_time": "2024-01-01T00:00:00Z",
@@ -243,7 +243,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path("/v1/killmails/300/badhash/"))
+        .and(path("/killmails/300/badhash/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&esi_server)
         .await;

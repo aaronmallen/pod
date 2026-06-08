@@ -332,7 +332,7 @@ mod tests {
     async fn it_passes_through_already_resolved_recipients_without_fetching() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -362,7 +362,7 @@ mod tests {
     async fn it_resolves_id_less_names_into_their_entity_buckets() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "alliances": [{ "id": 99_000_001, "name": "An Alliance" }],
           "characters": [{ "id": 95_000_001, "name": "A Pilot" }],
@@ -398,7 +398,7 @@ mod tests {
     async fn it_errors_when_no_recipient_resolves() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .mount(&server)
         .await;

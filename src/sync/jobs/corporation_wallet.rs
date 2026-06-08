@@ -195,13 +195,13 @@ mod tests {
   }
 
   async fn mount_roles(server: &MockServer, body: serde_json::Value) {
-    mount_json(server, &format!("/v2/corporations/{CORP}/roles/"), body).await;
+    mount_json(server, &format!("/corporations/{CORP}/roles/"), body).await;
   }
 
   async fn mount_wallets(server: &MockServer) {
     mount_json(
       server,
-      &format!("/v1/corporations/{CORP}/divisions/"),
+      &format!("/corporations/{CORP}/divisions/"),
       serde_json::json!({
         "wallet": [{ "division": 1, "name": "Master Wallet" }, { "division": 2, "name": "Logistics" }]
       }),
@@ -209,7 +209,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      &format!("/v1/corporations/{CORP}/wallets/"),
+      &format!("/corporations/{CORP}/wallets/"),
       serde_json::json!([{ "division": 1, "balance": 1234.56 }, { "division": 2, "balance": 0.0 }]),
     )
     .await;
@@ -219,7 +219,7 @@ mod tests {
     for division in 1..=7 {
       mount_paginated(
         server,
-        &format!("/v4/corporations/{CORP}/wallets/{division}/journal/"),
+        &format!("/corporations/{CORP}/wallets/{division}/journal/"),
         serde_json::json!([
           { "amount": -1000.0, "balance": 5000.0, "date": "2026-05-30T12:00:00Z",
             "description": "Market escrow", "id": 100 + division, "ref_type": "market_escrow" },
@@ -228,7 +228,7 @@ mod tests {
       .await;
       mount_json(
         server,
-        &format!("/v1/corporations/{CORP}/wallets/{division}/transactions/"),
+        &format!("/corporations/{CORP}/wallets/{division}/transactions/"),
         serde_json::json!([
           { "client_id": 1000035, "date": "2026-05-30T12:00:00Z", "is_buy": true,
             "journal_ref_id": 555, "location_id": 60003760, "quantity": 10,
@@ -372,7 +372,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/corporations/{CORP}/divisions/")))
+        .and(path(format!("/corporations/{CORP}/divisions/")))
         .respond_with(ResponseTemplate::new(401))
         .mount(&server)
         .await;
@@ -405,7 +405,7 @@ mod tests {
       .await;
       mount_wallets(&server).await;
       Mock::given(method("GET"))
-        .and(path(format!("/v4/corporations/{CORP}/wallets/3/journal/")))
+        .and(path(format!("/corporations/{CORP}/wallets/3/journal/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -445,7 +445,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_corporation_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/corporations/{CORP}/roles/")))
+        .and(path(format!("/corporations/{CORP}/roles/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

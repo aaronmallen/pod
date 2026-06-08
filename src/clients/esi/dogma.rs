@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn dynamic_item(&self, type_id: i64, item_id: i64) -> Result<DynamicItem, clients::Error> {
-    let url = self.esi.url(&format!("v1/dogma/dynamic/items/{type_id}/{item_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("dogma/dynamic/items/{type_id}/{item_id}/"));
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -48,7 +48,7 @@ mod tests {
     async fn it_returns_source_mutator_and_rolled_attributes() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/dogma/dynamic/items/47804/1038913810254/"))
+        .and(path("/dogma/dynamic/items/47804/1038913810254/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(DYNAMIC_ITEM_FIXTURE, "application/json"))
         .mount(&server)
         .await;
@@ -67,7 +67,7 @@ mod tests {
     async fn it_returns_http_error_on_4xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/dogma/dynamic/items/1/2/"))
+        .and(path("/dogma/dynamic/items/1/2/"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;

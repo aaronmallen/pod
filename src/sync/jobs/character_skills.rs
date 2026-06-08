@@ -140,7 +140,7 @@ mod tests {
   async fn mount_skills(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v4/characters/{character_id}/skills/"),
+      &format!("/characters/{character_id}/skills/"),
       serde_json::json!({
         "skills": [
           { "active_skill_level": 5, "skill_id": 3300, "skillpoints_in_skill": 256000, "trained_skill_level": 5 },
@@ -155,7 +155,7 @@ mod tests {
   async fn mount_skill_queue(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v2/characters/{character_id}/skillqueue/"),
+      &format!("/characters/{character_id}/skillqueue/"),
       serde_json::json!([
         { "finish_date": "2026-06-01T00:00:00Z", "finished_level": 5, "queue_position": 0, "skill_id": 3300 },
       ]),
@@ -166,7 +166,7 @@ mod tests {
   async fn mount_attributes(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/attributes/"),
+      &format!("/characters/{character_id}/attributes/"),
       serde_json::json!({
         "charisma": 20, "intelligence": 22, "memory": 21, "perception": 20, "willpower": 20,
         "bonus_remaps": 2, "last_remap_date": "2023-04-01T12:00:00Z",
@@ -179,13 +179,13 @@ mod tests {
   async fn mount_implants(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/implants/"),
+      &format!("/characters/{character_id}/implants/"),
       serde_json::json!([9899]),
     )
     .await;
     mount_json(
       server,
-      "/v3/universe/types/9899/",
+      "/universe/types/9899/",
       serde_json::json!({
         "description": "A memory implant.", "group_id": 300, "name": "Memory Augmentation - Basic",
         "published": true, "type_id": 9899,
@@ -201,7 +201,7 @@ mod tests {
   async fn mount_skill_type(server: &MockServer) {
     mount_json(
       server,
-      "/v3/universe/types/3300/",
+      "/universe/types/3300/",
       serde_json::json!({
         "description": "Gunnery.", "group_id": 255, "market_group_id": 1112, "name": "Gunnery",
         "published": true, "type_id": 3300,
@@ -218,7 +218,7 @@ mod tests {
   async fn mount_market_groups(server: &MockServer) {
     mount_json(
       server,
-      "/v1/markets/groups/1112/",
+      "/markets/groups/1112/",
       serde_json::json!({
         "description": "Skill books.", "market_group_id": 1112, "name": "Skills",
         "parent_group_id": 1111, "types": [3300],
@@ -227,7 +227,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/markets/groups/1111/",
+      "/markets/groups/1111/",
       serde_json::json!({
         "description": "All market groups.", "market_group_id": 1111, "name": "Market", "types": [],
       }),
@@ -238,13 +238,13 @@ mod tests {
   async fn mount_skill_group_and_category(server: &MockServer) {
     mount_json(
       server,
-      "/v1/universe/groups/255/",
+      "/universe/groups/255/",
       serde_json::json!({ "category_id": 16, "group_id": 255, "name": "Gunnery", "published": true, "types": [3300] }),
     )
     .await;
     mount_json(
       server,
-      "/v1/universe/categories/16/",
+      "/universe/categories/16/",
       serde_json::json!({ "category_id": 16, "groups": [255], "name": "Skill", "published": true }),
     )
     .await;
@@ -321,13 +321,13 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v4/characters/42/skills/",
+        "/characters/42/skills/",
         serde_json::json!({ "skills": [], "total_sp": 0 }),
       )
       .await;
-      mount_json(&server, "/v2/characters/42/skillqueue/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/skillqueue/", serde_json::json!([])).await;
       mount_attributes(&server, 42).await;
-      mount_json(&server, "/v1/characters/42/implants/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/implants/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -354,7 +354,7 @@ mod tests {
       mount_skills(&server, 42).await;
       mount_skill_queue(&server, 42).await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/attributes/"))
+        .and(path("/characters/42/attributes/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -390,7 +390,7 @@ mod tests {
       mount_implants(&server, 42).await;
       mount_json(
         &server,
-        "/v3/universe/types/3300/",
+        "/universe/types/3300/",
         serde_json::json!({
           "description": "Gunnery.", "group_id": 255, "market_group_id": 1112, "name": "Gunnery",
           "published": true, "type_id": 3300,
@@ -427,7 +427,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v4/characters/42/skills/"))
+        .and(path("/characters/42/skills/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "skills": [], "total_sp": 0 })))
         .expect(0)
         .mount(&server)

@@ -69,7 +69,7 @@ mod tests {
 
   async fn mount_orders(server: &MockServer, character_id: i64, body: serde_json::Value) {
     Mock::given(method("GET"))
-      .and(path(format!("/v2/characters/{character_id}/orders/")))
+      .and(path(format!("/characters/{character_id}/orders/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -188,7 +188,7 @@ mod tests {
     async fn it_errors_when_the_grant_is_missing() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/orders/"))
+        .and(path("/characters/42/orders/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
@@ -212,7 +212,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/orders/"))
+        .and(path("/characters/42/orders/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

@@ -221,7 +221,7 @@ mod tests {
 
   async fn mount_names(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -238,7 +238,7 @@ mod tests {
   async fn mount_item_type(server: &MockServer, type_id: i64, name: &str) {
     mount_json(
       server,
-      &format!("/v3/universe/types/{type_id}/"),
+      &format!("/universe/types/{type_id}/"),
       serde_json::json!({
         "description": "An implant.", "group_id": 300, "name": name, "published": true, "type_id": type_id,
       }),
@@ -270,7 +270,7 @@ mod tests {
   async fn mount_clones(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v4/characters/{character_id}/clones/"),
+      &format!("/characters/{character_id}/clones/"),
       serde_json::json!({
         "home_location": { "location_id": 60_003_760, "location_type": "station" },
         "jump_clones": [
@@ -284,7 +284,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/implants/"),
+      &format!("/characters/{character_id}/implants/"),
       serde_json::json!([9899]),
     )
     .await;
@@ -382,7 +382,7 @@ mod tests {
     async fn it_aborts_without_writing_when_the_clones_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v4/characters/42/clones/"))
+        .and(path("/characters/42/clones/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -451,7 +451,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v4/characters/42/clones/"))
+        .and(path("/characters/42/clones/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "home_location": { "location_id": 60_003_760, "location_type": "station" },
         })))
@@ -570,7 +570,7 @@ mod tests {
     async fn it_returns_the_cached_name_without_fetching() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -590,7 +590,7 @@ mod tests {
     async fn it_skips_silently_when_the_grant_lacks_the_scope() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -609,7 +609,7 @@ mod tests {
     async fn it_fetches_a_visible_structure_name_from_esi() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "name": "A Player Structure", "owner_id": 1_000_035, "solar_system_id": 30_000_142,
         })))
@@ -629,7 +629,7 @@ mod tests {
     async fn it_treats_a_403_as_unresolved() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -647,7 +647,7 @@ mod tests {
     async fn it_propagates_a_non_403_error() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;

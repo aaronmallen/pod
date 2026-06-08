@@ -252,7 +252,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"inventory_types":[{"id":34,"name":"Tritanium"},{"id":35,"name":"Pyerite"}]}"#;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -299,14 +299,14 @@ mod tests {
     async fn it_returns_resolved_type_ids_and_names() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("categories", "inventory_type"))
         .and(query_param("search", "Trit"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"inventory_type":[34,35]}"#, "application/json"))
         .mount(&server)
         .await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
           r#"[{"category":"inventory_type","id":34,"name":"Tritanium"},{"category":"inventory_type","id":35,"name":"Pyerite"}]"#,
           "application/json",
@@ -341,7 +341,7 @@ mod tests {
     async fn it_resolves_public_locations_via_names_and_structures_via_the_authenticated_endpoint() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("categories", "region,constellation,solar_system,station,structure"))
         .and(query_param("search", "Jita"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -351,7 +351,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
           r#"[{"category":"region","id":10000002,"name":"The Forge"},{"category":"constellation","id":20000020,"name":"Kimotoro"},{"category":"solar_system","id":30000142,"name":"Jita"},{"category":"station","id":60003760,"name":"Jita IV - Moon 4 - CNAP"}]"#,
           "application/json",
@@ -359,7 +359,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/structures/1234567890/"))
+        .and(path("/universe/structures/1234567890/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
           r#"{"name":"Jita Trade Hub","owner_id":98000001,"solar_system_id":30000142,"type_id":35833}"#,
           "application/json",

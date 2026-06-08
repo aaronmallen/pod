@@ -27,182 +27,151 @@ impl<'a> AuthenticatedClient<'a> {
   pub async fn assets(&self) -> Result<Vec<Asset>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v5/characters/{}/assets/", self.grant.character_id()));
-    self
-      .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+      .url(&format!("characters/{}/assets/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn attributes(&self) -> Result<Attributes, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/attributes/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/attributes/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn clones(&self) -> Result<Clones, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v4/characters/{}/clones/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/clones/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn contact_labels(&self) -> Result<Vec<ContactLabel>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/contacts/labels/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/contacts/labels/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn contacts(&self) -> Result<Vec<Contact>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v2/characters/{}/contacts/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/contacts/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn contracts(&self) -> Result<Vec<Contract>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/contracts/", self.grant.character_id()));
-    self
-      .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+      .url(&format!("characters/{}/contracts/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn implants(&self) -> Result<Vec<i64>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/implants/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/implants/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn location(&self) -> Result<Location, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v2/characters/{}/location/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/location/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn mail(&self) -> Result<Vec<MailHeader>, clients::Error> {
-    let url = self
-      .esi
-      .url(&format!("v1/characters/{}/mail/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    let url = self.esi.url(&format!("characters/{}/mail/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn mail_body(&self, mail_id: i64) -> Result<MailBody, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/mail/{mail_id}/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/mail/{mail_id}/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn mark_read(&self, mail_id: i64, request: &MarkReadRequest) -> Result<(), clients::Error> {
     let url = self
       .esi
-      .url(&format!("v1/characters/{}/mail/{mail_id}/", self.grant.character_id()));
-    self
-      .esi
-      .http()
-      .put_empty(&url, request, self.grant.access_token())
-      .await
+      .url(&format!("characters/{}/mail/{mail_id}/", self.grant.character_id()));
+    self.esi.put_empty(&url, request, self.grant.access_token()).await
   }
 
   pub async fn notifications(&self) -> Result<Vec<Notification>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v6/characters/{}/notifications/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/notifications/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn online(&self) -> Result<Online, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v3/characters/{}/online/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/online/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn orders(&self) -> Result<Vec<MarketOrder>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v2/characters/{}/orders/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/orders/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   #[allow(dead_code)]
   pub async fn recent_killmails(&self) -> Result<Vec<RecentKillmail>, clients::Error> {
-    let url = self.esi.url(&format!(
-      "v1/characters/{}/killmails/recent/",
-      self.grant.character_id()
-    ));
-    self
+    let url = self
       .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+      .url(&format!("characters/{}/killmails/recent/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn send_mail(&self, request: &SendMailRequest) -> Result<i64, clients::Error> {
-    let url = self
-      .esi
-      .url(&format!("v1/characters/{}/mail/", self.grant.character_id()));
-    self
-      .esi
-      .http()
-      .post_json(&url, request, self.grant.access_token())
-      .await
+    let url = self.esi.url(&format!("characters/{}/mail/", self.grant.character_id()));
+    self.esi.post_json(&url, request, self.grant.access_token()).await
   }
 
   pub async fn ship(&self) -> Result<Ship, clients::Error> {
-    let url = self
-      .esi
-      .url(&format!("v2/characters/{}/ship/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    let url = self.esi.url(&format!("characters/{}/ship/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn skill_queue(&self) -> Result<Vec<SkillQueueEntry>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v2/characters/{}/skillqueue/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/skillqueue/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn skills(&self) -> Result<CharacterSkills, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v4/characters/{}/skills/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/skills/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn standings(&self) -> Result<Vec<Standing>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v2/characters/{}/standings/", self.grant.character_id()));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+      .url(&format!("characters/{}/standings/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallet_journal(&self) -> Result<Vec<WalletJournalEntry>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v6/characters/{}/wallet/journal/", self.grant.character_id()));
-    self
-      .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+      .url(&format!("characters/{}/wallet/journal/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallet_transactions(&self) -> Result<Vec<WalletTransaction>, clients::Error> {
     let url = self.esi.url(&format!(
-      "v1/characters/{}/wallet/transactions/",
+      "characters/{}/wallet/transactions/",
       self.grant.character_id()
     ));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 }
 
@@ -218,8 +187,8 @@ impl<'a> PublicClient<'a> {
   }
 
   pub async fn public_info(&self, character_id: i64) -> Result<CharacterInfo, clients::Error> {
-    let url = self.esi.url(&format!("v5/characters/{character_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("characters/{character_id}/"));
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -254,7 +223,7 @@ mod tests {
         let page1 = r#"[{"is_singleton":true,"item_id":1,"location_flag":"Hangar","location_id":60,"location_type":"station","quantity":1,"type_id":587}]"#;
         let page2 = r#"[{"is_singleton":false,"item_id":2,"location_flag":"Hangar","location_id":60,"location_type":"station","quantity":5,"type_id":34}]"#;
         Mock::given(method("GET"))
-          .and(path("/v5/characters/42/assets/"))
+          .and(path("/characters/42/assets/"))
           .and(wiremock::matchers::query_param("page", "1"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -264,7 +233,7 @@ mod tests {
           .mount(&server)
           .await;
         Mock::given(method("GET"))
-          .and(path("/v5/characters/42/assets/"))
+          .and(path("/characters/42/assets/"))
           .and(wiremock::matchers::query_param("page", "2"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -285,7 +254,7 @@ mod tests {
       async fn it_sends_the_bearer_token() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-          .and(path("/v5/characters/42/assets/"))
+          .and(path("/characters/42/assets/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -314,7 +283,7 @@ mod tests {
       async fn it_sends_the_bearer_token_to_the_v1_attributes_path() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/attributes/"))
+          .and(path("/characters/42/attributes/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(ATTRIBUTES_FIXTURE, "application/json"))
           .mount(&server)
@@ -335,7 +304,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"{"charisma":19,"intelligence":20,"memory":20,"perception":20,"willpower":20}"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/attributes/"))
+          .and(path("/characters/42/attributes/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -365,7 +334,7 @@ mod tests {
           "last_station_change_date":"2024-02-01T00:00:00Z"
         }"#;
         Mock::given(method("GET"))
-          .and(path("/v4/characters/42/clones/"))
+          .and(path("/characters/42/clones/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -394,7 +363,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"label_id":1,"label_name":"Friends"},{"label_id":2,"label_name":"Enemies"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/contacts/labels/"))
+          .and(path("/characters/42/contacts/labels/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -421,7 +390,7 @@ mod tests {
         let body =
           r#"[{"contact_id":1001,"contact_type":"character","is_watched":true,"label_ids":[1],"standing":7.5}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/contacts/"))
+          .and(path("/characters/42/contacts/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -444,7 +413,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"contact_id":2002,"contact_type":"corporation"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/contacts/"))
+          .and(path("/characters/42/contacts/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -471,7 +440,7 @@ mod tests {
         let page1 = r#"[{"contract_id":1,"type":"item_exchange","status":"outstanding","price":1000.0}]"#;
         let page2 = r#"[{"contract_id":2,"type":"courier","status":"in_progress","reward":500.0,"collateral":100.0,"volume":1500.0}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/contracts/"))
+          .and(path("/characters/42/contracts/"))
           .and(wiremock::matchers::query_param("page", "1"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -481,7 +450,7 @@ mod tests {
           .mount(&server)
           .await;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/contracts/"))
+          .and(path("/characters/42/contracts/"))
           .and(wiremock::matchers::query_param("page", "2"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -503,7 +472,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"contract_id":9,"type":"courier","status":"outstanding","issuer_id":1001,"assignee_id":2002,"reward":1234.5,"collateral":6789.0,"volume":250.0,"date_issued":"2024-01-01T00:00:00Z","for_corporation":false}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/contracts/"))
+          .and(path("/characters/42/contracts/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -537,7 +506,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[9899,9941,9942]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/implants/"))
+          .and(path("/characters/42/implants/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -561,7 +530,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"{"solar_system_id":30000142,"station_id":60003760}"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/location/"))
+          .and(path("/characters/42/location/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -587,7 +556,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"mail_id":7,"from":1001,"recipients":[{"recipient_id":2002,"recipient_type":"character"},{"recipient_id":3003,"recipient_type":"mailing_list"}],"subject":"Hello","timestamp":"2024-01-01T00:00:00Z","is_read":true,"labels":[1,4]}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/mail/"))
+          .and(path("/characters/42/mail/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -615,7 +584,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"mail_id":8}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/mail/"))
+          .and(path("/characters/42/mail/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -644,7 +613,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"{"body":"<p>Greetings, capsuleer.</p>","from":1001,"labels":[1],"read":true,"subject":"Hello","timestamp":"2024-01-01T00:00:00Z","recipients":[{"recipient_id":2002,"recipient_type":"character"}]}"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/mail/7/"))
+          .and(path("/characters/42/mail/7/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -668,7 +637,7 @@ mod tests {
       async fn it_puts_the_read_flag_with_the_bearer_token() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-          .and(path("/v1/characters/42/mail/7/"))
+          .and(path("/characters/42/mail/7/"))
           .and(header("Authorization", "Bearer secret-token"))
           .and(body_json(json!({"read": true})))
           .respond_with(ResponseTemplate::new(204))
@@ -690,7 +659,7 @@ mod tests {
       async fn it_omits_unset_fields_from_the_body() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-          .and(path("/v1/characters/42/mail/7/"))
+          .and(path("/characters/42/mail/7/"))
           .respond_with(ResponseTemplate::new(204))
           .mount(&server)
           .await;
@@ -715,7 +684,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"order_id":1001,"type_id":34,"region_id":10000002,"location_id":60003760,"range":"region","is_buy_order":true,"price":5.5,"volume_remain":100,"volume_total":200,"min_volume":1,"escrow":550.0,"duration":90,"issued":"2026-06-01T12:00:00Z"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/orders/"))
+          .and(path("/characters/42/orders/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -745,7 +714,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"order_id":2002,"type_id":35,"region_id":10000002,"location_id":60003760,"range":"station","price":12.3,"volume_remain":5,"volume_total":5,"duration":30,"issued":"2026-06-02T00:00:00Z"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/orders/"))
+          .and(path("/characters/42/orders/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -773,7 +742,7 @@ mod tests {
       async fn it_posts_the_send_body_and_returns_the_new_mail_id() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-          .and(path("/v1/characters/42/mail/"))
+          .and(path("/characters/42/mail/"))
           .and(header("Authorization", "Bearer secret-token"))
           .and(body_json(json!({
             "body": "Form up at 19:00.",
@@ -846,7 +815,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"notification_id":7,"type":"KillReportFinalBlow","sender_id":1001,"sender_type":"character","timestamp":"2024-01-01T00:00:00Z","is_read":true,"text":"body"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v6/characters/42/notifications/"))
+          .and(path("/characters/42/notifications/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -869,7 +838,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"notification_id":8,"type":"TutorialMsg","timestamp":"2024-02-01T00:00:00Z"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v6/characters/42/notifications/"))
+          .and(path("/characters/42/notifications/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -894,7 +863,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"killmail_id":100,"killmail_hash":"abc123"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/characters/42/killmails/recent/"))
+          .and(path("/characters/42/killmails/recent/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -924,7 +893,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"{"skills":[{"active_skill_level":5,"skill_id":3300,"skillpoints_in_skill":256000,"trained_skill_level":5}],"total_sp":256000}"#;
         Mock::given(method("GET"))
-          .and(path("/v4/characters/42/skills/"))
+          .and(path("/characters/42/skills/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -948,7 +917,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"from_id":500001,"from_type":"faction","standing":5.0},{"from_id":1000035,"from_type":"npc_corp","standing":-2.5}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/characters/42/standings/"))
+          .and(path("/characters/42/standings/"))
           .and(header("Authorization", "Bearer secret-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -976,7 +945,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"date":"2024-01-01T00:00:00Z","description":"corp tax","id":1,"ref_type":"corporation_account_withdrawal"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v6/characters/42/wallet/journal/"))
+          .and(path("/characters/42/wallet/journal/"))
           .respond_with(
             ResponseTemplate::new(200)
               .insert_header("X-Pages", "1")
@@ -1016,7 +985,7 @@ mod tests {
           "race_id": 2
         }"#;
         Mock::given(method("GET"))
-          .and(path("/v5/characters/42/"))
+          .and(path("/characters/42/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -1032,7 +1001,7 @@ mod tests {
       async fn it_returns_http_error_on_4xx() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-          .and(path("/v5/characters/42/"))
+          .and(path("/characters/42/"))
           .respond_with(ResponseTemplate::new(404))
           .mount(&server)
           .await;

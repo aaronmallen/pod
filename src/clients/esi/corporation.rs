@@ -24,22 +24,18 @@ impl<'a> AuthenticatedClient<'a> {
   }
 
   pub async fn assets(&self, corporation_id: i64) -> Result<Vec<CorporationAsset>, clients::Error> {
-    let url = self.esi.url(&format!("v5/corporations/{corporation_id}/assets/"));
-    self
-      .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+    let url = self.esi.url(&format!("corporations/{corporation_id}/assets/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn divisions(&self, corporation_id: i64) -> Result<CorporationDivisions, clients::Error> {
-    let url = self.esi.url(&format!("v1/corporations/{corporation_id}/divisions/"));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    let url = self.esi.url(&format!("corporations/{corporation_id}/divisions/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn member_roles(&self, corporation_id: i64) -> Result<Vec<MemberRole>, clients::Error> {
-    let url = self.esi.url(&format!("v2/corporations/{corporation_id}/roles/"));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    let url = self.esi.url(&format!("corporations/{corporation_id}/roles/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallet_journal(
@@ -49,12 +45,8 @@ impl<'a> AuthenticatedClient<'a> {
   ) -> Result<Vec<CorporationWalletJournalEntry>, clients::Error> {
     let url = self
       .esi
-      .url(&format!("v4/corporations/{corporation_id}/wallets/{division}/journal/"));
-    self
-      .esi
-      .http()
-      .get_json_paginated(&url, Some(self.grant.access_token()))
-      .await
+      .url(&format!("corporations/{corporation_id}/wallets/{division}/journal/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallet_transactions(
@@ -63,14 +55,14 @@ impl<'a> AuthenticatedClient<'a> {
     division: i32,
   ) -> Result<Vec<CorporationWalletTransaction>, clients::Error> {
     let url = self.esi.url(&format!(
-      "v1/corporations/{corporation_id}/wallets/{division}/transactions/"
+      "corporations/{corporation_id}/wallets/{division}/transactions/"
     ));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallets(&self, corporation_id: i64) -> Result<Vec<CorporationWalletBalance>, clients::Error> {
-    let url = self.esi.url(&format!("v1/corporations/{corporation_id}/wallets/"));
-    self.esi.http().get_json(&url, Some(self.grant.access_token())).await
+    let url = self.esi.url(&format!("corporations/{corporation_id}/wallets/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 }
 
@@ -86,8 +78,8 @@ impl<'a> PublicClient<'a> {
   }
 
   pub async fn info(&self, corporation_id: i64) -> Result<CorporationInfo, clients::Error> {
-    let url = self.esi.url(&format!("v5/corporations/{corporation_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("corporations/{corporation_id}/"));
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -121,7 +113,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"is_singleton":true,"item_id":1,"location_flag":"CorpDeliveries","location_id":60,"location_type":"station","quantity":3,"type_id":34}]"#;
         Mock::given(method("GET"))
-          .and(path("/v5/corporations/2000/assets/"))
+          .and(path("/corporations/2000/assets/"))
           .and(header("Authorization", "Bearer corp-token"))
           .respond_with(
             ResponseTemplate::new(200)
@@ -153,7 +145,7 @@ mod tests {
           "wallet": [{"division": 1, "name": "Master Wallet"}, {"division": 2, "name": "Second Wallet"}]
         }"#;
         Mock::given(method("GET"))
-          .and(path("/v1/corporations/2000/divisions/"))
+          .and(path("/corporations/2000/divisions/"))
           .and(header("Authorization", "Bearer corp-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -182,7 +174,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"character_id":123,"roles":["Director","Accountant"]}]"#;
         Mock::given(method("GET"))
-          .and(path("/v2/corporations/2000/roles/"))
+          .and(path("/corporations/2000/roles/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -209,7 +201,7 @@ mod tests {
         let page_two =
           r#"[{"id":2,"date":"2026-01-02T00:00:00Z","description":"Tax","ref_type":"corporation_account_withdrawal"}]"#;
         Mock::given(method("GET"))
-          .and(path("/v4/corporations/2000/wallets/1/journal/"))
+          .and(path("/corporations/2000/wallets/1/journal/"))
           .and(header("Authorization", "Bearer corp-token"))
           .and(wiremock::matchers::query_param("page", "1"))
           .respond_with(
@@ -220,7 +212,7 @@ mod tests {
           .mount(&server)
           .await;
         Mock::given(method("GET"))
-          .and(path("/v4/corporations/2000/wallets/1/journal/"))
+          .and(path("/corporations/2000/wallets/1/journal/"))
           .and(header("Authorization", "Bearer corp-token"))
           .and(wiremock::matchers::query_param("page", "2"))
           .respond_with(
@@ -258,7 +250,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"client_id":1001,"date":"2026-01-01T00:00:00Z","is_buy":true,"journal_ref_id":555,"location_id":60003760,"quantity":10,"transaction_id":9001,"type_id":34,"unit_price":5.5}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/corporations/2000/wallets/1/transactions/"))
+          .and(path("/corporations/2000/wallets/1/transactions/"))
           .and(header("Authorization", "Bearer corp-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -290,7 +282,7 @@ mod tests {
         let server = MockServer::start().await;
         let body = r#"[{"division":1,"balance":1234.56},{"division":2,"balance":0.0}]"#;
         Mock::given(method("GET"))
-          .and(path("/v1/corporations/2000/wallets/"))
+          .and(path("/corporations/2000/wallets/"))
           .and(header("Authorization", "Bearer corp-token"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
@@ -327,7 +319,7 @@ mod tests {
           "ticker": "-CCP-"
         }"#;
         Mock::given(method("GET"))
-          .and(path("/v5/corporations/2000/"))
+          .and(path("/corporations/2000/"))
           .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
@@ -344,7 +336,7 @@ mod tests {
       async fn it_returns_http_error_on_4xx() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-          .and(path("/v5/corporations/2000/"))
+          .and(path("/corporations/2000/"))
           .respond_with(ResponseTemplate::new(404))
           .mount(&server)
           .await;

@@ -388,12 +388,12 @@ mod tests {
 
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-      .and(path("/v3/characters/42/search/"))
+      .and(path("/characters/42/search/"))
       .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[95,96]}"#, "application/json"))
       .mount(&server)
       .await;
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_raw(
         r#"[{"id":95,"name":"Vex","category":"character"},{"id":96,"name":"A Corp","category":"corporation"}]"#,
         "application/json",

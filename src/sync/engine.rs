@@ -606,7 +606,7 @@ mod tests {
   async fn mount_skill_picture(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v4/characters/{character_id}/skills/"),
+      &format!("/characters/{character_id}/skills/"),
       serde_json::json!({
         "skills": [
           { "active_skill_level": 5, "skill_id": 3300, "skillpoints_in_skill": 256000, "trained_skill_level": 5 },
@@ -618,7 +618,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      &format!("/v2/characters/{character_id}/skillqueue/"),
+      &format!("/characters/{character_id}/skillqueue/"),
       serde_json::json!([
         { "finish_date": "2026-06-01T00:00:00Z", "finished_level": 5, "queue_position": 0, "skill_id": 3300 },
       ]),
@@ -626,7 +626,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/attributes/"),
+      &format!("/characters/{character_id}/attributes/"),
       serde_json::json!({
         "charisma": 20, "intelligence": 22, "memory": 21, "perception": 20, "willpower": 20,
         "bonus_remaps": 2, "last_remap_date": "2023-04-01T12:00:00Z",
@@ -636,13 +636,13 @@ mod tests {
     .await;
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/implants/"),
+      &format!("/characters/{character_id}/implants/"),
       serde_json::json!([9899]),
     )
     .await;
     mount_json(
       server,
-      "/v3/universe/types/9899/",
+      "/universe/types/9899/",
       serde_json::json!({
         "description": "A memory implant.", "group_id": 300, "name": "Memory Augmentation - Basic",
         "published": true, "type_id": 9899,
@@ -652,7 +652,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v3/universe/types/3300/",
+      "/universe/types/3300/",
       serde_json::json!({
         "description": "Gunnery.", "group_id": 255, "market_group_id": 1112, "name": "Gunnery",
         "published": true, "type_id": 3300,
@@ -666,19 +666,19 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/universe/groups/255/",
+      "/universe/groups/255/",
       serde_json::json!({ "category_id": 16, "group_id": 255, "name": "Gunnery", "published": true, "types": [3300] }),
     )
     .await;
     mount_json(
       server,
-      "/v1/universe/categories/16/",
+      "/universe/categories/16/",
       serde_json::json!({ "category_id": 16, "groups": [255], "name": "Skill", "published": true }),
     )
     .await;
     mount_json(
       server,
-      "/v1/markets/groups/1112/",
+      "/markets/groups/1112/",
       serde_json::json!({
         "description": "Skill books.", "market_group_id": 1112, "name": "Skills",
         "parent_group_id": 1111, "types": [3300],
@@ -687,7 +687,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/markets/groups/1111/",
+      "/markets/groups/1111/",
       serde_json::json!({
         "description": "All market groups.", "market_group_id": 1111, "name": "Market", "types": [],
       }),
@@ -789,7 +789,7 @@ mod tests {
     #[tokio::test]
     async fn it_does_not_rerun_a_job_whose_ledger_eligibility_is_in_the_future() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v1/markets/prices/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
       seed_ledger(&db, "MarketPrices", Some(&future), None).await;
@@ -818,7 +818,7 @@ mod tests {
     #[tokio::test]
     async fn it_reruns_a_job_whose_ledger_eligibility_has_passed() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v1/markets/prices/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       let past = (Utc::now() - ChronoDuration::hours(1)).to_rfc3339();
       seed_ledger(&db, "MarketPrices", Some(&past), None).await;
@@ -997,20 +997,15 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v6/characters/7702/wallet/journal/",
+        "/characters/7702/wallet/journal/",
         serde_json::json!([
           { "amount": 1000.0, "balance": 50_000.0, "date": "2026-05-30T12:00:00Z", "description": "Donation",
             "id": 123_456_789_i64, "ref_type": "player_donation" },
         ]),
       )
       .await;
-      mount_json(
-        &server,
-        "/v1/characters/7702/wallet/transactions/",
-        serde_json::json!([]),
-      )
-      .await;
-      mount_json(&server, "/v1/markets/prices/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/7702/wallet/transactions/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 7702).await;
       infra::upsert(
@@ -1067,7 +1062,7 @@ mod tests {
     async fn it_runs_an_enrolled_job_and_reports_failure_without_persisting() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/7/"))
+        .and(path("/characters/7/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -1094,7 +1089,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/markets/prices/",
+        "/markets/prices/",
         serde_json::json!([{ "adjusted_price": 1.0, "average_price": 1.0, "type_id": 34 }]),
       )
       .await;
@@ -1126,7 +1121,7 @@ mod tests {
     async fn it_records_a_failure_outcome_without_a_success_timestamp() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/7/"))
+        .and(path("/characters/7/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -1157,7 +1152,7 @@ mod tests {
     #[tokio::test]
     async fn it_reschedules_a_pending_outcome_sooner_than_its_interval() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v1/markets/prices/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let (_handle, mut events, _db, _images) = spawn_engine(server.uri()).await;
 
       let scheduled = wait_for(
@@ -1206,7 +1201,7 @@ mod tests {
     async fn it_backs_off_when_esi_rate_limits() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/9/"))
+        .and(path("/characters/9/"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "30"))
         .mount(&server)
         .await;
@@ -1230,7 +1225,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v5/characters/100/",
+        "/characters/100/",
         serde_json::json!({
           "alliance_id": 300,
           "birthday": "2010-01-01T00:00:00Z",
@@ -1244,7 +1239,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v5/corporations/200/",
+        "/corporations/200/",
         serde_json::json!({
           "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
           "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
@@ -1253,7 +1248,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v4/alliances/300/",
+        "/alliances/300/",
         serde_json::json!({
           "creator_corporation_id": 200, "creator_id": 100,
           "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
@@ -1262,7 +1257,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/races/",
+        "/universe/races/",
         serde_json::json!([
           { "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ]),
@@ -1270,7 +1265,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/bloodlines/",
+        "/universe/bloodlines/",
         serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -1351,7 +1346,7 @@ mod tests {
     async fn it_enrolls_a_newly_credentialed_subject_on_a_discover_command() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/6161/"))
+        .and(path("/characters/6161/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -1390,7 +1385,7 @@ mod tests {
     async fn it_schedules_only_public_jobs_for_a_non_owned_character() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/3004069/"))
+        .and(path("/characters/3004069/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -1438,14 +1433,9 @@ mod tests {
     #[tokio::test]
     async fn it_schedules_only_jobs_whose_scopes_a_partial_grant_covers() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v6/characters/4477/wallet/journal/", serde_json::json!([])).await;
-      mount_json(
-        &server,
-        "/v1/characters/4477/wallet/transactions/",
-        serde_json::json!([]),
-      )
-      .await;
-      mount_json(&server, "/v1/markets/prices/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/4477/wallet/journal/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/4477/wallet/transactions/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 4477).await;
       infra::upsert(
@@ -1503,7 +1493,7 @@ mod tests {
     async fn it_short_retries_a_gather_job_whose_parent_row_is_absent_without_escalating() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v6/characters/5000/wallet/journal/"))
+        .and(path("/characters/5000/wallet/journal/"))
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
         .mount(&server)
@@ -1622,7 +1612,7 @@ mod tests {
     async fn it_globally_pauses_dispatch_on_an_esi_error_limit() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/10/"))
+        .and(path("/characters/10/"))
         .respond_with(ResponseTemplate::new(420).insert_header("X-ESI-Error-Limit-Reset", "30"))
         .mount(&server)
         .await;
@@ -1663,7 +1653,7 @@ mod tests {
     async fn it_reruns_a_subject_on_run_now() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/30/"))
+        .and(path("/characters/30/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -1683,7 +1673,7 @@ mod tests {
       let server = MockServer::start().await;
       for id in [41_i64, 42] {
         Mock::given(method("GET"))
-          .and(path(format!("/v5/characters/{id}/")))
+          .and(path(format!("/characters/{id}/")))
           .respond_with(ResponseTemplate::new(500).set_delay(Duration::from_millis(300)))
           .mount(&server)
           .await;

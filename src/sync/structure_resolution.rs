@@ -438,7 +438,7 @@ mod tests {
 
   async fn mount_structure_ok(server: &MockServer, expected: u64) {
     Mock::given(method("GET"))
-      .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+      .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "name": "A Player Structure",
         "owner_id": OWNER_CORP_ID,
@@ -455,7 +455,7 @@ mod tests {
 
   async fn mount_npc_station(server: &MockServer) {
     Mock::given(method("GET"))
-      .and(path(format!("/v2/universe/stations/{STATION_ID}/")))
+      .and(path(format!("/universe/stations/{STATION_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "max_dockable_ship_volume": 50_000_000.0,
         "name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
@@ -472,7 +472,7 @@ mod tests {
       .await;
     mount_item_type(server).await;
     Mock::given(method("GET"))
-      .and(path(format!("/v4/universe/systems/{SYSTEM_ID}/")))
+      .and(path(format!("/universe/systems/{SYSTEM_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "constellation_id": CONSTELLATION_ID, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
         "security_status": 0.946, "system_id": SYSTEM_ID,
@@ -480,7 +480,7 @@ mod tests {
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path(format!("/v1/universe/constellations/{CONSTELLATION_ID}/")))
+      .and(path(format!("/universe/constellations/{CONSTELLATION_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
         "region_id": REGION_ID, "systems": [SYSTEM_ID],
@@ -488,7 +488,7 @@ mod tests {
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+      .and(path(format!("/universe/regions/{REGION_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
       })))
@@ -498,21 +498,21 @@ mod tests {
 
   async fn mount_item_type(server: &MockServer) {
     Mock::given(method("GET"))
-      .and(path("/v3/universe/types/1529/"))
+      .and(path("/universe/types/1529/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "description": "A station.", "group_id": 15, "name": "Caldari Station", "published": true, "type_id": 1529,
       })))
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path("/v1/universe/groups/15/"))
+      .and(path("/universe/groups/15/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "category_id": 3, "group_id": 15, "name": "Station", "published": true, "types": [1529],
       })))
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path("/v1/universe/categories/3/"))
+      .and(path("/universe/categories/3/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "category_id": 3, "groups": [15], "name": "Station", "published": true,
       })))
@@ -548,7 +548,7 @@ mod tests {
     async fn it_marks_an_inaccessible_structure_for_the_owning_character() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -574,7 +574,7 @@ mod tests {
     async fn it_marks_an_inaccessible_structure_per_subject_for_a_corporation() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -602,7 +602,7 @@ mod tests {
     async fn it_leaves_a_structure_unmarked_without_the_structures_scope() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -642,7 +642,7 @@ mod tests {
     async fn it_tolerates_an_inaccessible_station_without_erroring() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/stations/{STATION_ID}/")))
+        .and(path(format!("/universe/stations/{STATION_ID}/")))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -675,7 +675,7 @@ mod tests {
 
   async fn mount_owner_corporation_stack(server: &MockServer) {
     Mock::given(method("GET"))
-      .and(path(format!("/v5/corporations/{OWNER_CORP_ID}/")))
+      .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
         "tax_rate": 0.0, "ticker": "CN",
@@ -683,7 +683,7 @@ mod tests {
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path("/v5/characters/3004029/"))
+      .and(path("/characters/3004029/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
         "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
         "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
@@ -691,14 +691,14 @@ mod tests {
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path("/v1/universe/races/"))
+      .and(path("/universe/races/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
         { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
       ])))
       .mount(server)
       .await;
     Mock::given(method("GET"))
-      .and(path("/v1/universe/bloodlines/"))
+      .and(path("/universe/bloodlines/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
         { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
           "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -761,7 +761,7 @@ mod tests {
     async fn it_resolves_a_region_picked_for_a_stockpile() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+        .and(path(format!("/universe/regions/{REGION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
         })))
@@ -791,7 +791,7 @@ mod tests {
     async fn it_resolves_a_constellation_and_its_region_for_a_stockpile() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/universe/constellations/{CONSTELLATION_ID}/")))
+        .and(path(format!("/universe/constellations/{CONSTELLATION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "region_id": REGION_ID, "systems": [SYSTEM_ID],
@@ -799,7 +799,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+        .and(path(format!("/universe/regions/{REGION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
         })))
@@ -876,7 +876,7 @@ mod tests {
     async fn it_resolves_the_alliance_and_faction_when_the_corporation_carries_them() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v5/corporations/{OWNER_CORP_ID}/")))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "faction_id": 500_001,
           "member_count": 10_000, "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
@@ -884,7 +884,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/3004029/"))
+        .and(path("/characters/3004029/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
           "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
@@ -892,7 +892,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v4/alliances/99000001/"))
+        .and(path("/alliances/99000001/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
           "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
@@ -900,7 +900,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
             "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
@@ -909,14 +909,14 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ])))
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -944,7 +944,7 @@ mod tests {
       let server = MockServer::start().await;
       // The corporation itself belongs to no alliance and no faction...
       Mock::given(method("GET"))
-        .and(path(format!("/v5/corporations/{OWNER_CORP_ID}/")))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
           "tax_rate": 0.0, "ticker": "CN",
@@ -953,7 +953,7 @@ mod tests {
         .await;
       // ...but its CEO personally holds an alliance and is enlisted in factional warfare.
       Mock::given(method("GET"))
-        .and(path("/v5/characters/3004029/"))
+        .and(path("/characters/3004029/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "alliance_id": 99_000_002, "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5,
           "corporation_id": OWNER_CORP_ID, "faction_id": 500_001, "gender": "male",
@@ -962,7 +962,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v4/alliances/99000002/"))
+        .and(path("/alliances/99000002/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
           "executor_corporation_id": OWNER_CORP_ID, "name": "CEO Personal Alliance", "ticker": "CPA",
@@ -970,7 +970,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
             "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
@@ -979,14 +979,14 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ])))
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -1032,7 +1032,7 @@ mod tests {
     async fn it_resolves_the_system_with_its_constellation_and_region_when_uncached() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/v4/universe/systems/{SYSTEM_ID}/")))
+        .and(path(format!("/universe/systems/{SYSTEM_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellation_id": CONSTELLATION_ID, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "security_status": 0.946, "system_id": SYSTEM_ID,
@@ -1040,7 +1040,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/universe/constellations/{CONSTELLATION_ID}/")))
+        .and(path(format!("/universe/constellations/{CONSTELLATION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "region_id": REGION_ID, "systems": [SYSTEM_ID],
@@ -1048,7 +1048,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+        .and(path(format!("/universe/regions/{REGION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
         })))
@@ -1095,7 +1095,7 @@ mod tests {
     async fn it_fetches_and_persists_a_race_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ])))
@@ -1121,7 +1121,7 @@ mod tests {
     async fn it_errors_when_the_race_is_absent_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;
@@ -1166,7 +1166,7 @@ mod tests {
     async fn it_fetches_a_faction_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
             "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
@@ -1186,7 +1186,7 @@ mod tests {
     async fn it_errors_when_the_faction_is_absent_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;
@@ -1224,7 +1224,7 @@ mod tests {
     async fn it_fetches_a_bloodline_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -1255,7 +1255,7 @@ mod tests {
     async fn it_errors_when_the_bloodline_is_absent_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;

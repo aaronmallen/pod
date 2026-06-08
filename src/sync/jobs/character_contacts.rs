@@ -118,7 +118,7 @@ mod tests {
 
   async fn mount_names(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -148,7 +148,7 @@ mod tests {
   async fn mount_contacts(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v2/characters/{character_id}/contacts/"),
+      &format!("/characters/{character_id}/contacts/"),
       serde_json::json!([
         { "contact_id": 95_001, "contact_type": "character", "is_watched": true, "label_ids": [1], "standing": 7.5 },
         { "contact_id": 98_001, "contact_type": "corporation", "standing": -10.0 },
@@ -160,7 +160,7 @@ mod tests {
   async fn mount_labels(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/contacts/labels/"),
+      &format!("/characters/{character_id}/contacts/labels/"),
       serde_json::json!([
         { "label_id": 1, "label_name": "Friendlies" },
         { "label_id": 2, "label_name": "Watchlist" },
@@ -195,8 +195,8 @@ mod tests {
     #[tokio::test]
     async fn it_is_empty_when_the_character_has_no_contacts() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v2/characters/42/contacts/", serde_json::json!([])).await;
-      mount_json(&server, "/v1/characters/42/contacts/labels/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/contacts/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/contacts/labels/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -275,20 +275,20 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v2/characters/42/contacts/",
+        "/characters/42/contacts/",
         serde_json::json!([{ "contact_id": 500_003, "contact_type": "faction", "standing": 5.0 }]),
       )
       .await;
-      mount_json(&server, "/v1/characters/42/contacts/labels/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/contacts/labels/", serde_json::json!([])).await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
         .await;
       mount_json(
         &server,
-        "/v2/universe/factions/",
+        "/universe/factions/",
         serde_json::json!([
           { "description": "The Amarr Empire.", "faction_id": 500_003, "is_unique": true, "name": "Amarr Empire",
             "size_factor": 5.0, "station_count": 1000, "station_system_count": 500 },
@@ -316,7 +316,7 @@ mod tests {
     async fn it_aborts_without_writing_when_the_contacts_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/contacts/"))
+        .and(path("/characters/42/contacts/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -344,7 +344,7 @@ mod tests {
       mount_contacts(&server, 42).await;
       mount_labels(&server, 42).await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;
@@ -368,7 +368,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/contacts/"))
+        .and(path("/characters/42/contacts/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

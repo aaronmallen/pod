@@ -18,15 +18,15 @@ impl<'a> Client<'a> {
   }
 
   pub async fn prices(&self) -> Result<Vec<MarketPrice>, clients::Error> {
-    let url = self.esi.url("v1/markets/prices/");
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url("markets/prices/");
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn sell_orders(&self, region_id: i64, type_id: i64) -> Result<Vec<RegionOrder>, clients::Error> {
     let url = self.esi.url(&format!(
-      "v1/markets/{region_id}/orders/?order_type=sell&type_id={type_id}"
+      "markets/{region_id}/orders/?order_type=sell&type_id={type_id}"
     ));
-    self.esi.http().get_json_paginated(&url, None).await
+    self.esi.get_json_paginated(&url, None).await
   }
 
   pub async fn lowest_sell(
@@ -75,7 +75,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"[{"adjusted_price":5.5,"type_id":34},{"average_price":6.25,"type_id":35},{"adjusted_price":7.0,"average_price":8.0,"type_id":36}]"#;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/prices/"))
+        .and(path("/markets/prices/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -97,7 +97,7 @@ mod tests {
     async fn it_returns_http_error_on_5xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/prices/"))
+        .and(path("/markets/prices/"))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;
@@ -153,7 +153,7 @@ mod tests {
       let page_one = r#"[{"is_buy_order":false,"location_id":60003760,"price":8.0,"type_id":34},{"is_buy_order":true,"location_id":60003760,"price":1.0,"type_id":34}]"#;
       let page_two = r#"[{"is_buy_order":false,"location_id":60003760,"price":6.5,"type_id":34},{"is_buy_order":false,"location_id":99,"price":0.1,"type_id":34}]"#;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/10000002/orders/"))
+        .and(path("/markets/10000002/orders/"))
         .and(wiremock::matchers::query_param("page", "1"))
         .respond_with(
           ResponseTemplate::new(200)
@@ -163,7 +163,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/10000002/orders/"))
+        .and(path("/markets/10000002/orders/"))
         .and(wiremock::matchers::query_param("page", "2"))
         .respond_with(
           ResponseTemplate::new(200)
@@ -183,7 +183,7 @@ mod tests {
     async fn it_returns_none_when_the_type_has_no_station_sell_orders() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/markets/10000002/orders/"))
+        .and(path("/markets/10000002/orders/"))
         .respond_with(
           ResponseTemplate::new(200)
             .insert_header("X-Pages", "1")

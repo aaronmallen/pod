@@ -98,7 +98,7 @@ mod tests {
     async fn it_resolves_ids_to_name_records() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           name_record("character", 95465499, "CCP Bartender"),
           name_record("corporation", 98356193, "Test Corp"),
@@ -146,7 +146,7 @@ mod tests {
         }
       }
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(CountingResponder {
           request_count: request_count.clone(),
           max_batch: max_batch.clone(),
@@ -191,7 +191,7 @@ mod tests {
         }
       }
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(CapturingResponder {
           seen_ids: seen_ids.clone(),
         })
@@ -233,7 +233,7 @@ mod tests {
         }
       }
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(PartitioningResponder)
         .mount(&server)
         .await;
@@ -260,7 +260,7 @@ mod tests {
     async fn it_returns_err_on_a_non_404_esi_error() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;

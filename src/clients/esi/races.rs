@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn list(&self) -> Result<Vec<Race>, clients::Error> {
-    let url = self.esi.url("v1/universe/races/");
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url("universe/races/");
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -47,7 +47,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"[{"alliance_id":500001,"description":"Founded on the tenets of patriotism and hard work.","name":"Caldari","race_id":1}]"#;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;

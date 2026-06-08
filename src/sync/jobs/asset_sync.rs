@@ -463,7 +463,7 @@ mod tests {
 
   async fn mount_ship(server: &MockServer, character_id: i64, body: serde_json::Value) {
     Mock::given(method("GET"))
-      .and(path(format!("/v2/characters/{character_id}/ship/")))
+      .and(path(format!("/characters/{character_id}/ship/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -521,7 +521,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/47/assets/",
+        "/characters/47/assets/",
         serde_json::json!([
           { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 60003760,
             "location_type": "station", "quantity": 1, "type_id": 34 },
@@ -618,7 +618,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/42/assets/",
+        "/characters/42/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 100, "location_flag": "Hangar", "location_id": 60003760,
             "location_type": "station", "quantity": 1, "type_id": 587 },
@@ -669,7 +669,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/45/assets/",
+        "/characters/45/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 9001, "location_flag": "Hangar", "location_id": 60003760,
             "location_type": "station", "quantity": 1, "type_id": 587 },
@@ -719,7 +719,7 @@ mod tests {
     async fn it_short_retries_without_an_esi_call_when_the_character_row_is_absent() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/46/assets/"))
+        .and(path("/characters/46/assets/"))
         .respond_with(
           ResponseTemplate::new(200)
             .insert_header("X-Pages", "1")
@@ -729,7 +729,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/46/ship/"))
+        .and(path("/characters/46/ship/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .expect(0)
         .mount(&server)
@@ -756,7 +756,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/43/assets/",
+        "/characters/43/assets/",
         serde_json::json!([
           { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 100,
             "location_type": "item", "quantity": 1, "type_id": 34 },
@@ -801,7 +801,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/44/assets/",
+        "/characters/44/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
             "location_type": "structure", "quantity": 1, "type_id": 587 },
@@ -815,7 +815,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -850,7 +850,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/47/assets/",
+        "/characters/47/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 600, "location_flag": "Hangar", "location_id": CITADEL_ID,
             "location_type": "item", "quantity": 1, "type_id": 587 },
@@ -909,7 +909,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/48/assets/",
+        "/characters/48/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 700, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
             "location_type": "item", "quantity": 1, "type_id": 587 },
@@ -925,7 +925,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{STRUCTURE_ID}/")))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -980,7 +980,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/corporations/90000001/assets/",
+        "/corporations/90000001/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 300, "location_flag": "CorpDeliveries", "location_id": 60003760,
             "location_type": "station", "quantity": 1, "type_id": 587 },
@@ -1045,7 +1045,7 @@ mod tests {
     #[tokio::test]
     async fn it_reports_empty_when_the_corporation_owns_no_assets() {
       let server = MockServer::start().await;
-      mount_assets(&server, "/v5/corporations/90000001/assets/", serde_json::json!([])).await;
+      mount_assets(&server, "/corporations/90000001/assets/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -1143,7 +1143,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_assets(
         &server,
-        "/v5/characters/44/assets/",
+        "/characters/44/assets/",
         serde_json::json!([
           { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": INACCESSIBLE_ID,
             "location_type": "structure", "quantity": 1, "type_id": 587 },
@@ -1159,7 +1159,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path(format!("/v2/universe/structures/{INACCESSIBLE_ID}/")))
+        .and(path(format!("/universe/structures/{INACCESSIBLE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;

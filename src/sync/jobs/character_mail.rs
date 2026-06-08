@@ -201,7 +201,7 @@ mod tests {
 
   async fn mount_names(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -285,7 +285,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/",
+        "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
             "labels": [1],
@@ -298,7 +298,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/7/",
+        "/characters/42/mail/7/",
         serde_json::json!({ "body": "<p>Hello</p>", "from": 1001, "labels": [1], "read": false, "subject": "Hi",
           "timestamp": "2026-06-01T10:00:00Z" }),
       )
@@ -339,7 +339,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/",
+        "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 98_000_001_i64, "is_read": false, "timestamp": "2026-06-01T10:00:00Z",
             "subject": "Corp", "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
@@ -348,7 +348,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/7/",
+        "/characters/42/mail/7/",
         serde_json::json!({ "body": "<p>Corp mail</p>" }),
       )
       .await;
@@ -383,7 +383,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/",
+        "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 1, "is_read": false, "timestamp": "2026-06-01T10:00:00Z",
             "subject": "System notice", "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
@@ -392,7 +392,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/7/",
+        "/characters/42/mail/7/",
         serde_json::json!({ "body": "<p>System mail</p>" }),
       )
       .await;
@@ -423,7 +423,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/",
+        "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
             "recipients": [{ "recipient_id": 2002, "recipient_type": "character" }] },
@@ -431,7 +431,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/mail/7/"))
+        .and(path("/characters/42/mail/7/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "<p>x</p>" })))
         .expect(0)
         .mount(&server)
@@ -456,7 +456,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v1/characters/42/mail/",
+        "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 1001, "is_read": true, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
             "recipients": [{ "recipient_id": 1001, "recipient_type": "character" }] },
@@ -472,7 +472,7 @@ mod tests {
         }
       }
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/mail/7/"))
+        .and(path("/characters/42/mail/7/"))
         .respond_with(CountingBody(body_hits.clone()))
         .mount(&server)
         .await;
@@ -520,7 +520,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/mail/"))
+        .and(path("/characters/42/mail/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
@@ -537,7 +537,7 @@ mod tests {
     async fn it_aborts_without_writing_when_the_mail_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/mail/"))
+        .and(path("/characters/42/mail/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;

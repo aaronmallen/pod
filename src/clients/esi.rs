@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use serde::{Serialize, de::DeserializeOwned};
+
 use crate::clients::{self, eve_sso::Grant, http};
 
 pub mod alliance;
@@ -16,6 +18,10 @@ pub mod scopes;
 pub mod universe;
 
 const BASE_URL: &str = "https://esi.evetech.net";
+/// The pinned ESI compatibility date sent as `X-Compatibility-Date` on every ESI request, replacing the
+/// deprecated `vN/` route-version prefixes. Bump this deliberately and in isolation — only after verifying the
+/// route deserializers still match the newer date's response shapes. Never derive it from the build date or "today".
+const COMPATIBILITY_DATE: &str = "2026-06-08";
 
 pub struct ClientBuilder {
   http: Arc<http::Client>,
@@ -112,12 +118,46 @@ impl Client {
     universe::Client::new(self)
   }
 
+  #[allow(dead_code)]
   pub fn http(&self) -> &http::Client {
     &self.http
   }
 
   pub fn url(&self, path: &str) -> String {
     format!("{}/{}", self.base_url.trim_end_matches('/'), path)
+  }
+
+  pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, clients::Error> {
+    self.http.get_json(url, token, Some(COMPATIBILITY_DATE)).await
+  }
+
+  pub async fn get_json_paginated<T: DeserializeOwned + Send + 'static>(
+    &self,
+    url: &str,
+    token: Option<&str>,
+  ) -> Result<Vec<T>, clients::Error> {
+    self.http.get_json_paginated(url, token, Some(COMPATIBILITY_DATE)).await
+  }
+
+  pub async fn post_json<B: Serialize, T: DeserializeOwned>(
+    &self,
+    url: &str,
+    body: &B,
+    token: &str,
+  ) -> Result<T, clients::Error> {
+    self.http.post_json(url, body, token, Some(COMPATIBILITY_DATE)).await
+  }
+
+  pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(
+    &self,
+    url: &str,
+    body: &B,
+  ) -> Result<T, clients::Error> {
+    self.http.post_json_anon(url, body, Some(COMPATIBILITY_DATE)).await
+  }
+
+  pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), clients::Error> {
+    self.http.put_empty(url, body, token, Some(COMPATIBILITY_DATE)).await
   }
 }
 

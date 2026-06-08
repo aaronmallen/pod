@@ -160,7 +160,7 @@ mod tests {
       let body =
         format!(r#"[{{"is_buy_order":false,"location_id":{JITA_STATION_ID},"price":{price},"type_id":{type_id}}}]"#);
       Mock::given(method("GET"))
-        .and(path(format!("/v1/markets/{THE_FORGE_REGION_ID}/orders/")))
+        .and(path(format!("/markets/{THE_FORGE_REGION_ID}/orders/")))
         .and(query_param("type_id", type_id.to_string()))
         .respond_with(
           ResponseTemplate::new(200)
@@ -247,7 +247,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_type(&server, 34, 5.5).await;
       Mock::given(method("GET"))
-        .and(path(format!("/v1/markets/{THE_FORGE_REGION_ID}/orders/")))
+        .and(path(format!("/markets/{THE_FORGE_REGION_ID}/orders/")))
         .and(query_param("type_id", "35"))
         .respond_with(
           ResponseTemplate::new(200)
@@ -273,7 +273,7 @@ mod tests {
       let server = MockServer::start().await;
       for &type_id in &type_ids[..BATCH_SIZE] {
         Mock::given(method("GET"))
-          .and(path(format!("/v1/markets/{THE_FORGE_REGION_ID}/orders/")))
+          .and(path(format!("/markets/{THE_FORGE_REGION_ID}/orders/")))
           .and(query_param("type_id", type_id.to_string()))
           .respond_with(ResponseTemplate::new(500))
           .mount(&server)

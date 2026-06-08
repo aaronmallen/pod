@@ -13,6 +13,7 @@ use crate::{
   store::{self, model::HttpCacheEntry, repo::infra},
 };
 
+const COMPATIBILITY_DATE_HEADER: &str = "X-Compatibility-Date";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ESI_ERROR_LIMIT_RESET_HEADER: &str = "X-ESI-Error-Limit-Reset";
 const ESI_PAGES_HEADER: &str = "X-Pages";
@@ -64,7 +65,7 @@ impl Client {
 
   #[allow(dead_code)]
   pub async fn get_bytes(&self, url: &str, token: Option<&str>) -> Result<Vec<u8>, Error> {
-    self.get_cached_bytes(url, token, true).await
+    self.get_cached_bytes(url, token, true, None).await
   }
 
   pub async fn get_bytes_uncached(&self, url: &str) -> Result<Vec<u8>, Error> {
@@ -75,8 +76,13 @@ impl Client {
     self.get_bytes_uncached_inner(url, Some(timeout)).await
   }
 
-  pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, Error> {
-    let body = self.get_cached_bytes(url, token, false).await?;
+  pub async fn get_json<T: DeserializeOwned>(
+    &self,
+    url: &str,
+    token: Option<&str>,
+    compat_date: Option<&str>,
+  ) -> Result<T, Error> {
+    let body = self.get_cached_bytes(url, token, false, compat_date).await?;
     Ok(serde_json::from_slice(&body)?)
   }
 
@@ -84,8 +90,9 @@ impl Client {
     &self,
     url: &str,
     token: Option<&str>,
+    compat_date: Option<&'static str>,
   ) -> Result<Vec<T>, Error> {
-    let (mut items, total_pages) = fetch_page::<T>(&self.inner, &self.budgets, url, 1, token).await?;
+    let (mut items, total_pages) = fetch_page::<T>(&self.inner, &self.budgets, url, 1, token, compat_date).await?;
 
     if total_pages <= 1 {
       return Ok(items);
@@ -98,7 +105,7 @@ impl Client {
       let url = url.to_owned();
       let token = token.map(str::to_owned);
       set.spawn(async move {
-        fetch_page::<T>(&inner, &budgets, &url, page, token.as_deref())
+        fetch_page::<T>(&inner, &budgets, &url, page, token.as_deref(), compat_date)
           .await
           .map(|(items, _)| items)
       });
@@ -134,30 +141,42 @@ impl Client {
     url: &str,
     body: &B,
     token: &str,
+    compat_date: Option<&str>,
   ) -> Result<T, Error> {
-    let resp = send_logged(
-      "POST",
-      url,
-      self.inner.post(url).bearer_auth(token).json(body),
-      &self.budgets,
-    )
-    .await?;
+    let mut req = self.inner.post(url).bearer_auth(token).json(body);
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+    let resp = send_logged("POST", url, req, &self.budgets).await?;
     deserialize_response(resp).await
   }
 
-  pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
-    let resp = send_logged("POST", url, self.inner.post(url).json(body), &self.budgets).await?;
+  pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(
+    &self,
+    url: &str,
+    body: &B,
+    compat_date: Option<&str>,
+  ) -> Result<T, Error> {
+    let mut req = self.inner.post(url).json(body);
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+    let resp = send_logged("POST", url, req, &self.budgets).await?;
     deserialize_response(resp).await
   }
 
-  pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
-    let resp = send_logged(
-      "PUT",
-      url,
-      self.inner.put(url).bearer_auth(token).json(body),
-      &self.budgets,
-    )
-    .await?;
+  pub async fn put_empty<B: Serialize>(
+    &self,
+    url: &str,
+    body: &B,
+    token: &str,
+    compat_date: Option<&str>,
+  ) -> Result<(), Error> {
+    let mut req = self.inner.put(url).bearer_auth(token).json(body);
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+    let resp = send_logged("PUT", url, req, &self.budgets).await?;
     handle_status(resp).await
   }
 
@@ -176,7 +195,13 @@ impl Client {
     Ok(resp.bytes().await?.to_vec())
   }
 
-  async fn get_cached_bytes(&self, url: &str, token: Option<&str>, serve_fresh: bool) -> Result<Vec<u8>, Error> {
+  async fn get_cached_bytes(
+    &self,
+    url: &str,
+    token: Option<&str>,
+    serve_fresh: bool,
+    compat_date: Option<&str>,
+  ) -> Result<Vec<u8>, Error> {
     let cached = self.cache.get(url).await?;
 
     if serve_fresh
@@ -195,6 +220,9 @@ impl Client {
     }
     if let Some(t) = token {
       req = req.bearer_auth(t);
+    }
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
     }
 
     let resp = send_logged("GET", url, req, &self.budgets).await?;
@@ -376,12 +404,16 @@ async fn fetch_page<T: DeserializeOwned>(
   url_base: &str,
   page: u32,
   token: Option<&str>,
+  compat_date: Option<&str>,
 ) -> Result<(Vec<T>, u32), Error> {
   let separator = if url_base.contains('?') { '&' } else { '?' };
   let url = format!("{url_base}{separator}page={page}");
   let mut req = inner.get(&url);
   if let Some(t) = token {
     req = req.bearer_auth(t);
+  }
+  if let Some(date) = compat_date {
+    req = req.header(COMPATIBILITY_DATE_HEADER, date);
   }
 
   let resp = send_logged("GET", &url, req, budgets).await?;
@@ -717,10 +749,48 @@ mod tests {
         let (client, _db) = make_test_client().await;
         let url = format!("{}/killmails/123/abcdef0123456789/", server.uri());
 
-        let _: Vec<i32> = client.get_json(&url, None).await.unwrap();
+        let _: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
 
         let key = route_key(url_path(&url));
         assert!(client.budgets.reserve_slot(&key, std::time::Instant::now()).is_some());
+      }
+
+      #[tokio::test]
+      async fn it_omits_the_compatibility_date_header_when_not_provided() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .and(|req: &wiremock::Request| !req.headers.contains_key("X-Compatibility-Date"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[1]".to_vec(), "application/json"))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Vec<i32> = client
+          .get_json(&format!("{}/resource", server.uri()), None, None)
+          .await
+          .unwrap();
+
+        assert_eq!(result, vec![1]);
+      }
+
+      #[tokio::test]
+      async fn it_sends_the_compatibility_date_header_when_provided() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .and(header("X-Compatibility-Date", "2026-06-08"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[1]".to_vec(), "application/json"))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Vec<i32> = client
+          .get_json(&format!("{}/resource", server.uri()), None, Some("2026-06-08"))
+          .await
+          .unwrap();
+
+        assert_eq!(result, vec![1]);
       }
 
       #[tokio::test]
@@ -738,7 +808,7 @@ mod tests {
         infra::http_cache_upsert(&db, &entry).await.unwrap();
         let client = Client::builder(Cache::new(db)).build();
 
-        let result: Vec<i32> = client.get_json(&url, None).await.unwrap();
+        let result: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
 
         assert_eq!(result, vec![7, 8, 9]);
       }
@@ -753,7 +823,7 @@ mod tests {
           .await;
         let (client, _db) = make_test_client().await;
 
-        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None).await;
+        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None, None).await;
 
         assert!(matches!(result, Err(Error::Http(_))));
       }
@@ -768,7 +838,7 @@ mod tests {
           .await;
         let (client, _db) = make_test_client().await;
 
-        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None).await;
+        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None, None).await;
 
         assert!(matches!(
           result,
@@ -788,7 +858,7 @@ mod tests {
           .await;
         let (client, _db) = make_test_client().await;
 
-        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None).await;
+        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None, None).await;
 
         assert!(matches!(
           result,
@@ -814,7 +884,7 @@ mod tests {
         infra::http_cache_upsert(&db, &entry).await.unwrap();
         let client = Client::builder(Cache::new(db)).build();
 
-        let result: Vec<i32> = client.get_json(&url, None).await.unwrap();
+        let result: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
 
         assert_eq!(result, vec![1]);
       }
@@ -835,7 +905,7 @@ mod tests {
         let url = format!("{}/resource", server.uri());
         let client = Client::builder(Cache::new(db.clone())).build();
 
-        let _: Vec<i32> = client.get_json(&url, None).await.unwrap();
+        let _: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
 
         let cached = infra::http_cache_get(&db, &url).await.unwrap().unwrap();
         assert_eq!(cached.etag().as_deref(), Some("\"new-etag\""));
@@ -884,7 +954,7 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let mut result: Vec<i32> = client
-          .get_json_paginated(&format!("{}/list", server.uri()), None)
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
           .await
           .unwrap();
         result.sort();
@@ -908,7 +978,7 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result: Vec<i32> = client
-          .get_json_paginated(&format!("{}/list", server.uri()), None)
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
           .await
           .unwrap();
 
@@ -936,7 +1006,9 @@ mod tests {
           .await;
         let (client, _db) = make_test_client().await;
 
-        let result: Result<Vec<i32>, _> = client.get_json_paginated(&format!("{}/list", server.uri()), None).await;
+        let result: Result<Vec<i32>, _> = client
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
+          .await;
 
         assert!(matches!(result, Err(Error::Http(_))));
       }
@@ -952,7 +1024,9 @@ mod tests {
           .await;
         let (client, _db) = make_test_client().await;
 
-        let result: Result<Vec<i32>, _> = client.get_json_paginated(&format!("{}/list", server.uri()), None).await;
+        let result: Result<Vec<i32>, _> = client
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
+          .await;
 
         assert!(matches!(
           result,
@@ -1090,6 +1164,7 @@ mod tests {
             &format!("{}/items", server.uri()),
             &serde_json::json!({"value": 1}),
             "token",
+            None,
           )
           .await
           .unwrap();
@@ -1112,6 +1187,7 @@ mod tests {
             &format!("{}/items", server.uri()),
             &serde_json::json!({"value": 1}),
             "token",
+            None,
           )
           .await;
 
@@ -1133,6 +1209,7 @@ mod tests {
             &format!("{}/items", server.uri()),
             &serde_json::json!({"value": 1}),
             "token",
+            None,
           )
           .await;
 
@@ -1161,7 +1238,11 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result: serde_json::Value = client
-          .post_json_anon(&format!("{}/anon", server.uri()), &serde_json::json!({"key": "val"}))
+          .post_json_anon(
+            &format!("{}/anon", server.uri()),
+            &serde_json::json!({"key": "val"}),
+            None,
+          )
           .await
           .unwrap();
 
@@ -1179,7 +1260,11 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result: Result<serde_json::Value, _> = client
-          .post_json_anon(&format!("{}/anon", server.uri()), &serde_json::json!({"key": "val"}))
+          .post_json_anon(
+            &format!("{}/anon", server.uri()),
+            &serde_json::json!({"key": "val"}),
+            None,
+          )
           .await;
 
         assert!(matches!(
@@ -1209,6 +1294,7 @@ mod tests {
             &format!("{}/things/1", server.uri()),
             &serde_json::json!({"read": true}),
             "token",
+            None,
           )
           .await;
 
@@ -1231,6 +1317,7 @@ mod tests {
             &format!("{}/things/1", server.uri()),
             &serde_json::json!({"read": true}),
             "secret-token",
+            None,
           )
           .await;
 
@@ -1252,6 +1339,7 @@ mod tests {
             &format!("{}/things/1", server.uri()),
             &serde_json::json!({"read": true}),
             "token",
+            None,
           )
           .await;
 
@@ -1273,6 +1361,7 @@ mod tests {
             &format!("{}/things/1", server.uri()),
             &serde_json::json!({"read": true}),
             "token",
+            None,
           )
           .await;
 

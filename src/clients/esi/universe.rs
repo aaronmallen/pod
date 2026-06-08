@@ -22,43 +22,43 @@ impl<'a> Client<'a> {
   }
 
   pub async fn constellation(&self, constellation_id: i64) -> Result<Constellation, clients::Error> {
-    let url = self.esi.url(&format!("v1/universe/constellations/{constellation_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/constellations/{constellation_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn ids(&self, names: &[String]) -> Result<ResolvedIds, clients::Error> {
-    let url = self.esi.url("v1/universe/ids/");
-    self.esi.http().post_json_anon(&url, &names).await
+    let url = self.esi.url("universe/ids/");
+    self.esi.post_json_anon(&url, &names).await
   }
 
   pub async fn item_category(&self, category_id: i32) -> Result<ItemCategory, clients::Error> {
-    let url = self.esi.url(&format!("v1/universe/categories/{category_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/categories/{category_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn item_group(&self, group_id: i32) -> Result<ItemGroup, clients::Error> {
-    let url = self.esi.url(&format!("v1/universe/groups/{group_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/groups/{group_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn item_type(&self, type_id: i32) -> Result<ItemType, clients::Error> {
-    let url = self.esi.url(&format!("v3/universe/types/{type_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/types/{type_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn market_group(&self, market_group_id: i32) -> Result<MarketGroup, clients::Error> {
-    let url = self.esi.url(&format!("v1/markets/groups/{market_group_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("markets/groups/{market_group_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn names(&self, ids: &[i64]) -> Result<Vec<NameRecord>, clients::Error> {
-    let url = self.esi.url("v3/universe/names/");
-    self.esi.http().post_json_anon(&url, &ids).await
+    let url = self.esi.url("universe/names/");
+    self.esi.post_json_anon(&url, &ids).await
   }
 
   pub async fn region(&self, region_id: i64) -> Result<Region, clients::Error> {
-    let url = self.esi.url(&format!("v1/universe/regions/{region_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/regions/{region_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn search(&self, query: &str, grant: &Grant) -> Result<SearchResult, clients::Error> {
@@ -73,28 +73,28 @@ impl<'a> Client<'a> {
     categories: &[&str],
     grant: &Grant,
   ) -> Result<SearchResult, clients::Error> {
-    let base = self.esi.url(&format!("v3/characters/{}/search/", grant.character_id()));
+    let base = self.esi.url(&format!("characters/{}/search/", grant.character_id()));
     let url = reqwest::Url::parse_with_params(
       &base,
       &[("categories", categories.join(",").as_str()), ("search", query)],
     )
     .map_err(|e| clients::Error::Internal(format!("invalid search url: {e}")))?;
-    self.esi.http().get_json(url.as_str(), Some(grant.access_token())).await
+    self.esi.get_json(url.as_str(), Some(grant.access_token())).await
   }
 
   pub async fn solar_system(&self, system_id: i64) -> Result<SolarSystem, clients::Error> {
-    let url = self.esi.url(&format!("v4/universe/systems/{system_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/systems/{system_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn station(&self, station_id: i64) -> Result<Station, clients::Error> {
-    let url = self.esi.url(&format!("v2/universe/stations/{station_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("universe/stations/{station_id}/"));
+    self.esi.get_json(&url, None).await
   }
 
   pub async fn structure(&self, structure_id: i64, grant: &Grant) -> Result<Structure, clients::Error> {
-    let url = self.esi.url(&format!("v2/universe/structures/{structure_id}/"));
-    self.esi.http().get_json(&url, Some(grant.access_token())).await
+    let url = self.esi.url(&format!("universe/structures/{structure_id}/"));
+    self.esi.get_json(&url, Some(grant.access_token())).await
   }
 }
 
@@ -125,7 +125,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"characters":[{"id":95465499,"name":"CCP Bartender"}],"corporations":[{"id":98356193,"name":"Test Corp"}],"alliances":[{"id":99005338,"name":"Test Alliance"}]}"#;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -152,7 +152,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"characters":[{"id":42,"name":"Solo"}]}"#;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -171,7 +171,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"inventory_types":[{"id":34,"name":"Tritanium"},{"id":35,"name":"Pyerite"}]}"#;
       Mock::given(method("POST"))
-        .and(path("/v1/universe/ids/"))
+        .and(path("/universe/ids/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -212,7 +212,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"capacity":0.0,"description":"Tritanium.","group_id":18,"mass":0.0,"name":"Tritanium","packaged_volume":0.01,"portion_size":1,"published":true,"radius":1.0,"type_id":34,"volume":0.01}"#;
       Mock::given(method("GET"))
-        .and(path("/v3/universe/types/34/"))
+        .and(path("/universe/types/34/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -230,7 +230,7 @@ mod tests {
     async fn it_deserializes_real_gunnery_dogma_attributes() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/universe/types/3300/"))
+        .and(path("/universe/types/3300/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(TYPE_3300_FIXTURE, "application/json"))
         .mount(&server)
         .await;
@@ -248,7 +248,7 @@ mod tests {
     async fn it_deserializes_real_attribute_implant_dogma() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/universe/types/9899/"))
+        .and(path("/universe/types/9899/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(TYPE_9899_FIXTURE, "application/json"))
         .mount(&server)
         .await;
@@ -271,7 +271,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"[{"category":"character","id":95465499,"name":"CCP Bartender"},{"category":"corporation","id":98356193,"name":"Test Corp"},{"category":"solar_system","id":30000142,"name":"Jita"}]"#;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -290,7 +290,7 @@ mod tests {
     async fn it_returns_http_error_on_4xx() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -313,7 +313,7 @@ mod tests {
       let body =
         r#"{"constellations":[20000001,20000002],"description":"The Forge.","name":"The Forge","region_id":10000002}"#;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/regions/10000002/"))
+        .and(path("/universe/regions/10000002/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -329,7 +329,7 @@ mod tests {
     async fn it_returns_http_error_on_4xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/regions/10000002/"))
+        .and(path("/universe/regions/10000002/"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -351,7 +351,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"character":[95465499,90000001],"corporation":[98356193],"alliance":[99005338]}"#;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("categories", "character,corporation,alliance"))
         .and(query_param("search", "Test"))
         .and(header("Authorization", "Bearer search-token"))
@@ -372,7 +372,7 @@ mod tests {
     async fn it_url_encodes_queries_with_spaces() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("search", "CCP Bartender"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[95465499]}"#, "application/json"))
         .mount(&server)
@@ -389,7 +389,7 @@ mod tests {
     async fn it_defaults_missing_categories_to_empty() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[1]}"#, "application/json"))
         .mount(&server)
         .await;
@@ -408,7 +408,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"solar_system":[30000142],"station":[60003760],"structure":[1234567890]}"#;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("categories", "station,structure,solar_system"))
         .and(query_param("search", "Jita"))
         .and(header("Authorization", "Bearer search-token"))
@@ -435,7 +435,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"inventory_type":[34,35]}"#;
       Mock::given(method("GET"))
-        .and(path("/v3/characters/42/search/"))
+        .and(path("/characters/42/search/"))
         .and(query_param("categories", "inventory_type"))
         .and(query_param("search", "Trit"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
@@ -466,7 +466,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"constellation_id":20000020,"name":"Jita","position":{"x":1.0,"y":2.0,"z":3.0},"security_class":"B","security_status":0.946,"star_id":40000001,"system_id":30000142}"#;
       Mock::given(method("GET"))
-        .and(path("/v4/universe/systems/30000142/"))
+        .and(path("/universe/systems/30000142/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -489,7 +489,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"{"name":"A Player Structure","owner_id":98000001,"solar_system_id":30000142,"type_id":35833}"#;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/structures/1234567890/"))
+        .and(path("/universe/structures/1234567890/"))
         .and(header("Authorization", "Bearer structure-token"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)

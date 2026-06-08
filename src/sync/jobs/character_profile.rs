@@ -148,7 +148,7 @@ mod tests {
     async fn it_errors_and_persists_nothing_when_the_character_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/characters/42/"))
+        .and(path("/characters/42/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -178,7 +178,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v5/characters/100/",
+        "/characters/100/",
         serde_json::json!({
           "alliance_id": 300, "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5,
           "corporation_id": 200, "gender": "male", "name": "Test Pilot", "race_id": 1,
@@ -187,7 +187,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v5/corporations/200/",
+        "/corporations/200/",
         serde_json::json!({
           "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
           "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
@@ -196,7 +196,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v4/alliances/300/",
+        "/alliances/300/",
         serde_json::json!({
           "creator_corporation_id": 200, "creator_id": 100,
           "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
@@ -204,7 +204,7 @@ mod tests {
       )
       .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/races/"))
+        .and(path("/universe/races/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ])))
@@ -212,7 +212,7 @@ mod tests {
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -253,7 +253,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v5/characters/100/",
+        "/characters/100/",
         serde_json::json!({
           "alliance_id": 300, "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5,
           "corporation_id": 200, "gender": "male", "name": "Test Pilot", "race_id": 1,
@@ -262,7 +262,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v5/corporations/200/",
+        "/corporations/200/",
         serde_json::json!({
           "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
           "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
@@ -271,7 +271,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v4/alliances/300/",
+        "/alliances/300/",
         serde_json::json!({
           "creator_corporation_id": 200, "creator_id": 100,
           "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
@@ -280,7 +280,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/races/",
+        "/universe/races/",
         serde_json::json!([
           { "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
         ]),
@@ -288,7 +288,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/bloodlines/",
+        "/universe/bloodlines/",
         serde_json::json!([
           { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
             "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,

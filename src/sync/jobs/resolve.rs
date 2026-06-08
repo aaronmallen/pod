@@ -112,13 +112,13 @@ mod tests {
   async fn mount_skill_group_and_category(server: &MockServer) {
     mount_json(
       server,
-      "/v1/universe/groups/255/",
+      "/universe/groups/255/",
       serde_json::json!({ "category_id": 16, "group_id": 255, "name": "Gunnery", "published": true, "types": [3300] }),
     )
     .await;
     mount_json(
       server,
-      "/v1/universe/categories/16/",
+      "/universe/categories/16/",
       serde_json::json!({ "category_id": 16, "groups": [255], "name": "Skill", "published": true }),
     )
     .await;
@@ -150,7 +150,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v3/universe/types/3300/",
+        "/universe/types/3300/",
         serde_json::json!({
           "description": "Gunnery.", "group_id": 255, "name": "Gunnery", "published": true, "type_id": 3300,
           "dogma_attributes": [
@@ -187,7 +187,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v3/universe/types/34/",
+        "/universe/types/34/",
         serde_json::json!({
           "description": "Tritanium.", "group_id": 18, "name": "Tritanium", "published": true, "type_id": 34,
         }),
@@ -195,13 +195,13 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/groups/18/",
+        "/universe/groups/18/",
         serde_json::json!({ "category_id": 4, "group_id": 18, "name": "Mineral", "published": true, "types": [34] }),
       )
       .await;
       mount_json(
         &server,
-        "/v1/universe/categories/4/",
+        "/universe/categories/4/",
         serde_json::json!({ "category_id": 4, "groups": [18], "name": "Material", "published": true }),
       )
       .await;
@@ -224,7 +224,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v3/universe/types/3300/",
+        "/universe/types/3300/",
         serde_json::json!({
           "description": "Gunnery.", "group_id": 255, "name": "Gunnery", "published": true, "type_id": 3300,
           "dogma_attributes": [

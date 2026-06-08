@@ -270,13 +270,13 @@ mod tests {
   }
 
   async fn mount_location(server: &MockServer, character_id: i64, body: serde_json::Value) {
-    mount_json(server, &format!("/v2/characters/{character_id}/location/"), body).await;
+    mount_json(server, &format!("/characters/{character_id}/location/"), body).await;
   }
 
   async fn mount_online(server: &MockServer, character_id: i64, online: bool) {
     mount_json(
       server,
-      &format!("/v3/characters/{character_id}/online/"),
+      &format!("/characters/{character_id}/online/"),
       serde_json::json!({ "online": online }),
     )
     .await;
@@ -285,7 +285,7 @@ mod tests {
   async fn mount_ship(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v2/characters/{character_id}/ship/"),
+      &format!("/characters/{character_id}/ship/"),
       serde_json::json!({ "ship_item_id": 1_000_000_016_991_i64, "ship_name": "My Rifter", "ship_type_id": 587 }),
     )
     .await;
@@ -294,7 +294,7 @@ mod tests {
   async fn mount_system_geography(server: &MockServer) {
     mount_json(
       server,
-      "/v4/universe/systems/30000142/",
+      "/universe/systems/30000142/",
       serde_json::json!({
         "constellation_id": 20000020, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
         "security_status": 0.946, "system_id": 30000142,
@@ -303,7 +303,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/universe/constellations/20000020/",
+      "/universe/constellations/20000020/",
       serde_json::json!({
         "constellation_id": 20000020, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
         "region_id": 10000002, "systems": [30000142],
@@ -312,7 +312,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/universe/regions/10000002/",
+      "/universe/regions/10000002/",
       serde_json::json!({
         "constellations": [20000020], "description": "The Forge.", "name": "The Forge", "region_id": 10000002,
       }),
@@ -323,7 +323,7 @@ mod tests {
   async fn mount_station_hull_type(server: &MockServer) {
     mount_json(
       server,
-      "/v3/universe/types/1529/",
+      "/universe/types/1529/",
       serde_json::json!({
         "description": "A station.", "group_id": 15, "market_group_id": 1500, "name": "Caldari Station",
         "published": true, "type_id": 1529,
@@ -332,13 +332,13 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/universe/groups/15/",
+      "/universe/groups/15/",
       serde_json::json!({ "category_id": 3, "group_id": 15, "name": "Station", "published": true, "types": [1529] }),
     )
     .await;
     mount_json(
       server,
-      "/v1/universe/categories/3/",
+      "/universe/categories/3/",
       serde_json::json!({ "category_id": 3, "groups": [15], "name": "Station", "published": true }),
     )
     .await;
@@ -347,7 +347,7 @@ mod tests {
   async fn mount_market_groups(server: &MockServer) {
     mount_json(
       server,
-      "/v1/markets/groups/1500/",
+      "/markets/groups/1500/",
       serde_json::json!({
         "description": "Stations.", "market_group_id": 1500, "name": "Stations",
         "parent_group_id": 1499, "types": [1529],
@@ -356,7 +356,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v1/markets/groups/1499/",
+      "/markets/groups/1499/",
       serde_json::json!({
         "description": "Structures.", "market_group_id": 1499, "name": "Structures", "types": [],
       }),
@@ -367,7 +367,7 @@ mod tests {
   async fn mount_owner_corporation(server: &MockServer) {
     mount_json(
       server,
-      "/v5/corporations/1000035/",
+      "/corporations/1000035/",
       serde_json::json!({
         "ceo_id": 3004029, "creator_id": 3004029, "member_count": 10000, "name": "Caldari Navy",
         "tax_rate": 0.0, "ticker": "CN",
@@ -376,7 +376,7 @@ mod tests {
     .await;
     mount_json(
       server,
-      "/v5/characters/3004029/",
+      "/characters/3004029/",
       serde_json::json!({
         "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": 1000035,
         "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
@@ -388,7 +388,7 @@ mod tests {
   async fn mount_races(server: &MockServer) {
     mount_json(
       server,
-      "/v1/universe/races/",
+      "/universe/races/",
       serde_json::json!([
         { "alliance_id": 500001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
       ]),
@@ -399,7 +399,7 @@ mod tests {
   async fn mount_bloodlines(server: &MockServer) {
     mount_json(
       server,
-      "/v1/universe/bloodlines/",
+      "/universe/bloodlines/",
       serde_json::json!([
         { "bloodline_id": 5, "charisma": 6, "corporation_id": 1000035, "description": "The Civire.",
           "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
@@ -444,7 +444,7 @@ mod tests {
       mount_system_geography(&server).await;
       mount_json(
         &server,
-        "/v2/universe/stations/60003760/",
+        "/universe/stations/60003760/",
         serde_json::json!({
           "max_dockable_ship_volume": 50000000.0, "name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
           "office_rental_cost": 10000.0, "owner": 1000035, "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
@@ -489,7 +489,7 @@ mod tests {
     async fn it_errors_and_persists_nothing_when_the_location_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/location/"))
+        .and(path("/characters/42/location/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -516,7 +516,7 @@ mod tests {
       mount_online(&server, 42, true).await;
       mount_ship(&server, 42).await;
       Mock::given(method("GET"))
-        .and(path("/v4/universe/systems/30000142/"))
+        .and(path("/universe/systems/30000142/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
           "constellation_id": 20000020, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "security_status": 0.946, "system_id": 30000142,
@@ -526,7 +526,7 @@ mod tests {
         .await;
       mount_json(
         &server,
-        "/v1/universe/constellations/20000020/",
+        "/universe/constellations/20000020/",
         serde_json::json!({
           "constellation_id": 20000020, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "region_id": 10000002, "systems": [30000142],
@@ -535,7 +535,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/regions/10000002/",
+        "/universe/regions/10000002/",
         serde_json::json!({
           "constellations": [20000020], "description": "The Forge.", "name": "The Forge", "region_id": 10000002,
         }),
@@ -570,7 +570,7 @@ mod tests {
       mount_ship(&server, 42).await;
       mount_system_geography(&server).await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/structures/1021000000000/"))
+        .and(path("/universe/structures/1021000000000/"))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
@@ -607,7 +607,7 @@ mod tests {
       mount_ship(&server, 42).await;
       mount_system_geography(&server).await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/structures/1045971617379/"))
+        .and(path("/universe/structures/1045971617379/"))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -646,7 +646,7 @@ mod tests {
       mount_system_geography(&server).await;
       mount_json(
         &server,
-        "/v2/universe/structures/1021000000000/",
+        "/universe/structures/1021000000000/",
         serde_json::json!({
           "name": "A Player Structure", "owner_id": 1000035, "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
           "solar_system_id": 30000142, "type_id": 35833,
@@ -655,7 +655,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v3/universe/types/35833/",
+        "/universe/types/35833/",
         serde_json::json!({
           "description": "An Astrahus.", "group_id": 1657, "market_group_id": 1500, "name": "Astrahus",
           "published": true, "type_id": 35833,
@@ -664,13 +664,13 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v1/universe/groups/1657/",
+        "/universe/groups/1657/",
         serde_json::json!({ "category_id": 65, "group_id": 1657, "name": "Citadel", "published": true, "types": [35833] }),
       )
       .await;
       mount_json(
         &server,
-        "/v1/universe/categories/65/",
+        "/universe/categories/65/",
         serde_json::json!({ "category_id": 65, "groups": [1657], "name": "Structure", "published": true }),
       )
       .await;
@@ -700,7 +700,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/location/"))
+        .and(path("/characters/42/location/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "solar_system_id": 30000142 })))
         .expect(0)
         .mount(&server)
@@ -754,7 +754,7 @@ mod tests {
     async fn mount_factions(server: &MockServer) {
       mount_json(
         server,
-        "/v2/universe/factions/",
+        "/universe/factions/",
         serde_json::json!([
           { "corporation_id": 1_000_035, "description": "The State.", "faction_id": 500_001, "is_unique": true,
             "name": "Caldari State", "size_factor": 5.0, "station_count": 100, "station_system_count": 50 },
@@ -767,7 +767,7 @@ mod tests {
     async fn it_short_circuits_when_the_faction_is_already_cached() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200))
         .expect(0)
         .mount(&server)
@@ -798,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn it_errors_when_the_faction_is_absent_from_the_esi_list() {
       let server = MockServer::start().await;
-      mount_json(&server, "/v2/universe/factions/", serde_json::json!([])).await;
+      mount_json(&server, "/universe/factions/", serde_json::json!([])).await;
       let h = harness(&server).await;
       let grant = Grant::new_test("token", 42);
 

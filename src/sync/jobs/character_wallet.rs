@@ -97,7 +97,7 @@ mod tests {
   async fn mount_journal(server: &MockServer, character_id: i64) {
     mount_paginated(
       server,
-      &format!("/v6/characters/{character_id}/wallet/journal/"),
+      &format!("/characters/{character_id}/wallet/journal/"),
       serde_json::json!([
         { "amount": 1000.0, "balance": 50000.0, "date": "2026-05-30T12:00:00Z", "description": "Donation",
           "id": 123456789_i64, "ref_type": "player_donation" },
@@ -109,7 +109,7 @@ mod tests {
   async fn mount_transactions(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v1/characters/{character_id}/wallet/transactions/"),
+      &format!("/characters/{character_id}/wallet/transactions/"),
       serde_json::json!([
         { "client_id": 1000035, "date": "2026-05-30T12:00:00Z", "is_buy": true, "is_personal": true,
           "journal_ref_id": 123456789_i64, "location_id": 60003760, "quantity": 10, "transaction_id": 987654321_i64,
@@ -167,7 +167,7 @@ mod tests {
     async fn it_errors_and_persists_nothing_when_the_journal_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v6/characters/42/wallet/journal/"))
+        .and(path("/characters/42/wallet/journal/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -192,7 +192,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v6/characters/42/wallet/journal/"))
+        .and(path("/characters/42/wallet/journal/"))
         .respond_with(
           ResponseTemplate::new(200)
             .insert_header("X-Pages", "1")

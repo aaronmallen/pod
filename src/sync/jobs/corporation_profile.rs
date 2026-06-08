@@ -126,7 +126,7 @@ mod tests {
   async fn mount_corporation(server: &MockServer, corporation_id: i64) {
     mount_json(
       server,
-      &format!("/v5/corporations/{corporation_id}/"),
+      &format!("/corporations/{corporation_id}/"),
       serde_json::json!({
         "ceo_id": 100, "creator_id": 100, "member_count": 42, "name": "Test Corp",
         "tax_rate": 0.1, "ticker": "TST",
@@ -144,7 +144,7 @@ mod tests {
   }
 
   async fn mount_roles(server: &MockServer, corporation_id: i64, body: serde_json::Value) {
-    mount_json(server, &format!("/v2/corporations/{corporation_id}/roles/"), body).await;
+    mount_json(server, &format!("/corporations/{corporation_id}/roles/"), body).await;
   }
 
   async fn seed_credential(db: &store::Database, corporation_id: i64, director_id: i64) {
@@ -223,7 +223,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v5/corporations/2000/",
+        "/corporations/2000/",
         serde_json::json!({
           "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
           "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
@@ -232,7 +232,7 @@ mod tests {
       .await;
       mount_json(
         &server,
-        "/v4/alliances/300/",
+        "/alliances/300/",
         serde_json::json!({
           "creator_corporation_id": 2000, "creator_id": 100,
           "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
@@ -266,7 +266,7 @@ mod tests {
     async fn it_errors_and_persists_nothing_when_the_corp_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v5/corporations/2000/"))
+        .and(path("/corporations/2000/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -318,7 +318,7 @@ mod tests {
       let server = MockServer::start().await;
       mount_corporation(&server, 2000).await;
       Mock::given(method("GET"))
-        .and(path("/v2/corporations/2000/roles/"))
+        .and(path("/corporations/2000/roles/"))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;

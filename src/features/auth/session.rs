@@ -213,7 +213,7 @@ mod tests {
         r#"{{"birthday":"2020-01-01T00:00:00Z","bloodline_id":1,"corporation_id":{CORPORATION_ID},"gender":"male","name":"Test Pilot","race_id":1}}"#
       );
       Mock::given(method("GET"))
-        .and(path(format!("/v5/characters/{CHARACTER_ID}/")))
+        .and(path(format!("/characters/{CHARACTER_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
         .mount(server)
         .await;
@@ -222,7 +222,7 @@ mod tests {
     async fn mount_roles(server: &MockServer, roles: &str) {
       let body = format!(r#"[{{"character_id":{CHARACTER_ID},"roles":{roles}}}]"#);
       Mock::given(method("GET"))
-        .and(path(format!("/v2/corporations/{CORPORATION_ID}/roles/")))
+        .and(path(format!("/corporations/{CORPORATION_ID}/roles/")))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
         .mount(server)
         .await;
@@ -233,7 +233,7 @@ mod tests {
         r#"{{"ceo_id":{ceo_id},"creator_id":{ceo_id},"member_count":1,"name":"Test Corp","tax_rate":0.0,"ticker":"TEST"}}"#
       );
       Mock::given(method("GET"))
-        .and(path(format!("/v5/corporations/{CORPORATION_ID}/")))
+        .and(path(format!("/corporations/{CORPORATION_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
         .mount(server)
         .await;

@@ -114,7 +114,7 @@ mod tests {
 
   async fn mount_contracts(server: &MockServer, character_id: i64, body: serde_json::Value) {
     Mock::given(method("GET"))
-      .and(path(format!("/v1/characters/{character_id}/contracts/")))
+      .and(path(format!("/characters/{character_id}/contracts/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -122,7 +122,7 @@ mod tests {
 
   async fn mount_names(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -267,7 +267,7 @@ mod tests {
     async fn it_errors_when_the_grant_is_missing() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/contracts/"))
+        .and(path("/characters/42/contracts/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
@@ -291,7 +291,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v1/characters/42/contracts/"))
+        .and(path("/characters/42/contracts/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

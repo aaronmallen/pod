@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn list(&self) -> Result<Vec<Bloodline>, clients::Error> {
-    let url = self.esi.url("v1/universe/bloodlines/");
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url("universe/bloodlines/");
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -47,7 +47,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"[{"bloodline_id":1,"charisma":6,"corporation_id":1000006,"description":"The Deteis.","intelligence":7,"memory":7,"name":"Deteis","perception":5,"race_id":1,"ship_type_id":601,"willpower":5}]"#;
       Mock::given(method("GET"))
-        .and(path("/v1/universe/bloodlines/"))
+        .and(path("/universe/bloodlines/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;

@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn list(&self) -> Result<Vec<Faction>, clients::Error> {
-    let url = self.esi.url("v2/universe/factions/");
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url("universe/factions/");
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -47,7 +47,7 @@ mod tests {
       let server = MockServer::start().await;
       let body = r#"[{"corporation_id":1000084,"description":"The Amarr Empire.","faction_id":500003,"is_unique":true,"militia_corporation_id":500003,"name":"Amarr Empire","size_factor":5.0,"solar_system_id":30002187,"station_count":1031,"station_system_count":508}]"#;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -64,7 +64,7 @@ mod tests {
     async fn it_returns_http_error_on_5xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;

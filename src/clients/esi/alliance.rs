@@ -15,8 +15,8 @@ impl<'a> Client<'a> {
   }
 
   pub async fn info(&self, alliance_id: i64) -> Result<AllianceInfo, clients::Error> {
-    let url = self.esi.url(&format!("v4/alliances/{alliance_id}/"));
-    self.esi.http().get_json(&url, None).await
+    let url = self.esi.url(&format!("alliances/{alliance_id}/"));
+    self.esi.get_json(&url, None).await
   }
 }
 
@@ -54,7 +54,7 @@ mod tests {
         "ticker": "TEST"
       }"#;
       Mock::given(method("GET"))
-        .and(path("/v4/alliances/99/"))
+        .and(path("/alliances/99/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
@@ -72,7 +72,7 @@ mod tests {
     async fn it_returns_http_error_on_4xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v4/alliances/99/"))
+        .and(path("/alliances/99/"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;

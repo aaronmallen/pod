@@ -228,7 +228,7 @@ mod tests {
 
   async fn mount_dynamic_item(server: &MockServer, type_id: i64, item_id: i64) {
     Mock::given(method("GET"))
-      .and(path(format!("/v1/dogma/dynamic/items/{type_id}/{item_id}/")))
+      .and(path(format!("/dogma/dynamic/items/{type_id}/{item_id}/")))
       .respond_with(ResponseTemplate::new(200).set_body_json(dynamic_item_body()))
       .mount(server)
       .await;

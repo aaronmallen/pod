@@ -102,7 +102,7 @@ mod tests {
 
   async fn mount_names(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("POST"))
-      .and(path("/v3/universe/names/"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -132,7 +132,7 @@ mod tests {
   async fn mount_standings(server: &MockServer, character_id: i64) {
     mount_json(
       server,
-      &format!("/v2/characters/{character_id}/standings/"),
+      &format!("/characters/{character_id}/standings/"),
       serde_json::json!([
         { "from_id": 500_003, "from_type": "faction", "standing": 7.5 },
         { "from_id": 1_000_125, "from_type": "npc_corp", "standing": -2.5 },
@@ -171,7 +171,7 @@ mod tests {
       mount_standings(&server, 42).await;
       mount_json(
         &server,
-        "/v2/universe/factions/",
+        "/universe/factions/",
         serde_json::json!([
           { "description": "The Amarr Empire.", "faction_id": 500_003, "is_unique": true, "name": "Amarr Empire",
             "size_factor": 5.0, "station_count": 1000, "station_system_count": 500 },
@@ -214,12 +214,12 @@ mod tests {
       let server = MockServer::start().await;
       mount_json(
         &server,
-        "/v2/characters/42/standings/",
+        "/characters/42/standings/",
         serde_json::json!([{ "from_id": 500_003, "from_type": "faction", "standing": 5.0 }]),
       )
       .await;
       Mock::given(method("GET"))
-        .and(path("/v2/universe/factions/"))
+        .and(path("/universe/factions/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
@@ -247,7 +247,7 @@ mod tests {
     async fn it_aborts_without_writing_when_the_standings_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/standings/"))
+        .and(path("/characters/42/standings/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
@@ -273,7 +273,7 @@ mod tests {
       mount_standings(&server, 42).await;
       mount_json(
         &server,
-        "/v2/universe/factions/",
+        "/universe/factions/",
         serde_json::json!([
           { "description": "The Amarr Empire.", "faction_id": 500_003, "is_unique": true, "name": "Amarr Empire",
             "size_factor": 5.0, "station_count": 1000, "station_system_count": 500 },
@@ -281,7 +281,7 @@ mod tests {
       )
       .await;
       Mock::given(method("POST"))
-        .and(path("/v3/universe/names/"))
+        .and(path("/universe/names/"))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;
@@ -305,7 +305,7 @@ mod tests {
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/v2/characters/42/standings/"))
+        .and(path("/characters/42/standings/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)

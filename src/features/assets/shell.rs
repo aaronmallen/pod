@@ -102,6 +102,21 @@ pub(super) fn shell(state: &State, _now: DateTime<Utc>) -> Element<'_, Message> 
     .into();
   }
 
+  let multibuy_export = (state.tab() == Tab::Stockpiles)
+    .then(|| state.stockpile_multibuy_export())
+    .flatten()
+    .and_then(|id| state.stockpiles().iter().find(|card| card.id == id));
+  if let Some(card) = multibuy_export {
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::backdrop(Message::StockpileMultibuyExportClosed),
+      stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_copied()),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
   base.into()
 }
 

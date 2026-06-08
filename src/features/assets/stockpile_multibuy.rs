@@ -14,6 +14,14 @@ pub fn parse(text: &str) -> Vec<(String, u64)> {
   totals
 }
 
+pub fn serialize(items: &[(String, u64)]) -> String {
+  items
+    .iter()
+    .map(|(name, quantity)| format!("{name}\t{quantity}"))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
 fn parse_line(line: &str) -> Option<(String, u64)> {
   let line = line.trim();
   if line.is_empty() {
@@ -349,6 +357,39 @@ Tritanium 500
       assert_eq!(parse_separated_quantity("-5"), None);
       assert_eq!(parse_separated_quantity("x"), None);
       assert_eq!(parse_separated_quantity(""), None);
+    }
+  }
+
+  mod serialize {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_serializes_an_empty_list_to_an_empty_string() {
+      assert_eq!(serialize(&[]), "");
+    }
+
+    #[test]
+    fn it_formats_each_line_as_name_tab_quantity_joined_by_newlines() {
+      let items = vec![
+        ("Tritanium".to_owned(), 1000),
+        ("Medium Shield Extender II".to_owned(), 3),
+      ];
+
+      assert_eq!(serialize(&items), "Tritanium\t1000\nMedium Shield Extender II\t3");
+    }
+
+    #[test]
+    fn it_writes_quantities_without_thousands_separators() {
+      assert_eq!(serialize(&[("Tritanium".to_owned(), 1_234_567)]), "Tritanium\t1234567");
+    }
+
+    #[test]
+    fn it_round_trips_through_parse() {
+      let items = vec![("Tritanium".to_owned(), 1000), ("Pyerite".to_owned(), 50)];
+
+      assert_eq!(parse(&serialize(&items)), items);
     }
   }
 }

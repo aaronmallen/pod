@@ -11,7 +11,7 @@ use iced::{
 };
 
 use super::{
-  Message, StockpileContextMenu, fmt_count,
+  Message, StockpileContextMenu, fmt_count, stockpile_multibuy,
   stockpile_search::{self, MultibuyMatch, MultibuyResolution},
 };
 use crate::{
@@ -27,6 +27,7 @@ use crate::{
       backdrop,
       chip::Chip,
       context_menu::{self, Item},
+      icon::Icon,
       icon_tile::icon_tile,
       text_input::TextInput,
     },
@@ -42,6 +43,7 @@ const ICON_BOX: f32 = 22.0;
 const FORM_WIDTH: f32 = 400.0;
 const IMPORT_PANEL_WIDTH: f32 = 480.0;
 const IMPORT_FIELD_HEIGHT: f32 = 168.0;
+const MULTIBUY_EXPORT_BODY_HEIGHT: f32 = 240.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct StockpileItemLine {
@@ -64,6 +66,17 @@ pub struct StockpileCard {
 }
 
 impl StockpileCard {
+  pub(super) fn multibuy_deficit(&self) -> Vec<(String, u64)> {
+    self
+      .items
+      .iter()
+      .filter_map(|item| {
+        let deficit = item.target - item.have;
+        (deficit > 0).then(|| (item.type_name.clone(), deficit as u64))
+      })
+      .collect()
+  }
+
   fn is_full(&self) -> bool {
     self.items.iter().all(|item| item.have >= item.target)
   }
@@ -471,6 +484,7 @@ pub(super) fn body<'a>(
 pub(super) fn context_menu_view(menu: &StockpileContextMenu) -> Element<'_, Message> {
   let items = vec![
     Item::action("Edit", Message::StockpileEditStarted(menu.id)),
+    Item::action("Export to Multibuy", Message::StockpileMultibuyExportOpened(menu.id)),
     Item::separator(),
     Item::danger("Delete", Message::StockpileDeleted(menu.id)),
   ];
@@ -826,6 +840,113 @@ fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .into()
+}
+
+pub(super) fn multibuy_export_overlay(card: &StockpileCard, copied: bool) -> Element<'_, Message> {
+  let lines = card.multibuy_deficit();
+
+  let header = Row::with_children(vec![
+    text("Export to Multibuy")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+    multibuy_copy_button(card.id, copied, !lines.is_empty()),
+  ])
+  .align_y(Vertical::Center);
+
+  let body: Element<'_, Message> = if lines.is_empty() {
+    container(muted_text("Stockpile is fully stocked \u{2014} nothing to buy."))
+      .width(Length::Fill)
+      .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT))
+      .into()
+  } else {
+    container(
+      scrollable(
+        text(stockpile_multibuy::serialize(&lines))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::SM)
+          .style(|_| text::Style {
+            color: Some(color::text::PRIMARY),
+          })
+          .width(Length::Fill),
+      )
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT)),
+    )
+    .width(Length::Fill)
+    .into()
+  };
+
+  let panel = container(
+    Column::with_children(vec![header.into(), body])
+      .spacing(spacing::SPACE_3)
+      .width(Length::Fill),
+  )
+  .width(Length::Fixed(IMPORT_PANEL_WIDTH))
+  .padding(spacing::SPACE_6)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.12),
+      radius: radius::CARD.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Element<'a, Message> {
+  let label = if copied { "Copied!" } else { "Copy" };
+  let tint = if enabled {
+    color::accent::PLASMA
+  } else {
+    color::text::TERTIARY
+  };
+
+  let content = Row::with_children(vec![
+    Icon::copy().size(typography::size::MD).color(tint).render(),
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let mut export = button(content)
+    .padding(Padding {
+      top: spacing::UNIT + 3.0,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::UNIT + 3.0,
+      left: spacing::SPACE_3_5,
+    })
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(color::with_alpha(tint, 0.12))),
+      border: Border {
+        color: color::with_alpha(tint, 0.35),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..button::Style::default()
+    });
+  if enabled {
+    export = export.on_press(Message::StockpileMultibuyExportCopied(card_id));
+  }
+  export.into()
 }
 
 fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
@@ -1333,6 +1454,59 @@ mod tests {
     }
   }
 
+  mod multibuy_deficit {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
+      StockpileCard {
+        character_id: None,
+        id: 1,
+        items,
+        location_id: None,
+        location_name: None,
+        name: "Cache".to_owned(),
+        overall_pct: 0.0,
+      }
+    }
+
+    fn line(type_name: &str, have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_id: 0,
+        type_name: type_name.to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_omits_items_at_or_above_target() {
+      let card = card(vec![
+        line("Tritanium", 1000, 1000),
+        line("Pyerite", 80, 50),
+        line("Mexallon", 10, 25),
+      ]);
+
+      assert_eq!(card.multibuy_deficit(), vec![("Mexallon".to_owned(), 15)]);
+    }
+
+    #[test]
+    fn it_returns_an_empty_list_for_a_fully_stocked_stockpile() {
+      let card = card(vec![line("Tritanium", 1000, 1000)]);
+
+      assert!(card.multibuy_deficit().is_empty());
+    }
+
+    #[test]
+    fn it_returns_target_minus_have_for_positive_deficits() {
+      let card = card(vec![line("Tritanium", 400, 1000)]);
+
+      assert_eq!(card.multibuy_deficit(), vec![("Tritanium".to_owned(), 600)]);
+    }
+  }
+
   mod render {
     use super::*;
 
@@ -1397,6 +1571,22 @@ mod tests {
     #[test]
     fn it_renders_the_empty_state() {
       let _el: Element<'_, Message> = body(&[], None, None);
+    }
+
+    #[test]
+    fn it_renders_the_multibuy_export_overlay_with_a_deficit() {
+      let card = card_model();
+
+      let _el: Element<'_, Message> = multibuy_export_overlay(&card, false);
+      let _copied: Element<'_, Message> = multibuy_export_overlay(&card, true);
+    }
+
+    #[test]
+    fn it_renders_the_multibuy_export_overlay_empty_state_when_fully_stocked() {
+      let mut card = card_model();
+      card.items[0].have = card.items[0].target;
+
+      let _el: Element<'_, Message> = multibuy_export_overlay(&card, false);
     }
   }
 }

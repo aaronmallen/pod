@@ -241,6 +241,9 @@ pub enum Message {
   StockpileImportResolveRequested,
   StockpileImportResolved(MultibuyResolution),
   StockpileImportTextChanged(text_editor::Action),
+  StockpileMultibuyExportClosed,
+  StockpileMultibuyExportCopied(i64),
+  StockpileMultibuyExportOpened(i64),
   StockpileNew,
   StockpilesReloaded(Vec<stockpiles::StockpileCard>),
   TabSelected(Tab),
@@ -289,6 +292,8 @@ pub struct State {
   stockpile_import: Option<stockpiles::ImportPanel>,
   stockpile_context_menu: Option<StockpileContextMenu>,
   stockpile_cursor: Option<iced::Point>,
+  stockpile_multibuy_export: Option<i64>,
+  stockpile_multibuy_copied: bool,
   abyssals: Vec<abyssals::AbyssalCard>,
   abyssal_source_types: Vec<abyssals::SourceTypeFilter>,
   abyssal_filters: abyssals::Filters,
@@ -330,6 +335,8 @@ impl State {
       stockpile_import: None,
       stockpile_context_menu: None,
       stockpile_cursor: None,
+      stockpile_multibuy_export: None,
+      stockpile_multibuy_copied: false,
       abyssals: Vec::new(),
       abyssal_source_types: Vec::new(),
       abyssal_filters: abyssals::Filters::default(),
@@ -430,6 +437,14 @@ impl State {
 
   pub(super) fn stockpile_context_menu(&self) -> Option<&StockpileContextMenu> {
     self.stockpile_context_menu.as_ref()
+  }
+
+  pub(super) fn stockpile_multibuy_export(&self) -> Option<i64> {
+    self.stockpile_multibuy_export
+  }
+
+  pub(super) fn stockpile_multibuy_copied(&self) -> bool {
+    self.stockpile_multibuy_copied
   }
 
   pub(super) fn abyssals(&self) -> &[abyssals::AbyssalCard] {
@@ -670,6 +685,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StockpileImportResolveRequested
     | Message::StockpileImportResolved(_)
     | Message::StockpileImportTextChanged(_)
+    | Message::StockpileMultibuyExportClosed
+    | Message::StockpileMultibuyExportCopied(_)
+    | Message::StockpileMultibuyExportOpened(_)
     | Message::StockpileNew
     | Message::StockpilesReloaded(_) => update_stockpile(state, message, db),
 
@@ -1032,6 +1050,25 @@ fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database
     Message::StockpileContextMenuClosed => {
       state.stockpile_context_menu = None;
       Task::none()
+    }
+    Message::StockpileMultibuyExportOpened(id) => {
+      state.stockpile_context_menu = None;
+      state.stockpile_multibuy_export = Some(id);
+      state.stockpile_multibuy_copied = false;
+      Task::none()
+    }
+    Message::StockpileMultibuyExportClosed => {
+      state.stockpile_multibuy_export = None;
+      state.stockpile_multibuy_copied = false;
+      Task::none()
+    }
+    Message::StockpileMultibuyExportCopied(id) => {
+      let Some(card) = state.stockpiles.iter().find(|card| card.id == id) else {
+        return Task::none();
+      };
+      let text = stockpile_multibuy::serialize(&card.multibuy_deficit());
+      state.stockpile_multibuy_copied = true;
+      iced::clipboard::write(text)
     }
     _ => Task::none(),
   }

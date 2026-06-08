@@ -54,6 +54,8 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+        with:
+          cache-key: release-icons
 
       - name: Generate item icons
         run: mise run generate:item-images
@@ -76,6 +78,8 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+        with:
+          cache-key: release-macos
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -202,6 +206,8 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+        with:
+          cache-key: release-windows
 
       - name: Download item icons
         uses: actions/download-artifact@v8
@@ -303,6 +309,8 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+        with:
+          cache-key: release-linux
 
       - name: Download item icons
         uses: actions/download-artifact@v8

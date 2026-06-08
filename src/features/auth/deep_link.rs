@@ -75,7 +75,7 @@ pub fn forward_or_claim() -> bool {
   let url = url_from_args();
   let claim = resolve_claim(
     url.clone(),
-    |url| single_instance::forward_to_primary(url),
+    single_instance::forward_to_primary,
     single_instance::request_focus,
   );
   breadcrumb(url.as_deref(), &claim);

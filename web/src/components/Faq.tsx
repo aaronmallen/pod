@@ -55,9 +55,12 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
         4. Re-run the installer (you may then see the normal SmartScreen prompt
         — click <strong>More info</strong> → <strong>Run anyway</strong>)
         <br/><br/>
-        Note: Windows can only re-enable Smart App Control by reinstalling the
-        OS, so this is a one-way change. Only do it if you&apos;re comfortable
-        running unsigned software you trust.
+        On current Windows 11 builds you can switch Smart App Control back on
+        later from the same screen; older builds required reinstalling Windows
+        to re-enable it. Note that there&apos;s no per-app exception — the file
+        Properties &ldquo;Unblock&rdquo; checkbox only affects SmartScreen, not
+        Smart App Control. Only turn it off if you&apos;re comfortable running
+        unsigned software you trust.
       </>
     ),
   },
@@ -160,7 +163,7 @@ function FaqEntry({ question, answer }: { question: string; answer: React.ReactN
 
       <div style={{
         overflow: 'hidden',
-        maxHeight: open ? 640 : 0,
+        maxHeight: open ? 720 : 0,
         opacity: open ? 1 : 0,
         transition: 'max-height 280ms ease, opacity 220ms ease',
       }}>

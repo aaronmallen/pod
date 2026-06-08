@@ -250,7 +250,11 @@ fn load_from(path: &Path) -> Result<Settings, Error> {
 }
 
 pub fn log_dir() -> PathBuf {
-  data_dir().join("logs")
+  resolve_log_dir(dir_spec::state_home(), std::env::temp_dir())
+}
+
+fn resolve_log_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
+  state_home.unwrap_or(fallback_root).join("pod").join("logs")
 }
 
 /// Locates the directory containing the bundled assets, preferring the dev manifest dir, then a macOS .app bundle's ../Resources, then the executable's own dir.
@@ -367,6 +371,37 @@ mod tests {
     }
   }
 
+  mod resolve_log_dir {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_state_home_when_present() {
+      let resolved = resolve_log_dir(Some(PathBuf::from("/home/me/.local/state")), PathBuf::from("/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/state/pod/logs"));
+    }
+
+    #[test]
+    fn it_falls_back_to_the_given_root_when_state_home_is_missing() {
+      let resolved = resolve_log_dir(None, PathBuf::from("/var/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/var/tmp/pod/logs"));
+    }
+
+    #[test]
+    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
+      let resolved = resolve_log_dir(None, std::env::temp_dir());
+
+      assert!(
+        resolved.is_absolute(),
+        "the fallback must not depend on the working directory"
+      );
+      assert_ne!(resolved, PathBuf::from("./pod/logs"));
+    }
+  }
+
   mod resolved_paths {
     use pretty_assertions::assert_eq;
 
@@ -386,6 +421,13 @@ mod tests {
 
       assert_eq!(storage.resolved_db_dir(), PathBuf::from("/var/pod/db"));
       assert_eq!(storage.resolved_database_path(), PathBuf::from("/var/pod/db/pod.db"));
+    }
+
+    #[test]
+    fn it_uses_the_state_home_default_log_dir_with_no_override() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.resolved_log_dir(), log_dir());
     }
 
     #[test]
@@ -504,6 +546,28 @@ mod tests {
       assert_eq!(*storage.db_dir(), Some(PathBuf::from("/var/pod/db")));
       assert_eq!(*storage.log_dir(), Some(PathBuf::from("/var/pod/log")));
       assert_eq!(*storage.cache_dir(), Some(PathBuf::from("/var/pod/cache")));
+    }
+  }
+
+  mod serialization {
+    use super::*;
+
+    #[test]
+    fn a_default_storage_config_serializes_without_any_dir_keys() {
+      let toml = toml::to_string_pretty(&StorageConfig::default()).unwrap();
+
+      assert!(
+        !toml.contains("cache_dir"),
+        "resolved cache_dir must not leak to disk: {toml}"
+      );
+      assert!(
+        !toml.contains("db_dir"),
+        "resolved db_dir must not leak to disk: {toml}"
+      );
+      assert!(
+        !toml.contains("log_dir"),
+        "resolved log_dir must not leak to disk: {toml}"
+      );
     }
   }
 

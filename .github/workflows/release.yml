@@ -226,11 +226,25 @@ jobs:
       - name: Add Rust target
         run: rustup target add x86_64-pc-windows-msvc
 
-      - name: Install WiX Toolset v3
-        run: choco upgrade wixtoolset -y
+      # Cache Chocolatey's download cache (the nupkg + the WiX installer that the
+      # package's install script pulls) keyed on the OS. The install step still
+      # always runs — so the WiX binaries and PATH are never cache-dependent — it
+      # just restores the download instead of re-fetching it on a second run.
+      - name: Cache WiX Toolset download
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}\.choco-cache
+          key: ${{ runner.os }}-wixtoolset
 
-      - name: Build and package (nsis)
-        run: mise run package --format nsis
+      - name: Install WiX Toolset v3
+        run: choco upgrade wixtoolset -y --cache-location="${{ github.workspace }}\.choco-cache"
+
+      # One cargo build --release, both Windows formats packaged from it
+      # (cargo-packager accepts a comma-separated --formats); the NSIS and WiX
+      # deep-link handler verifications both run afterward against the rendered
+      # installer.nsi / main.wxs.
+      - name: Build and package (nsis, wix)
+        run: mise run package --format nsis,wix
 
       - name: Verify NSIS deep-link handler
         shell: bash
@@ -250,9 +264,6 @@ jobs:
             echo "::warning::NSIS protocol description renders a literal \${BUNDLEID} (cargo-packager template limitation; the runtime HKCU self-registration overrides it per-user)"
           fi
           echo "NSIS deep-link handler verified: eveauth-pod registered with a \"%1\" command"
-
-      - name: Build and package (wix)
-        run: mise run package --format wix
 
       - name: Verify WiX deep-link handler
         shell: bash
@@ -329,11 +340,13 @@ jobs:
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu
 
-      - name: Build and package (deb)
-        run: mise run package --format deb
-
-      - name: Build and package (appimage)
-        run: mise run package --format appimage
+      # One cargo build --release shared by all three native Linux formats
+      # (cargo-packager accepts a comma-separated --formats). The pacman bundler
+      # emits the PKGBUILD + source tarball consumed by the Docker makepkg step
+      # below, and Flatpak builds from the deb-extracted binary — so neither
+      # forces a second app rebuild.
+      - name: Build and package (deb, appimage, pacman)
+        run: mise run package --format deb,appimage,pacman
 
       - name: Sign package for updater
         if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
@@ -344,8 +357,25 @@ jobs:
           APPIMAGE=$(find . -name "*.AppImage" | head -1)
           cargo-packager signer sign "$APPIMAGE"
 
-      - name: Build and package (pacman)
-        run: mise run package --format pacman
+      # Cache the archlinux:latest image so the multi-hundred-MB pull becomes a
+      # local docker load on a second run. The makepkg container still runs
+      # `pacman -Sy` to refresh its package DB, so a cached base image stays
+      # usable. Correctness is cache-independent: a miss pulls and saves it.
+      - name: Cache Arch Linux image
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/arch-image
+          key: ${{ runner.os }}-archlinux-latest
+
+      - name: Restore or pull Arch Linux image
+        run: |
+          if [ -f ~/.cache/arch-image/archlinux.tar ]; then
+            docker load -i ~/.cache/arch-image/archlinux.tar
+          else
+            docker pull archlinux:latest
+            mkdir -p ~/.cache/arch-image
+            docker save archlinux:latest -o ~/.cache/arch-image/archlinux.tar
+          fi
 
       - name: Build pacman package
         run: |
@@ -373,11 +403,23 @@ jobs:
       - name: Install Flatpak tools
         run: sudo apt-get install -y flatpak flatpak-builder
 
+      # Cache the user Flatpak installation (the freedesktop Platform + Sdk
+      # runtimes) keyed on the OS + runtime version. --user installs live under
+      # $HOME, so actions/cache restores them without root-owned-path issues, and
+      # flatpak-builder --user resolves the cached runtime instead of
+      # re-downloading it. The install step stays idempotent, so a cache miss
+      # simply re-fetches — correctness never depends on the cache.
+      - name: Cache Flatpak runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/flatpak
+          key: ${{ runner.os }}-flatpak-freedesktop-24.08
+
       - name: Add Flathub remote
-        run: sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        run: flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Install Flatpak runtime
-        run: sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+        run: flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
       - name: Prepare binary tarball
         run: |
@@ -396,7 +438,7 @@ jobs:
         run: mise run generate:flatpak --path "../$TARBALL"
 
       - name: Build Flatpak
-        run: sudo flatpak-builder --repo=repo build-dir flatpak/dev.aaronmallen.pod.yml
+        run: flatpak-builder --user --repo=repo build-dir flatpak/dev.aaronmallen.pod.yml
 
       - name: Bundle Flatpak
         run: flatpak build-bundle repo dev.aaronmallen.pod.flatpak dev.aaronmallen.pod

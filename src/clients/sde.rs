@@ -13,18 +13,22 @@ use crate::clients::{self, http};
 const SDE_DOWNLOAD_BACKOFF_BASE: Duration = Duration::from_millis(500);
 const SDE_DOWNLOAD_MAX_ATTEMPTS: u32 = 3;
 const SDE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+const SDE_LATEST_TIMEOUT: Duration = Duration::from_secs(15);
+const SDE_LATEST_URL: &str = "https://developers.eveonline.com/static-data/tranquility/latest.jsonl";
 const SDE_YAML_URL: &str = "https://developers.eveonline.com/static-data/eve-online-static-data-latest-yaml.zip";
 
 pub struct Client {
-  url: String,
   http: Arc<http::Client>,
+  latest_url: String,
+  url: String,
 }
 
 impl Client {
   pub fn new(http: Arc<http::Client>) -> Self {
     Self {
-      url: SDE_YAML_URL.to_owned(),
       http,
+      latest_url: SDE_LATEST_URL.to_owned(),
+      url: SDE_YAML_URL.to_owned(),
     }
   }
 
@@ -40,6 +44,17 @@ impl Client {
       build_version,
       _temp_dir: temp_dir,
     })
+  }
+
+  /// Probes for the latest SDE build number; returns None on any failure to gracefully fall back to the full download.
+  pub async fn latest_build_version(&self) -> Option<String> {
+    let bytes = self
+      .http
+      .get_bytes_uncached_with_timeout(&self.latest_url, SDE_LATEST_TIMEOUT)
+      .await
+      .ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    parse_sde_build_from_jsonl(text)
   }
 
   async fn download_bytes(&self) -> Result<Vec<u8>, clients::Error> {
@@ -72,10 +87,20 @@ impl Client {
   }
 
   #[cfg(test)]
+  pub fn with_latest_url(http: Arc<http::Client>, latest_url: impl Into<String>) -> Self {
+    Self {
+      http,
+      latest_url: latest_url.into(),
+      url: SDE_YAML_URL.to_owned(),
+    }
+  }
+
+  #[cfg(test)]
   pub fn with_url(http: Arc<http::Client>, url: impl Into<String>) -> Self {
     Self {
-      url: url.into(),
       http,
+      latest_url: SDE_LATEST_URL.to_owned(),
+      url: url.into(),
     }
   }
 }
@@ -160,6 +185,16 @@ fn is_transient(error: &clients::Error) -> bool {
       None => e.is_timeout() || e.is_connect() || e.is_request() || e.is_decode() || e.is_body(),
     },
     _ => false,
+  }
+}
+
+fn parse_sde_build_from_jsonl(data: &str) -> Option<String> {
+  let line = data.lines().find(|l| !l.trim().is_empty())?;
+  let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+  match value.get("buildNumber")? {
+    serde_json::Value::String(s) => Some(s.clone()),
+    serde_json::Value::Number(n) => Some(n.to_string()),
+    _ => None,
   }
 }
 
@@ -340,6 +375,82 @@ mod tests {
       let result = client.download_and_extract().await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+  }
+
+  mod latest_build_version {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::store;
+
+    #[tokio::test]
+    async fn it_reads_the_build_number_from_latest_jsonl() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/latest.jsonl"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          b"{\"buildNumber\":2841340,\"releaseDate\":\"2026-06-08\"}".to_vec(),
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let client = Client::with_latest_url(http, format!("{}/latest.jsonl", server.uri()));
+
+      let build = client.latest_build_version().await;
+
+      assert_eq!(build.as_deref(), Some("2841340"));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_probe_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/latest.jsonl"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let client = Client::with_latest_url(http, format!("{}/latest.jsonl", server.uri()));
+
+      assert!(client.latest_build_version().await.is_none());
+    }
+  }
+
+  mod parse_sde_build_from_jsonl {
+    use super::*;
+
+    #[test]
+    fn it_reads_a_numeric_build_number() {
+      let jsonl = "{\"buildNumber\":2841340,\"releaseDate\":\"2026-06-08\"}";
+
+      assert_eq!(parse_sde_build_from_jsonl(jsonl).as_deref(), Some("2841340"));
+    }
+
+    #[test]
+    fn it_reads_a_string_build_number() {
+      let jsonl = "{\"buildNumber\":\"20240101.1\"}";
+
+      assert_eq!(parse_sde_build_from_jsonl(jsonl).as_deref(), Some("20240101.1"));
+    }
+
+    #[test]
+    fn it_returns_none_for_invalid_json() {
+      assert_eq!(parse_sde_build_from_jsonl("not json"), None);
+    }
+
+    #[test]
+    fn it_returns_none_when_the_build_number_is_missing() {
+      let jsonl = "{\"releaseDate\":\"2026-06-08\"}";
+
+      assert_eq!(parse_sde_build_from_jsonl(jsonl), None);
     }
   }
 

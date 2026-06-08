@@ -241,13 +241,27 @@ async fn run_seed(db: Database, http: Arc<http::Client>, mut tx: Tx) {
 }
 
 async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<(), String> {
+  let client = sde_client::Client::new(http);
+
+  let latest_build = client.latest_build_version().await;
+  let seeded = sde::is_seeded(db).await.unwrap_or(false);
+  if should_skip_download(latest_build.as_deref(), sde_version_path().as_deref(), seeded) {
+    tracing::info!(target: "pod::sde", build = latest_build.as_deref(), "SDE already current; skipping full download");
+    return Ok(());
+  }
+
   step(tx, "Downloading static data\u{2026}").await;
-  let extracted = sde_client::Client::new(http)
-    .download_and_extract()
-    .await
-    .map_err(|e| e.to_string())?;
+  let extracted = client.download_and_extract().await.map_err(|e| e.to_string())?;
 
   seed_if_stale(db, tx, &extracted.root, extracted.build_version.as_deref()).await
+}
+
+fn should_skip_download(latest_build: Option<&str>, marker_path: Option<&Path>, seeded: bool) -> bool {
+  let Some(build) = latest_build else {
+    return false;
+  };
+
+  seeded && sde_is_current(marker_path, Some(&composite_version(build)))
 }
 
 async fn seed_if_stale(db: &Database, tx: &mut Tx, root: &Path, build_version: Option<&str>) -> Result<(), String> {
@@ -1180,6 +1194,46 @@ mod tests {
       let b = composite_version("20240102.1");
 
       assert_ne!(a, b);
+    }
+  }
+
+  mod should_skip_download {
+    use super::*;
+
+    #[test]
+    fn it_skips_when_the_marker_matches_the_current_composite() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
+
+      assert!(should_skip_download(Some("12345"), Some(&marker), true));
+    }
+
+    #[test]
+    fn it_downloads_when_only_the_build_matches_a_stale_composite() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, "12345+pod-0.0.0+seed-0").unwrap();
+
+      assert!(!should_skip_download(Some("12345"), Some(&marker), true));
+    }
+
+    #[test]
+    fn it_downloads_when_the_probe_returns_nothing() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
+
+      assert!(!should_skip_download(None, Some(&marker), true));
+    }
+
+    #[test]
+    fn it_downloads_when_the_database_is_not_yet_seeded() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
+
+      assert!(!should_skip_download(Some("12345"), Some(&marker), false));
     }
   }
 

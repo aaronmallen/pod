@@ -34,13 +34,15 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let race = resolve_race(ctx, race_id).await?;
   let bloodline = resolve_bloodline(ctx, bloodline_id).await?;
 
-  let portrait_url = ctx.image.character_portrait_url(character_id, images::PORTRAIT_SIZE);
-  let portrait = ctx.image.fetch(&portrait_url).await?;
   let portrait_path = ctx.image_store.character_portrait_path(character_id);
-  ctx
-    .image_store
-    .write(&portrait_path, &portrait)
-    .map_err(|error| Error::Internal(format!("write portrait for character {character_id}: {error}")))?;
+  if !images::is_fresh(&portrait_path, images::STALE_AFTER) {
+    let portrait_url = ctx.image.character_portrait_url(character_id, images::PORTRAIT_SIZE);
+    let portrait = ctx.image.fetch(&portrait_url).await?;
+    ctx
+      .image_store
+      .write(&portrait_path, &portrait)
+      .map_err(|error| Error::Internal(format!("write portrait for character {character_id}: {error}")))?;
+  }
 
   character::upsert_with_org(
     ctx.db,

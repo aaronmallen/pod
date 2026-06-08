@@ -66,7 +66,7 @@ async fn cache_recipient_portraits(eve_image: &eve_image::Client, ids: impl Iter
   let store = images::default_store();
   for id in ids {
     let path = store.character_portrait_path(id);
-    if path.exists() {
+    if images::is_fresh(&path, images::STALE_AFTER) {
       continue;
     }
     let url = eve_image.character_portrait_url(id, images::PORTRAIT_SIZE);

@@ -165,7 +165,10 @@ async fn cache_contract_portraits(db: &Database, entries: &[ContractEntry]) {
 fn pending_party_ids(store: &images::Store, ids: Vec<i64>) -> Vec<i64> {
   ids
     .into_iter()
-    .filter(|id| !store.character_portrait_path(*id).exists() && !store.corporation_logo_path(*id).exists())
+    .filter(|id| {
+      !images::is_fresh(&store.character_portrait_path(*id), images::STALE_AFTER)
+        && !images::is_fresh(&store.corporation_logo_path(*id), images::STALE_AFTER)
+    })
     .collect()
 }
 

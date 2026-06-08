@@ -2,12 +2,14 @@ use std::{
   fs, io,
   path::{Path, PathBuf},
   sync::OnceLock,
+  time::Duration,
 };
 
 use crate::{clients::eve_image::Size, config};
 
 pub const LOGO_SIZE: Size = Size::S256;
 pub const PORTRAIT_SIZE: Size = Size::S512;
+pub const STALE_AFTER: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
 static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
@@ -125,6 +127,14 @@ pub fn default_store() -> Store {
       .join("images")
   });
   Store::new(root).with_committed_items(config::resource_dir().join("assets").join("images").join("items"))
+}
+
+/// A missing or unreadable file is treated as stale (callers should refetch); a file whose mtime is in the future is
+/// treated as fresh.
+pub fn is_fresh(path: &Path, max_age: Duration) -> bool {
+  fs::metadata(path)
+    .and_then(|meta| meta.modified())
+    .is_ok_and(|modified| modified.elapsed().map_or(true, |age| age < max_age))
 }
 
 #[cfg(test)]
@@ -349,6 +359,36 @@ mod tests {
       store.write(&path, &[1, 2, 3]).unwrap();
 
       assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
+    }
+  }
+
+  mod is_fresh {
+    use super::*;
+
+    #[test]
+    fn it_treats_a_recently_written_file_as_fresh() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("portrait.jpg");
+      std::fs::write(&path, [0u8]).unwrap();
+
+      assert!(super::super::is_fresh(&path, STALE_AFTER));
+    }
+
+    #[test]
+    fn it_treats_a_file_older_than_the_max_age_as_stale() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("portrait.jpg");
+      std::fs::write(&path, [0u8]).unwrap();
+
+      assert!(!super::super::is_fresh(&path, Duration::ZERO));
+    }
+
+    #[test]
+    fn it_treats_a_missing_file_as_stale() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("missing.jpg");
+
+      assert!(!super::super::is_fresh(&path, STALE_AFTER));
     }
   }
 }

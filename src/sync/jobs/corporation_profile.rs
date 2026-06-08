@@ -32,13 +32,15 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
 
   let authorizing_roles = verify_director(ctx, grant, corporation_id, authorized_by).await?;
 
-  let logo_url = ctx.image.corporation_logo_url(corporation_id, images::LOGO_SIZE);
-  let logo = ctx.image.fetch(&logo_url).await?;
   let logo_path = ctx.image_store.corporation_logo_path(corporation_id);
-  ctx
-    .image_store
-    .write(&logo_path, &logo)
-    .map_err(|error| Error::Internal(format!("write logo for corporation {corporation_id}: {error}")))?;
+  if !images::is_fresh(&logo_path, images::STALE_AFTER) {
+    let logo_url = ctx.image.corporation_logo_url(corporation_id, images::LOGO_SIZE);
+    let logo = ctx.image.fetch(&logo_url).await?;
+    ctx
+      .image_store
+      .write(&logo_path, &logo)
+      .map_err(|error| Error::Internal(format!("write logo for corporation {corporation_id}: {error}")))?;
+  }
 
   if let Some(alliance) = alliance.as_ref() {
     org::upsert_alliance(ctx.db, alliance).await?;

@@ -12,6 +12,19 @@ created: 2026-06-06
 
 ![Active](https://img.shields.io/badge/Active-green?style=for-the-badge)
 
+> **Revised 2026-06-08 (cross-release icon caching):** the generated item-icon set is now **cached across releases,
+> keyed on the SDE build number**, so an unchanged SDE no longer re-downloads the SDE zip or re-fetches ~30k icons from
+> the CDN. The `generate-icons` job resolves the build number with a cheap `curl` of the SDE
+> [`latest.jsonl`](https://developers.eveonline.com/static-data/tranquility/latest.jsonl) endpoint (the same
+> `buildNumber` the runtime keys on in `src/clients/sde.rs`) piped through `jq` — **without** downloading the
+> multi-hundred-MB zip — and uses it as the `actions/cache` key for `assets/images/items`. The earlier "**fetch once
+> per release**" rule is relaxed to "**fetch when the SDE build number changes or the cache misses**": on an exact cache
+> hit the previously gated set is reused and **satisfies the coverage-floor gate by construction** (it passed the gate
+> when it was generated for that exact build number); on a miss the generator runs a full cold fetch and its coverage
+> gate re-validates the set, so the **CDN-outage canary still fires whenever a fetch is actually required**. `jq` is
+> pinned in `.config/mise.toml [tools]`. The shared `item-images` workflow artifact still flows to the three package
+> jobs unchanged.
+>
 > **Revised 2026-06-08 (spec `powlkvns`):** synced **character portraits and corporation/alliance logos are reclassified
 > from durable data to an evictable cache.** They now live under the **cache root** (`resolved_cache_dir()/images`,
 > ADR-0007), not the data root, in a **flattened single-file, single-(biggest)-size** layout — `characters/{id}.jpg`,
@@ -82,7 +95,11 @@ published icon. Verification runs (`--ids`) keep the strict all-must-resolve beh
 The release workflow runs the generator **once** in a dedicated `generate-icons` job and uploads
 `assets/images/items` as a shared workflow artifact. Each OS package job (`package-macos`, `package-windows`,
 `package-linux`) declares `needs: generate-icons` and downloads that artifact into `assets/images/items` before
-`mise run package`, so the CDN is hit once per release and the Windows runner never executes the POSIX generator.
+`mise run package`, so the CDN is hit at most once per release and the Windows runner never executes the POSIX
+generator. The `generate-icons` job wraps the generator in an `actions/cache` step keyed on the SDE build number (see
+the 2026-06-08 cross-release icon caching revision above): an unchanged SDE restores the previously gated set and skips
+the generator entirely, so the SDE download and CDN fetch happen only when the build number changes or the cache
+misses.
 
 **A two-tier runtime resolver.** `resolve_type_icon` (`src/store/images.rs`) consults, in order:
 
@@ -144,10 +161,12 @@ the next sync.
 
 ## Affected Areas
 
-- `scripts/generate/item-images` + `yq` in `.config/mise.toml` — the icon-set generator, with the coverage-floor gate.
+- `scripts/generate/item-images` + `yq`/`jq` in `.config/mise.toml` — the icon-set generator (with the coverage-floor
+  gate); `jq` parses the SDE `latest.jsonl` build number for the cross-release cache key.
 - `.gitignore` — ignores `assets/images/items/*` (the generated PNGs and the generator's `.tmp.*`/`.hdr.*` scratch
   files) while keeping the `.no-icon` ledger tracked via a negation.
-- `.github/workflows/release.yml` — the `generate-icons` job and the per-package-job artifact download.
+- `.github/workflows/release.yml` — the `generate-icons` job (SDE-build-number `actions/cache` keying the generated
+  set) and the per-package-job artifact download.
 - `assets/images/items/{type_id}.png` — the generated 64px set (built per release, gitignored).
 - `src/config.rs` — the `resource_dir()` helper.
 - `src/store/images.rs` — the committed-tier fallback in `resolve_type_icon`.
@@ -174,8 +193,8 @@ For synced portraits/logos (evictable cache, revised 2026-06-08):
   download.
 - A missing or failing icon can no longer block or fail a privileged sync job.
 - The repository no longer carries the ~150 MB icon set — clones stay lean and PRs no longer churn binary blobs.
-- Releases always ship a freshly-generated set with no manual maintainer step, and the CDN is hit exactly once per
-  release.
+- Releases always ship a current set with no manual maintainer step, and the CDN is hit at most once per release — and
+  not at all when the SDE build number is unchanged, since the cross-release cache reuses the previously gated set.
 
 ### Negative
 

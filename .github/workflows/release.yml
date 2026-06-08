@@ -57,7 +57,39 @@ jobs:
         with:
           cache-key: release-icons
 
+      # Derive the cache key from the SDE build number WITHOUT downloading the
+      # multi-hundred-MB SDE zip: latest.jsonl is a one-line document carrying
+      # the same buildNumber the runtime keys on (src/clients/sde.rs). A failure
+      # here fails the release — we will not cache against an unknown SDE.
+      - name: Resolve SDE build number
+        id: sde
+        run: |
+          build="$(curl -fsS \
+            https://developers.eveonline.com/static-data/tranquility/latest.jsonl \
+            | jq -r '.buildNumber')"
+          if [ -z "$build" ] || [ "$build" = "null" ]; then
+            echo "::error::could not resolve SDE buildNumber from latest.jsonl"
+            exit 1
+          fi
+          echo "Resolved SDE buildNumber: $build"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      # Cross-release icon cache keyed on the SDE build number. An unchanged SDE
+      # is an exact hit: the generator below (SDE download + ~30k-icon CDN
+      # fetch) is skipped and the previously gated set is reused. A changed build
+      # number misses, so the generator runs a full cold fetch and its
+      # coverage-floor gate re-validates the set — keeping the CDN-outage canary
+      # intact. Exact key only (no restore-keys) so a miss is a true full fetch,
+      # not a warm base that could mask an outage affecting only new types.
+      - name: Cache item icons
+        id: icon-cache
+        uses: actions/cache@v5
+        with:
+          path: assets/images/items
+          key: item-images-sde-${{ steps.sde.outputs.build }}
+
       - name: Generate item icons
+        if: steps.icon-cache.outputs.cache-hit != 'true'
         run: mise run generate:item-images
 
       - name: Upload item icons

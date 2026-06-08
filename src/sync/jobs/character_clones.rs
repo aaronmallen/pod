@@ -357,7 +357,7 @@ mod tests {
           .icon()
           .as_deref()
           .unwrap()
-          .ends_with("types/9899/icon_64.png")
+          .ends_with("types/9899.png")
       );
       assert_eq!(result.jump_clones.len(), 1);
       assert_eq!(

@@ -1303,12 +1303,7 @@ mod tests {
           .is_some()
       );
       assert!(
-        images_dir
-          .path()
-          .join("characters")
-          .join("100")
-          .join("portrait_256.jpg")
-          .exists(),
+        images_dir.path().join("characters").join("100.jpg").exists(),
         "the portrait should be written to the image store as part of the dataset"
       );
     }

@@ -1,12 +1,20 @@
 use std::{
   fs, io,
   path::{Path, PathBuf},
+  sync::OnceLock,
 };
 
 use crate::{clients::eve_image::Size, config};
 
-pub const LOGO_SIZE: Size = Size::S128;
-pub const PORTRAIT_SIZE: Size = Size::S256;
+pub const LOGO_SIZE: Size = Size::S256;
+pub const PORTRAIT_SIZE: Size = Size::S512;
+
+static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Initializes the process-wide image cache root from the loaded settings. Called once at boot; subsequent calls are ignored.
+pub fn init_root(root: PathBuf) {
+  let _ = IMAGE_ROOT.set(root);
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IconVariant {
@@ -21,14 +29,6 @@ impl IconVariant {
       Some(true) => Self::Bpc,
       Some(false) => Self::Bpo,
       None => Self::Icon,
-    }
-  }
-
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Bpc => "bpc",
-      Self::Bpo => "bpo",
-      Self::Icon => "icon",
     }
   }
 }
@@ -54,19 +54,11 @@ impl Store {
   }
 
   pub fn character_portrait_path(&self, character_id: i64) -> PathBuf {
-    self
-      .root
-      .join("characters")
-      .join(character_id.to_string())
-      .join(format!("portrait_{}.jpg", PORTRAIT_SIZE as u16))
+    self.root.join("characters").join(format!("{character_id}.jpg"))
   }
 
   pub fn corporation_logo_path(&self, corporation_id: i64) -> PathBuf {
-    self
-      .root
-      .join("corporations")
-      .join(corporation_id.to_string())
-      .join(format!("logo_{}.png", LOGO_SIZE as u16))
+    self.root.join("corporations").join(format!("{corporation_id}.png"))
   }
 
   pub fn resolve_type_icon(&self, type_id: i64, is_blueprint_copy: Option<bool>, size: Size) -> IconResolution {
@@ -106,12 +98,8 @@ impl Store {
     self.type_icon_variant_path(type_id, IconVariant::Icon, size)
   }
 
-  pub fn type_icon_variant_path(&self, type_id: i64, variant: IconVariant, size: Size) -> PathBuf {
-    self
-      .root
-      .join("types")
-      .join(type_id.to_string())
-      .join(format!("{}_{}.png", variant.as_str(), size as u16))
+  pub fn type_icon_variant_path(&self, type_id: i64, _variant: IconVariant, _size: Size) -> PathBuf {
+    self.root.join("types").join(format!("{type_id}.png"))
   }
 
   pub fn with_committed_items(mut self, dir: PathBuf) -> Self {
@@ -130,8 +118,13 @@ impl Store {
 }
 
 pub fn default_store() -> Store {
-  Store::new(config::data_dir().join("images"))
-    .with_committed_items(config::resource_dir().join("assets").join("images").join("items"))
+  let root = IMAGE_ROOT.get().cloned().unwrap_or_else(|| {
+    config::load()
+      .map(|settings| settings.storage().resolved_cache_dir())
+      .unwrap_or_else(|_| config::cache_dir())
+      .join("images")
+  });
+  Store::new(root).with_committed_items(config::resource_dir().join("assets").join("images").join("items"))
 }
 
 #[cfg(test)]
@@ -142,12 +135,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_a_per_character_sized_path() {
+    fn it_derives_a_flat_per_character_path() {
       let store = Store::new(PathBuf::from("/data/images"));
 
       let path = store.character_portrait_path(42);
 
-      assert!(path.ends_with("characters/42/portrait_256.jpg"), "got {path:?}");
+      assert!(path.ends_with("characters/42.jpg"), "got {path:?}");
     }
   }
 
@@ -155,12 +148,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_a_per_corporation_sized_png_path() {
+    fn it_derives_a_flat_per_corporation_png_path() {
       let store = Store::new(PathBuf::from("/data/images"));
 
       let path = store.corporation_logo_path(98_000_001);
 
-      assert!(path.ends_with("corporations/98000001/logo_128.png"), "got {path:?}");
+      assert!(path.ends_with("corporations/98000001.png"), "got {path:?}");
     }
   }
 
@@ -168,12 +161,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_a_per_type_sized_png_path() {
+    fn it_derives_a_flat_per_type_png_path() {
       let store = Store::new(PathBuf::from("/data/images"));
 
       let path = store.type_icon_path(587, Size::S64);
 
-      assert!(path.ends_with("types/587/icon_64.png"), "got {path:?}");
+      assert!(path.ends_with("types/587.png"), "got {path:?}");
     }
   }
 
@@ -188,25 +181,18 @@ mod tests {
       assert_eq!(IconVariant::from_blueprint_copy(Some(false)), IconVariant::Bpo);
       assert_eq!(IconVariant::from_blueprint_copy(None), IconVariant::Icon);
     }
-
-    #[test]
-    fn it_names_each_variant() {
-      assert_eq!(IconVariant::Bpc.as_str(), "bpc");
-      assert_eq!(IconVariant::Bpo.as_str(), "bpo");
-      assert_eq!(IconVariant::Icon.as_str(), "icon");
-    }
   }
 
   mod type_icon_variant_path {
     use super::*;
 
     #[test]
-    fn it_names_the_file_by_variant() {
+    fn it_uses_a_flat_path_regardless_of_variant() {
       let store = Store::new(PathBuf::from("/data/images"));
 
       let path = store.type_icon_variant_path(587, IconVariant::Bpc, Size::S64);
 
-      assert!(path.ends_with("types/587/bpc_64.png"), "got {path:?}");
+      assert!(path.ends_with("types/587.png"), "got {path:?}");
     }
 
     #[test]
@@ -224,20 +210,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_resolves_the_variant_icon_when_present() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = Store::new(dir.path().to_path_buf());
-      let bpc = store.type_icon_variant_path(587, IconVariant::Bpc, Size::S64);
-      store.write(&bpc, &[1]).unwrap();
-      store.write(&store.type_icon_path(587, Size::S64), &[2]).unwrap();
-
-      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
-
-      assert_eq!(resolved, IconResolution::Found(bpc));
-    }
-
-    #[test]
-    fn it_falls_back_to_the_plain_icon_when_the_variant_is_absent() {
+    fn it_resolves_the_runtime_icon_when_present() {
       let dir = tempfile::tempdir().unwrap();
       let store = Store::new(dir.path().to_path_buf());
       let icon = store.type_icon_path(587, Size::S64);

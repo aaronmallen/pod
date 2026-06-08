@@ -427,6 +427,12 @@ fn blank<'a>() -> Element<'a, Message> {
 }
 
 fn boot() -> (App, Task<Message>) {
+  let image_root = config::load()
+    .map(|settings| settings.storage().resolved_cache_dir())
+    .unwrap_or_else(|_| config::cache_dir())
+    .join("images");
+  store::images::init_root(image_root);
+
   auth::install();
   menu::init();
   let settings = window::Settings {

@@ -59,7 +59,7 @@ jobs:
         run: mise run generate:item-images
 
       - name: Upload item icons
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: item-images
           path: assets/images/items

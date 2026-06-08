@@ -15,7 +15,7 @@ where
   let remaining = 1000u16.saturating_sub(filled);
 
   let fill_seg = container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(filled))
+    .width(portion(filled))
     .height(Length::Fill)
     .style(move |_| container::Style {
       background: Some(Background::Color(fill)),
@@ -28,10 +28,7 @@ where
 
   let track = Row::with_children(vec![
     fill_seg.into(),
-    Space::new()
-      .width(Length::FillPortion(remaining))
-      .height(Length::Fill)
-      .into(),
+    Space::new().width(portion(remaining)).height(Length::Fill).into(),
   ])
   .height(Length::Fill);
 
@@ -47,6 +44,18 @@ where
       ..container::Style::default()
     })
     .into()
+}
+
+// A `FillPortion(0)` segment resolves to the FULL available width (every
+// `FillPortion(_)` resolves to the layout max, and a 0-factor child is laid out
+// as non-fluid against all remaining space), which would paint a 0% bar fully
+// filled and a 100% bar empty. Use a true `Fixed(0.0)` for the empty side.
+fn portion(factor: u16) -> Length {
+  if factor == 0 {
+    Length::Fixed(0.0)
+  } else {
+    Length::FillPortion(factor)
+  }
 }
 
 #[cfg(test)]
@@ -66,6 +75,31 @@ mod tests {
     fn it_clamps_out_of_range_fractions() {
       let _under: Element<'_, ()> = progress_bar(-1.0, color::accent::PLASMA, 4.0);
       let _over: Element<'_, ()> = progress_bar(2.0, color::accent::PLASMA, 4.0);
+    }
+
+    #[test]
+    fn it_renders_empty_and_full_boundaries() {
+      let _empty: Element<'_, ()> = progress_bar(0.0, color::accent::PLASMA, 2.0);
+      let _full: Element<'_, ()> = progress_bar(1.0, color::accent::PLASMA, 2.0);
+    }
+  }
+
+  mod portion {
+    use iced::Length;
+
+    use super::super::portion;
+
+    #[test]
+    fn it_uses_a_true_zero_width_for_an_empty_segment() {
+      // `FillPortion(0)` resolves to the full width, so an empty segment must be
+      // `Fixed(0.0)` to avoid a 0% bar painting full / a 100% bar painting empty.
+      assert_eq!(portion(0), Length::Fixed(0.0));
+    }
+
+    #[test]
+    fn it_uses_a_fill_portion_for_a_non_empty_segment() {
+      assert_eq!(portion(1), Length::FillPortion(1));
+      assert_eq!(portion(1000), Length::FillPortion(1000));
     }
   }
 }

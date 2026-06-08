@@ -14,7 +14,7 @@ use iced::{
 };
 
 use super::{
-  Message, StockpileContextMenu, fmt_count, fmt_isk, stockpile_multibuy,
+  Message, StockpileContextMenu, fmt_count, fmt_isk,
   stockpile_search::{self, MultibuyMatch, MultibuyResolution},
 };
 use crate::{
@@ -30,8 +30,10 @@ use crate::{
       backdrop,
       chip::Chip,
       context_menu::{self, Item},
+      eyebrow::eyebrow,
       icon::Icon,
       icon_tile::icon_tile,
+      rule,
       segmented::segment_button_style,
       text_input::TextInput,
     },
@@ -45,9 +47,13 @@ const MAX_SUGGESTIONS: usize = 20;
 const SUGGESTIONS_MAX_HEIGHT: f32 = 240.0;
 const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 22.0;
-const FORM_WIDTH: f32 = 400.0;
-const IMPORT_PANEL_WIDTH: f32 = 480.0;
+const EDITOR_MODAL_WIDTH: f32 = 560.0;
+const EXPORT_MODAL_WIDTH: f32 = 500.0;
+const IMPORT_PANEL_WIDTH: f32 = 560.0;
 const IMPORT_FIELD_HEIGHT: f32 = 168.0;
+const MODAL_CONTENT_MAX_HEIGHT: f32 = 440.0;
+const MODAL_PAD_X: f32 = 20.0;
+const MODAL_PAD_Y: f32 = 16.0;
 const MULTIBUY_EXPORT_BODY_HEIGHT: f32 = 240.0;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,16 +260,6 @@ impl Editor {
 
   pub(super) fn add_item(&mut self) {
     self.items.push(EditorItem::default());
-  }
-
-  pub(super) fn clear_item(&mut self, index: usize) {
-    if let Some(item) = self.items.get_mut(index) {
-      item.type_id = None;
-      item.type_name = None;
-      item.query.clear();
-      item.searching = false;
-      item.suggestions.clear();
-    }
   }
 
   pub(super) fn clear_location(&mut self) {
@@ -525,24 +521,23 @@ pub(super) fn body<'a>(
   .width(Length::Fill)
   .height(Length::Fill);
 
-  let base: Element<'a, Message> = match editor {
-    Some(editor) => Row::with_children(vec![list.into(), editor_form(editor)])
+  let mut layers: Vec<Element<'a, Message>> = vec![list.into()];
+  if let Some(editor) = editor {
+    layers.push(backdrop::backdrop(Message::StockpileEditorClosed));
+    layers.push(editor_form(editor));
+  }
+  if let Some(panel) = import {
+    layers.push(backdrop::backdrop(Message::StockpileImportClosed));
+    layers.push(import_overlay(panel));
+  }
+
+  if layers.len() == 1 {
+    layers.pop().unwrap()
+  } else {
+    Stack::with_children(layers)
       .width(Length::Fill)
       .height(Length::Fill)
-      .into(),
-    None => list.into(),
-  };
-
-  match import {
-    Some(panel) => Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::StockpileImportClosed),
-      import_overlay(panel),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into(),
-    None => base,
+      .into()
   }
 }
 
@@ -583,11 +578,150 @@ fn small_button<'a>(label: &'a str, message: Message, text_color: iced::Color) -
   .into()
 }
 
+fn modal_close_button<'a>(close: Message) -> Element<'a, Message> {
+  button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::UNIT + 1.0,
+    bottom: spacing::UNIT + 1.0,
+    left: spacing::SPACE_2,
+    right: spacing::SPACE_2,
+  })
+  .on_press(close)
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      text_color: color::text::SECONDARY,
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn modal_footer<'a>(left: Option<Element<'a, Message>>, actions: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(actions.len() + 2);
+  if let Some(left) = left {
+    children.push(left);
+  }
+  children.push(Space::new().width(Length::Fill).into());
+  children.extend(actions);
+
+  modal_section(
+    Row::with_children(children)
+      .spacing(spacing::SPACE_2_5)
+      .align_y(Vertical::Center)
+      .width(Length::Fill)
+      .into(),
+  )
+}
+
+fn modal_header<'a>(title: &'a str, subtitle: &'a str, close: Message) -> Element<'a, Message> {
+  let titles = Column::with_children(vec![
+    text(title)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    eyebrow(subtitle, Some(color::text::SECONDARY)),
+  ])
+  .spacing(spacing::UNIT)
+  .width(Length::Fill);
+
+  modal_section(
+    Row::with_children(vec![titles.into(), modal_close_button(close)])
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center)
+      .width(Length::Fill)
+      .into(),
+  )
+}
+
+fn modal_overlay<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn modal_panel<'a>(width: f32, sections: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  container(Column::with_children(sections).width(Length::Fill))
+    .width(Length::Fixed(width))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        radius: radius::CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+  container(content)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: MODAL_PAD_Y,
+      bottom: MODAL_PAD_Y,
+      left: MODAL_PAD_X,
+      right: MODAL_PAD_X,
+    })
+    .into()
+}
+
+fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+  button(
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::UNIT + 3.0,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::UNIT + 3.0,
+    left: spacing::SPACE_3_5,
+  })
+  .on_press(message)
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.28),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
 fn editor_form(editor: &Editor) -> Element<'_, Message> {
-  let title = if editor.is_editing() {
-    "Edit stockpile"
+  let (title, subtitle, save_label) = if editor.is_editing() {
+    ("Edit stockpile", "Adjust this target pile", "Save changes")
   } else {
-    "New stockpile"
+    ("New stockpile", "Define a target pile", "Create stockpile")
   };
 
   let name_field = Column::with_children(vec![
@@ -597,131 +731,111 @@ fn editor_form(editor: &Editor) -> Element<'_, Message> {
       .padding(spacing::SPACE_2)
       .render(),
   ])
-  .spacing(spacing::UNIT + 1.0);
+  .spacing(spacing::UNIT + 1.0)
+  .width(Length::Fill);
 
-  let location_field = Column::with_children(vec![field_label("Location (optional)"), location_typeahead(editor)])
-    .spacing(spacing::UNIT + 1.0);
+  let location_field = Column::with_children(vec![field_label("Location"), location_typeahead(editor)])
+    .spacing(spacing::UNIT + 1.0)
+    .width(Length::Fill);
 
-  let mut item_rows: Vec<Element<'_, Message>> = Vec::with_capacity(editor.items().len() + 2);
-  item_rows.push(
-    Row::with_children(vec![
-      container(field_label("Items")).width(Length::Fill).into(),
-      add_item_button(),
-    ])
-    .align_y(Vertical::Center)
-    .into(),
-  );
-  for (index, item) in editor.items().iter().enumerate() {
-    item_rows.push(editor_item_row(index, item));
-  }
-
-  let body = Column::with_children(vec![
-    text(title)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    name_field.into(),
-    location_field.into(),
-    Column::with_children(item_rows).spacing(spacing::SPACE_2).into(),
+  let fields = Row::with_children(vec![
+    container(name_field).width(Length::FillPortion(1)).into(),
+    container(location_field).width(Length::FillPortion(1)).into(),
   ])
   .spacing(spacing::SPACE_3_5)
   .width(Length::Fill);
 
-  container(
-    Column::with_children(vec![
-      container(body)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(spacing::SPACE_6)
-        .into(),
-      editor_footer(editor),
-    ])
-    .height(Length::Fill),
-  )
-  .width(Length::Fixed(FORM_WIDTH))
-  .height(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::RAISED)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
+  let resolved = editor.items().iter().filter(|item| item.type_id.is_some()).count();
+  let items_header = Row::with_children(vec![
+    field_label("Items"),
+    Space::new().width(Length::Fill).into(),
+    text(format!("{resolved} type{}", if resolved == 1 { "" } else { "s" }))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+    add_item_button(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
 
-fn editor_footer(editor: &Editor) -> Element<'_, Message> {
-  let mut children: Vec<Element<'_, Message>> = Vec::new();
-  if !editor.error().is_empty() {
-    children.push(
-      text(editor.error().to_owned())
-        .font(typography::body::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::status::DANGER),
-        })
-        .into(),
-    );
+  let mut item_children: Vec<Element<'_, Message>> = Vec::with_capacity(editor.items().len() + 1);
+  item_children.push(items_header.into());
+  for (index, item) in editor.items().iter().enumerate() {
+    item_children.push(editor_item_row(index, item));
   }
-  children.push(Space::new().width(Length::Fill).into());
-  children.push(small_button(
-    "Cancel",
-    Message::StockpileEditorClosed,
-    color::text::SECONDARY,
-  ));
-  children.push(primary_button("Save", Message::StockpileEditorSaved));
+  let items_section = Column::with_children(item_children)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
 
-  container(
-    Row::with_children(children)
-      .spacing(spacing::SPACE_2_5)
-      .align_y(Vertical::Center),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: spacing::SPACE_3,
-    right: spacing::SPACE_6,
-    bottom: spacing::SPACE_3_5,
-    left: spacing::SPACE_6,
-  })
-  .style(|_| container::Style {
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
+  let content_body = Column::with_children(vec![fields.into(), items_section.into()])
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill);
+
+  let content = container(scrollable(content_body).style(crate::ui::style::control::scrollbar))
+    .max_height(MODAL_CONTENT_MAX_HEIGHT)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: MODAL_PAD_Y,
+      bottom: MODAL_PAD_Y,
+      left: MODAL_PAD_X,
+      right: MODAL_PAD_X,
+    });
+
+  let error: Option<Element<'_, Message>> = (!editor.error().is_empty()).then(|| {
+    text(editor.error().to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(|_| text::Style {
+        color: Some(color::status::DANGER),
+      })
+      .into()
+  });
+
+  let footer = modal_footer(
+    error,
+    vec![
+      secondary_button("Cancel", Message::StockpileEditorClosed),
+      primary_button(save_label, Message::StockpileEditorSaved),
+    ],
+  );
+
+  modal_overlay(modal_panel(
+    EDITOR_MODAL_WIDTH,
+    vec![
+      modal_header(title, subtitle, Message::StockpileEditorClosed),
+      rule::horizontal(),
+      content.into(),
+      rule::horizontal(),
+      footer,
+    ],
+  ))
 }
 
 fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
-  let name_field: Element<'_, Message> = match (item.type_id, &item.type_name) {
-    (Some(_), Some(name)) => container(
-      Chip::new(name.clone(), Some(color::accent::PLASMA))
-        .on_remove(Message::StockpileEditorItemCleared(index))
-        .view(),
-    )
-    .width(Length::FillPortion(3))
-    .align_y(Vertical::Center)
-    .into(),
-    _ => container(item_typeahead(index, item))
-      .width(Length::FillPortion(3))
-      .into(),
+  let (Some(type_id), Some(name)) = (item.type_id, &item.type_name) else {
+    return item_typeahead(index, item);
   };
 
-  Row::with_children(vec![
-    name_field,
+  let card = Row::with_children(vec![
+    type_icon(type_id),
+    text(name.clone())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
     TextInput::new("Qty", &item.target, move |value| {
       Message::StockpileEditorItemTargetChanged(index, value)
     })
     .font_size(typography::size::SM)
     .padding(spacing::SPACE_2)
-    .width(Length::FillPortion(2))
+    .width(Length::Fixed(96.0))
     .render(),
     small_button(
       "\u{2715}",
@@ -731,11 +845,30 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center)
-  .into()
+  .width(Length::Fill);
+
+  container(card)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::UNIT + 3.0,
+      bottom: spacing::UNIT + 3.0,
+      left: spacing::SPACE_2_5,
+      right: spacing::SPACE_2_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.1),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn item_typeahead(index: usize, item: &EditorItem) -> Element<'_, Message> {
-  let field = TextInput::new("Search item\u{2026}", &item.query, move |value| {
+  let field = TextInput::new("Add item \u{2014} search name\u{2026}", &item.query, move |value| {
     Message::StockpileEditorItemSearchChanged(index, value)
   })
   .font_size(typography::size::SM)
@@ -895,35 +1028,15 @@ fn type_icon<'a>(type_id: i64) -> Element<'a, Message> {
 }
 
 fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
-  let inner = match panel.resolution() {
+  match panel.resolution() {
     Some(resolution) => import_preview(resolution),
     None => import_paste(panel),
-  };
-
-  container(inner)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
+  }
 }
 
 pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, copied: bool) -> Element<'_, Message> {
   let lines = card.multibuy_lines(mode);
   let units: u64 = lines.iter().map(|(_, qty)| qty).sum();
-
-  let header = Row::with_children(vec![
-    text("Export to Multibuy")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .width(Length::Fill)
-      .into(),
-    multibuy_copy_button(card.id, copied, !lines.is_empty()),
-  ])
-  .align_y(Vertical::Center);
 
   let controls = Row::with_children(vec![
     multibuy_mode_toggle(mode),
@@ -941,59 +1054,115 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
     })
     .into(),
   ])
-  .align_y(Vertical::Center);
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
 
-  let body: Element<'_, Message> = if lines.is_empty() {
-    container(muted_text("Stockpile is fully stocked \u{2014} nothing to buy."))
-      .width(Length::Fill)
-      .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT))
-      .into()
-  } else {
+  let preview: Element<'_, Message> = if lines.is_empty() {
     container(
-      scrollable(
-        text(stockpile_multibuy::serialize(&lines))
-          .font(typography::mono::REGULAR)
-          .size(typography::size::SM)
-          .style(|_| text::Style {
-            color: Some(color::text::PRIMARY),
-          })
-          .width(Length::Fill),
-      )
-      .style(crate::ui::style::control::scrollbar)
-      .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT)),
+      text("Nothing remaining \u{2014} this stockpile is fully stocked.")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::status::ONLINE),
+        }),
     )
     .width(Length::Fill)
-    .into()
-  };
-
-  let panel = container(
-    Column::with_children(vec![
-      header.into(),
-      controls.into(),
-      body,
-      multibuy_footer(card.multibuy_value(mode)),
-    ])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill),
-  )
-  .width(Length::Fixed(IMPORT_PANEL_WIDTH))
-  .padding(spacing::SPACE_6)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::RAISED)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.12),
-      radius: radius::CARD.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  });
-
-  container(panel)
-    .width(Length::Fill)
-    .height(Length::Fill)
+    .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .into()
+  } else {
+    multibuy_preview(&lines)
+  };
+
+  let content = modal_section(
+    Column::with_children(vec![controls.into(), preview])
+      .spacing(spacing::SPACE_3)
+      .width(Length::Fill)
+      .into(),
+  );
+
+  let footer = modal_footer(
+    Some(multibuy_footer(card.multibuy_value(mode))),
+    vec![
+      secondary_button("Close", Message::StockpileMultibuyExportClosed),
+      multibuy_copy_button(card.id, copied, !lines.is_empty()),
+    ],
+  );
+
+  modal_overlay(modal_panel(
+    EXPORT_MODAL_WIDTH,
+    vec![
+      modal_header("Export to Multibuy", &card.name, Message::StockpileMultibuyExportClosed),
+      rule::horizontal(),
+      content,
+      rule::horizontal(),
+      footer,
+    ],
+  ))
+}
+
+fn multibuy_preview<'a>(lines: &[(String, u64)]) -> Element<'a, Message> {
+  let rows: Vec<Element<'a, Message>> = lines
+    .iter()
+    .enumerate()
+    .map(|(index, (name, qty))| {
+      let row = container(
+        Row::with_children(vec![
+          text(name.clone())
+            .font(typography::mono::REGULAR)
+            .size(typography::size::SM)
+            .style(|_| text::Style {
+              color: Some(color::text::PRIMARY),
+            })
+            .width(Length::Fill)
+            .into(),
+          text(format!("\u{d7}{}", fmt_count(*qty as i64)))
+            .font(typography::mono::REGULAR)
+            .size(typography::size::SM)
+            .style(|_| text::Style {
+              color: Some(color::accent::PLASMA),
+            })
+            .into(),
+        ])
+        .spacing(spacing::SPACE_3)
+        .align_y(Vertical::Center)
+        .width(Length::Fill),
+      )
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::UNIT + 3.0,
+        bottom: spacing::UNIT + 3.0,
+        left: spacing::SPACE_3_5,
+        right: spacing::SPACE_3_5,
+      });
+
+      if index == 0 {
+        row.into()
+      } else {
+        Column::with_children(vec![rule::horizontal_alpha(0.05), row.into()])
+          .width(Length::Fill)
+          .into()
+      }
+    })
+    .collect();
+
+  container(
+    scrollable(Column::with_children(rows).width(Length::Fill))
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT)),
+  )
+  .width(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
@@ -1122,6 +1291,7 @@ fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
 
   import_shell_body(
     "Import multibuy",
+    "Paste an in-game multibuy or inventory list",
     "Paste a multibuy list \u{2014} one item per line (Name<tab>qty, Name qty, Name xN, or bare Name). Names resolve against EVE.",
     field.into(),
     "Resolve",
@@ -1184,6 +1354,7 @@ fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
 
   import_shell_body(
     "Review import",
+    "Confirm the matched items",
     "Matched items will prefill the editor. Nothing is saved until you set a name and hit Save.",
     body.into(),
     "Add to stockpile",
@@ -1213,6 +1384,7 @@ fn muted_text<'a>(value: &str) -> Element<'a, Message> {
 
 fn import_shell_body<'a>(
   title: &'a str,
+  subtitle: &'a str,
   hint: &'a str,
   field: Element<'a, Message>,
   action_label: &'a str,
@@ -1223,46 +1395,40 @@ fn import_shell_body<'a>(
     action = action.on_press(msg);
   }
 
-  let body = Column::with_children(vec![
-    text(title.to_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-    text(hint.to_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
-      .into(),
-    field,
-    Row::with_children(vec![
-      small_button("Cancel", Message::StockpileImportClosed, color::text::SECONDARY),
-      Space::new().width(Length::Fill).into(),
-      action.into(),
+  let content = modal_section(
+    Column::with_children(vec![
+      text(hint.to_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+      field,
     ])
-    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill)
     .into(),
-  ])
-  .spacing(spacing::SPACE_3)
-  .width(Length::Fill);
+  );
 
-  container(body)
-    .width(Length::Fixed(IMPORT_PANEL_WIDTH))
-    .padding(spacing::SPACE_6)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.12),
-        radius: radius::CARD.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
+  let footer = modal_footer(
+    None,
+    vec![
+      secondary_button("Cancel", Message::StockpileImportClosed),
+      action.into(),
+    ],
+  );
+
+  modal_overlay(modal_panel(
+    IMPORT_PANEL_WIDTH,
+    vec![
+      modal_header(title, subtitle, Message::StockpileImportClosed),
+      rule::horizontal(),
+      content,
+      rule::horizontal(),
+      footer,
+    ],
+  ))
 }
 
 fn primary_button_owned<'a>(label: String) -> button::Button<'a, Message> {
@@ -1432,17 +1598,6 @@ mod tests {
       assert_eq!(editor.items()[0].type_id, Some(34));
       assert_eq!(editor.items()[0].type_name.as_deref(), Some("Tritanium"));
       assert!(editor.items()[0].suggestions.is_empty());
-    }
-
-    #[test]
-    fn it_clears_a_resolved_item_back_to_a_query() {
-      let mut editor = Editor::blank();
-      editor.pick_item(0, 34, "Tritanium".to_owned());
-
-      editor.clear_item(0);
-
-      assert_eq!(editor.items()[0].type_id, None);
-      assert_eq!(editor.items()[0].query, "");
     }
 
     #[test]

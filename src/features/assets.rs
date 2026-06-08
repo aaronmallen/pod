@@ -223,7 +223,6 @@ pub enum Message {
   StockpileEditStarted(i64),
   StockpileEditorClosed,
   StockpileEditorItemAdded,
-  StockpileEditorItemCleared(usize),
   StockpileEditorItemPicked(usize, i64, String),
   StockpileEditorItemRemoved(usize),
   StockpileEditorItemResults(usize, Vec<(i64, String)>),
@@ -681,7 +680,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StockpileEditStarted(_)
     | Message::StockpileEditorClosed
     | Message::StockpileEditorItemAdded
-    | Message::StockpileEditorItemCleared(_)
     | Message::StockpileEditorItemPicked(..)
     | Message::StockpileEditorItemRemoved(_)
     | Message::StockpileEditorItemResults(..)
@@ -971,7 +969,6 @@ fn apply_stockpile_editor(state: &mut State, message: Message) -> Result<Task<Me
     Message::StockpileEditorItemSearchChanged(index, value) => editor.set_item_query(index, value),
     Message::StockpileEditorItemResults(index, results) => editor.set_item_suggestions(index, results),
     Message::StockpileEditorItemPicked(index, id, name) => editor.pick_item(index, id, name),
-    Message::StockpileEditorItemCleared(index) => editor.clear_item(index),
     Message::StockpileEditorItemTargetChanged(index, value) => editor.set_item_target(index, value),
     Message::StockpileEditorItemAdded => editor.add_item(),
     Message::StockpileEditorItemRemoved(index) => editor.remove_item(index),

@@ -1,12 +1,12 @@
 use std::{
-  collections::{HashMap, VecDeque},
-  sync::Arc,
+  collections::HashMap,
+  sync::{Arc, Mutex},
   time::{Duration, Instant},
 };
 
 use chrono::Utc;
+use reqwest::header::HeaderMap;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::sync::Mutex;
 
 use crate::{
   clients::Error,
@@ -17,6 +17,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ESI_ERROR_LIMIT_RESET_HEADER: &str = "X-ESI-Error-Limit-Reset";
 const ESI_PAGES_HEADER: &str = "X-Pages";
 const HTTP_TARGET: &str = "pod::http";
+const RATELIMIT_GROUP_HEADER: &str = "X-Ratelimit-Group";
+const RATELIMIT_LIMIT_HEADER: &str = "X-Ratelimit-Limit";
+const RATELIMIT_REMAINING_HEADER: &str = "X-Ratelimit-Remaining";
+const RATELIMIT_USED_HEADER: &str = "X-Ratelimit-Used";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Cache {
@@ -40,23 +44,21 @@ impl Cache {
 }
 
 pub struct Client {
+  budgets: Arc<RateBudgets>,
   cache: Cache,
   inner: reqwest::Client,
-  rate_limiters: Arc<HashMap<String, Mutex<RateLimiter>>>,
 }
 
 impl Client {
   pub fn builder(cache: Cache) -> ClientBuilder {
     ClientBuilder {
       cache,
-      rate_limiters: HashMap::new(),
     }
   }
 
   #[allow(dead_code)]
   pub async fn delete_empty(&self, url: &str, token: &str) -> Result<(), Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("DELETE", url, self.inner.delete(url).bearer_auth(token)).await?;
+    let resp = send_logged("DELETE", url, self.inner.delete(url).bearer_auth(token), &self.budgets).await?;
     handle_status(resp).await
   }
 
@@ -83,7 +85,7 @@ impl Client {
     url: &str,
     token: Option<&str>,
   ) -> Result<Vec<T>, Error> {
-    let (mut items, total_pages) = fetch_page::<T>(&self.inner, &self.rate_limiters, url, 1, token).await?;
+    let (mut items, total_pages) = fetch_page::<T>(&self.inner, &self.budgets, url, 1, token).await?;
 
     if total_pages <= 1 {
       return Ok(items);
@@ -92,11 +94,11 @@ impl Client {
     let mut set = tokio::task::JoinSet::new();
     for page in 2..=total_pages {
       let inner = self.inner.clone();
-      let rate_limiters = Arc::clone(&self.rate_limiters);
+      let budgets = Arc::clone(&self.budgets);
       let url = url.to_owned();
       let token = token.map(str::to_owned);
       set.spawn(async move {
-        fetch_page::<T>(&inner, &rate_limiters, &url, page, token.as_deref())
+        fetch_page::<T>(&inner, &budgets, &url, page, token.as_deref())
           .await
           .map(|(items, _)| items)
       });
@@ -112,14 +114,18 @@ impl Client {
 
   #[allow(dead_code)]
   pub async fn post_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("POST", url, self.inner.post(url).bearer_auth(token).json(body)).await?;
+    let resp = send_logged(
+      "POST",
+      url,
+      self.inner.post(url).bearer_auth(token).json(body),
+      &self.budgets,
+    )
+    .await?;
     handle_status(resp).await
   }
 
   pub async fn post_form<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("POST", url, self.inner.post(url).form(body)).await?;
+    let resp = send_logged("POST", url, self.inner.post(url).form(body), &self.budgets).await?;
     deserialize_response(resp).await
   }
 
@@ -129,34 +135,38 @@ impl Client {
     body: &B,
     token: &str,
   ) -> Result<T, Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("POST", url, self.inner.post(url).bearer_auth(token).json(body)).await?;
+    let resp = send_logged(
+      "POST",
+      url,
+      self.inner.post(url).bearer_auth(token).json(body),
+      &self.budgets,
+    )
+    .await?;
     deserialize_response(resp).await
   }
 
   pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("POST", url, self.inner.post(url).json(body)).await?;
+    let resp = send_logged("POST", url, self.inner.post(url).json(body), &self.budgets).await?;
     deserialize_response(resp).await
   }
 
   pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
-    self.apply_rate_limit(url).await;
-    let resp = send_logged("PUT", url, self.inner.put(url).bearer_auth(token).json(body)).await?;
+    let resp = send_logged(
+      "PUT",
+      url,
+      self.inner.put(url).bearer_auth(token).json(body),
+      &self.budgets,
+    )
+    .await?;
     handle_status(resp).await
   }
 
-  async fn apply_rate_limit(&self, url: &str) {
-    enforce_rate_limit(&self.rate_limiters, url).await;
-  }
-
   async fn get_bytes_uncached_inner(&self, url: &str, timeout: Option<Duration>) -> Result<Vec<u8>, Error> {
-    self.apply_rate_limit(url).await;
     let mut req = self.inner.get(url);
     if let Some(timeout) = timeout {
       req = req.timeout(timeout);
     }
-    let resp = send_logged("GET", url, req).await?;
+    let resp = send_logged("GET", url, req, &self.budgets).await?;
     if let Some(err) = throttle_error(&resp) {
       return Err(err);
     }
@@ -167,7 +177,6 @@ impl Client {
   }
 
   async fn get_cached_bytes(&self, url: &str, token: Option<&str>, serve_fresh: bool) -> Result<Vec<u8>, Error> {
-    self.apply_rate_limit(url).await;
     let cached = self.cache.get(url).await?;
 
     if serve_fresh
@@ -188,7 +197,7 @@ impl Client {
       req = req.bearer_auth(t);
     }
 
-    let resp = send_logged("GET", url, req).await?;
+    let resp = send_logged("GET", url, req, &self.budgets).await?;
     let status = resp.status().as_u16();
 
     if status == 304 {
@@ -226,7 +235,6 @@ impl Client {
 
 pub struct ClientBuilder {
   cache: Cache,
-  rate_limiters: HashMap<String, Mutex<RateLimiter>>,
 }
 
 impl ClientBuilder {
@@ -238,57 +246,104 @@ impl ClientBuilder {
       .build()
       .expect("failed to build reqwest client");
     Arc::new(Client {
+      budgets: Arc::new(RateBudgets::new()),
       cache: self.cache,
       inner,
-      rate_limiters: Arc::new(self.rate_limiters),
     })
-  }
-
-  #[allow(dead_code)]
-  pub fn rate_limit(mut self, prefix: &str, max_requests: u32, window: Duration) -> Self {
-    self
-      .rate_limiters
-      .insert(prefix.to_owned(), Mutex::new(RateLimiter::new(max_requests, window)));
-    self
   }
 }
 
-pub struct RateLimiter {
-  max_requests: u32,
-  timestamps: VecDeque<Instant>,
+#[derive(Default)]
+struct BudgetState {
+  groups: HashMap<String, GroupBudget>,
+  routes: HashMap<String, String>,
+}
+
+struct GroupBudget {
+  limit: u32,
+  next_allowed_at: Instant,
+  remaining: u32,
+  reset_at: Instant,
   window: Duration,
 }
 
-impl RateLimiter {
-  pub fn new(max_requests: u32, window: Duration) -> Self {
+struct ParsedBudget {
+  group: String,
+  limit: u32,
+  remaining: u32,
+  window: Duration,
+}
+
+struct RateBudgets {
+  state: Mutex<BudgetState>,
+}
+
+impl RateBudgets {
+  fn new() -> Self {
     Self {
-      max_requests,
-      timestamps: VecDeque::new(),
-      window,
+      state: Mutex::new(BudgetState::default()),
     }
   }
 
-  pub async fn check(&mut self) {
-    loop {
-      let now = Instant::now();
-      while let Some(&front) = self.timestamps.front() {
-        if now.duration_since(front) >= self.window {
-          self.timestamps.pop_front();
-        } else {
-          break;
+  fn record(&self, route_key: &str, parsed: ParsedBudget, now: Instant) {
+    let reset_at = now + parsed.window;
+    let mut state = self.state.lock().expect("rate-budget mutex poisoned");
+
+    state.routes.insert(route_key.to_owned(), parsed.group.clone());
+
+    match state.groups.get_mut(&parsed.group) {
+      Some(budget) => {
+        budget.limit = parsed.limit;
+        budget.remaining = parsed.remaining;
+        budget.reset_at = reset_at;
+        budget.window = parsed.window;
+        if budget.next_allowed_at < now {
+          budget.next_allowed_at = now;
         }
       }
-
-      if (self.timestamps.len() as u32) < self.max_requests {
-        self.timestamps.push_back(now);
-        return;
+      None => {
+        state.groups.insert(
+          parsed.group,
+          GroupBudget {
+            limit: parsed.limit,
+            next_allowed_at: now,
+            remaining: parsed.remaining,
+            reset_at,
+            window: parsed.window,
+          },
+        );
       }
-
-      let oldest = self.timestamps[0];
-      let elapsed = now.duration_since(oldest);
-      let sleep_for = self.window.saturating_sub(elapsed);
-      tokio::time::sleep(sleep_for).await;
     }
+  }
+
+  fn reserve_slot(&self, route_key: &str, now: Instant) -> Option<Duration> {
+    let mut state = self.state.lock().expect("rate-budget mutex poisoned");
+
+    let group = state.routes.get(route_key)?.clone();
+    let budget = state.groups.get_mut(&group)?;
+
+    if now >= budget.reset_at {
+      budget.remaining = budget.limit;
+      budget.next_allowed_at = now;
+      return None;
+    }
+
+    // Gate only when remaining falls to ≤ 20% of limit; leave headroom for concurrent requests.
+    let low_watermark = (budget.limit / 5).max(1);
+    if budget.remaining > low_watermark {
+      return None;
+    }
+
+    let (earliest, spacing) = if budget.remaining == 0 {
+      (budget.reset_at, budget.window / budget.limit.max(1))
+    } else {
+      let remaining_window = budget.reset_at.saturating_duration_since(now);
+      (now, remaining_window / budget.remaining)
+    };
+    let slot = budget.next_allowed_at.max(earliest);
+    budget.next_allowed_at = slot + spacing;
+
+    Some(slot.saturating_duration_since(now))
   }
 }
 
@@ -304,13 +359,6 @@ async fn deserialize_response<T: DeserializeOwned>(resp: reqwest::Response) -> R
   Ok(serde_json::from_slice(&body)?)
 }
 
-async fn enforce_rate_limit(rate_limiters: &HashMap<String, Mutex<RateLimiter>>, url: &str) {
-  if let Some(limiter) = find_rate_limiter_for(rate_limiters, url) {
-    let mut guard = limiter.lock().await;
-    guard.check().await;
-  }
-}
-
 fn expires_at_from_response(resp: &reqwest::Response) -> Option<i64> {
   let cc = resp.headers().get("Cache-Control")?.to_str().ok()?;
   for directive in cc.split(',') {
@@ -324,13 +372,11 @@ fn expires_at_from_response(resp: &reqwest::Response) -> Option<i64> {
 
 async fn fetch_page<T: DeserializeOwned>(
   inner: &reqwest::Client,
-  rate_limiters: &HashMap<String, Mutex<RateLimiter>>,
+  budgets: &RateBudgets,
   url_base: &str,
   page: u32,
   token: Option<&str>,
 ) -> Result<(Vec<T>, u32), Error> {
-  enforce_rate_limit(rate_limiters, url_base).await;
-
   let separator = if url_base.contains('?') { '&' } else { '?' };
   let url = format!("{url_base}{separator}page={page}");
   let mut req = inner.get(&url);
@@ -338,7 +384,7 @@ async fn fetch_page<T: DeserializeOwned>(
     req = req.bearer_auth(t);
   }
 
-  let resp = send_logged("GET", &url, req).await?;
+  let resp = send_logged("GET", &url, req, budgets).await?;
   let status = resp.status().as_u16();
   if let Some(err) = throttle_error(&resp) {
     return Err(err);
@@ -354,18 +400,6 @@ async fn fetch_page<T: DeserializeOwned>(
   Ok((items, total_pages))
 }
 
-fn find_rate_limiter_for<'a>(
-  rate_limiters: &'a HashMap<String, Mutex<RateLimiter>>,
-  url: &str,
-) -> Option<&'a Mutex<RateLimiter>> {
-  let path = url_path(url);
-  rate_limiters
-    .iter()
-    .filter(|(prefix, _)| path.starts_with(prefix.as_str()))
-    .max_by_key(|(prefix, _)| prefix.len())
-    .map(|(_, limiter)| limiter)
-}
-
 async fn handle_status(resp: reqwest::Response) -> Result<(), Error> {
   let status = resp.status().as_u16();
   if let Some(err) = throttle_error(&resp) {
@@ -377,6 +411,12 @@ async fn handle_status(resp: reqwest::Response) -> Result<(), Error> {
   Ok(())
 }
 
+fn is_id_segment(seg: &str) -> bool {
+  !seg.is_empty()
+    // len >= 8 collapses killmail SHA-hash segments (≥ 40 hex chars) without swallowing short words like "ok"
+    && (seg.bytes().all(|b| b.is_ascii_digit()) || (seg.len() >= 8 && seg.bytes().all(|b| b.is_ascii_hexdigit())))
+}
+
 fn parse_error_limit_reset(resp: &reqwest::Response) -> u64 {
   resp
     .headers()
@@ -384,6 +424,47 @@ fn parse_error_limit_reset(resp: &reqwest::Response) -> u64 {
     .and_then(|v| v.to_str().ok())
     .and_then(|s| s.parse::<u64>().ok())
     .unwrap_or(60)
+}
+
+fn parse_rate_headers(headers: &HeaderMap) -> Option<ParsedBudget> {
+  let group = headers.get(RATELIMIT_GROUP_HEADER)?.to_str().ok()?.to_owned();
+  let (limit, window) = parse_rate_limit_spec(headers.get(RATELIMIT_LIMIT_HEADER)?.to_str().ok()?)?;
+  let remaining = headers
+    .get(RATELIMIT_REMAINING_HEADER)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|s| s.parse::<u32>().ok())
+    .or_else(|| {
+      headers
+        .get(RATELIMIT_USED_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(|used| limit.saturating_sub(used))
+    })
+    .unwrap_or(limit);
+
+  Some(ParsedBudget {
+    group,
+    limit,
+    remaining,
+    window,
+  })
+}
+
+fn parse_rate_limit_spec(spec: &str) -> Option<(u32, Duration)> {
+  let (count, window) = spec.split_once('/')?;
+  let limit = count.trim().parse::<u32>().ok()?;
+  let window = window.trim();
+  let split = window.find(|c: char| !c.is_ascii_digit())?;
+  let (value, unit) = window.split_at(split);
+  let value = value.parse::<u64>().ok()?;
+  let secs = match unit {
+    "s" => value,
+    "m" => value * 60,
+    "h" => value * 3600,
+    _ => return None,
+  };
+
+  Some((limit, Duration::from_secs(secs)))
 }
 
 fn parse_retry_after(resp: &reqwest::Response) -> u64 {
@@ -404,13 +485,37 @@ fn parse_x_pages(resp: &reqwest::Response) -> u32 {
     .unwrap_or(1)
 }
 
-async fn send_logged(method: &str, url: &str, req: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
+fn route_key(path: &str) -> String {
+  path
+    .split('/')
+    .map(|seg| if is_id_segment(seg) { "{}" } else { seg })
+    .collect::<Vec<_>>()
+    .join("/")
+}
+
+async fn send_logged(
+  method: &str,
+  url: &str,
+  req: reqwest::RequestBuilder,
+  budgets: &RateBudgets,
+) -> Result<reqwest::Response, Error> {
+  let key = route_key(url_path(url));
+  if let Some(delay) = budgets.reserve_slot(&key, Instant::now())
+    && !delay.is_zero()
+  {
+    tracing::debug!(target: HTTP_TARGET, method, url, delay_ms = delay.as_millis() as u64, "spacing request to respect rate-limit budget");
+    tokio::time::sleep(delay).await;
+  }
+
   let started = Instant::now();
   let result = req.send().await;
   let elapsed_ms = started.elapsed().as_millis() as u64;
 
   match result {
     Ok(resp) => {
+      if let Some(parsed) = parse_rate_headers(resp.headers()) {
+        budgets.record(&key, parsed, Instant::now());
+      }
       let status = resp.status().as_u16();
       if (200..400).contains(&status) {
         tracing::debug!(target: HTTP_TARGET, method, url, status, elapsed_ms, "request completed");
@@ -594,6 +699,29 @@ mod tests {
       use pretty_assertions::assert_eq;
 
       use super::*;
+
+      #[tokio::test]
+      async fn it_learns_a_group_budget_from_response_headers() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/killmails/123/abcdef0123456789/"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Ratelimit-Group", "killmails")
+              .insert_header("X-Ratelimit-Limit", "100/15m")
+              .insert_header("X-Ratelimit-Remaining", "1")
+              .set_body_raw(b"[]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+        let url = format!("{}/killmails/123/abcdef0123456789/", server.uri());
+
+        let _: Vec<i32> = client.get_json(&url, None).await.unwrap();
+
+        let key = route_key(url_path(&url));
+        assert!(client.budgets.reserve_slot(&key, std::time::Instant::now()).is_some());
+      }
 
       #[tokio::test]
       async fn it_returns_cached_body_on_304() {
@@ -1158,38 +1286,180 @@ mod tests {
     }
   }
 
-  mod rate_limiter {
+  mod parse_rate_headers {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    mod check {
-      use std::time::{Duration, Instant};
-
-      use super::*;
-
-      #[tokio::test]
-      async fn it_returns_immediately_when_below_capacity() {
-        let mut limiter = RateLimiter::new(3, Duration::from_secs(60));
-
-        let start = Instant::now();
-        limiter.check().await;
-        limiter.check().await;
-
-        assert!(start.elapsed() < Duration::from_millis(50));
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+      let mut map = HeaderMap::new();
+      for (name, value) in pairs {
+        map.insert(
+          reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+          value.parse().unwrap(),
+        );
       }
+      map
+    }
 
-      #[tokio::test]
-      async fn it_sleeps_until_capacity_is_available() {
-        let window = Duration::from_millis(100);
-        let mut limiter = RateLimiter::new(2, window);
+    #[test]
+    fn it_parses_all_fields() {
+      let map = headers(&[
+        ("X-Ratelimit-Group", "killmails"),
+        ("X-Ratelimit-Limit", "150/15m"),
+        ("X-Ratelimit-Remaining", "42"),
+        ("X-Ratelimit-Used", "108"),
+      ]);
 
-        limiter.check().await;
-        limiter.check().await;
+      let parsed = parse_rate_headers(&map).unwrap();
 
-        let start = Instant::now();
-        limiter.check().await;
+      assert_eq!(parsed.group, "killmails");
+      assert_eq!(parsed.limit, 150);
+      assert_eq!(parsed.remaining, 42);
+      assert_eq!(parsed.window, Duration::from_secs(900));
+    }
 
-        assert!(start.elapsed() >= window);
+    #[test]
+    fn it_derives_remaining_from_used_when_remaining_is_absent() {
+      let map = headers(&[
+        ("X-Ratelimit-Group", "killmails"),
+        ("X-Ratelimit-Limit", "150/15m"),
+        ("X-Ratelimit-Used", "110"),
+      ]);
+
+      let parsed = parse_rate_headers(&map).unwrap();
+
+      assert_eq!(parsed.remaining, 40);
+    }
+
+    #[test]
+    fn it_returns_none_without_a_group() {
+      let map = headers(&[("X-Ratelimit-Limit", "150/15m")]);
+
+      assert!(parse_rate_headers(&map).is_none());
+    }
+  }
+
+  mod parse_rate_limit_spec {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_minutes() {
+      let (limit, window) = parse_rate_limit_spec("150/15m").unwrap();
+
+      assert_eq!(limit, 150);
+      assert_eq!(window, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn it_parses_hours() {
+      let (limit, window) = parse_rate_limit_spec("60/1h").unwrap();
+
+      assert_eq!(limit, 60);
+      assert_eq!(window, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn it_returns_none_for_an_unknown_unit() {
+      assert!(parse_rate_limit_spec("150/15d").is_none());
+    }
+
+    #[test]
+    fn it_returns_none_without_a_window() {
+      assert!(parse_rate_limit_spec("150").is_none());
+    }
+  }
+
+  mod rate_budgets {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    fn parsed(group: &str, limit: u32, remaining: u32, window: Duration) -> ParsedBudget {
+      ParsedBudget {
+        group: group.to_owned(),
+        limit,
+        remaining,
+        window,
       }
+    }
+
+    #[test]
+    fn it_clears_gating_after_the_window_elapses() {
+      let budgets = RateBudgets::new();
+      let now = Instant::now();
+      budgets.record("/k/", parsed("k", 100, 0, Duration::from_secs(60)), now);
+
+      let after_reset = now + Duration::from_secs(61);
+
+      assert!(budgets.reserve_slot("/k/", after_reset).is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_an_unknown_route() {
+      let budgets = RateBudgets::new();
+
+      assert!(budgets.reserve_slot("/unknown/", Instant::now()).is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_when_remaining_is_high() {
+      let budgets = RateBudgets::new();
+      let now = Instant::now();
+      budgets.record("/k/", parsed("k", 100, 90, Duration::from_secs(60)), now);
+
+      assert!(budgets.reserve_slot("/k/", now).is_none());
+    }
+
+    #[test]
+    fn it_spaces_requests_when_remaining_is_low() {
+      let budgets = RateBudgets::new();
+      let now = Instant::now();
+      budgets.record("/k/", parsed("k", 100, 5, Duration::from_secs(60)), now);
+
+      let first = budgets.reserve_slot("/k/", now).unwrap();
+      let second = budgets.reserve_slot("/k/", now).unwrap();
+
+      assert_eq!(first, Duration::ZERO);
+      assert!(second > Duration::ZERO);
+    }
+
+    #[test]
+    fn it_waits_for_the_window_to_reset_when_remaining_is_zero() {
+      let budgets = RateBudgets::new();
+      let now = Instant::now();
+      budgets.record("/k/", parsed("k", 100, 0, Duration::from_secs(60)), now);
+
+      let delay = budgets.reserve_slot("/k/", now).unwrap();
+
+      assert!(delay >= Duration::from_secs(59));
+      assert!(delay <= Duration::from_secs(60));
+    }
+  }
+
+  mod route_key {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_replaces_numeric_id_segments() {
+      assert_eq!(route_key("/characters/12345/assets/"), "/characters/{}/assets/");
+    }
+
+    #[test]
+    fn it_replaces_killmail_id_and_hash_segments() {
+      assert_eq!(
+        route_key("/killmails/123456/a1b2c3d4e5f6a7b8c9d0/"),
+        "/killmails/{}/{}/"
+      );
+    }
+
+    #[test]
+    fn it_leaves_short_words_intact() {
+      assert_eq!(route_key("/status/"), "/status/");
     }
   }
 }

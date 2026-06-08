@@ -78,7 +78,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Download item icons
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: item-images
           path: assets/images/items
@@ -204,7 +204,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Download item icons
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: item-images
           path: assets/images/items
@@ -305,7 +305,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Download item icons
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: item-images
           path: assets/images/items

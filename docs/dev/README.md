@@ -9,4 +9,5 @@
 
 [Code Style]: code-style.md
 [Commits]: commits.md
+[Tasks]: tasks.md
 [Testing]: testing.md

@@ -218,8 +218,41 @@ jobs:
       - name: Build and package (nsis)
         run: mise run package --format nsis
 
+      - name: Verify NSIS deep-link handler
+        shell: bash
+        run: |
+          nsi="$(find . -name installer.nsi | head -1)"
+          if [ -z "$nsi" ]; then
+            echo "::error::rendered installer.nsi not found; cannot verify the deep-link handler"
+            exit 1
+          fi
+          # installer.nsi is UTF-16LE; strip the null bytes to inspect the ASCII content.
+          text="$(tr -d '\0' < "$nsi")"
+          printf '%s' "$text" | grep -qi 'eveauth-pod' \
+            || { echo "::error::NSIS installer does not register the eveauth-pod scheme"; exit 1; }
+          printf '%s\n' "$text" | grep -i 'eveauth-pod' | grep -q '%1' \
+            || { echo "::error::NSIS eveauth-pod command is missing the %1 URL placeholder"; exit 1; }
+          if printf '%s' "$text" | grep -q '${BUNDLEID}'; then
+            echo "::warning::NSIS protocol description renders a literal \${BUNDLEID} (cargo-packager template limitation; the runtime HKCU self-registration overrides it per-user)"
+          fi
+          echo "NSIS deep-link handler verified: eveauth-pod registered with a \"%1\" command"
+
       - name: Build and package (wix)
         run: mise run package --format wix
+
+      - name: Verify WiX deep-link handler
+        shell: bash
+        run: |
+          wxs="$(find . -name main.wxs | head -1)"
+          if [ -z "$wxs" ]; then
+            echo "::error::rendered main.wxs not found; cannot verify the deep-link handler"
+            exit 1
+          fi
+          grep -qi 'eveauth-pod' "$wxs" \
+            || { echo "::error::WiX installer does not register the eveauth-pod scheme"; exit 1; }
+          grep -qF '%1' "$wxs" \
+            || { echo "::error::WiX eveauth-pod command is missing the %1 URL placeholder"; exit 1; }
+          echo "WiX deep-link handler verified: eveauth-pod registered with a \"%1\" command"
 
       - name: Sign Windows installers
         if: env.WINDOWS_CERTIFICATE != ''

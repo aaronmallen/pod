@@ -7,19 +7,21 @@ use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Space, container, mouse_area},
+  widget::{Column, Space, button, container, mouse_area, text},
 };
 
 use crate::ui::{
   components::{eve_time::eve_time, status_bar::status_bar},
-  style::{color, radius, spacing},
+  style::{color, control, radius, spacing, typography},
 };
 
 #[derive(Clone, Debug)]
 pub enum Message {
   DragWindow,
   ExpandComplete,
+  Failed(String),
   LoadingComplete,
+  Retry,
   StepChanged { label: String, progress: f32 },
   Tick,
 }
@@ -33,6 +35,7 @@ pub enum Phase {
 
 #[derive(Debug)]
 pub struct State {
+  pub error: Option<String>,
   pub expand: f32,
   pub phase: Phase,
   pub progress: f32,
@@ -45,6 +48,7 @@ pub struct State {
 impl Default for State {
   fn default() -> Self {
     Self {
+      error: None,
       expand: 0.0,
       phase: Phase::Loading,
       progress: 0.0,
@@ -59,9 +63,17 @@ impl Default for State {
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::DragWindow | Message::ExpandComplete => Task::none(),
+    Message::Failed(error) => {
+      state.error = Some(error);
+      Task::none()
+    }
     Message::LoadingComplete => {
       state.phase = Phase::Expanding;
       state.progress_target = 1.0;
+      Task::none()
+    }
+    Message::Retry => {
+      *state = State::default();
       Task::none()
     }
     Message::StepChanged {
@@ -84,7 +96,10 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let progress = matches!(state.phase, Phase::Loading).then_some(state.progress);
 
   let logo = animation::logo(state.rotation, state.pulse, state.expand);
-  let status = status_message::status_message(label, progress);
+  let status = match &state.error {
+    Some(error) => error_view(error),
+    None => status_message::status_message(label, progress),
+  };
 
   let inner = container(
     Column::with_children(vec![
@@ -121,6 +136,25 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     });
 
   mouse_area(panel).on_press(Message::DragWindow).into()
+}
+
+fn error_view<'a>(error: &str) -> Element<'a, Message> {
+  let message = text(format!("Couldn\u{2019}t start Pod: {error}"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::status::DANGER),
+    });
+
+  let retry = button(text("Retry").font(typography::body::MEDIUM).size(typography::size::MD))
+    .padding(control::padding())
+    .on_press(Message::Retry)
+    .style(control::primary_button);
+
+  Column::with_children(vec![message.into(), retry.into()])
+    .align_x(Horizontal::Center)
+    .spacing(spacing::SPACE_3)
+    .into()
 }
 
 fn tick(state: &mut State) -> Task<Message> {
@@ -234,6 +268,32 @@ mod tests {
 
       assert_eq!(state.expand, 1.0);
       assert_eq!(state.phase, Phase::Done);
+    }
+
+    #[test]
+    fn it_records_the_error_on_failed() {
+      let mut state = State::default();
+
+      let _ = update(&mut state, Message::Failed("seed boom".to_string()));
+
+      assert_eq!(state.error.as_deref(), Some("seed boom"));
+    }
+
+    #[test]
+    fn it_resets_to_a_fresh_loading_state_on_retry() {
+      let mut state = State {
+        error: Some("seed boom".to_string()),
+        phase: Phase::Done,
+        progress: 0.8,
+        progress_target: 0.9,
+        ..State::default()
+      };
+
+      let _ = update(&mut state, Message::Retry);
+
+      assert_eq!(state.error, None);
+      assert_eq!(state.phase, Phase::Loading);
+      assert_eq!(state.progress_target, 0.0);
     }
   }
 }

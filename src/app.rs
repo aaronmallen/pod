@@ -104,6 +104,7 @@ struct App {
   pending_auth: Option<auth::Message>,
   route: Route,
   runtime: Option<Runtime>,
+  sde_stale: bool,
   selected_character: Option<i64>,
   settings: Option<settings::State>,
   skills: Option<skills::State>,
@@ -466,6 +467,7 @@ fn boot() -> (App, Task<Message>) {
     pending_auth: None,
     route: Route::default(),
     runtime: None,
+    sde_stale: false,
     selected_character: None,
     settings: None,
     skills: None,
@@ -863,9 +865,12 @@ fn main_view(app: &App) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  let mut column_children: Vec<Element<'_, Message>> = Vec::with_capacity(3);
+  let mut column_children: Vec<Element<'_, Message>> = Vec::with_capacity(4);
   if let Some(banner) = updater_banner::banner(&app.updater_state, Message::UpdaterAction) {
     column_children.push(banner);
+  }
+  if app.sde_stale {
+    column_children.push(sde_stale_banner());
   }
   column_children.push(body.into());
   column_children.push(status_bar_view(app));
@@ -909,6 +914,29 @@ fn main_view(app: &App) -> Element<'_, Message> {
   Stack::with_children(layers)
     .width(Length::Fill)
     .height(Length::Fill)
+    .into()
+}
+
+fn sde_stale_banner<'a>() -> Element<'a, Message> {
+  let label = text("Static data refresh failed \u{2014} showing the last cached reference data.")
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::status::WARNING),
+    });
+
+  container(label)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_6,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_6,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.12))),
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -2158,8 +2186,29 @@ fn on_seed_progress(app: &mut App, progress: splash::seed::Progress) -> Task<Mes
       Some(ready) => build_runtime(ready),
       None => Task::none(),
     },
-    splash::seed::Progress::Error(error) => update(app, Message::InitFailed(error)),
+    splash::seed::Progress::Degraded(error) => handle_seed_degraded(app, error),
+    splash::seed::Progress::Error(error) => handle_seed_failed(app, error),
   }
+}
+
+fn handle_seed_degraded(app: &mut App, error: String) -> Task<Message> {
+  tracing::warn!(%error, "SDE refresh failed; proceeding with existing reference data");
+  app.sde_stale = true;
+  match app.store_ready.take() {
+    Some(ready) => build_runtime(ready),
+    None => Task::none(),
+  }
+}
+
+/// Reports a fatal seed failure but deliberately preserves `store_ready` (unlike `handle_init_failed`,
+/// which clears it) so the splash Retry action can re-run the seed against the parked store.
+fn handle_seed_failed(app: &mut App, error: String) -> Task<Message> {
+  tracing::error!(%error, "SDE seed failed with no existing reference data");
+  if let Some(state) = app.splash.as_mut() {
+    let _ = splash::update(state, splash::Message::Failed(error.clone()));
+  }
+  app.init_error = Some(error);
+  Task::none()
 }
 
 fn seed_progress_target(step: u32) -> f32 {
@@ -2179,10 +2228,25 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
   if matches!(message, splash::Message::ExpandComplete) {
     return transition_to_main(app);
   }
+  if matches!(message, splash::Message::Retry) {
+    return retry_seed(app);
+  }
   match app.splash.as_mut() {
     Some(state) => splash::update(state, message).map(Message::Splash),
     None => Task::none(),
   }
+}
+
+fn retry_seed(app: &mut App) -> Task<Message> {
+  let Some(ready) = app.store_ready.clone() else {
+    return Task::none();
+  };
+  app.init_error = None;
+  app.splash_step = 0;
+  if let Some(state) = app.splash.as_mut() {
+    let _ = splash::update(state, splash::Message::Retry);
+  }
+  splash::seed::seed(ready.db, ready.http).map(Message::SeedProgress)
 }
 
 fn view(app: &App, id: window::Id) -> Element<'_, Message> {
@@ -2234,6 +2298,7 @@ mod tests {
       pending_auth: None,
       route: Route::default(),
       runtime: None,
+      sde_stale: false,
       selected_character: None,
       settings: None,
       skills: None,
@@ -2571,6 +2636,75 @@ mod tests {
 
       assert_eq!(app.init_error.as_deref(), Some("download failed"));
       assert!(app.runtime.is_none(), "a seed failure must not enter the main runtime");
+    }
+
+    #[tokio::test]
+    async fn it_shows_the_seed_error_on_the_splash_and_keeps_the_store_handle_for_retry() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        settings: config::Settings::default(),
+      });
+
+      let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("seed boom".to_owned()));
+
+      assert_eq!(app.init_error.as_deref(), Some("seed boom"));
+      assert_eq!(app.splash.as_ref().and_then(|s| s.error.as_deref()), Some("seed boom"));
+      assert!(
+        app.store_ready.is_some(),
+        "a retryable seed failure keeps the store handle so Retry can re-run the seed"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_proceeds_with_existing_data_and_flags_stale_on_a_degraded_seed() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        settings: config::Settings::default(),
+      });
+
+      let _ = on_seed_progress(&mut app, splash::seed::Progress::Degraded("stale refresh".to_owned()));
+
+      assert!(app.sde_stale, "a degraded seed flags the stale-data warning");
+      assert!(app.init_error.is_none(), "a degraded seed never surfaces a fatal error");
+      assert!(
+        app.store_ready.is_none(),
+        "the store handle is consumed to build the runtime with existing data"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_re_dispatches_the_seed_and_clears_the_error_on_retry() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.init_error = Some("seed boom".to_owned());
+      app.splash_step = 5;
+      app.splash = Some(splash::State {
+        error: Some("seed boom".to_owned()),
+        ..splash::State::default()
+      });
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        settings: config::Settings::default(),
+      });
+
+      let _ = update(&mut app, Message::Splash(splash::Message::Retry));
+
+      assert!(app.init_error.is_none(), "retry clears the fatal error");
+      assert_eq!(app.splash_step, 0, "retry restarts seed progress from the first step");
+      assert!(
+        app.splash.as_ref().and_then(|s| s.error.as_ref()).is_none(),
+        "retry clears the splash error so progress can resume"
+      );
+      assert!(app.store_ready.is_some(), "retry preserves the store handle");
     }
 
     #[test]

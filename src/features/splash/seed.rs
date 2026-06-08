@@ -29,6 +29,8 @@ const SKILL_SECONDARY_ATTR_ID: i32 = 181;
 #[derive(Clone, Debug)]
 pub enum Progress {
   Complete,
+  /// Seed failed but usable reference data already exists, so the app can proceed with stale data.
+  Degraded(String),
   Error(String),
   Step(String),
 }
@@ -227,7 +229,13 @@ async fn run_seed(db: Database, http: Arc<http::Client>, mut tx: Tx) {
       let _ = tx.send(Progress::Complete).await;
     }
     Err(e) => {
-      let _ = tx.send(Progress::Error(format!("SDE seed error: {e}"))).await;
+      let message = format!("SDE seed error: {e}");
+      let progress = if sde::is_seeded(&db).await.unwrap_or(false) {
+        Progress::Degraded(message)
+      } else {
+        Progress::Error(message)
+      };
+      let _ = tx.send(progress).await;
     }
   }
 }

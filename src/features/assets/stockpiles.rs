@@ -2,7 +2,10 @@ mod card;
 mod card_grid;
 mod item_row;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+  collections::{HashMap, HashSet},
+  sync::Arc,
+};
 
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
@@ -82,6 +85,10 @@ impl StockpileCard {
 
   fn is_full(&self) -> bool {
     self.items.iter().all(|item| item.have >= item.target)
+  }
+
+  fn short_items(&self) -> usize {
+    self.items.iter().filter(|item| item.have < item.target).count()
   }
 }
 
@@ -476,9 +483,10 @@ pub(super) fn body<'a>(
   cards: &'a [StockpileCard],
   editor: Option<&'a Editor>,
   import: Option<&'a ImportPanel>,
+  expanded: &HashSet<i64>,
 ) -> Element<'a, Message> {
   let list = container(
-    scrollable(card_grid::view(cards))
+    scrollable(card_grid::view(cards, expanded))
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill),
@@ -1538,6 +1546,50 @@ mod tests {
     }
   }
 
+  mod short_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
+      StockpileCard {
+        character_id: None,
+        fill_isk: 0.0,
+        id: 1,
+        items,
+        location_id: None,
+        location_name: None,
+        name: "Cache".to_owned(),
+        overall_pct: 0.0,
+        target_isk: 0.0,
+      }
+    }
+
+    fn line(have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_id: 34,
+        type_name: "Tritanium".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_counts_only_items_below_target() {
+      let card = card(vec![line(1000, 1000), line(80, 50), line(10, 25), line(0, 100)]);
+
+      assert_eq!(card.short_items(), 2);
+    }
+
+    #[test]
+    fn it_reports_zero_for_a_full_pile() {
+      let card = card(vec![line(1000, 1000), line(80, 50)]);
+
+      assert_eq!(card.short_items(), 0);
+    }
+  }
+
   mod economics {
     use pretty_assertions::assert_eq;
 
@@ -1621,7 +1673,7 @@ mod tests {
     #[test]
     fn it_renders_the_card_grid_and_fill_status() {
       let cards = vec![card_model()];
-      let _el: Element<'_, Message> = body(&cards, None, None);
+      let _el: Element<'_, Message> = body(&cards, None, None, &HashSet::new());
     }
 
     #[test]
@@ -1632,7 +1684,7 @@ mod tests {
       editor.add_item();
       editor.set_item_suggestions(1, vec![(35, "Pyerite".to_owned())]);
 
-      let _el: Element<'_, Message> = body(&[], Some(&editor), None);
+      let _el: Element<'_, Message> = body(&[], Some(&editor), None, &HashSet::new());
     }
 
     #[test]
@@ -1640,7 +1692,7 @@ mod tests {
       let mut panel = ImportPanel::blank();
       panel.set_text("Tritanium 1000".to_owned());
 
-      let _el: Element<'_, Message> = body(&[], None, Some(&panel));
+      let _el: Element<'_, Message> = body(&[], None, Some(&panel), &HashSet::new());
     }
 
     #[test]
@@ -1655,12 +1707,12 @@ mod tests {
         unmatched: vec!["Notathing".to_owned()],
       });
 
-      let _el: Element<'_, Message> = body(&[], None, Some(&panel));
+      let _el: Element<'_, Message> = body(&[], None, Some(&panel), &HashSet::new());
     }
 
     #[test]
     fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(&[], None, None);
+      let _el: Element<'_, Message> = body(&[], None, None, &HashSet::new());
     }
 
     #[test]

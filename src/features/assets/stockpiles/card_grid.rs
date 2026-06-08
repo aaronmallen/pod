@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use iced::{
   Border, Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, button, container, text},
 };
 
@@ -8,21 +10,23 @@ use super::{StockpileCard, card};
 use crate::{
   features::assets::{HEADER_SIDE_PADDING, Message, fmt_count},
   ui::{
-    components::empty_state::empty_state as shared_empty_state,
+    components::icon::Icon,
     style::{color, radius, spacing, typography},
   },
 };
 
-pub(super) fn view(cards: &[StockpileCard]) -> Element<'_, Message> {
+const EMPTY_COPY_WIDTH: f32 = 360.0;
+const EMPTY_ICON_SIZE: f32 = 30.0;
+const EMPTY_VERTICAL_PADDING: f32 = 56.0;
+
+pub(super) fn view<'a>(cards: &'a [StockpileCard], expanded: &HashSet<i64>) -> Element<'a, Message> {
   let ready = cards.iter().filter(|c| c.is_full()).count();
   let short = cards.len() - ready;
 
-  let content: Element<'_, Message> = if cards.is_empty() {
-    shared_empty_state("No stockpiles yet")
-      .subtitle("Create one to track target quantities.")
-      .render()
+  let content: Element<'a, Message> = if cards.is_empty() {
+    empty_state()
   } else {
-    let cells: Vec<Element<'_, Message>> = cards.iter().map(card::view).collect();
+    let cells: Vec<Element<'a, Message>> = cards.iter().map(|card| card::view(card, expanded)).collect();
     Row::with_children(cells).spacing(spacing::SPACE_3_5).wrap().into()
   };
 
@@ -39,6 +43,55 @@ pub(super) fn view(cards: &[StockpileCard]) -> Element<'_, Message> {
     left: HEADER_SIDE_PADDING,
   })
   .into()
+}
+
+fn empty_state<'a>() -> Element<'a, Message> {
+  let copy = Column::with_children(vec![
+    Icon::assets()
+      .color(color::text::TERTIARY)
+      .size(EMPTY_ICON_SIZE)
+      .render(),
+    text("No stockpile targets yet")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text("Set target quantities for the items you want to keep on hand, and Pod tracks how close you are across every character and location.")
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .width(Length::Fixed(EMPTY_COPY_WIDTH))
+    .align_x(Horizontal::Center)
+    .style(|_| text::Style {
+      color: Some(color::text::SECONDARY),
+    })
+    .into(),
+    Row::with_children(vec![new_button(), import_button()])
+      .spacing(spacing::SPACE_2_5)
+      .into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_x(Horizontal::Center);
+
+  container(copy)
+    .width(Length::Fill)
+    .align_x(Horizontal::Center)
+    .padding(Padding {
+      top: EMPTY_VERTICAL_PADDING,
+      bottom: EMPTY_VERTICAL_PADDING,
+      left: spacing::SPACE_6,
+      right: spacing::SPACE_6,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn header<'a>(ready: usize, short: usize) -> Element<'a, Message> {
@@ -156,12 +209,12 @@ mod tests {
     fn it_renders_the_card_grid_with_a_ready_and_short_caption() {
       let cards = vec![card(1, true), card(2, false)];
 
-      let _el: Element<'_, Message> = view(&cards);
+      let _el: Element<'_, Message> = view(&cards, &HashSet::new());
     }
 
     #[test]
-    fn it_renders_the_shared_empty_state() {
-      let _el: Element<'_, Message> = view(&[]);
+    fn it_renders_the_empty_state() {
+      let _el: Element<'_, Message> = view(&[], &HashSet::new());
     }
   }
 }

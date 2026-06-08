@@ -64,7 +64,19 @@ fn readout(item: &StockpileItemLine, ok: bool) -> Element<'_, Message> {
     color::text::PRIMARY
   };
 
-  let figures = Row::with_children(vec![
+  let mut figure_parts: Vec<Element<'_, Message>> = Vec::with_capacity(3);
+  if ok {
+    figure_parts.push(
+      text("\u{2713} ")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::status::ONLINE),
+        })
+        .into(),
+    );
+  }
+  figure_parts.push(
     text(fmt_count(item.have))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -72,6 +84,8 @@ fn readout(item: &StockpileItemLine, ok: bool) -> Element<'_, Message> {
         color: Some(got_color),
       })
       .into(),
+  );
+  figure_parts.push(
     text(format!(" / {}", fmt_count(item.target)))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -79,7 +93,8 @@ fn readout(item: &StockpileItemLine, ok: bool) -> Element<'_, Message> {
         color: Some(color::text::TERTIARY),
       })
       .into(),
-  ]);
+  );
+  let figures = Row::with_children(figure_parts);
 
   let mut children: Vec<Element<'_, Message>> = vec![figures.into()];
   if !ok {

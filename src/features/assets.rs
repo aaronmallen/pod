@@ -241,6 +241,7 @@ pub enum Message {
   StockpileImportResolveRequested,
   StockpileImportResolved(MultibuyResolution),
   StockpileImportTextChanged(text_editor::Action),
+  StockpileItemsToggled(i64),
   StockpileMultibuyExportClosed,
   StockpileMultibuyExportCopied(i64),
   StockpileMultibuyExportOpened(i64),
@@ -292,6 +293,7 @@ pub struct State {
   stockpile_import: Option<stockpiles::ImportPanel>,
   stockpile_context_menu: Option<StockpileContextMenu>,
   stockpile_cursor: Option<iced::Point>,
+  stockpile_expanded: HashSet<i64>,
   stockpile_multibuy_export: Option<i64>,
   stockpile_multibuy_copied: bool,
   abyssals: Vec<abyssals::AbyssalCard>,
@@ -335,6 +337,7 @@ impl State {
       stockpile_import: None,
       stockpile_context_menu: None,
       stockpile_cursor: None,
+      stockpile_expanded: HashSet::new(),
       stockpile_multibuy_export: None,
       stockpile_multibuy_copied: false,
       abyssals: Vec::new(),
@@ -437,6 +440,10 @@ impl State {
 
   pub(super) fn stockpile_context_menu(&self) -> Option<&StockpileContextMenu> {
     self.stockpile_context_menu.as_ref()
+  }
+
+  pub(super) fn stockpile_expanded(&self) -> &HashSet<i64> {
+    &self.stockpile_expanded
   }
 
   pub(super) fn stockpile_multibuy_export(&self) -> Option<i64> {
@@ -685,6 +692,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StockpileImportResolveRequested
     | Message::StockpileImportResolved(_)
     | Message::StockpileImportTextChanged(_)
+    | Message::StockpileItemsToggled(_)
     | Message::StockpileMultibuyExportClosed
     | Message::StockpileMultibuyExportCopied(_)
     | Message::StockpileMultibuyExportOpened(_)
@@ -1049,6 +1057,12 @@ fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database
     }
     Message::StockpileContextMenuClosed => {
       state.stockpile_context_menu = None;
+      Task::none()
+    }
+    Message::StockpileItemsToggled(id) => {
+      if !state.stockpile_expanded.remove(&id) {
+        state.stockpile_expanded.insert(id);
+      }
       Task::none()
     }
     Message::StockpileMultibuyExportOpened(id) => {

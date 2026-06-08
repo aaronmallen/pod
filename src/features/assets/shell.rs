@@ -204,6 +204,7 @@ fn tab_body(state: &State) -> Element<'_, Message> {
         state.stockpiles(),
         state.stockpile_editor(),
         state.stockpile_import(),
+        state.stockpile_expanded(),
       ))
       .width(Length::Fill)
       .height(Length::Fill),

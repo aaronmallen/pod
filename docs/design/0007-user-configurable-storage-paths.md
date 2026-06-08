@@ -12,18 +12,37 @@ created: 2026-06-06
 
 ![Active](https://img.shields.io/badge/Active-green?style=for-the-badge)
 
+> **Revised 2026-06-08 (spec `powlkvns`):** `config.rs` becomes the **single path authority** and three points are
+> amended:
+>
+> - **Images now follow a CACHE root, not the data root.** The image store lives at `resolved_cache_dir()/images` (an
+>   evictable cache, ADR-0013), making the previously-vestigial `cache_dir` override meaningful. The earlier statement
+>   that Pod keeps "no separate on-disk cache" no longer holds — the image cache is exactly such a store.
+> - **Logs default to `state_home/pod/logs`** (corrected from `data_dir()/logs`).
+> - **`config.toml` persists only explicit overrides.** `db_dir`/`log_dir`/`cache_dir` stay `Option<PathBuf>`; `None`
+>   means "use the platform default" and resolved absolute defaults are **never** written back to disk.
+>
+> **Cache-dir override does not relocate files.** Unlike the database (which is moved on a `db_dir` change, below), the
+> image cache is disposable: changing `cache_dir` simply repoints the root and the cache repopulates lazily on the next
+> sync — existing image files are not moved. The move-on-change semantics in this ADR apply to the database (and log
+> tree), not to the image cache.
+
 ## Summary
 
-The locations of Pod's two on-disk stores — the SQLite **database** and the **log** directory —
-become **user-overridable settings**. Each has an optional override in `config.toml`; when set it
-wins, otherwise the location is derived from the platform convention via `dir_spec` exactly as today.
-This reverses the original `config.rs` stance that "paths are not user settings". When an override
-changes, Pod **moves the existing store to the new location** and only repoints if the move is
-impossible, with a clear failure path. The override does not change *what* the stores hold (ADR-0013
-image layout and ADR-0003 app-owned tables are unaffected) — only *where* the roots live.
+The locations of Pod's on-disk stores — the SQLite **database**, the **log** directory, and (as of the 2026-06-08
+revision) the evictable **image cache** — become **user-overridable settings**. Each has an optional override in
+`config.toml`; when set it wins, otherwise the location is derived from the platform convention via `dir_spec`. Only
+*explicit* overrides are persisted — an unset override stays `None` and resolves to the platform default at read time,
+never a baked-in absolute path. This reverses the original `config.rs` stance that "paths are not user settings". When
+the **database** override changes, Pod **moves the existing store to the new location** and only repoints if the move is
+impossible, with a clear failure path; the **image cache** override merely repoints (the cache is disposable and
+repopulates lazily — files are not moved). The override does not change *what* the stores hold (ADR-0013 image layout
+and ADR-0003 app-owned tables are unaffected) — only *where* the roots live.
 
-Pod keeps **no separate on-disk cache** — ESI responses and other transient data are cached in the
-database itself — so the cache is not a relocatable store; only the database and logs are.
+`config.rs` is the **single path authority**: every store path is resolved there (override-over-default), and no call
+site reads a raw `dir_spec` home for these stores. The image cache (`resolved_cache_dir()/images`, ADR-0013) is a real
+on-disk cache that follows the **cache root**, so — unlike the original premise — there *is* a separate, relocatable
+cache store alongside the database and logs.
 
 ## Context
 
@@ -53,15 +72,16 @@ Make the two store roots overridable, resolve override-over-default, and move-on
 
 ### Override fields
 
-Two optional path settings live in `Settings`, serialized in `config.toml`:
+Three optional path settings live in `Settings`, serialized in `config.toml`:
 
 - **`db_dir`** — the directory holding `pod.db`.
-- **`log_dir`** — the directory for log files.
+- **`log_dir`** — the directory for log files (default `state_home/pod/logs`).
+- **`cache_dir`** — the cache root; the **image cache** lives at `resolved_cache_dir()/images` (ADR-0013).
 
-Each is `Option<PathBuf>`: absent means "use the platform default". They are independent — a user may
-override one and leave the other on convention. The **image store is not separately overridable**;
-it remains rooted at `{data_dir}/images` (ADR-0013) and follows the data directory. Overriding the
-database path moves the database; it does not move images.
+Each is `Option<PathBuf>`: absent means "use the platform default", and only set overrides are written to
+`config.toml`. They are independent — a user may override one and leave the others on convention. Overriding `db_dir`
+**moves** the database; overriding `cache_dir` **repoints** the image cache without moving files (the cache is
+disposable and repopulates lazily on the next sync).
 
 ### Resolution precedence
 
@@ -71,11 +91,11 @@ For each store, the effective path is resolved **override first, platform defaul
 effective_path = settings.<override>.unwrap_or_else(|| dir_spec::<home>().join("pod")…)
 ```
 
-The existing `dir_spec` derivation (`data_home` → database, `state_home` → logs) becomes the
-*fallback* arm rather than the only arm. The current `config::data_dir` / `database_path` free
-functions are extended to consult `Settings`, so every call site resolves the same way. There is
-exactly one resolution per store, in `config.rs`; nothing reads a raw `dir_spec` home directly for
-these stores.
+The `dir_spec` derivation (`data_home` → database, `state_home` → logs at `state_home/pod/logs`, `cache_home` → image
+cache) becomes the *fallback* arm rather than the only arm. The `config::data_dir` / `database_path` resolvers (and the
+new `resolved_cache_dir`) consult `Settings`, so every call site resolves the same way. There is exactly one resolution
+per store, in `config.rs` (the single path authority); nothing reads a raw `dir_spec` home directly for these stores,
+and the previously settings-blind free functions are removed.
 
 ### Relocation / move semantics
 
@@ -117,11 +137,12 @@ changes the journal mode; that remains the `network` flag's job.
 
 ### Relationship to ADR-0013 (Images) and ADR-0003 (Canonical Data Model)
 
-- **ADR-0013 (Image assets).** Image layout — derived paths under `{data_dir}/images`,
-  presence-on-disk as source of truth, atomic temp-then-rename writes — is **unchanged**. Only the
-  `{data_dir}` root can move (with the database, as part of the data directory). The render layer
-  still resolves paths (portraits/logos) relative to the resolved root, so a missing file remains a
-  re-sync trigger, not a placeholder.
+- **ADR-0013 (Image assets).** As of the 2026-06-08 revision the image store is an **evictable cache** rooted at
+  `resolved_cache_dir()/images` (flat single-size paths, presence-on-disk as source of truth, atomic temp-then-rename
+  writes). It follows the **cache root**, not the data root: changing `cache_dir` repoints it but does **not** move
+  existing files (the cache repopulates lazily on the next sync), and a missing file is a disposable-cache miss
+  repopulated lazily — not a hard integrity failure. This supersedes the prior text that rooted images at
+  `{data_dir}/images` and treated a missing file as a strict re-sync trigger.
 - **ADR-0003 (App-owned data, Canonical Data Model).** App-owned tables (squads, and later tags/skill plans/fittings)
   live
   in the same `pod.db`, so they relocate **with the database** as one unit — there is no separate
@@ -134,15 +155,18 @@ holds.
 
 ## Affected Areas
 
-- `src/config.rs` — `Settings` gains `db_dir`/`log_dir` overrides; `data_dir`, the database path, and
-  the log resolver consult `Settings` (override-over-default) instead of reading `dir_spec` directly.
-  The "paths are not user settings" module doc is corrected.
+- `src/config.rs` — `Settings` gains `db_dir`/`log_dir`/`cache_dir` overrides; `data_dir`, the database path, the log
+  resolver (now defaulting to `state_home/pod/logs`), and `resolved_cache_dir` consult `Settings`
+  (override-over-default) instead of reading `dir_spec` directly. `config.rs` is the single path authority; the prior
+  settings-blind free functions are removed and only explicit overrides are serialized. The "paths are not user
+  settings" module doc is corrected.
 - `src/store.rs` — relocation helper that quiesces, moves (rename or copy-then-delete with rollback),
   and reopens the database at a new path, threaded with the existing `network`/WAL `open` path.
-- `src/store/images.rs` — image store re-rooted off the resolved `data_dir` (no layout change).
+- `src/store/images.rs` — image cache re-rooted off the resolved `resolved_cache_dir()/images` (flat single-size
+  layout, ADR-0013); a `cache_dir` change repoints only and does not move files.
 - Logging init — reads its directory from the resolved settings rather than the raw platform home.
-- The Storage tab — surfaces the two overrides, the `network` flag, and the move-vs-repoint outcome /
-  errors of an apply.
+- The Storage tab — surfaces the `db_dir`/`log_dir`/`cache_dir` overrides, the `network` flag, and the
+  move-vs-repoint outcome / errors of an apply.
 
 ## Consequences
 
@@ -167,8 +191,6 @@ holds.
 
 ## Future Work
 
-- A separate image-store override, if users want images apart from the database (today they move
-  together with the data directory).
 - A "reset to platform default" affordance in the Storage tab that relocates a store back to the
   convention.
 - Detection and recovery UX for a configured path that is missing at launch (e.g. an unmounted
@@ -178,4 +200,5 @@ holds.
 
 - ADR-0002 — Sync/Render Separation and Aggregation Chaining (`0002-sync-render-separation.md`)
 - ADR-0013 — Image Assets — Committed Item Icons and Synced Portraits/Logos (`0013-committed-item-icon-set.md`)
+- Spec `powlkvns` — Storage path-resolution authority + image cache overhaul (the 2026-06-08 revision).
 - ADR-0003 — Canonical Data Model (`0003-canonical-data-model.md`)

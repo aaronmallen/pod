@@ -12,6 +12,15 @@ created: 2026-06-06
 
 ![Active](https://img.shields.io/badge/Active-green?style=for-the-badge)
 
+> **Revised 2026-06-08 (spec `powlkvns`):** synced **character portraits and corporation/alliance logos are reclassified
+> from durable data to an evictable cache.** They now live under the **cache root** (`resolved_cache_dir()/images`,
+> ADR-0007), not the data root, in a **flattened single-file, single-(biggest)-size** layout — `characters/{id}.jpg`,
+> `corporations/{id}.png`, `types/{id}.png` (the per-id directory and the `_{size}` suffix are dropped). The image sync
+> folds in a **weekly (~7-day) sync-time staleness refetch** so a stale portrait/logo is replaced. The **committed
+> item-icon bundle is UNCHANGED** by this revision, and **type icons are immutable — they are never evicted on
+> staleness.** See [Synced portraits and logos](#synced-portraits-and-logos) for the revised rules; the 2026-06-06
+> revision below is otherwise unaffected.
+>
 > **Revised 2026-06-06:** the loose-PNG set is no longer committed to the repository. It is now gitignored and generated
 > once per release by the GitHub Actions pipeline, then shipped inside each OS package via a shared workflow artifact.
 > The Decision, Consequences, and Affected Areas below reflect this; the two-tier resolver and best-effort sync
@@ -20,7 +29,8 @@ created: 2026-06-06
 > **History:** item/type icons were originally treated as synced data — fetched per-entity during sync with a fatal
 > fetch-failure rule (in a since-retired "Image Assets as Synced Data" ADR). This ADR replaces that approach for item
 > icons with the committed/CI-generated set described below, and absorbs the still-active portrait/logo decision from
-> that retired record. Character portraits and corporation/alliance logos *remain* synced data, as documented under
+> that retired record. Character portraits and corporation/alliance logos are now treated as an **evictable image
+> cache** rather than durable synced data, as documented under
 > [Synced portraits and logos](#synced-portraits-and-logos).
 
 ## Summary
@@ -33,9 +43,12 @@ in the bundle. Sync is demoted to a **best-effort long-tail** that fills in only
 an icon fetch can never block or fail a sync job. This replaces the original "images are synced data, fetch-fail is
 fatal" rule for the item-icon case.
 
-**Character portraits and corporation/alliance logos remain synced data:** the sync engine fetches them while building
-an entity's complete dataset, writes them to a durable on-disk store at derived paths, and commits the entity only once
-its images are present. See [Synced portraits and logos](#synced-portraits-and-logos).
+**Character portraits and corporation/alliance logos are an evictable image cache** (revised 2026-06-08): the sync
+engine fetches them while building an entity's dataset and writes them, at the single biggest size, to an **evictable
+on-disk cache** under the cache root (`resolved_cache_dir()/images`, ADR-0007) — not to the durable data root. The
+files use a flat `characters/{id}.jpg` / `corporations/{id}.png` layout, are refetched on a weekly sync-time staleness
+check, and a missing file is repopulated lazily on the next sync rather than treated as an integrity failure. See
+[Synced portraits and logos](#synced-portraits-and-logos). **Type icons are immutable and are never evicted.**
 
 ## Context
 
@@ -73,12 +86,14 @@ The release workflow runs the generator **once** in a dedicated `generate-icons`
 
 **A two-tier runtime resolver.** `resolve_type_icon` (`src/store/images.rs`) consults, in order:
 
-1. `data_dir()/images` — the writable store where the sync long-tail writes.
+1. The writable image cache (`resolved_cache_dir()/images`, ADR-0007) — flat `types/{id}.png`, where the sync long-tail
+   writes. (Revised 2026-06-08: this tier moved from `data_dir()/images` to the cache root; type icons written here are
+   immutable and never evicted on staleness.)
 2. The generated items dir — `assets/images/items/` in a dev build, the cargo-packager resources dir in a packaged
    build, located by a `resource_dir()` helper that probes for the bundled `assets/` tree rather than trusting a
    compile-time path.
 
-The data-dir tier keeps priority so a freshly-synced icon shadows the shipped one; only when both miss is the icon
+The cache tier keeps priority so a freshly-synced icon shadows the shipped one; only when both miss is the icon
 `Missing` (the UI shows a silhouette). A fresh checkout with no generated icons resolves everything to silhouettes until
 a contributor runs the opt-in generator.
 
@@ -88,38 +103,44 @@ shipped set; they can never block or fail a sync job.
 
 ### Synced portraits and logos
 
-Character portraits and corporation/alliance logos are **not** part of the item-icon set above. They remain *synced
-data*: a presentational binary is part of an entity's dataset, not a render-time concern, and is treated under the same
-completeness contract as the rest of that dataset (ADR-0002). Three reasons drive this:
+Character portraits and corporation/alliance logos are **not** part of the item-icon set above. As of the 2026-06-08
+revision (spec `powlkvns`) they are an **evictable image cache**, not durable synced data. They are still *fetched
+during sync* — a presentational binary is part of building an entity — but they are written to a disposable cache that
+may be cleared at any time and repopulated lazily, so their absence no longer blocks an entity's commit. Two reasons
+still drive keeping them out of SQLite and the JSON HTTP cache:
 
 - **`http_cache` is a freshness cache.** It keys entries by URL with a `Cache-Control` lifetime and prunes/revalidates
-  them, so images placed there are not durable — they vanish on eviction and are unavailable offline.
+  them, so images placed there are not durable in a useful way for rendering, and it stays JSON-response-only.
 - **Large binaries do not belong in SQLite.** Storing portraits and logos as BLOBs bloats the database file, its page
   cache, and every backup, and makes `VACUUM` expensive. The relational store holds relational data only.
-- **Images are data.** Treating them as a render side effect would let a row exist without its image; an entity's
-  dataset is not *complete* until its images are present.
 
-The rules:
+The rules (revised 2026-06-08):
 
-- **Synced before commit.** The sync engine fetches an entity's portraits/logos at the canonical UI sizes while
-  assembling its dataset and writes them **before** committing the entity. A fetch failure fails the job — nothing is
-  persisted and the cycle retries — exactly like any other step in the completeness gate (ADR-0002). So a committed
-  entity always has its images.
-- **Durable on-disk store at derived paths.** Images live as files under `{data_dir}/images` at deterministic paths
-  derived from `(category, id, size)` — e.g. `images/characters/{id}/portrait_256.jpg`. There is **no database
-  manifest**: presence on disk is the source of truth. Writes are atomic (write a temporary sibling, then rename).
+- **Fetched during sync, but non-blocking.** The sync engine fetches an entity's portrait/logo while assembling its
+  dataset and writes it to the image cache. Because the cache is evictable, a fetch failure is **logged and skipped**
+  rather than failing the entity's commit — the render layer falls back to a placeholder and the next sync repopulates
+  the file. (This is a change from the prior "synced before commit / fetch failure fails the job" rule.)
+- **Evictable on-disk cache, flat single-biggest-size layout.** Images live as files under the **cache root**
+  (`resolved_cache_dir()/images`, ADR-0007), **not** the data root. The layout is **flattened to a single file at a
+  single size** — `characters/{id}.jpg`, `corporations/{id}.png`, `types/{id}.png` — dropping the old per-id directory
+  and the `_{size}` suffix. Only the **biggest** size is downloaded; iced scales it down at render time, so there is no
+  on-disk resize and no per-size variants. There is **no database manifest**: presence on disk is the source of truth.
+  Writes are atomic (write a temporary sibling, then rename).
 - **Not the HTTP cache.** Image fetches bypass `http_cache` via `http::Client::get_bytes_uncached`; `http_cache` stays
   JSON-response-only.
-- **The render layer reads locally.** The UI resolves the derived path and loads the file; it never triggers a fetch. A
-  missing file is an integrity miss (a re-sync trigger), not a render-time placeholder. An initials placeholder is kept
-  only as a defensive fallback (e.g. before a character's first sync completes).
-- **Scope and freshness.** Character portraits are synced by the character-profile job; corporation/alliance logos are
-  synced by the jobs that introduce those rows, bounded by the ids actually present in the data. With no manifest,
-  refresh is driven by the owning entity's sync cadence: a job re-fetches and overwrites the image each cycle (images
-  are small).
+- **The render layer reads locally.** The UI resolves the flat path and loads the file; it never triggers a fetch. A
+  missing file is **not** an integrity failure — it is a disposable-cache miss that is repopulated on the next sync. An
+  initials placeholder is shown whenever the cached file is absent (e.g. before a character's first sync completes or
+  after the cache has been cleared).
+- **Scope, freshness, and weekly staleness.** Character portraits are fetched by the character-profile job;
+  corporation/alliance logos by the jobs that introduce those rows, bounded by the ids actually present in the data.
+  Refresh keys off sync cadence, with an added **weekly (~7-day) sync-time staleness check**: a portrait/logo whose
+  cached file is older than ~7 days is refetched and overwritten (EVE users do change their portraits). **Type icons
+  are exempt — they are immutable and are never refetched on staleness or evicted.**
 
-This is the one place item icons and portraits/logos diverge: item icons ship pre-generated and a missing/failing icon
-is non-fatal, whereas a portrait/logo is fetched at sync time and its absence blocks the entity's commit.
+Both item icons and portraits/logos are now non-fatal: item icons ship pre-generated and a missing/failing icon shows a
+silhouette, while a portrait/logo is a disposable cache entry whose absence shows a placeholder and is repopulated on
+the next sync.
 
 ## Affected Areas
 
@@ -133,10 +154,12 @@ is non-fatal, whereas a portrait/logo is fetched at sync time and its absence bl
 - `src/sync/jobs/character_clones.rs`, `src/sync/jobs/abyssals.rs` — icon fetches demoted to best-effort.
 - The render sites (`inventory.rs`, `clones.rs`, `killlog.rs`) — all resolve through `resolve_type_icon`.
 
-For synced portraits/logos:
+For synced portraits/logos (evictable cache, revised 2026-06-08):
 
-- `src/store/images.rs` — the rooted on-disk `Store` (derived paths, atomic write).
-- `src/clients/eve_image.rs` — image URL builders and the uncached `fetch`.
+- `src/store/images.rs` — the cache-rooted on-disk `Store` (flat single-size paths under `resolved_cache_dir()/images`,
+  atomic write, weekly staleness refetch; no longer rooted at `{data_dir}/images`).
+- `src/clients/eve_image.rs` — image URL builders and the uncached `fetch`; the size enum collapses to the single
+  biggest size.
 - `src/clients/http.rs` — `get_bytes_uncached` (no cache read/write).
 - `src/sync/{engine,job}.rs`, `src/sync/jobs/character_profile.rs` — the engine carries the image client and store; the
   character-profile job fetches and writes the portrait before the commit.
@@ -163,17 +186,16 @@ For synced portraits/logos:
 - A CDN outage during the `generate-icons` job fails the release (by design, via the coverage-floor gate) rather than
   shipping a sparse set.
 
-For synced portraits/logos:
+For synced portraits/logos (evictable cache, revised 2026-06-08):
 
-- Images are durable: they survive cache pruning and are available offline, and the database stays lean (relational
-  data only).
-- Completeness is enforced at the source: an entity is committed only once its images are on disk, and the render layer
-  is trivial — resolve a path and load it.
-- An entity sync fails if the image server is unreachable (completeness is strict): a transient image hiccup blocks that
-  entity's profile until the next retry.
-- A manifest-free store cannot be queried for freshness or inventory; refresh keys off sync cadence. A committed row's
-  image file can be deleted out from under the app (mitigated by treating a missing file as a re-sync trigger), and
-  orphan collection for untracked entities has no DB cascade.
+- The database stays lean (relational data only), and the cache root is disposable: clearing it (or a cache-dir
+  override change, ADR-0007) is safe — files are repopulated lazily on the next sync.
+- The flat single-biggest-size layout and the no-on-disk-resize rule keep the cache simple; iced scales at render time.
+- A transient image-server hiccup no longer blocks an entity's commit — the fetch is skipped and the render layer shows
+  a placeholder until the next sync (a deliberate trade of strict completeness for resilience, suitable for a cache).
+- A manifest-free cache cannot be queried for freshness or inventory; refresh keys off sync cadence plus the ~7-day
+  staleness check. A cached file can be deleted out from under the app, which is fine — it is repopulated lazily — and
+  orphan collection for untracked entities relies on cache eviction rather than a DB cascade.
 
 ## Future Work
 
@@ -187,6 +209,9 @@ For synced portraits/logos:
   its completeness contract; this ADR folds in the since-retired "Image Assets as Synced Data" record for the item-icon
   case.
 - ADR-0003 — Canonical Data Model (`0003-canonical-data-model.md`)
+- ADR-0007 — User-Configurable Storage Paths (`0007-user-configurable-storage-paths.md`). The image cache follows its
+  cache root and is repopulated lazily; a cache-dir override change does not move existing image files.
 - Spec `kolowpzv` — Pre-generate and Commit Item Icons.
+- Spec `powlkvns` — Storage path-resolution authority + image cache overhaul (the 2026-06-08 revision).
 - RFC `lpvoysql` — predecessor (downloaded-archive approach, superseded here).
 - EVE image server: <https://docs.esi.evetech.net/docs/image_server.html>

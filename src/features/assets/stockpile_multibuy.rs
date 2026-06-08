@@ -24,11 +24,11 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
   let bare = || Some((line.to_owned(), 1));
 
   let mut name_end = tokens.len();
-  let mut digits = String::new();
+  let mut trailing = String::new();
   while name_end > 0 {
     let token = tokens[name_end - 1];
     if let Some(group) = parse_digit_group(token) {
-      digits.insert_str(0, &group);
+      trailing.insert_str(0, &group);
       name_end -= 1;
     } else {
       break;
@@ -39,15 +39,42 @@ fn parse_line(line: &str) -> Option<(String, u64)> {
     && name_end > 0
     && let Some(group) = parse_separated_quantity(tokens[name_end - 1])
   {
-    digits = group;
+    trailing = group;
     name_end -= 1;
   }
 
-  if name_end == 0 || digits.is_empty() {
+  let mut name_start = 0;
+  let mut leading = String::new();
+  while name_start < name_end {
+    let token = tokens[name_start];
+    if let Some(group) = parse_digit_group(token) {
+      leading.push_str(&group);
+      name_start += 1;
+    } else {
+      break;
+    }
+  }
+
+  if name_start == 0
+    && name_end > 0
+    && let Some(group) = parse_separated_quantity(tokens[0])
+  {
+    leading = group;
+    name_start = 1;
+  }
+
+  // Prefer-prefix: leading quantity wins when both ends look numeric.
+  if name_start < name_end
+    && let Some(quantity) = leading.parse::<u64>().ok().filter(|&quantity| quantity > 0)
+  {
+    return Some((tokens[name_start..name_end].join(" "), quantity));
+  }
+
+  if name_end == 0 || trailing.is_empty() {
     return bare();
   }
 
-  let Some(quantity) = digits.parse::<u64>().ok().filter(|&quantity| quantity > 0) else {
+  let Some(quantity) = trailing.parse::<u64>().ok().filter(|&quantity| quantity > 0) else {
     return bare();
   };
 
@@ -192,6 +219,65 @@ mod tests {
     #[test]
     fn it_treats_a_garbage_trailing_token_as_part_of_the_name() {
       assert_eq!(parse("Tritanium abc"), vec![("Tritanium abc".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn it_parses_a_leading_bare_quantity() {
+      assert_eq!(
+        parse("25      Mobile Tractor Unit"),
+        vec![("Mobile Tractor Unit".to_owned(), 25)]
+      );
+    }
+
+    #[test]
+    fn it_parses_a_leading_x_quantity() {
+      assert_eq!(
+        parse("x25      Mobile Tractor Unit"),
+        vec![("Mobile Tractor Unit".to_owned(), 25)]
+      );
+    }
+
+    #[test]
+    fn it_parses_a_leading_space_thousands_quantity() {
+      assert_eq!(
+        parse("1 000 Mobile Tractor Unit"),
+        vec![("Mobile Tractor Unit".to_owned(), 1000)]
+      );
+    }
+
+    #[test]
+    fn it_prefers_a_leading_quantity_over_a_trailing_one() {
+      assert_eq!(parse("425 Railgun II 50"), vec![("Railgun II".to_owned(), 425)]);
+    }
+
+    #[test]
+    fn it_does_not_misread_a_unit_glued_leading_number() {
+      assert_eq!(parse("425mm Railgun II 50"), vec![("425mm Railgun II".to_owned(), 50)]);
+    }
+
+    #[test]
+    fn it_keeps_a_trailing_quantity_with_a_leading_unit_glued_number() {
+      assert_eq!(
+        parse("Mobile Tractor Unit               25"),
+        vec![("Mobile Tractor Unit".to_owned(), 25)]
+      );
+      assert_eq!(
+        parse("Mobile Tractor Unit         x25"),
+        vec![("Mobile Tractor Unit".to_owned(), 25)]
+      );
+    }
+
+    #[test]
+    fn it_parses_a_native_eve_copy_with_a_leading_quantity_form_present() {
+      assert_eq!(parse("Tritanium\t1,000,000"), vec![("Tritanium".to_owned(), 1_000_000)]);
+    }
+
+    #[test]
+    fn it_sums_duplicates_across_prefix_suffix_and_bare_forms() {
+      assert_eq!(
+        parse("x10 Tritanium\nTritanium 5\nTritanium"),
+        vec![("Tritanium".to_owned(), 16)]
+      );
     }
 
     #[test]

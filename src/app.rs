@@ -1610,7 +1610,7 @@ fn dispatch_assets_with_runtime(state: &mut assets::State, runtime: &Runtime, ms
       Task::batch([update, stockpile_item_search(runtime, index, query)])
     }
     assets::Message::StockpileImportResolveRequested => match state.stockpile_import_text() {
-      Some(text) => stockpile_import_resolve(runtime, text.to_owned()),
+      Some(text) => stockpile_import_resolve(runtime, text),
       None => Task::none(),
     },
     assets::Message::StockpileEditorSaved => match state.take_stockpile_editor() {

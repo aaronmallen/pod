@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, container, mouse_area, text, text_input},
+  widget::{Column, Row, Space, container, mouse_area, text, text_editor, text_input},
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,9 +67,9 @@ impl Recipient {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Draft {
-  pub body: String,
+  pub body: text_editor::Content,
   pub cc: Vec<Recipient>,
   pub cc_input: String,
   pub cc_searching: bool,
@@ -92,7 +92,7 @@ pub struct Draft {
 impl Draft {
   pub(super) fn blank(from_character_id: i64) -> Self {
     Draft {
-      body: String::new(),
+      body: text_editor::Content::new(),
       cc: Vec::new(),
       cc_input: String::new(),
       cc_searching: false,
@@ -181,7 +181,7 @@ impl SendPayload {
     let mut recipients = draft.to.clone();
     recipients.extend(draft.cc.iter().cloned());
     SendPayload {
-      body: draft.body.clone(),
+      body: draft.body.text(),
       from_character_id: draft.from_character_id,
       recipients,
       subject: draft.subject.clone(),
@@ -481,12 +481,13 @@ fn subject_field(draft: &Draft) -> Element<'_, Message> {
 }
 
 fn body_field(draft: &Draft) -> Element<'_, Message> {
-  let editor = text_input("Write your message…", &draft.body)
-    .on_input(Message::ComposeBodyChanged)
+  let editor = text_editor(&draft.body)
+    .placeholder("Write your message…")
+    .on_action(Message::ComposeBodyChanged)
     .padding(0.0)
     .size(typography::size::MD)
-    .width(Length::Fill)
-    .style(transparent_input);
+    .height(Length::Fill)
+    .style(transparent_editor);
 
   let mut column = Column::new().spacing(spacing::SPACE_3).push(editor);
   if let Some(quote) = &draft.quote {
@@ -731,6 +732,20 @@ fn field_row<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Mess
     .into()
 }
 
+fn transparent_editor(_theme: &iced::Theme, _status: text_editor::Status) -> text_editor::Style {
+  text_editor::Style {
+    background: Background::Color(iced::Color::TRANSPARENT),
+    border: Border {
+      color: iced::Color::TRANSPARENT,
+      radius: 0.0.into(),
+      width: 0.0,
+    },
+    placeholder: color::text::TERTIARY,
+    value: color::text::PRIMARY,
+    selection: color::accent::PLASMA_MUTED,
+  }
+}
+
 fn transparent_input(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
   text_input::Style {
     background: Background::Color(iced::Color::TRANSPARENT),
@@ -879,7 +894,7 @@ mod tests {
     let mut draft = Draft::blank(42);
     draft.to.push(Recipient::typed("Vex Voronova"));
     draft.subject = "Hello".to_owned();
-    draft.body = "Hi there".to_owned();
+    draft.body = text_editor::Content::with_text("Hi there");
 
     enqueue_send(db.clone(), draft).await.unwrap();
 

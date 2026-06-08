@@ -13,7 +13,7 @@ mod triage;
 
 use std::collections::HashMap;
 
-use iced::{Element, Task};
+use iced::{Element, Task, widget::text_editor};
 
 pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot, search_recipients};
 use self::message_list::MessageRow;
@@ -92,7 +92,7 @@ pub struct ReadingRender {
 #[derive(Clone, Debug)]
 pub enum Message {
   Archive(i64),
-  ComposeBodyChanged(String),
+  ComposeBodyChanged(text_editor::Action),
   ComposeCcCommitted,
   ComposeCcInput(String),
   ComposeCcPicked(i64, String),
@@ -814,7 +814,7 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
     }
     Message::ComposeCcShown => draft.show_cc = true,
     Message::ComposeSubjectChanged(value) => draft.subject = value,
-    Message::ComposeBodyChanged(value) => draft.body = value,
+    Message::ComposeBodyChanged(action) => draft.body.perform(action),
     Message::ComposeFromChanged(character_id) => {
       draft.from_character_id = character_id;
       draft.from_picker_open = false;
@@ -1206,13 +1206,19 @@ mod tests {
       let _ = update(&mut state, Message::ComposeCcInput("Alt".to_owned()), &db);
       let _ = update(&mut state, Message::ComposeCcCommitted, &db);
       let _ = update(&mut state, Message::ComposeSubjectChanged("CTA".to_owned()), &db);
-      let _ = update(&mut state, Message::ComposeBodyChanged("Form up.".to_owned()), &db);
+      let _ = update(
+        &mut state,
+        Message::ComposeBodyChanged(text_editor::Action::Edit(text_editor::Edit::Paste(
+          std::sync::Arc::new("Form up.".to_owned()),
+        ))),
+        &db,
+      );
       let _ = update(&mut state, Message::ComposeFromChanged(42), &db);
       let draft = state.compose().unwrap();
       assert_eq!(draft.to.len(), 1);
       assert_eq!(draft.cc.len(), 1);
       assert_eq!(draft.subject, "CTA");
-      assert_eq!(draft.body, "Form up.");
+      assert_eq!(draft.body.text(), "Form up.");
 
       let _ = update(&mut state, Message::ComposeToRemoved(0), &db);
       assert!(state.compose().unwrap().to.is_empty());
@@ -1493,7 +1499,7 @@ mod tests {
       draft.show_cc = true;
       draft.cc.push(compose::Recipient::typed("Alt Pilot"));
       draft.subject = "CTA".to_owned();
-      draft.body = "Form up.".to_owned();
+      draft.body = text_editor::Content::with_text("Form up.");
       draft.from_picker_open = true;
       draft.error = Some("enqueue failed".to_owned());
       state.compose = Some(draft);

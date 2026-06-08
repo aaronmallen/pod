@@ -15,7 +15,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use iced::{Element, Task};
+use iced::{Element, Task, widget::text_editor};
 
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
@@ -240,7 +240,7 @@ pub enum Message {
   StockpileImportOpened,
   StockpileImportResolveRequested,
   StockpileImportResolved(MultibuyResolution),
-  StockpileImportTextChanged(String),
+  StockpileImportTextChanged(text_editor::Action),
   StockpileNew,
   StockpilesReloaded(Vec<stockpiles::StockpileCard>),
   TabSelected(Tab),
@@ -424,7 +424,7 @@ impl State {
     self.stockpile_import.as_ref()
   }
 
-  pub fn stockpile_import_text(&self) -> Option<&str> {
+  pub fn stockpile_import_text(&self) -> Option<String> {
     self.stockpile_import.as_ref().map(stockpiles::ImportPanel::text)
   }
 
@@ -951,9 +951,9 @@ fn apply_stockpile_import(state: &mut State, message: Message) -> Result<Task<Me
   match message {
     Message::StockpileImportOpened => state.stockpile_import = Some(stockpiles::ImportPanel::blank()),
     Message::StockpileImportClosed => state.stockpile_import = None,
-    Message::StockpileImportTextChanged(value) => {
+    Message::StockpileImportTextChanged(action) => {
       if let Some(panel) = state.stockpile_import.as_mut() {
-        panel.set_text(value);
+        panel.apply(action);
       }
     }
     Message::StockpileImportResolved(resolution) => {
@@ -2270,10 +2270,12 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::StockpileImportTextChanged("Tritanium 100".to_owned()),
+        Message::StockpileImportTextChanged(text_editor::Action::Edit(text_editor::Edit::Paste(
+          std::sync::Arc::new("Tritanium 100".to_owned()),
+        ))),
         &db,
       );
-      assert_eq!(state.stockpile_import_text(), Some("Tritanium 100"));
+      assert_eq!(state.stockpile_import_text(), Some("Tritanium 100".to_owned()));
 
       let _ = update(&mut state, Message::StockpileImportClosed, &db);
       assert!(state.stockpile_import.is_none());

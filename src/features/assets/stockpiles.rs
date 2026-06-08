@@ -7,7 +7,7 @@ use std::sync::Arc;
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, Stack, button, container, image, scrollable, text, text_editor},
 };
 
 use super::{
@@ -41,6 +41,7 @@ const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 22.0;
 const FORM_WIDTH: f32 = 400.0;
 const IMPORT_PANEL_WIDTH: f32 = 480.0;
+const IMPORT_FIELD_HEIGHT: f32 = 168.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct StockpileItemLine {
@@ -91,15 +92,26 @@ impl EditorItem {
   }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ImportPanel {
   resolution: Option<MultibuyResolution>,
-  text: String,
+  text: text_editor::Content,
 }
 
 impl ImportPanel {
   pub(super) fn blank() -> Self {
     Self::default()
+  }
+
+  pub(super) fn apply(&mut self, action: text_editor::Action) {
+    if action.is_edit() {
+      self.resolution = None;
+    }
+    self.text.perform(action);
+  }
+
+  pub(super) fn content(&self) -> &text_editor::Content {
+    &self.text
   }
 
   pub(super) fn matched(&self) -> &[MultibuyMatch] {
@@ -114,13 +126,14 @@ impl ImportPanel {
     self.resolution = Some(resolution);
   }
 
+  #[cfg(test)]
   pub(super) fn set_text(&mut self, value: String) {
-    self.text = value;
+    self.text = text_editor::Content::with_text(&value);
     self.resolution = None;
   }
 
-  pub(super) fn text(&self) -> &str {
-    &self.text
+  pub(super) fn text(&self) -> String {
+    self.text.text()
   }
 }
 
@@ -816,12 +829,14 @@ fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
 }
 
 fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
-  let field = iced::widget::text_input("Paste multibuy text here\u{2026}", panel.text())
-    .on_input(Message::StockpileImportTextChanged)
+  let field = text_editor(panel.content())
+    .placeholder("Paste multibuy text here\u{2026}")
+    .on_action(Message::StockpileImportTextChanged)
     .padding(spacing::SPACE_2_5)
     .size(typography::size::SM)
+    .height(Length::Fixed(IMPORT_FIELD_HEIGHT))
     .font(typography::mono::REGULAR)
-    .style(import_field_style);
+    .style(import_field_editor_style);
 
   let action = if panel.text().trim().is_empty() {
     None
@@ -1000,15 +1015,14 @@ fn primary_button_owned<'a>(label: String) -> button::Button<'a, Message> {
   })
 }
 
-fn import_field_style(_: &iced::Theme, _: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
-  iced::widget::text_input::Style {
+fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_editor::Style {
+  text_editor::Style {
     background: Background::Color(color::surface::SUNKEN),
     border: Border {
       color: color::with_alpha(color::text::PRIMARY, 0.12),
       radius: radius::CONTROL.into(),
       width: 1.0,
     },
-    icon: color::text::SECONDARY,
     placeholder: color::text::TERTIARY,
     value: color::text::PRIMARY,
     selection: color::accent::PLASMA_MUTED,
@@ -1239,6 +1253,26 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_clears_the_resolution_when_an_edit_is_applied() {
+      let mut panel = ImportPanel::blank();
+      panel.set_resolution(MultibuyResolution {
+        matched: vec![MultibuyMatch {
+          name: "Tritanium".to_owned(),
+          quantity: 1,
+          type_id: 34,
+        }],
+        unmatched: Vec::new(),
+      });
+
+      panel.apply(text_editor::Action::Edit(text_editor::Edit::Paste(
+        std::sync::Arc::new("Pyerite 5".to_owned()),
+      )));
+
+      assert_eq!(panel.text(), "Pyerite 5");
+      assert!(panel.resolution().is_none());
+    }
 
     #[test]
     fn it_clears_the_resolution_when_the_text_changes() {

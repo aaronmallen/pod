@@ -218,7 +218,11 @@ fn config_path() -> Result<PathBuf, Error> {
 }
 
 pub fn data_dir() -> PathBuf {
-  dir_spec::data_home().unwrap_or_else(|| PathBuf::from(".")).join("pod")
+  resolve_data_dir(dir_spec::data_home(), std::env::temp_dir())
+}
+
+fn resolve_data_dir(data_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
+  data_home.unwrap_or(fallback_root).join("pod")
 }
 
 #[allow(dead_code)]
@@ -329,6 +333,37 @@ mod tests {
         flags.set_enabled(feature, true);
         assert!(flags.is_enabled(feature), "{feature:?} should be back on");
       }
+    }
+  }
+
+  mod resolve_data_dir {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_data_home_when_present() {
+      let resolved = resolve_data_dir(Some(PathBuf::from("/home/me/.local/share")), PathBuf::from("/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
+    }
+
+    #[test]
+    fn it_falls_back_to_the_given_root_when_data_home_is_missing() {
+      let resolved = resolve_data_dir(None, PathBuf::from("/var/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/var/tmp/pod"));
+    }
+
+    #[test]
+    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
+      let resolved = resolve_data_dir(None, std::env::temp_dir());
+
+      assert!(
+        resolved.is_absolute(),
+        "the fallback must not depend on the working directory"
+      );
+      assert_ne!(resolved, PathBuf::from("./pod"));
     }
   }
 

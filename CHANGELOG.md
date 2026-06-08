@@ -7,6 +7,56 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1]
+
+> [!WARNING]
+> **Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
+> Updating clears your existing local Pod data and starts fresh, so the first time you open it you'll need to sign in
+> and re-authorize all of your characters again.
+
+### Added
+
+- Stockpile cards now show ISK figures — an estimated total value when fully stocked and the ISK still needed to fill
+  any shortfall, each labeled as an EVE-average estimate.
+- You can now export a stockpile's shopping list to EVE's in-game Multibuy — right-click a stockpile, choose between the
+  full target or just the remaining shortfall, and copy a paste-ready list to the clipboard.
+- Stockpile cards gained a status strip showing "Ready to ship" or how many items are short, plus an expand/collapse
+  control so long item lists no longer overflow the card.
+
+### Changed
+
+- The stockpile create, edit, import, and export screens have been redesigned as centered modals with clearer item
+  previews and actions.
+- The mail compose body and the stockpile multibuy import box are now multi-line editors, so you can write, paste, and
+  review multi-line content in a scrollable box instead of one cramped line.
+- Character portraits and corporation and alliance logos now refresh on their own — images older than about a week are
+  re-fetched during sync, so they stay current when someone changes a portrait or a corp updates its logo.
+
+### Fixed
+
+- Stockpile cards now count items you already own even when they sit in a station, structure, or container inside the
+  stockpile's location, and across your corporation — they previously showed 0 of N for stock you actually held.
+- Stockpile progress bars no longer render full at 0% (or empty at 100%) — a display bug could make an empty stockpile
+  look fully stocked.
+- Importing a multibuy list now reads quantities written before the item name (like "25 Mobile Tractor Unit" or
+  "x25 Mobile Tractor Unit"), not just quantities at the end of the line.
+- Pod no longer gets stuck on the loading screen when EVE's static data fails to refresh — if your data is already
+  present it continues with a small "refresh failed" notice, and a fresh install now offers a Retry button.
+- Downloading EVE's static data no longer fails on slow or large connections — the download now has a much longer
+  timeout and retries transient network errors instead of giving up on the first hiccup.
+- Browser sign-in now reliably hands you back to Pod on Windows even after you move the app to a new folder, and on
+  Linux AppImage builds where the link previously failed silently.
+- Launching Pod a second time now brings the existing window to the front instead of opening a duplicate.
+- Asset sync no longer fails with a database error in an edge case where a structure owner's CEO is personally enlisted
+  in factional warfare.
+
+### Performance
+
+- Pod starts up faster when EVE's static data hasn't changed — it checks a small version marker and skips the large
+  static-data download entirely when your local copy is already current.
+- Initial setup is much faster when Pod's database lives on a network drive — seeding EVE's static data, which could
+  take several minutes, now completes far more quickly.
+
 ## [0.5.0]
 
 > [!WARNING]
@@ -262,7 +312,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.1...HEAD
+[0.5.1]: https://github.com/aaronmallen/pod/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/aaronmallen/pod/compare/0.4.9...0.5.0
 [0.4.9]: https://github.com/aaronmallen/pod/compare/0.4.8...0.4.9
 [0.4.8]: https://github.com/aaronmallen/pod/compare/0.4.7...0.4.8

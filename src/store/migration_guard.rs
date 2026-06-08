@@ -29,6 +29,8 @@ impl MigrationGuard {
   }
 
   pub fn run(&self) {
+    remove_dir(&legacy_images_dir(&crate::config::data_dir()));
+
     let marker = self.marker_path.as_deref().and_then(read_marker);
     if decision(marker.as_deref(), self.database_path.exists()) == Decision::Keep {
       return;
@@ -93,6 +95,10 @@ fn decision(marker: Option<&str>, db_exists: bool) -> Decision {
     None if db_exists => Decision::BackUp,
     None => Decision::Keep,
   }
+}
+
+fn legacy_images_dir(data_dir: &Path) -> PathBuf {
+  data_dir.join("images")
 }
 
 fn parse_pod_version(marker: &str) -> Option<(u32, u32)> {
@@ -205,6 +211,35 @@ mod tests {
     #[test]
     fn it_returns_none_when_the_minor_is_absent() {
       assert_eq!(parse_pod_version("20240101.1+pod-1+seed-2"), None);
+    }
+  }
+
+  mod legacy_images {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn it_removes_the_legacy_images_directory_when_present() {
+      let tmp = tempfile::tempdir().unwrap();
+      let images = legacy_images_dir(tmp.path());
+      fs::create_dir_all(images.join("587")).unwrap();
+      fs::write(images.join("587").join("64.png"), b"x").unwrap();
+
+      remove_dir(&images);
+
+      assert!(!images.exists());
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_the_legacy_images_directory_is_absent() {
+      let tmp = tempfile::tempdir().unwrap();
+      let images = legacy_images_dir(tmp.path());
+
+      remove_dir(&images);
+
+      assert!(!images.exists());
+      assert!(tmp.path().exists());
     }
   }
 

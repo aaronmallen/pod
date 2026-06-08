@@ -108,6 +108,10 @@ pub fn subscription() -> Subscription<Message> {
   deep_link::subscription().map(Message::CallbackReceived)
 }
 
+pub fn focus_subscription() -> Subscription<()> {
+  deep_link::focus_subscription()
+}
+
 pub fn install() {
   deep_link::install();
 }

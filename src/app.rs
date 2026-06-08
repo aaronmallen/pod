@@ -146,6 +146,7 @@ enum Message {
   CharacterManager(character_manager::Message),
   ClockTick,
   CloseSyncPopover,
+  FocusMainWindow,
   InitFailed(String),
   Mail(mail::Message),
   MailUnreadCounted(i64),
@@ -204,6 +205,7 @@ impl Message {
     Some(match self {
       Message::ClockTick => "ClockTick",
       Message::CloseSyncPopover => "CloseSyncPopover",
+      Message::FocusMainWindow => "FocusMainWindow",
       Message::InitFailed(_) => "InitFailed",
       Message::OpenAbout => "OpenAbout",
       Message::Ready(_) => "Ready",
@@ -625,6 +627,16 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::About) => close_about_window(app, id),
     _ => window::close(id),
+  }
+}
+
+fn handle_focus_main_window(app: &App) -> Task<Message> {
+  match app.windows.id_for(Window::Main) {
+    Some(id) => {
+      tracing::info!(target: "pod::lifecycle", "raising the main window for a duplicate launch");
+      window::gain_focus(id)
+    }
+    None => Task::none(),
   }
 }
 
@@ -1312,6 +1324,7 @@ fn subscription(app: &App) -> Subscription<Message> {
     }));
   }
   subs.push(auth::subscription().map(Message::Auth));
+  subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
   subs.push(menu::subscription().map(Message::Menu));
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
@@ -1565,6 +1578,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::ClockTick => handle_clock_tick(app),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
+    Message::FocusMainWindow => handle_focus_main_window(app),
     Message::InitFailed(error) => handle_init_failed(app, error),
     Message::OpenAbout => open_about_window(app),
     Message::Ready(runtime) => handle_ready(app, runtime),

@@ -14,10 +14,26 @@ use interprocess::local_socket::{
 
 use crate::config;
 
+/// Sentinel sent over the socket to request a window raise rather than a URL delivery.
+///
+/// The `pod-deeplink:` prefix ensures this value can never be mistaken for a real
+/// `eveauth-pod://` callback: `validate()` rejects it because it lacks the scheme prefix,
+/// and `classify()` matches it by equality before falling through to `validate()`.
+const FOCUS_PING: &str = "pod-deeplink:focus";
+
 pub type PrimaryLock = interprocess::local_socket::Listener;
+
+enum Signal {
+  Focus,
+  Url(String),
+}
 
 pub fn forward_to_primary(url: &str) -> bool {
   forward_to(&socket_name(), url)
+}
+
+pub fn request_focus() -> bool {
+  forward_to(&socket_name(), FOCUS_PING)
 }
 
 pub fn spawn_listener(lock: PrimaryLock, deliver: impl Fn(String) + Send + 'static) {
@@ -35,10 +51,12 @@ fn accept_loop(listener: PrimaryLock, deliver: impl Fn(String)) {
     match listener.accept() {
       Ok(mut stream) => {
         let mut payload = String::new();
-        if stream.read_to_string(&mut payload).is_ok()
-          && let Some(url) = validate(payload.trim())
-        {
-          deliver(url);
+        if stream.read_to_string(&mut payload).is_ok() {
+          match classify(payload.trim()) {
+            Some(Signal::Url(url)) => deliver(url),
+            Some(Signal::Focus) => super::deliver_focus(),
+            None => {}
+          }
         }
       }
       Err(error) => {
@@ -58,6 +76,13 @@ fn bind(name: &str) -> Option<PrimaryLock> {
       None
     }
   }
+}
+
+fn classify(payload: &str) -> Option<Signal> {
+  if payload == FOCUS_PING {
+    return Some(Signal::Focus);
+  }
+  validate(payload).map(Signal::Url)
 }
 
 fn forward_to(name: &str, url: &str) -> bool {
@@ -147,6 +172,29 @@ mod tests {
         second.is_none(),
         "a second bind on a held name fails (a primary already runs)"
       );
+    }
+  }
+
+  mod classify {
+    use super::*;
+
+    #[test]
+    fn it_recognizes_the_focus_ping() {
+      assert!(matches!(classify(FOCUS_PING), Some(Signal::Focus)));
+    }
+
+    #[test]
+    fn it_recognizes_an_eveauth_pod_url_as_a_callback() {
+      let url = format!("{}://callback?code=a&state=b", super::super::super::SCHEME);
+
+      assert!(matches!(classify(&url), Some(Signal::Url(delivered)) if delivered == url));
+    }
+
+    #[test]
+    fn it_rejects_a_payload_that_is_neither_a_callback_nor_the_focus_ping() {
+      assert!(classify("https://evil.example/callback").is_none());
+      assert!(classify("eveauth-pod-evil://callback").is_none());
+      assert!(classify("").is_none());
     }
   }
 

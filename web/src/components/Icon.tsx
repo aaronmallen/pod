@@ -1,4 +1,29 @@
 const ICONS = {
+  'alert-note': <g>
+    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <circle cx="12" cy="8" r="0.9" fill="currentColor"/>
+    <line x1="12" y1="11" x2="12" y2="16.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+  </g>,
+  'alert-tip': <g>
+    <path d="M 12 3 A 6 6 0 0 1 16 13.5 C 15.2 14.3 15 15 15 16 L 9 16 C 9 15 8.8 14.3 8 13.5 A 6 6 0 0 1 12 3 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <line x1="9.5" y1="19" x2="14.5" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="10.5" y1="21.5" x2="13.5" y2="21.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+  </g>,
+  'alert-important': <g>
+    <path d="M 5.5 3.5 L 18.5 3.5 A 1.5 1.5 0 0 1 20 5 L 20 14 A 1.5 1.5 0 0 1 18.5 15.5 L 11 15.5 L 7 19.5 L 7 15.5 L 5.5 15.5 A 1.5 1.5 0 0 1 4 14 L 4 5 A 1.5 1.5 0 0 1 5.5 3.5 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <line x1="12" y1="6.5" x2="12" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="12" cy="12.4" r="0.9" fill="currentColor"/>
+  </g>,
+  'alert-warning': <g>
+    <path d="M 12 3 L 22 20 L 2 20 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <line x1="12" y1="10" x2="12" y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="12" cy="17" r="0.9" fill="currentColor"/>
+  </g>,
+  'alert-caution': <g>
+    <path d="M 8.7 3 L 15.3 3 L 21 8.7 L 21 15.3 L 15.3 21 L 8.7 21 L 3 15.3 L 3 8.7 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <line x1="12" y1="8" x2="12" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="12" cy="16" r="0.9" fill="currentColor"/>
+  </g>,
   fitting: <g>
     <path d="M 10.437 20.863 A 9 9 0 0 1 3.543 8.922" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
     <path d="M 5.106 6.215 A 9 9 0 0 1 18.894 6.215" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>

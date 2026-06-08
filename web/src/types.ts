@@ -1,4 +1,11 @@
-export type NoteTone = 'plasma' | 'success' | 'warning' | 'muted';
+export type NoteTone = 'plasma' | 'success' | 'warning' | 'danger' | 'muted';
+
+export interface Alert {
+  type: string;
+  tone: NoteTone;
+  icon: string;
+  text: string;
+}
 
 export interface Note {
   tag: string;

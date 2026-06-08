@@ -1,6 +1,8 @@
-import type { Note } from '../types';
+import type { Alert, Note } from '../types';
 
-export const NOTICE: string = 'Heads up — Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions. Updating clears your existing local Pod data and starts fresh, so the first time you open it you\'ll need to sign in and re-authorize all of your characters again.';
+export const NOTICES: Alert[] = [
+  { type: 'WARNING', tone: 'warning', icon: 'alert-warning', text: 'Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions. Updating clears your existing local Pod data and starts fresh, so the first time you open it you\'ll need to sign in and re-authorize all of your characters again.' },
+];
 
 export const NOTES: Note[] = [
   { tag: 'NEW', tone: 'plasma',  text: 'In-app auto-update: Pod checks for new versions on startup and every 4 hours. A dismissible banner lets you download, install, and restart in one click — no manual download required.' },

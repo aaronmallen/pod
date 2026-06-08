@@ -1,7 +1,25 @@
 import { T } from '../tokens';
-import { NOTES, NOTICE } from '../generated/notes';
-import type { Release } from '../types';
+import { NOTES, NOTICES } from '../generated/notes';
+import type { NoteTone, Release } from '../types';
+import { Icon, type IconName } from './Icon';
 import { SectionHead } from './SectionHead';
+
+const toneBg = (tone: NoteTone): string =>
+    tone === 'plasma'  ? T.plasmaSoft
+  : tone === 'success' ? 'rgba(91,185,126,0.10)'
+  : tone === 'warning' ? 'rgba(217,178,82,0.12)'
+  : tone === 'danger'  ? 'rgba(224,117,89,0.12)'
+  : 'rgba(244,242,236,0.05)';
+
+const toneColor = (tone: NoteTone, accent: string): string =>
+    tone === 'plasma'  ? accent
+  : tone === 'success' ? T.success
+  : tone === 'warning' ? T.warning
+  : tone === 'danger'  ? T.danger
+  : T.muted;
+
+const titleCase = (type: string): string =>
+  type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 
 const GithubIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
@@ -55,31 +73,35 @@ export function Notes({ accent, release }: Props) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {NOTICE && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr',
-            alignItems: 'start', gap: 16,
-            padding: '20px 20px',
-            marginBottom: 32,
-            background: 'rgba(217,178,82,0.10)',
-            border: `1px solid ${T.warning}55`,
-            borderLeft: `3px solid ${T.warning}`,
-            borderRadius: 10,
-          }}>
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              padding: '3px 8px', borderRadius: 3,
-              background: 'rgba(217,178,82,0.12)', color: T.warning,
-              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              fontSize: 9, letterSpacing: '0.18em', textTransform: 'uppercase',
-              fontWeight: 500, minWidth: 48,
-              border: `1px solid ${T.warning}33`,
-            } as React.CSSProperties}>Notice</span>
-            <span style={{
-              fontFamily: '"Space Grotesk", sans-serif',
-              fontSize: 15, lineHeight: 1.55, color: T.ink, textWrap: 'pretty',
-            } as React.CSSProperties}>{NOTICE}</span>
+        {NOTICES.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 32 }}>
+            {NOTICES.map((a, i) => {
+              const color = toneColor(a.tone, accent);
+              return (
+                <div key={i} style={{
+                  display: 'flex', flexDirection: 'column', gap: 8,
+                  padding: '16px 20px',
+                  background: toneBg(a.tone),
+                  border: `1px solid ${color}55`,
+                  borderLeft: `3px solid ${color}`,
+                  borderRadius: 10,
+                }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    color,
+                    fontFamily: '"Space Grotesk", sans-serif',
+                    fontSize: 14, fontWeight: 600, letterSpacing: '0.01em',
+                  } as React.CSSProperties}>
+                    <Icon name={a.icon as IconName} size={18}/>
+                    {titleCase(a.type)}
+                  </span>
+                  <span style={{
+                    fontFamily: '"Space Grotesk", sans-serif',
+                    fontSize: 15, lineHeight: 1.55, color: T.ink, textWrap: 'pretty',
+                  } as React.CSSProperties}>{a.text}</span>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -89,14 +111,8 @@ export function Notes({ accent, release }: Props) {
           borderTop: `1px solid ${T.rule}`,
         }}>
           {NOTES.map((n, i) => {
-            const color = n.tone === 'plasma' ? accent
-                        : n.tone === 'success' ? T.success
-                        : n.tone === 'warning' ? T.warning
-                        : T.muted;
-            const bg    = n.tone === 'plasma' ? T.plasmaSoft
-                        : n.tone === 'success' ? 'rgba(91,185,126,0.10)'
-                        : n.tone === 'warning' ? 'rgba(217,178,82,0.12)'
-                        : 'rgba(244,242,236,0.05)';
+            const color = toneColor(n.tone, accent);
+            const bg    = toneBg(n.tone);
             return (
               <li key={i} style={{
                 display: 'grid',

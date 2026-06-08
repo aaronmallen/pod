@@ -9,7 +9,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [0.5.0]
 
-> **Heads up — Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
+> [!WARNING]
+> **Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
 > Updating clears your existing local Pod data and starts fresh, so the first time you open it you'll need to sign in
 > and re-authorize all of your characters again.
 

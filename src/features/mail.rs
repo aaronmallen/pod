@@ -2,7 +2,6 @@ mod compose;
 mod folder_pane;
 mod loaders;
 mod message_list;
-mod nav_state;
 mod outbox_indicator;
 mod read_state;
 mod reading_pane;
@@ -123,7 +122,6 @@ pub enum Message {
   ListPaneDragged(f32),
   Loaded(Box<Loaded>),
   MarkedRead,
-  NavPersisted,
   OutboxDismiss(i64),
   OutboxRefreshed(Box<OutboxIndicator>),
   OutboxRetry(i64),
@@ -222,10 +220,6 @@ impl State {
       MESSAGE_LIST_PANE_DEFAULT_WIDTH,
       MESSAGE_LIST_PANE_MIN_WIDTH,
     );
-    let nav = nav_state::load();
-    self.active = nav.active;
-    self.folder = nav.folder;
-    self.selected = nav.selected;
     self
   }
 
@@ -350,11 +344,6 @@ fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32) -> PaneDrag {
   PaneDrag::with_min_width(ui.panes.get(key).copied().unwrap_or(default), min)
 }
 
-fn persist_nav(state: &State) -> Task<Message> {
-  let nav = nav_state::NavState::capture(state.active, state.folder, state.selected);
-  Task::perform(async move { nav_state::save(&nav) }, |()| Message::NavPersisted)
-}
-
 pub fn load(db: &Database) -> Task<Message> {
   Task::perform(load_mail(db.clone(), Scope::AllInboxes, Folder::Unified), |loaded| {
     Message::Loaded(Box::new(loaded))
@@ -418,13 +407,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = false;
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
-      persist_nav(state)
+      Task::none()
     }
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    Message::NavPersisted => Task::none(),
     Message::FolderPaneDragStart
     | Message::FolderPaneDragged(_)
     | Message::FolderPaneDragEnd
@@ -438,7 +426,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.render = None;
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
-      Task::batch([reload_for(db, state.active, folder), persist_nav(state)])
+      reload_for(db, state.active, folder)
     }
     Message::SearchChanged(query) => {
       state.search = query;
@@ -595,16 +583,14 @@ fn handle_message_selected(state: &mut State, mail_id: i64, db: &Database) -> Ta
   let render = Task::perform(load_render(db.clone(), character_id, mail_id), |render| {
     Message::RenderLoaded(Box::new(render))
   });
-  let nav = persist_nav(state);
   match read_state::open_target(state, mail_id) {
     Some((character_id, mail_id)) => Task::batch([
       render,
-      nav,
       Task::perform(read_state::mark_read_on_open(db.clone(), character_id, mail_id), |()| {
         Message::MarkedRead
       }),
     ]),
-    None => Task::batch([render, nav]),
+    None => render,
   }
 }
 
@@ -1314,7 +1300,6 @@ mod tests {
 
       for message in [
         Message::PickerToggled,
-        Message::NavPersisted,
         Message::MarkedRead,
         Message::OverlayWritten,
         Message::ToggleStar(7),

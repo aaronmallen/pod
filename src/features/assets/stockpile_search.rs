@@ -6,7 +6,7 @@ use crate::{
 };
 
 const ITEM_SEARCH_CATEGORIES: &[&str] = &["inventory_type"];
-const LOCATION_SEARCH_CATEGORIES: &[&str] = &["station", "structure", "solar_system"];
+const LOCATION_SEARCH_CATEGORIES: &[&str] = &["region", "constellation", "solar_system", "station", "structure"];
 const MAX_ITEM_RESULTS: usize = 20;
 const MAX_LOCATION_RESULTS: usize = 20;
 const RESOLVE_NAMES_CHUNK: usize = 1000;
@@ -129,8 +129,12 @@ pub async fn search_locations(
 
   let mut named: Vec<(i64, String)> = Vec::new();
 
-  let mut public_ids: Vec<i64> = result.station;
+  // Regions, constellations, systems, and stations are public and resolve by name in one /universe/names
+  // batch; only player structures need the per-id authenticated endpoint below.
+  let mut public_ids: Vec<i64> = result.region;
+  public_ids.extend(result.constellation);
   public_ids.extend(result.solar_system);
+  public_ids.extend(result.station);
   if !public_ids.is_empty() {
     match esi.universe().names(&public_ids).await {
       Ok(names) => named.extend(names.into_iter().map(|record| (record.id, record.name))),
@@ -334,14 +338,14 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_resolves_stations_systems_via_names_and_structures_via_the_authenticated_endpoint() {
+    async fn it_resolves_public_locations_via_names_and_structures_via_the_authenticated_endpoint() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
         .and(path("/v3/characters/42/search/"))
-        .and(query_param("categories", "station,structure,solar_system"))
+        .and(query_param("categories", "region,constellation,solar_system,station,structure"))
         .and(query_param("search", "Jita"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-          r#"{"solar_system":[30000142],"station":[60003760],"structure":[1234567890]}"#,
+          r#"{"constellation":[20000020],"region":[10000002],"solar_system":[30000142],"station":[60003760],"structure":[1234567890]}"#,
           "application/json",
         ))
         .mount(&server)
@@ -349,7 +353,7 @@ mod tests {
       Mock::given(method("POST"))
         .and(path("/v3/universe/names/"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-          r#"[{"category":"station","id":60003760,"name":"Jita IV - Moon 4 - CNAP"},{"category":"solar_system","id":30000142,"name":"Jita"}]"#,
+          r#"[{"category":"region","id":10000002,"name":"The Forge"},{"category":"constellation","id":20000020,"name":"Kimotoro"},{"category":"solar_system","id":30000142,"name":"Jita"},{"category":"station","id":60003760,"name":"Jita IV - Moon 4 - CNAP"}]"#,
           "application/json",
         ))
         .mount(&server)
@@ -370,8 +374,10 @@ mod tests {
       assert_eq!(
         results,
         vec![
-          (60003760, "Jita IV - Moon 4 - CNAP".to_owned()),
+          (10000002, "The Forge".to_owned()),
+          (20000020, "Kimotoro".to_owned()),
           (30000142, "Jita".to_owned()),
+          (60003760, "Jita IV - Moon 4 - CNAP".to_owned()),
           (1234567890, "Jita Trade Hub".to_owned()),
         ]
       );

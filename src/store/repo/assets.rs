@@ -1984,25 +1984,82 @@ pub async fn items(db: &Database, stockpile_id: i64) -> Result<Vec<StockpileItem
   Ok(rows)
 }
 
-pub async fn fill_status(db: &Database, id: i64) -> Result<Option<StockpileFill>, Error> {
+pub async fn fill_status(db: &Database, id: i64, scope: Option<i64>) -> Result<Option<StockpileFill>, Error> {
   let Some(stockpile) = get(db, id).await? else {
     return Ok(None);
   };
+  let location_id = stockpile.location_id();
+  // loc_set needs no explicit "what kind of id is this?" detection: EVE id-spaces are disjoint ranges
+  // (regions 10M, constellations 20M, systems 30M, stations 60M+, structures 1e12+), so each expanding
+  // join matches only when location_id is genuinely that tier. A region pile rolls up every station and
+  // structure in the region; a constellation pile every one in the constellation; a system pile every
+  // one in the system; a station/structure pile stays itself.
   let rows = sqlx::query_as::<_, (i64, i64, i64)>(
-    "SELECT si.type_id, si.target_quantity, COALESCE(SUM(ca.quantity), 0) AS have_quantity \
+    "WITH RECURSIVE \
+    loc_set(location_id) AS ( \
+      SELECT ? \
+      UNION \
+      SELECT id FROM stations WHERE system_id = ? \
+      UNION \
+      SELECT id FROM structures WHERE solar_system_id = ? \
+      UNION \
+      SELECT st.id FROM stations st JOIN solar_systems ss ON st.system_id = ss.id WHERE ss.constellation_id = ? \
+      UNION \
+      SELECT sr.id FROM structures sr JOIN solar_systems ss ON sr.solar_system_id = ss.id \
+        WHERE ss.constellation_id = ? \
+      UNION \
+      SELECT st.id FROM stations st JOIN solar_systems ss ON st.system_id = ss.id \
+        JOIN constellations c ON ss.constellation_id = c.id WHERE c.region_id = ? \
+      UNION \
+      SELECT sr.id FROM structures sr JOIN solar_systems ss ON sr.solar_system_id = ss.id \
+        JOIN constellations c ON ss.constellation_id = c.id WHERE c.region_id = ? \
+    ), \
+    char_tree(item_id, type_id, quantity, root_location_id) AS ( \
+      SELECT item_id, type_id, quantity, location_id \
+      FROM character_assets \
+      WHERE container_id IS NULL AND (? IS NULL OR character_id = ?) \
+      UNION ALL \
+      SELECT ca.item_id, ca.type_id, ca.quantity, ct.root_location_id \
+      FROM character_assets ca \
+      JOIN char_tree ct ON ca.container_id = ct.item_id \
+    ), \
+    corp_tree(item_id, type_id, quantity, root_location_id) AS ( \
+      SELECT item_id, type_id, quantity, location_id \
+      FROM corporation_assets \
+      WHERE container_id IS NULL \
+        AND (? IS NULL OR corporation_id = (SELECT corporation_id FROM characters WHERE id = ?)) \
+      UNION ALL \
+      SELECT ca.item_id, ca.type_id, ca.quantity, parent.root_location_id \
+      FROM corporation_assets ca \
+      JOIN corp_tree parent ON ca.container_id = parent.item_id \
+    ), \
+    have(type_id, quantity) AS ( \
+      SELECT type_id, quantity FROM char_tree \
+      WHERE (? IS NULL OR root_location_id IN (SELECT location_id FROM loc_set)) \
+      UNION ALL \
+      SELECT type_id, quantity FROM corp_tree \
+      WHERE (? IS NULL OR root_location_id IN (SELECT location_id FROM loc_set)) \
+    ) \
+    SELECT si.type_id, si.target_quantity, COALESCE(SUM(h.quantity), 0) AS have_quantity \
     FROM stockpile_items si \
-    LEFT JOIN character_assets ca \
-      ON ca.type_id = si.type_id \
-      AND (? IS NULL OR ca.character_id = ?) \
-      AND (? IS NULL OR ca.location_id = ?) \
+    LEFT JOIN have h ON h.type_id = si.type_id \
     WHERE si.stockpile_id = ? \
     GROUP BY si.id, si.type_id, si.target_quantity \
     ORDER BY si.id",
   )
-  .bind(stockpile.character_id())
-  .bind(stockpile.character_id())
-  .bind(stockpile.location_id())
-  .bind(stockpile.location_id())
+  .bind(location_id)
+  .bind(location_id)
+  .bind(location_id)
+  .bind(location_id)
+  .bind(location_id)
+  .bind(location_id)
+  .bind(location_id)
+  .bind(scope)
+  .bind(scope)
+  .bind(scope)
+  .bind(scope)
+  .bind(location_id)
+  .bind(location_id)
   .bind(id)
   .fetch_all(&db.0)
   .await?;
@@ -2027,8 +2084,14 @@ pub async fn location_name(db: &Database, location_id: i64) -> Result<Option<Str
     SELECT name FROM structures WHERE id = ? \
     UNION ALL \
     SELECT name FROM solar_systems WHERE id = ? \
+    UNION ALL \
+    SELECT name FROM constellations WHERE id = ? \
+    UNION ALL \
+    SELECT name FROM regions WHERE id = ? \
     LIMIT 1",
   )
+  .bind(location_id)
+  .bind(location_id)
   .bind(location_id)
   .bind(location_id)
   .bind(location_id)
@@ -5456,15 +5519,222 @@ mod stockpile_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::store::{
+      model::{Constellation, ItemCategory, ItemGroup, Region, SolarSystem, Station, Structure},
+      repo::{org, sde},
+    };
 
+    const CONSTELLATION_ID: i64 = 20_000_020;
+    const OTHER_STATION: i64 = 60_003_761;
+    const OTHER_SYSTEM_ID: i64 = 30_000_142;
+    const OWNER_CORP: i64 = 90_000_001;
+    const REGION_ID: i64 = 10_000_002;
     const STATION_A: i64 = 60_003_760;
     const STATION_B: i64 = 60_008_494;
+    const STATION_TYPE: i64 = 1529;
+    const SYSTEM_ID: i64 = 31_000_005;
+    const SYSTEM_STATION: i64 = 60_015_150;
+    const SYSTEM_STATION_2: i64 = 60_015_151;
+    const SYSTEM_STRUCTURE: i64 = 1_021_000_000_001;
+
+    async fn seed_contained_asset(
+      db: &Database,
+      item_id: i64,
+      character_id: i64,
+      type_id: i64,
+      container_id: i64,
+      quantity: i64,
+    ) {
+      sqlx::query(
+        "INSERT INTO character_assets \
+          (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, container_id, depth) \
+        VALUES (?, ?, ?, ?, 'item', 'Cargo', ?, ?, 1)",
+      )
+      .bind(item_id)
+      .bind(character_id)
+      .bind(type_id)
+      .bind(container_id)
+      .bind(quantity)
+      .bind(container_id)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_corp_asset(
+      db: &Database,
+      item_id: i64,
+      corporation_id: i64,
+      type_id: i64,
+      location_id: i64,
+      quantity: i64,
+    ) {
+      sqlx::query(
+        "INSERT INTO corporation_assets \
+          (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity) \
+        VALUES (?, ?, ?, ?, 'station', 'CorpSAG1', ?)",
+      )
+      .bind(item_id)
+      .bind(corporation_id)
+      .bind(type_id)
+      .bind(location_id)
+      .bind(quantity)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_corporation(db: &Database, id: i64) {
+      let mut corp = Corporation::new(id, "Other Corp", "OTH");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(db, &corp).await.unwrap();
+    }
+
+    async fn seed_geography(db: &Database, region_id: i64, constellation_id: i64, system_id: i64) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: region_id,
+          name: "Region".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: constellation_id,
+          name: "Constellation".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id,
+          id: system_id,
+          name: "System".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.5,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn seed_station(db: &Database, station_id: i64, system_id: i64) {
+      seed_station_type(db).await;
+      sde::upsert_station(
+        db,
+        &Station {
+          id: station_id,
+          max_dockable_ship_volume: 0.0,
+          name: "Station".to_owned(),
+          office_rental_cost: 0.0,
+          owner: None,
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          race_id: None,
+          reprocessing_efficiency: 0.0,
+          reprocessing_stations_take: 0.0,
+          services: "[]".to_owned(),
+          system_id,
+          type_id: STATION_TYPE,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn seed_station_in(db: &Database, station_id: i64, system_id: i64) {
+      seed_system(db, system_id).await;
+      seed_station(db, station_id, system_id).await;
+    }
+
+    async fn seed_station_in_region(
+      db: &Database,
+      station_id: i64,
+      region_id: i64,
+      constellation_id: i64,
+      system_id: i64,
+    ) {
+      seed_geography(db, region_id, constellation_id, system_id).await;
+      seed_station(db, station_id, system_id).await;
+    }
+
+    async fn seed_station_type(db: &Database) {
+      sde::upsert_item_category(
+        db,
+        &ItemCategory {
+          icon_id: None,
+          id: 6,
+          name: "Station".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_group(
+        db,
+        &ItemGroup {
+          category_id: 6,
+          icon_id: None,
+          id: 15,
+          name: "Station".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_types (id, group_id, description, name, published) VALUES (?, 15, 'Station', 'Station', 1)")
+        .bind(STATION_TYPE)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_structure_in(db: &Database, structure_id: i64, system_id: i64) {
+      seed_system(db, system_id).await;
+      sde::upsert_structure(
+        db,
+        &Structure {
+          id: structure_id,
+          name: "Structure".to_owned(),
+          owner_id: OWNER_CORP,
+          position_x: None,
+          position_y: None,
+          position_z: None,
+          solar_system_id: system_id,
+          type_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn seed_system(db: &Database, id: i64) {
+      seed_geography(db, REGION_ID, CONSTELLATION_ID, id).await;
+    }
 
     #[tokio::test]
     async fn it_is_none_for_a_missing_stockpile() {
       let db = store::open_test().await.unwrap();
 
-      assert!(super::super::fill_status(&db, 999_999).await.unwrap().is_none());
+      assert!(super::super::fill_status(&db, 999_999, None).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -5478,7 +5748,7 @@ mod stockpile_tests {
       seed_asset(&db, 2, 1001, 35, STATION_A, 500).await;
       seed_asset(&db, 3, 1001, 36, STATION_A, 350).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5512,7 +5782,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 300).await;
       seed_asset(&db, 2, 1001, 34, STATION_B, 250).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5525,7 +5795,7 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       let created = create(&db, "Cache", None, None, &[(34, 100)]).await.unwrap();
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5545,7 +5815,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1002, 34, STATION_A, 999).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
         .await
         .unwrap()
         .unwrap();
@@ -5563,7 +5833,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1001, 34, STATION_B, 999).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5580,7 +5850,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1002, 34, STATION_B, 350).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5598,7 +5868,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 200).await;
       seed_asset(&db, 2, 1001, 35, STATION_A, 5000).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5617,7 +5887,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 100).await;
       seed_asset(&db, 2, 1001, 35, STATION_A, 250).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5631,7 +5901,7 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       let created = create(&db, "Empty", None, None, &[]).await.unwrap();
 
-      let fill = super::super::fill_status(&db, created.stockpile.id())
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
@@ -5639,6 +5909,188 @@ mod stockpile_tests {
       assert!(fill.items.is_empty());
       assert_eq!(fill.overall_pct(), 1.0);
       assert!(fill.is_full());
+    }
+
+    #[tokio::test]
+    async fn a_system_pile_counts_an_asset_at_a_station_in_that_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 7).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 7);
+    }
+
+    #[tokio::test]
+    async fn a_system_pile_counts_an_asset_at_a_structure_in_that_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_structure_in(&db, SYSTEM_STRUCTURE, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STRUCTURE, 4).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 4);
+    }
+
+    #[tokio::test]
+    async fn a_system_pile_counts_an_asset_nested_in_a_container() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 99, SYSTEM_STATION, 1).await;
+      seed_contained_asset(&db, 2, 1001, 34, 1, 6).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 6);
+    }
+
+    #[tokio::test]
+    async fn a_pile_counts_a_corp_asset_at_the_location() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_corp_asset(&db, 1, OWNER_CORP, 34, SYSTEM_STATION, 9).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 9);
+    }
+
+    #[tokio::test]
+    async fn a_system_pile_excludes_an_asset_in_a_different_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      seed_station_in(&db, OTHER_STATION, OTHER_SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, OTHER_STATION, 5).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 0);
+    }
+
+    #[tokio::test]
+    async fn a_station_pile_counts_only_that_station_not_the_whole_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      seed_station_in(&db, SYSTEM_STATION_2, SYSTEM_ID).await;
+      let created = create(&db, "Dock", None, Some(SYSTEM_STATION), &[(34, 10)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 3).await;
+      seed_asset(&db, 2, 1001, 34, SYSTEM_STATION_2, 8).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 3);
+    }
+
+    #[tokio::test]
+    async fn a_character_scope_restricts_to_that_character_and_their_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_character(&db, 1002).await;
+      seed_corporation(&db, 90_000_002).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 1000)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 100).await;
+      seed_asset(&db, 2, 1002, 34, SYSTEM_STATION, 50).await;
+      seed_corp_asset(&db, 3, OWNER_CORP, 34, SYSTEM_STATION, 30).await;
+      seed_corp_asset(&db, 4, 90_000_002, 34, SYSTEM_STATION, 70).await;
+
+      let scoped = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
+        .await
+        .unwrap()
+        .unwrap();
+      let unscoped = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(scoped.items[0].have_quantity, 130);
+      assert_eq!(unscoped.items[0].have_quantity, 250);
+    }
+
+    #[tokio::test]
+    async fn a_constellation_pile_counts_an_asset_at_a_station_in_the_constellation() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Const", None, Some(CONSTELLATION_ID), &[(34, 10)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 5);
+    }
+
+    #[tokio::test]
+    async fn a_region_pile_counts_an_asset_at_a_station_in_the_region() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 5);
+    }
+
+    #[tokio::test]
+    async fn a_region_pile_excludes_an_asset_in_a_different_region() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      seed_station_in_region(&db, OTHER_STATION, 10_000_003, 20_000_021, OTHER_SYSTEM_ID).await;
+      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+      seed_asset(&db, 2, 1001, 34, OTHER_STATION, 8).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 5);
     }
   }
 
@@ -5727,6 +6179,26 @@ mod stockpile_tests {
       let name = location_name(&db, 30_000_142).await.unwrap();
 
       assert_eq!(name.as_deref(), Some("Jita"));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_constellation_name() {
+      let db = store::open_test().await.unwrap();
+      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
+
+      let name = location_name(&db, 20_000_020).await.unwrap();
+
+      assert_eq!(name.as_deref(), Some("Kimotoro"));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_region_name() {
+      let db = store::open_test().await.unwrap();
+      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
+
+      let name = location_name(&db, 10_000_002).await.unwrap();
+
+      assert_eq!(name.as_deref(), Some("The Forge"));
     }
 
     #[tokio::test]

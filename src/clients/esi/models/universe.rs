@@ -124,9 +124,13 @@ pub struct SearchResult {
   #[serde(default)]
   pub character: Vec<i64>,
   #[serde(default)]
+  pub constellation: Vec<i64>,
+  #[serde(default)]
   pub corporation: Vec<i64>,
   #[serde(default)]
   pub inventory_type: Vec<i64>,
+  #[serde(default)]
+  pub region: Vec<i64>,
   #[serde(default)]
   pub solar_system: Vec<i64>,
   #[serde(default)]

@@ -12,8 +12,10 @@ use crate::{
   },
 };
 
-const SOLAR_SYSTEM_ID_FLOOR: i64 = 30_000_000;
+const CONSTELLATION_ID_FLOOR: i64 = 20_000_000;
+const REGION_ID_FLOOR: i64 = 10_000_000;
 const SOLAR_SYSTEM_ID_CEIL: i64 = 32_000_000;
+const SOLAR_SYSTEM_ID_FLOOR: i64 = 30_000_000;
 const STRUCTURE_ID_FLOOR: i64 = 1_000_000_000_000;
 
 enum StructureOutcome {
@@ -40,6 +42,12 @@ pub async fn resolve_stockpile_location(
     key: JobKey::new(JobKind::AssetSync, Subject::Character(*grant.character_id())),
     grant: Some(grant),
   };
+  if (REGION_ID_FLOOR..CONSTELLATION_ID_FLOOR).contains(&location_id) {
+    return resolve_region(&ctx, location_id).await;
+  }
+  if (CONSTELLATION_ID_FLOOR..SOLAR_SYSTEM_ID_FLOOR).contains(&location_id) {
+    return resolve_constellation(&ctx, location_id).await;
+  }
   if location_id >= STRUCTURE_ID_FLOOR {
     resolve_asset_references(&ctx, &[], &[], &[location_id]).await
   } else {
@@ -147,6 +155,25 @@ async fn resolve_station(ctx: &JobCtx<'_>, station_id: i64) -> Result<(), Error>
     &region.into(),
   )
   .await?;
+  Ok(())
+}
+
+pub async fn resolve_constellation(ctx: &JobCtx<'_>, constellation_id: i64) -> Result<(), Error> {
+  if sde::get_constellation(ctx.db, constellation_id).await?.is_some() {
+    return Ok(());
+  }
+  let constellation = ctx.esi.universe().constellation(constellation_id).await?;
+  resolve_region(ctx, constellation.region_id).await?;
+  sde::upsert_constellation(ctx.db, &constellation.into()).await?;
+  Ok(())
+}
+
+pub async fn resolve_region(ctx: &JobCtx<'_>, region_id: i64) -> Result<(), Error> {
+  if sde::get_region(ctx.db, region_id).await?.is_some() {
+    return Ok(());
+  }
+  let region = ctx.esi.universe().region(region_id).await?;
+  sde::upsert_region(ctx.db, &region.into()).await?;
   Ok(())
 }
 
@@ -728,6 +755,81 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_region_picked_for_a_stockpile() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
+        })))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let grant = Grant::new_test("token", 100);
+
+      resolve_stockpile_location(
+        &harness.db,
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        REGION_ID,
+      )
+      .await
+      .unwrap();
+
+      assert!(
+        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
+        "a region chosen for a stockpile is resolved into the universe cache"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_constellation_and_its_region_for_a_stockpile() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/v1/universe/constellations/{CONSTELLATION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
+          "region_id": REGION_ID, "systems": [SYSTEM_ID],
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/v1/universe/regions/{REGION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
+        })))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let grant = Grant::new_test("token", 100);
+
+      resolve_stockpile_location(
+        &harness.db,
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        CONSTELLATION_ID,
+      )
+      .await
+      .unwrap();
+
+      assert!(
+        sde::get_constellation(&harness.db, CONSTELLATION_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the picked constellation is cached"
+      );
+      assert!(
+        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
+        "its parent region is resolved too, satisfying the constellation's region FK"
+      );
     }
   }
 

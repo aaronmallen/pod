@@ -38,6 +38,7 @@ use crate::{
 pub const SEARCH_MIN_CHARS: usize = 3;
 
 const MAX_SUGGESTIONS: usize = 20;
+const SUGGESTIONS_MAX_HEIGHT: f32 = 240.0;
 const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 22.0;
 const FORM_WIDTH: f32 = 400.0;
@@ -361,7 +362,7 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
   let mut cards = Vec::with_capacity(stockpiles.len());
   for entry in stockpiles {
     let id = entry.stockpile.id();
-    let fill = assets::fill_status(db, id).await.ok().flatten();
+    let fill = assets::fill_status(db, id, None).await.ok().flatten();
     let overall_pct = fill.as_ref().map(StockpileFill::overall_pct).unwrap_or(1.0);
 
     let mut items = Vec::with_capacity(entry.items.len());
@@ -702,7 +703,7 @@ fn location_typeahead(editor: &Editor) -> Element<'_, Message> {
   }
 
   let field = TextInput::new(
-    "Search station, structure, or system\u{2026}",
+    "Search region, constellation, system, station, or structure\u{2026}",
     editor.location_query(),
     Message::StockpileEditorLocationSearchChanged,
   )
@@ -747,7 +748,8 @@ fn suggestions<'a>(
 
   Some(
     container(
-      container(column)
+      container(scrollable(column).style(crate::ui::style::control::scrollbar))
+        .max_height(SUGGESTIONS_MAX_HEIGHT)
         .width(Length::Fill)
         .padding(spacing::UNIT)
         .style(|_| container::Style {

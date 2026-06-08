@@ -14,9 +14,9 @@ impl<'a> Client<'a> {
     }
   }
 
-  pub async fn detail(&self, killmail_id: i64, hash: &str) -> Result<Killmail, clients::Error> {
+  pub async fn detail(&self, killmail_id: i64, hash: &str, token: Option<&str>) -> Result<Killmail, clients::Error> {
     let url = self.esi.url(&format!("killmails/{killmail_id}/{hash}/"));
-    self.esi.get_json(&url, None).await
+    self.esi.get_json(&url, token).await
   }
 }
 
@@ -63,7 +63,7 @@ mod tests {
         .await;
       let esi = make_esi(&server.uri()).await;
 
-      let killmail = esi.killmail().detail(100, "abc123").await.unwrap();
+      let killmail = esi.killmail().detail(100, "abc123", None).await.unwrap();
 
       assert_eq!(killmail.killmail_id, 100);
       assert_eq!(killmail.solar_system_id, 30000142);
@@ -90,11 +90,33 @@ mod tests {
         .await;
       let esi = make_esi(&server.uri()).await;
 
-      let killmail = esi.killmail().detail(200, "def456").await.unwrap();
+      let killmail = esi.killmail().detail(200, "def456", None).await.unwrap();
 
       assert!(killmail.victim.character_id.is_none());
       assert!(killmail.victim.corporation_id.is_none());
       assert!(killmail.attackers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_attaches_the_bearer_token_when_one_is_provided() {
+      let server = MockServer::start().await;
+      let body = r#"{
+        "killmail_id": 300,
+        "killmail_time": "2024-03-01T00:00:00Z",
+        "solar_system_id": 30000142,
+        "victim": {"ship_type_id": 587}
+      }"#;
+      Mock::given(method("GET"))
+        .and(path("/killmails/300/ghi789/"))
+        .and(header("Authorization", "Bearer km-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let killmail = esi.killmail().detail(300, "ghi789", Some("km-token")).await.unwrap();
+
+      assert_eq!(killmail.killmail_id, 300);
     }
   }
 }

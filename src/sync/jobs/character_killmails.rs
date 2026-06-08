@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
-  run_with_zkill(ctx, &zkillboard::Client::new()).await
+  run_with_zkill(ctx, &zkillboard::Client::new(ctx.esi.http())).await
 }
 
 async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<Outcome, Error> {
@@ -23,10 +23,9 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
     return Ok(Outcome::NotReady);
   }
 
-  let _ = grant;
-
   let kills = zkill.character_kills(character_id).await?;
   let losses = zkill.character_losses(character_id).await?;
+  let token = grant.access_token();
   let synced_at = Utc::now().to_rfc3339();
   let mut synced = 0usize;
 
@@ -35,7 +34,7 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
     .map(|k| (k, true))
     .chain(losses.into_iter().map(|k| (k, false)))
   {
-    match assemble(ctx, character_id, &killmail, is_kill, &synced_at).await {
+    match assemble(ctx, character_id, &killmail, is_kill, &synced_at, Some(token)).await {
       Ok(entry) => {
         character::upsert_killmail(ctx.db, &entry).await?;
         synced += 1;
@@ -57,11 +56,12 @@ async fn assemble(
   killmail: &zkillboard::Killmail,
   is_kill: bool,
   synced_at: &str,
+  token: Option<&str>,
 ) -> Result<CharacterKillEntry, Error> {
   let detail = ctx
     .esi
     .killmail()
-    .detail(killmail.killmail_id, &killmail.zkb.hash)
+    .detail(killmail.killmail_id, &killmail.zkb.hash, token)
     .await?;
   let final_blow = detail
     .attackers
@@ -205,12 +205,12 @@ mod tests {
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http, esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(zkill_server.uri());
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
 
       run_with_zkill(&ctx, &zkill).await.unwrap();
 
@@ -264,12 +264,12 @@ mod tests {
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http, esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(zkill_server.uri());
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
 
       run_with_zkill(&ctx, &zkill).await.unwrap();
 
@@ -292,12 +292,12 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http, esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(zkill_server.uri());
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
 
       run_with_zkill(&ctx, &zkill).await.unwrap();
 

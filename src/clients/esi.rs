@@ -118,9 +118,8 @@ impl Client {
     universe::Client::new(self)
   }
 
-  #[allow(dead_code)]
-  pub fn http(&self) -> &http::Client {
-    &self.http
+  pub fn http(&self) -> Arc<http::Client> {
+    Arc::clone(&self.http)
   }
 
   pub fn url(&self, path: &str) -> String {

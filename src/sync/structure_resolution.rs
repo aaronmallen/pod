@@ -186,6 +186,15 @@ async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<()
     Some(id) => Some(resolve_faction(ctx, id).await?),
     None => None,
   };
+  // The CEO carries its own alliance/faction, which can differ from the corporation's (or exist when
+  // the corp has none). upsert_with_org only persists the corp-side rows, so resolve the CEO's ends
+  // too or the non-deferrable characters.alliance_id/faction_id FKs fail at commit.
+  if let Some(id) = ceo.alliance_id() {
+    ensure_alliance(ctx, id).await?;
+  }
+  if let Some(id) = ceo.faction_id() {
+    ensure_faction(ctx, id).await?;
+  }
   let race = resolve_race_model(ctx, i64::from(race_id)).await?;
   let bloodline = resolve_bloodline(ctx, i64::from(bloodline_id)).await?;
 
@@ -199,6 +208,24 @@ async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<()
     faction.as_ref(),
   )
   .await?;
+  Ok(())
+}
+
+async fn ensure_alliance(ctx: &JobCtx<'_>, alliance_id: i64) -> Result<(), Error> {
+  if org::get_alliance(ctx.db, alliance_id).await?.is_some() {
+    return Ok(());
+  }
+  let alliance = Alliance::from((alliance_id, ctx.esi.alliance().info(alliance_id).await?));
+  org::upsert_alliance(ctx.db, &alliance).await?;
+  Ok(())
+}
+
+async fn ensure_faction(ctx: &JobCtx<'_>, faction_id: i64) -> Result<(), Error> {
+  if sde::get_faction(ctx.db, faction_id).await?.is_some() {
+    return Ok(());
+  }
+  let faction = resolve_faction(ctx, faction_id).await?;
+  sde::upsert_faction(ctx.db, &faction).await?;
   Ok(())
 }
 
@@ -808,6 +835,79 @@ mod tests {
       );
       assert!(org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some());
       assert!(sde::get_faction(&harness.db, 500_001).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_ceos_own_alliance_and_faction_when_the_corp_carries_neither() {
+      let server = MockServer::start().await;
+      // The corporation itself belongs to no alliance and no faction...
+      Mock::given(method("GET"))
+        .and(path(format!("/v5/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      // ...but its CEO personally holds an alliance and is enlisted in factional warfare.
+      Mock::given(method("GET"))
+        .and(path("/v5/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "alliance_id": 99_000_002, "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5,
+          "corporation_id": OWNER_CORP_ID, "faction_id": 500_001, "gender": "male",
+          "name": "Caldari Navy CEO", "race_id": 1,
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/v4/alliances/99000002/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": OWNER_CORP_ID, "name": "CEO Personal Alliance", "ticker": "CPA",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/v2/universe/factions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
+            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
+            "station_system_count": 50 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/v1/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("the CEO's own alliance and faction are resolved, so no FK violation at commit");
+
+      assert!(
+        org::get_alliance(&harness.db, 99_000_002).await.unwrap().is_some(),
+        "the CEO's personal alliance is persisted even though the corp has none"
+      );
+      assert!(
+        sde::get_faction(&harness.db, 500_001).await.unwrap().is_some(),
+        "the CEO's faction is persisted even though the corp has none"
+      );
+      assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
     }
   }
 

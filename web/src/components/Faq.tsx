@@ -8,7 +8,18 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
     answer: (
       <>
         macOS Gatekeeper quarantines apps downloaded outside the Mac App
-        Store. To remove the quarantine attribute, open Terminal and run:
+        Store. The simplest fix is through System Settings:
+        <br/><br/>
+        1. Try to open Pod once (it will be blocked)<br/>
+        2. Open <strong>System Settings</strong> →{' '}
+        <strong>Privacy &amp; Security</strong><br/>
+        3. Scroll to the <strong>Security</strong> section near the bottom and
+        click <strong>Open Anyway</strong> next to Pod<br/>
+        4. Confirm by clicking <strong>Open</strong>
+        <br/><br/>
+        On macOS Sequoia (15) and later the older right-click → Open trick no
+        longer works, so use the steps above. Alternatively, you can clear the
+        quarantine attribute from Terminal:
         <br/><br/>
         <code style={{
           display: 'block',
@@ -24,7 +35,7 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
           xattr -dr com.apple.quarantine /Applications/Pod.app
         </code>
         <br/>
-        Then try launching Pod again. You only need to do this once.
+        Either way, you only need to do this once.
       </>
     ),
   },

@@ -2,7 +2,7 @@ mod card;
 mod card_grid;
 mod item_row;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
@@ -20,7 +20,7 @@ use crate::{
     Database,
     images::{self, IconResolution},
     model::stockpile_fill::{StockpileFill, StockpileItemFill},
-    repo::{assets, sde},
+    repo::{assets, finance, sde},
   },
   ui::{
     components::{
@@ -58,12 +58,14 @@ pub(super) struct StockpileItemLine {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StockpileCard {
   pub(super) character_id: Option<i64>,
+  pub(super) fill_isk: f64,
   pub(super) id: i64,
   pub(super) items: Vec<StockpileItemLine>,
   pub(super) location_id: Option<i64>,
   pub(super) location_name: Option<String>,
   pub(super) name: String,
   pub(super) overall_pct: f64,
+  pub(super) target_isk: f64,
 }
 
 impl StockpileCard {
@@ -357,8 +359,27 @@ impl Editor {
   }
 }
 
+fn economics(items: &[StockpileItemLine], prices: &HashMap<i64, f64>) -> (f64, f64) {
+  let mut target_isk = 0.0;
+  let mut fill_isk = 0.0;
+  for item in items {
+    let price = prices.get(&item.type_id).copied().unwrap_or(0.0);
+    target_isk += item.target as f64 * price;
+    if item.have < item.target {
+      fill_isk += (item.target - item.have) as f64 * price;
+    }
+  }
+  (target_isk, fill_isk)
+}
+
 pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
   let stockpiles = assets::list_with_items(db).await.unwrap_or_default();
+  let prices: HashMap<i64, f64> = finance::market_prices_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|price| price.average_price().map(|average| (price.type_id(), average)))
+    .collect();
   let mut cards = Vec::with_capacity(stockpiles.len());
   for entry in stockpiles {
     let id = entry.stockpile.id();
@@ -392,14 +413,18 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
       None => None,
     };
 
+    let (target_isk, fill_isk) = economics(&items, &prices);
+
     cards.push(StockpileCard {
       character_id: entry.stockpile.character_id(),
+      fill_isk,
       id,
       items,
       location_id,
       location_name,
       name: entry.stockpile.name().to_owned(),
       overall_pct,
+      target_isk,
     });
   }
   cards
@@ -1336,12 +1361,14 @@ mod tests {
     fn it_seeds_the_location_chip_from_an_existing_card() {
       let card = StockpileCard {
         character_id: None,
+        fill_isk: 0.0,
         id: 1,
         items: vec![],
         location_id: Some(60_003_760),
         location_name: Some("Jita IV".to_owned()),
         name: "Cache".to_owned(),
         overall_pct: 0.0,
+        target_isk: 0.0,
       };
 
       let editor = Editor::from_card(&card);
@@ -1464,12 +1491,14 @@ mod tests {
     fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
       StockpileCard {
         character_id: None,
+        fill_isk: 0.0,
         id: 1,
         items,
         location_id: None,
         location_name: None,
         name: "Cache".to_owned(),
         overall_pct: 0.0,
+        target_isk: 0.0,
       }
     }
 
@@ -1509,12 +1538,70 @@ mod tests {
     }
   }
 
+  mod economics {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn line(type_id: i64, have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_id,
+        type_name: format!("Type {type_id}"),
+      }
+    }
+
+    fn prices(entries: &[(i64, f64)]) -> HashMap<i64, f64> {
+      entries.iter().copied().collect()
+    }
+
+    #[test]
+    fn it_sums_target_value_from_average_price() {
+      let items = vec![line(34, 0, 1000), line(35, 0, 50)];
+
+      let (target_isk, _) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(target_isk, 1000.0 * 6.0 + 50.0 * 11.0);
+    }
+
+    #[test]
+    fn it_sums_fill_value_over_short_items_only() {
+      let items = vec![line(34, 400, 1000), line(35, 80, 50)];
+
+      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(fill_isk, (1000.0 - 400.0) * 6.0);
+    }
+
+    #[test]
+    fn it_reports_zero_fill_value_for_a_full_pile() {
+      let items = vec![line(34, 1000, 1000), line(35, 80, 50)];
+
+      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(fill_isk, 0.0);
+    }
+
+    #[test]
+    fn it_treats_an_unpriced_type_as_zero_value() {
+      let items = vec![line(34, 0, 1000)];
+
+      let (target_isk, fill_isk) = economics(&items, &prices(&[]));
+
+      assert_eq!(target_isk, 0.0);
+      assert_eq!(fill_isk, 0.0);
+    }
+  }
+
   mod render {
     use super::*;
 
     fn card_model() -> StockpileCard {
       StockpileCard {
         character_id: None,
+        fill_isk: 0.0,
         id: 1,
         items: vec![StockpileItemLine {
           have: 400,
@@ -1527,6 +1614,7 @@ mod tests {
         location_name: None,
         name: "Cache".to_owned(),
         overall_pct: 0.4,
+        target_isk: 0.0,
       }
     }
 

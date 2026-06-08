@@ -139,6 +139,7 @@ mod tests {
   fn card_model(location_name: Option<&str>, location_id: Option<i64>) -> StockpileCard {
     StockpileCard {
       character_id: None,
+      fill_isk: 0.0,
       id: 1,
       items: vec![super::super::StockpileItemLine {
         have: 400,
@@ -151,6 +152,7 @@ mod tests {
       location_name: location_name.map(str::to_owned),
       name: "Cache".to_owned(),
       overall_pct: 0.4,
+      target_isk: 0.0,
     }
   }
 

@@ -2177,12 +2177,14 @@ mod tests {
     fn card(id: i64, name: &str) -> stockpiles::StockpileCard {
       stockpiles::StockpileCard {
         character_id: None,
+        fill_isk: 0.0,
         id,
         items: vec![],
         location_id: None,
         location_name: None,
         name: name.to_owned(),
         overall_pct: 0.0,
+        target_isk: 0.0,
       }
     }
 

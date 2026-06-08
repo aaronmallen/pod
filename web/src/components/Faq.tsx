@@ -39,6 +39,29 @@ const ENTRIES: { question: string; answer: React.ReactNode }[] = [
     ),
   },
   {
+    question: "Smart App Control blocked the app (no “Run anyway”)",
+    answer: (
+      <>
+        Some Windows 11 PCs run <strong>Smart App Control</strong>, a stricter
+        layer than SmartScreen that hard-blocks apps from unverified publishers
+        with no per-app override. If you only see <strong>Okay</strong> and{' '}
+        <strong>Get apps from the Store</strong>, you&apos;ll need to turn Smart
+        App Control off:
+        <br/><br/>
+        1. Open <strong>Windows Security</strong><br/>
+        2. Go to <strong>App &amp; browser control</strong> →{' '}
+        <strong>Smart App Control settings</strong><br/>
+        3. Set it to <strong>Off</strong><br/>
+        4. Re-run the installer (you may then see the normal SmartScreen prompt
+        — click <strong>More info</strong> → <strong>Run anyway</strong>)
+        <br/><br/>
+        Note: Windows can only re-enable Smart App Control by reinstalling the
+        OS, so this is a one-way change. Only do it if you&apos;re comfortable
+        running unsigned software you trust.
+      </>
+    ),
+  },
+  {
     question: "Why does Pod request so many EVE Online permissions?",
     answer: (
       <>
@@ -137,7 +160,7 @@ function FaqEntry({ question, answer }: { question: string; answer: React.ReactN
 
       <div style={{
         overflow: 'hidden',
-        maxHeight: open ? 480 : 0,
+        maxHeight: open ? 640 : 0,
         opacity: open ? 1 : 0,
         transition: 'max-height 280ms ease, opacity 220ms ease',
       }}>

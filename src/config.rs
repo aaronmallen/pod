@@ -5,9 +5,14 @@ use figment::{
   providers::{Format, Serialized, Toml},
 };
 use getset::{Getters, MutGetters, Setters};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::store::fs_kind::{self, FsKind};
+
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
+const WORKING_COPY_DB_NAME: &str = "pod.db";
+const WORKING_COPY_SUBDIR: &str = "db";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -178,11 +183,33 @@ pub struct StorageConfig {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   log_dir: Option<PathBuf>,
   #[getset(get = "pub")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  machine_id: Option<String>,
+  #[getset(get = "pub")]
   #[serde(default)]
   network: bool,
 }
 
 impl StorageConfig {
+  fn mode_from(network_override: bool, kind: FsKind) -> StorageMode {
+    if network_override || kind.is_network() {
+      StorageMode::Sync
+    } else {
+      StorageMode::Direct
+    }
+  }
+
+  #[allow(dead_code)]
+  pub fn machine_id_or_generate(&mut self) -> String {
+    if let Some(id) = &self.machine_id {
+      return id.clone();
+    }
+
+    let id = generate_machine_id();
+    self.machine_id = Some(id.clone());
+    id
+  }
+
   pub fn resolved_cache_dir(&self) -> PathBuf {
     self.cache_dir.clone().unwrap_or_else(cache_dir)
   }
@@ -198,6 +225,36 @@ impl StorageConfig {
   #[allow(dead_code)]
   pub fn resolved_log_dir(&self) -> PathBuf {
     self.log_dir.clone().unwrap_or_else(log_dir)
+  }
+
+  #[allow(dead_code)]
+  pub fn resolved_working_copy_path(&self) -> PathBuf {
+    self
+      .resolved_cache_dir()
+      .join(WORKING_COPY_SUBDIR)
+      .join(WORKING_COPY_DB_NAME)
+  }
+
+  #[allow(dead_code)]
+  pub fn storage_mode(&self) -> StorageMode {
+    self.storage_mode_with(fs_kind::detect)
+  }
+
+  fn storage_mode_with(&self, detect: impl Fn(&Path) -> FsKind) -> StorageMode {
+    Self::mode_from(self.network, detect(&self.resolved_db_dir()))
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageMode {
+  Direct,
+  Sync,
+}
+
+impl StorageMode {
+  #[allow(dead_code)]
+  pub fn is_sync(self) -> bool {
+    matches!(self, StorageMode::Sync)
   }
 }
 
@@ -236,6 +293,22 @@ fn default_eve_client_id() -> String {
 
 fn default_true() -> bool {
   true
+}
+
+#[allow(dead_code)]
+fn generate_machine_id() -> String {
+  let mut bytes = [0u8; 16];
+  rand::rng().fill_bytes(&mut bytes);
+
+  let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+  format!(
+    "{}-{}-{}-{}-{}",
+    &hex[0..8],
+    &hex[8..12],
+    &hex[12..16],
+    &hex[16..20],
+    &hex[20..32]
+  )
 }
 
 pub fn load() -> Result<Settings, Error> {
@@ -454,6 +527,119 @@ mod tests {
     }
   }
 
+  mod storage_mode {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
+      move |_| kind
+    }
+
+    #[test]
+    fn it_is_direct_for_a_local_path_with_no_override() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.storage_mode_with(always(FsKind::Local)), StorageMode::Direct);
+    }
+
+    #[test]
+    fn it_is_sync_when_detection_reports_a_network_path() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.storage_mode_with(always(FsKind::Network)), StorageMode::Sync);
+    }
+
+    #[test]
+    fn it_forces_sync_when_the_manual_flag_is_set_even_when_detection_says_local() {
+      let mut storage = StorageConfig::default();
+      storage.set_network(true);
+
+      assert_eq!(storage.storage_mode_with(always(FsKind::Local)), StorageMode::Sync);
+    }
+
+    #[test]
+    fn it_detects_against_the_resolved_db_dir() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
+      let seen = std::cell::RefCell::new(None);
+
+      let mode = storage.storage_mode_with(|path| {
+        *seen.borrow_mut() = Some(path.to_path_buf());
+        FsKind::Local
+      });
+
+      assert_eq!(mode, StorageMode::Direct);
+      assert_eq!(seen.into_inner(), Some(PathBuf::from("/mnt/nas/pod")));
+    }
+  }
+
+  mod resolved_working_copy_path {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_lives_under_the_evictable_cache_dir() {
+      let mut storage = StorageConfig::default();
+      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+
+      let path = storage.resolved_working_copy_path();
+
+      assert!(path.starts_with(storage.resolved_cache_dir()));
+      assert_eq!(path.file_name().unwrap(), "pod.db");
+    }
+
+    #[test]
+    fn it_is_distinct_from_the_shared_db_path() {
+      let mut storage = StorageConfig::default();
+      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
+
+      assert_ne!(storage.resolved_working_copy_path(), storage.resolved_database_path());
+    }
+  }
+
+  mod machine_id_or_generate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_generates_and_persists_a_machine_id_once() {
+      let mut storage = StorageConfig::default();
+      assert_eq!(*storage.machine_id(), None);
+
+      let first = storage.machine_id_or_generate();
+
+      assert!(!first.is_empty());
+      assert_eq!(*storage.machine_id(), Some(first.clone()));
+    }
+
+    #[test]
+    fn it_returns_the_same_id_on_subsequent_calls() {
+      let mut storage = StorageConfig::default();
+
+      let first = storage.machine_id_or_generate();
+      let second = storage.machine_id_or_generate();
+
+      assert_eq!(first, second);
+    }
+
+    #[test]
+    fn it_round_trips_a_generated_id_through_the_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      let mut settings = Settings::default();
+      let id = settings.storage_mut().machine_id_or_generate();
+
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
+
+      assert_eq!(*loaded.storage().machine_id(), Some(id));
+    }
+  }
+
   mod load_from {
     use pretty_assertions::assert_eq;
 
@@ -488,6 +674,7 @@ mod tests {
       assert_eq!(*storage.db_dir(), None);
       assert_eq!(*storage.log_dir(), None);
       assert_eq!(*storage.cache_dir(), None);
+      assert_eq!(*storage.machine_id(), None);
     }
 
     #[test]
@@ -567,6 +754,10 @@ mod tests {
       assert!(
         !toml.contains("log_dir"),
         "resolved log_dir must not leak to disk: {toml}"
+      );
+      assert!(
+        !toml.contains("machine_id"),
+        "an unset machine_id must not leak to disk: {toml}"
       );
     }
   }

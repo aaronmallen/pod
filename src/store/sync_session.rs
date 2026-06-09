@@ -89,6 +89,20 @@ impl SyncSession {
   pub fn release(&self) -> io::Result<()> {
     self.lease.release(&self.share)
   }
+
+  /// Reclaims the share, but only once the foreign holder is gone. The re-check goes through
+  /// [`SyncSession::acquire`] — whose stale-test declines a still-fresh holder (returning it,
+  /// writing nothing) — rather than the unconditional [`LeaseManager::take_over`], so a live writer
+  /// is never clobbered. On a successful claim the newer canonical copy is pulled so the working
+  /// copy converges before this machine writes again.
+  pub fn take_over(&self, now: DateTime<Utc>) -> Result<Outcome, sync_copy::Error> {
+    let outcome = self.acquire(now)?;
+    if outcome == Outcome::Acquired {
+      self.engine.pull_if_newer()?;
+    }
+
+    Ok(outcome)
+  }
 }
 
 fn hostname() -> String {
@@ -120,6 +134,7 @@ mod tests {
 
   struct Fixture {
     _dir: TempDir,
+    canonical: PathBuf,
     marker: PathBuf,
     session: SyncSession,
     sidecar: PathBuf,
@@ -144,6 +159,7 @@ mod tests {
       fs::create_dir_all(working_copy.parent().unwrap()).unwrap();
 
       Self {
+        canonical: storage.resolved_database_path(),
         marker: with_suffix(&working_copy, GENERATION_SUFFIX),
         sidecar: with_suffix(&storage.resolved_database_path(), GENERATION_SUFFIX),
         session,
@@ -301,6 +317,71 @@ mod tests {
       let fixture = Fixture::new();
 
       assert_eq!(fixture.session.is_dirty_since(None), false);
+    }
+  }
+
+  mod take_over {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_declines_a_still_fresh_foreign_lease_without_writing() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now)
+        .unwrap();
+
+      let outcome = fixture.session.take_over(now).unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::HeldBy {
+          hostname: "host-b".to_owned(),
+          machine_id: "machine-b".to_owned(),
+        }
+      );
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-b",
+        "the fresh foreign holder is left intact"
+      );
+    }
+
+    #[test]
+    fn it_claims_a_stale_foreign_lease() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now - chrono::Duration::seconds(31))
+        .unwrap();
+
+      let outcome = fixture.session.take_over(now).unwrap();
+
+      assert_eq!(outcome, Outcome::Acquired);
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-a"
+      );
+    }
+
+    #[test]
+    fn it_pulls_the_newer_canonical_copy_when_claiming() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.canonical, b"newer canonical").unwrap();
+      write_generation(&fixture.sidecar, 9).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      let outcome = fixture.session.take_over(Utc::now()).unwrap();
+
+      assert_eq!(outcome, Outcome::Acquired);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"newer canonical");
+      assert_eq!(read_generation(&fixture.marker), 9);
     }
   }
 

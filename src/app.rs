@@ -12,7 +12,7 @@ use iced::{
   alignment::{Horizontal, Vertical},
   futures::SinkExt as _,
   keyboard,
-  widget::{Column, Row, Space, Stack, container, mouse_area, text},
+  widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
   window,
 };
 use windows::{Window, Windows};
@@ -37,7 +37,7 @@ use crate::{
       sync_popover::{self, Header, JobRow, Model, RowState},
       updater_banner,
     },
-    style::{color, spacing, typography},
+    style::{color, control, spacing, typography},
   },
   window_state::{self, UiState, WindowGeometry, coalesce::WriteCoalescer, validity},
 };
@@ -137,6 +137,13 @@ struct HolderInfo {
   machine_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TakeOverOutcome {
+  Claimed,
+  Failed,
+  StillHeld(HolderInfo),
+}
+
 impl From<store::lease::Outcome> for Option<HolderInfo> {
   fn from(outcome: store::lease::Outcome) -> Self {
     match outcome {
@@ -199,6 +206,8 @@ enum Message {
   StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
   SyncPulse,
+  TakeOver,
+  TakeOverResolved(TakeOverOutcome),
   ToggleSyncPopover,
   UpdaterAction(updater_banner::Action),
   UpdaterDismissToast,
@@ -254,6 +263,8 @@ impl Message {
       Message::Splash(_) => "Splash",
       Message::StoreOpened(_) => "StoreOpened",
       Message::SyncPulse => "SyncPulse",
+      Message::TakeOver => "TakeOver",
+      Message::TakeOverResolved(_) => "TakeOverResolved",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
       Message::UpdaterAction(_) => "UpdaterAction",
       Message::UpdaterDismissToast => "UpdaterDismissToast",
@@ -649,9 +660,11 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
   let StoreReady {
     db,
     http,
+    lease,
     settings,
     ..
   } = ready;
+  let read_only = lease.is_some();
 
   let esi = Arc::new(
     esi::Client::builder(http.clone())
@@ -662,15 +675,21 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
   let sso = Arc::new(eve_sso::Client::new(http.clone(), settings.eve_client_id().clone()));
   let eve_image = Arc::new(eve_image::Client::new(http));
 
-  let (handle, events) = sync::spawn(
-    db.clone(),
-    Arc::clone(&esi),
-    sso.clone(),
-    Arc::clone(&eve_image),
-    store::images::default_store(),
-    *settings.features(),
-  );
-  tracing::info!(target: "pod::lifecycle", "sync engine started");
+  let (handle, events) = if read_only {
+    tracing::info!(target: "pod::lifecycle", "opened read-only; the sync engine stays parked");
+    inert_sync()
+  } else {
+    let started = sync::spawn(
+      db.clone(),
+      Arc::clone(&esi),
+      sso.clone(),
+      Arc::clone(&eve_image),
+      store::images::default_store(),
+      *settings.features(),
+    );
+    tracing::info!(target: "pod::lifecycle", "sync engine started");
+    started
+  };
   tracing::info!(target: "pod::lifecycle", "runtime built");
   Ok((
     Runtime {
@@ -683,6 +702,16 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     },
     events,
   ))
+}
+
+/// A sync handle whose command receiver is dropped, so every command it forwards is a silent no-op,
+/// paired with an already-closed event stream. A read-only opener installs this instead of spawning
+/// the engine: the only autonomous writer to the working copy never runs, so the local copy cannot
+/// diverge and nothing is ever pushed to the canonical share.
+fn inert_sync() -> (sync::Handle, tokio::sync::mpsc::Receiver<sync::Event>) {
+  let (commands, _commands_rx) = tokio::sync::mpsc::channel(1);
+  let (_events_tx, events) = tokio::sync::mpsc::channel(1);
+  (sync::Handle::new(commands), events)
 }
 
 fn enabled_features(app: &App) -> Vec<config::Feature> {
@@ -965,6 +994,9 @@ fn main_view(app: &App) -> Element<'_, Message> {
   if let Some(banner) = updater_banner::banner(&app.updater_state, Message::UpdaterAction) {
     column_children.push(banner);
   }
+  if let Some(holder) = &app.read_only {
+    column_children.push(read_only_banner(holder));
+  }
   if app.sde_stale {
     column_children.push(sde_stale_banner());
   }
@@ -1022,6 +1054,47 @@ fn sde_stale_banner<'a>() -> Element<'a, Message> {
     });
 
   container(label)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_6,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_6,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.12))),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn read_only_banner(holder: &HolderInfo) -> Element<'_, Message> {
+  let label = text(format!(
+    "Open on {} \u{2014} close it there, or take over.",
+    holder.hostname
+  ))
+  .font(typography::body::REGULAR)
+  .size(typography::size::SM)
+  .style(|_| text::Style {
+    color: Some(color::status::WARNING),
+  });
+
+  let action = button(
+    text("Take over")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM),
+  )
+  .padding(control::padding())
+  .on_press(Message::TakeOver)
+  .style(control::primary_button);
+
+  let row = Row::new()
+    .push(container(label).width(Length::Fill).align_y(Vertical::Center))
+    .push(action)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3);
+
+  container(row)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_2,
@@ -1770,6 +1843,8 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Splash(msg) => update_splash(app, msg),
     Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::SyncPulse => handle_sync_pulse(app),
+    Message::TakeOver => handle_take_over(app),
+    Message::TakeOverResolved(outcome) => handle_take_over_resolved(app, outcome),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
     Message::UpdaterDismissToast => handle_updater_dismiss_toast(app),
@@ -2002,6 +2077,64 @@ fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
       }
     }
   })
+}
+
+fn handle_take_over(app: &mut App) -> Task<Message> {
+  if app.read_only.is_none() {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  Task::future(async move {
+    let outcome = match session.take_over(Utc::now()) {
+      Ok(store::lease::Outcome::Acquired) => {
+        tracing::info!(target: "pod::lifecycle", "took over the storage lease");
+        TakeOverOutcome::Claimed
+      }
+      Ok(store::lease::Outcome::HeldBy {
+        hostname,
+        machine_id,
+      }) => {
+        tracing::info!(target: "pod::lifecycle", %hostname, "take over declined; the share is still held");
+        TakeOverOutcome::StillHeld(HolderInfo {
+          hostname,
+          machine_id,
+        })
+      }
+      Err(error) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "taking over the storage lease failed");
+        TakeOverOutcome::Failed
+      }
+    };
+    Message::TakeOverResolved(outcome)
+  })
+}
+
+/// Applies a resolved take-over. A claim rebuilds the runtime from the parked `store_ready`: the
+/// database must reopen so the connection picks up the freshly pulled working copy (swapping the
+/// file under a live connection would corrupt it) and the real sync engine replaces the inert one.
+fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Message> {
+  match outcome {
+    TakeOverOutcome::Claimed => {
+      app.read_only = None;
+      app.last_push = app
+        .sync_session
+        .as_ref()
+        .and_then(store::sync_session::SyncSession::last_write);
+      let Some(mut ready) = app.store_ready.clone() else {
+        return Task::none();
+      };
+      ready.lease = None;
+      app.store_ready = Some(ready.clone());
+      build_runtime(ready)
+    }
+    TakeOverOutcome::StillHeld(holder) => {
+      app.read_only = Some(holder);
+      Task::none()
+    }
+    TakeOverOutcome::Failed => Task::none(),
+  }
 }
 
 fn handle_toggle_sync_popover(app: &mut App) -> Task<Message> {
@@ -3592,6 +3725,92 @@ mod tests {
       });
 
       assert!(!holding_lease(&app), "a read-only opener does not hold the lease");
+    }
+
+    #[test]
+    fn take_over_is_a_no_op_when_the_app_is_already_writable() {
+      let mut app = test_app();
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(app.read_only.is_none(), "a writable app stays writable");
+    }
+
+    #[test]
+    fn take_over_without_a_sync_session_fires_no_real_io() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the request short-circuits and the banner stays"
+      );
+    }
+
+    #[test]
+    fn a_claimed_take_over_drops_read_only() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Claimed);
+
+      assert!(app.read_only.is_none(), "claiming the share makes the app writable");
+    }
+
+    #[test]
+    fn a_still_held_take_over_keeps_the_named_banner() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over_resolved(
+        &mut app,
+        TakeOverOutcome::StillHeld(HolderInfo {
+          hostname: "studio-linux".to_owned(),
+          machine_id: "machine-c".to_owned(),
+        }),
+      );
+
+      assert_eq!(
+        app.read_only,
+        Some(HolderInfo {
+          hostname: "studio-linux".to_owned(),
+          machine_id: "machine-c".to_owned(),
+        }),
+        "a still-fresh holder is refused and the banner updates to the current holder"
+      );
+    }
+
+    #[test]
+    fn a_failed_take_over_keeps_the_app_read_only() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed);
+
+      assert!(app.read_only.is_some(), "a failed take-over leaves the app read-only");
+    }
+
+    #[test]
+    fn an_inert_sync_handle_swallows_commands_without_panicking() {
+      let (handle, _events) = inert_sync();
+
+      handle.discover();
+      handle.enroll(sync::Subject::Character(7));
+      handle.run_now(sync::Subject::Character(7));
     }
 
     #[test]

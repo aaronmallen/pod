@@ -6,7 +6,7 @@ mod side_filter;
 
 use std::path::PathBuf;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iced::{Element, Task};
 
 pub use self::{
@@ -99,6 +99,7 @@ impl Timeframe {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NetWorthPoint {
   pub date: String,
+  pub liquid: f64,
   pub net_worth: f64,
 }
 
@@ -630,15 +631,18 @@ async fn load_net_worth_series(
       .into_iter()
       .map(|row| NetWorthPoint {
         date: row.date().clone(),
+        liquid: row.liquid(),
         net_worth: row.net_worth(),
       })
       .collect(),
     Scope::All => {
       let _ = scope_ids;
-      let mut by_date: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+      let mut by_date: std::collections::BTreeMap<String, (f64, f64)> = std::collections::BTreeMap::new();
       for row in finance::combined_series_since(db, &since).await.unwrap_or_default() {
         if let Some(net_worth) = row.net_worth() {
-          *by_date.entry(row.date().clone()).or_insert(0.0) += net_worth;
+          let entry = by_date.entry(row.date().clone()).or_insert((0.0, 0.0));
+          entry.0 += net_worth;
+          entry.1 += row.liquid().unwrap_or(0.0);
         }
       }
       for corp in corporations {
@@ -646,13 +650,16 @@ async fn load_net_worth_series(
           .await
           .unwrap_or_default()
         {
-          *by_date.entry(row.date().clone()).or_insert(0.0) += row.net_worth();
+          let entry = by_date.entry(row.date().clone()).or_insert((0.0, 0.0));
+          entry.0 += row.net_worth();
+          entry.1 += row.liquid();
         }
       }
       by_date
         .into_iter()
-        .map(|(date, net_worth)| NetWorthPoint {
+        .map(|(date, (net_worth, liquid))| NetWorthPoint {
           date,
+          liquid,
           net_worth,
         })
         .collect()
@@ -663,6 +670,7 @@ async fn load_net_worth_series(
       .into_iter()
       .map(|row| NetWorthPoint {
         date: row.date().clone(),
+        liquid: row.liquid(),
         net_worth: row.net_worth(),
       })
       .collect(),
@@ -782,10 +790,11 @@ pub fn period_totals(state: &State) -> PeriodTotals {
   totals
 }
 
-pub fn sliced_series(state: &State) -> &[NetWorthPoint] {
-  let days = state.timeframe.days();
+pub fn sliced_series(state: &State, today: NaiveDate) -> &[NetWorthPoint] {
+  let span = state.timeframe.days().saturating_sub(1) as i64;
+  let cutoff = (today - Duration::days(span)).format("%Y-%m-%d").to_string();
   let series = &state.net_worth_series;
-  let start = series.len().saturating_sub(days);
+  let start = series.partition_point(|point| point.date.as_str() < cutoff.as_str());
   &series[start..]
 }
 
@@ -1634,35 +1643,59 @@ mod tests {
   fn nw_point(date: &str, net_worth: f64) -> NetWorthPoint {
     NetWorthPoint {
       date: date.to_owned(),
+      liquid: 0.0,
       net_worth,
     }
   }
 
   mod sliced_series {
+    use chrono::NaiveDate;
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[test]
-    fn it_returns_the_last_n_points_for_the_timeframe() {
-      let mut state = State::new();
-      state.net_worth_series = (0..100).map(|i| nw_point("2026-06-01", i as f64)).collect();
-      state.timeframe = Timeframe::Week;
-
-      let sliced = super::sliced_series(&state);
-
-      assert_eq!(sliced.len(), 7);
-      assert_eq!(sliced[0].net_worth, 93.0);
-      assert_eq!(sliced[6].net_worth, 99.0);
+    fn day(date: &str) -> NaiveDate {
+      NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
     }
 
     #[test]
-    fn it_returns_the_whole_series_when_shorter_than_the_timeframe() {
+    fn it_keeps_only_points_within_the_timeframe_window() {
+      let mut state = State::new();
+      state.net_worth_series = (1..=20)
+        .map(|d| nw_point(&format!("2026-06-{d:02}"), d as f64))
+        .collect();
+      state.timeframe = Timeframe::Week;
+
+      let sliced = super::sliced_series(&state, day("2026-06-20"));
+
+      assert_eq!(sliced.len(), 7);
+      assert_eq!(sliced[0].net_worth, 14.0);
+      assert_eq!(sliced[6].net_worth, 20.0);
+    }
+
+    #[test]
+    fn it_returns_the_whole_series_when_it_fits_inside_the_window() {
       let mut state = State::new();
       state.net_worth_series = vec![nw_point("2026-06-01", 1.0), nw_point("2026-06-02", 2.0)];
       state.timeframe = Timeframe::Year;
 
-      assert_eq!(super::sliced_series(&state).len(), 2);
+      assert_eq!(super::sliced_series(&state, day("2026-06-02")).len(), 2);
+    }
+
+    #[test]
+    fn it_does_not_widen_the_window_when_points_are_sparse() {
+      let mut state = State::new();
+      state.net_worth_series = vec![
+        nw_point("2026-01-01", 1.0),
+        nw_point("2026-05-30", 2.0),
+        nw_point("2026-06-09", 3.0),
+      ];
+      state.timeframe = Timeframe::Week;
+
+      let sliced = super::sliced_series(&state, day("2026-06-09"));
+
+      assert_eq!(sliced.len(), 1);
+      assert_eq!(sliced[0].net_worth, 3.0);
     }
   }
 

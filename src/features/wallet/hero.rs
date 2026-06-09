@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme,
   alignment::{Horizontal, Vertical},
@@ -17,6 +18,7 @@ const PLOT_PAD_BOTTOM: f32 = 24.0;
 const AXIS_LABEL_SIZE: f32 = 9.0;
 const BAR_HEIGHT: f32 = 6.0;
 const COMPOSITION_CHIP_WIDTH: f32 = 130.0;
+const HOVER_DASH: [f32; 2] = [3.0, 3.0];
 
 struct Chart<'a> {
   hover: Option<f32>,
@@ -107,6 +109,57 @@ impl Chart<'_> {
     frame.stroke(&line, canvas::Stroke::default().with_width(2.0).with_color(line_color));
   }
 
+  fn draw_liquid(&self, frame: &mut canvas::Frame, width: f32, height: f32, range: (f64, f64)) {
+    if !self.has_liquid() {
+      return;
+    }
+    let baseline = height - PLOT_PAD_BOTTOM;
+
+    let fill = canvas::Path::new(|builder| {
+      builder.move_to(Point::new(self.x_at(0, width), baseline));
+      for (i, point) in self.points.iter().enumerate() {
+        builder.line_to(Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range)));
+      }
+      builder.line_to(Point::new(self.x_at(self.points.len() - 1, width), baseline));
+      builder.close();
+    });
+    frame.fill(
+      &fill,
+      canvas::gradient::Linear::new(Point::new(0.0, PLOT_PAD_TOP), Point::new(0.0, baseline))
+        .add_stop(0.0, color::with_alpha(color::accent::PLASMA, 0.2))
+        .add_stop(1.0, color::with_alpha(color::accent::PLASMA, 0.0)),
+    );
+
+    let line = canvas::Path::new(|builder| {
+      for (i, point) in self.points.iter().enumerate() {
+        let p = Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range));
+        if i == 0 {
+          builder.move_to(p);
+        } else {
+          builder.line_to(p);
+        }
+      }
+    });
+    frame.stroke(
+      &line,
+      canvas::Stroke::default()
+        .with_width(1.75)
+        .with_color(color::with_alpha(color::accent::PLASMA, 0.92)),
+    );
+
+    let last = self.points.len() - 1;
+    frame.fill(
+      &canvas::Path::circle(
+        Point::new(
+          self.x_at(last, width),
+          self.y_at(self.points[last].liquid, height, range),
+        ),
+        3.5,
+      ),
+      color::accent::PLASMA,
+    );
+  }
+
   fn draw_marker(&self, frame: &mut canvas::Frame, width: f32, height: f32, range: (f64, f64), line_color: Color) {
     let idx = self.marker_index();
     let x = self.x_at(idx, width);
@@ -115,12 +168,24 @@ impl Chart<'_> {
     if self.hovered().is_some() {
       frame.stroke(
         &canvas::Path::line(Point::new(x, PLOT_PAD_TOP), Point::new(x, height - PLOT_PAD_BOTTOM)),
-        canvas::Stroke::default()
-          .with_width(1.0)
-          .with_color(color::with_alpha(line_color, 0.6)),
+        canvas::Stroke {
+          line_dash: canvas::LineDash {
+            segments: &HOVER_DASH,
+            offset: 0,
+          },
+          ..canvas::Stroke::default()
+            .with_width(1.0)
+            .with_color(color::with_alpha(line_color, 0.6))
+        },
       );
+      frame.fill(&canvas::Path::circle(Point::new(x, y), 5.0), color::surface::BASE);
+      frame.stroke(
+        &canvas::Path::circle(Point::new(x, y), 5.0),
+        canvas::Stroke::default().with_width(2.0).with_color(line_color),
+      );
+    } else {
+      frame.fill(&canvas::Path::circle(Point::new(x, y), 4.0), line_color);
     }
-    frame.fill(&canvas::Path::circle(Point::new(x, y), 4.0), line_color);
   }
 
   fn draw_tooltip(&self, frame: &mut canvas::Frame, width: f32, height: f32, range: (f64, f64)) {
@@ -135,16 +200,20 @@ impl Chart<'_> {
     let value = format!("{} ISK", fmt_isk(Some(point.net_worth)));
 
     let delta = (idx > 0).then(|| point.net_worth - self.points[idx - 1].net_worth);
+    let liquid = self.has_liquid().then_some(point.liquid);
 
     let card_w = 150.0_f32;
-    let card_h = tooltip_card_height(delta.is_some());
+    let card_h = tooltip_card_height(liquid.is_some(), delta.is_some());
     let card_x = (x + 12.0).min(width - card_w).max(0.0);
     let card_y = (y - card_h - 12.0).max(PLOT_PAD_TOP);
 
-    frame.fill_rectangle(
-      Point::new(card_x, card_y),
-      iced::Size::new(card_w, card_h),
-      color::surface::RAISED,
+    let card = canvas::Path::rounded_rectangle(Point::new(card_x, card_y), iced::Size::new(card_w, card_h), 6.0.into());
+    frame.fill(&card, color::surface::RAISED);
+    frame.stroke(
+      &card,
+      canvas::Stroke::default()
+        .with_width(1.0)
+        .with_color(color::with_alpha(color::text::PRIMARY, 0.18)),
     );
 
     frame.fill_text(canvas::Text {
@@ -163,17 +232,46 @@ impl Chart<'_> {
       font: typography::mono::MEDIUM,
       ..canvas::Text::default()
     });
+    let mut row_y = card_y + 38.0;
+    if let Some(liquid) = liquid {
+      frame.fill(
+        &canvas::Path::circle(Point::new(card_x + 13.0, row_y + 4.0), 3.0),
+        color::accent::PLASMA,
+      );
+      frame.fill_text(canvas::Text {
+        content: "Liquid".to_owned(),
+        position: Point::new(card_x + 22.0, row_y),
+        color: color::text::SECONDARY,
+        size: 9.0.into(),
+        font: typography::mono::REGULAR,
+        ..canvas::Text::default()
+      });
+      frame.fill_text(canvas::Text {
+        content: fmt_isk(Some(liquid)),
+        position: Point::new(card_x + card_w - 10.0, row_y),
+        color: color::accent::PLASMA,
+        size: 10.0.into(),
+        font: typography::mono::REGULAR,
+        align_x: Horizontal::Right.into(),
+        ..canvas::Text::default()
+      });
+      row_y += 16.0;
+    }
     if let Some(delta) = delta {
       let (sign, delta_color) = delta_style(delta);
       frame.fill_text(canvas::Text {
         content: format!("{sign}{} ISK", fmt_isk(Some(delta.abs()))),
-        position: Point::new(card_x + 10.0, card_y + 38.0),
+        position: Point::new(card_x + 10.0, row_y),
         color: delta_color,
         size: 10.0.into(),
         font: typography::mono::REGULAR,
         ..canvas::Text::default()
       });
     }
+  }
+
+  fn has_liquid(&self) -> bool {
+    self.points.iter().any(|point| point.liquid != 0.0)
   }
 
   fn hovered(&self) -> Option<usize> {
@@ -269,6 +367,7 @@ impl canvas::Program<Message> for Chart<'_> {
 
     self.draw_gridlines(&mut frame, width, height, range);
     self.draw_area(&mut frame, width, height, range, line_color);
+    self.draw_liquid(&mut frame, width, height, range);
     self.draw_line(&mut frame, width, height, range, line_color);
     self.draw_marker(&mut frame, width, height, range, line_color);
     self.draw_axis_labels(&mut frame, width, height);
@@ -286,8 +385,8 @@ impl canvas::Program<Message> for Chart<'_> {
   }
 }
 
-pub(super) fn hero(state: &State) -> Element<'_, Message> {
-  let sliced = super::sliced_series(state);
+pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  let sliced = super::sliced_series(state, now.date_naive());
   let current = super::series_current(sliced);
   let change = super::series_change(sliced);
   let composition = super::scope_composition(state);
@@ -641,8 +740,15 @@ fn delta_style(delta: f64) -> (&'static str, Color) {
   }
 }
 
-fn tooltip_card_height(has_delta: bool) -> f32 {
-  if has_delta { 54.0 } else { 40.0 }
+fn tooltip_card_height(has_liquid: bool, has_delta: bool) -> f32 {
+  let mut height = 40.0;
+  if has_liquid {
+    height += 16.0;
+  }
+  if has_delta {
+    height += 16.0;
+  }
+  height
 }
 
 fn tick_alignment(tick: usize) -> Horizontal {
@@ -678,6 +784,15 @@ mod tests {
   fn point(net_worth: f64) -> NetWorthPoint {
     NetWorthPoint {
       date: "2026-06-01".to_owned(),
+      liquid: 0.0,
+      net_worth,
+    }
+  }
+
+  fn liquid_point(net_worth: f64, liquid: f64) -> NetWorthPoint {
+    NetWorthPoint {
+      date: "2026-06-01".to_owned(),
+      liquid,
       net_worth,
     }
   }
@@ -736,9 +851,37 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn it_is_taller_when_a_delta_line_is_present() {
-      assert_eq!(super::tooltip_card_height(true), 54.0);
-      assert_eq!(super::tooltip_card_height(false), 40.0);
+    fn it_grows_a_row_for_the_liquid_and_delta_lines() {
+      assert_eq!(super::tooltip_card_height(false, false), 40.0);
+      assert_eq!(super::tooltip_card_height(false, true), 56.0);
+      assert_eq!(super::tooltip_card_height(true, false), 56.0);
+      assert_eq!(super::tooltip_card_height(true, true), 72.0);
+    }
+  }
+
+  mod has_liquid {
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_every_point_has_zero_liquid() {
+      let points = [point(100.0), point(200.0)];
+      let chart = Chart {
+        hover: None,
+        points: &points,
+      };
+
+      assert!(!chart.has_liquid());
+    }
+
+    #[test]
+    fn it_is_true_when_any_point_has_liquid() {
+      let points = [liquid_point(100.0, 0.0), liquid_point(200.0, 25.0)];
+      let chart = Chart {
+        hover: None,
+        points: &points,
+      };
+
+      assert!(chart.has_liquid());
     }
   }
 

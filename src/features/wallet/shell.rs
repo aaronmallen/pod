@@ -34,7 +34,7 @@ const JOURNAL_RIGHT_COL_WIDTH: f32 = 120.0;
 const RECENT_ACTIVITY_LIMIT: usize = 8;
 
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let body = Column::with_children(vec![header::header(state), self::body(state, now)])
+  let body = Column::with_children(vec![header::header(state, now), self::body(state, now)])
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -75,7 +75,7 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  Column::with_children(vec![super::hero::hero(state), panes.into()])
+  Column::with_children(vec![super::hero::hero(state, now), panes.into()])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()

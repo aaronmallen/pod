@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use iced::Element;
 
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
@@ -15,10 +16,10 @@ use crate::{
   },
 };
 
-pub(super) fn header(state: &State) -> Element<'_, Message> {
+pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let liquid = super::scope_liquid(state);
 
-  let sliced = super::sliced_series(state);
+  let sliced = super::sliced_series(state, now.date_naive());
   let net_worth = super::series_current(sliced).or(liquid);
   let change = super::series_change(sliced);
   let change_color = if change >= 0.0 {
@@ -185,6 +186,12 @@ mod tests {
     }
   }
 
+  fn now() -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339("2026-06-09T00:00:00Z")
+      .unwrap()
+      .with_timezone(&Utc)
+  }
+
   mod header {
     use super::*;
 
@@ -193,7 +200,7 @@ mod tests {
       let mut state = State::new();
       state.roster = vec![pilot(1), pilot(2)];
 
-      let _el: Element<'_, Message> = header(&state);
+      let _el: Element<'_, Message> = header(&state, now());
     }
   }
 

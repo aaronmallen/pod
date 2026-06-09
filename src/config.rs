@@ -227,7 +227,6 @@ impl StorageConfig {
     self.log_dir.clone().unwrap_or_else(log_dir)
   }
 
-  #[allow(dead_code)]
   pub fn resolved_working_copy_path(&self) -> PathBuf {
     self
       .resolved_cache_dir()
@@ -235,7 +234,6 @@ impl StorageConfig {
       .join(WORKING_COPY_DB_NAME)
   }
 
-  #[allow(dead_code)]
   pub fn storage_mode(&self) -> StorageMode {
     self.storage_mode_with(fs_kind::detect)
   }

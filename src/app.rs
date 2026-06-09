@@ -523,8 +523,9 @@ async fn run_open_store(mut tx: Tx) {
 
 async fn open_store_inner() -> Result<StoreReady, String> {
   let settings = config::load().map_err(|error| error.to_string())?;
-  run_migration_guard(&settings);
-  let db = open_database(&settings).await?;
+  let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(|error| error.to_string())?;
+  run_migration_guard(&settings, &database_path);
+  let db = store::open(&database_path).await.map_err(|error| error.to_string())?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {
     db,
@@ -533,27 +534,15 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   })
 }
 
-fn run_migration_guard(settings: &config::Settings) {
-  let storage = settings.storage();
+fn run_migration_guard(settings: &config::Settings, database_path: &std::path::Path) {
   store::migration_guard::MigrationGuard::new(
-    storage.resolved_cache_dir(),
-    storage.resolved_database_path(),
+    settings.storage().resolved_cache_dir(),
+    database_path.to_path_buf(),
     splash::seed::sde_version_path(),
     window_state::state_path(),
     config::config_file_path(),
   )
   .run();
-}
-
-async fn open_database(settings: &config::Settings) -> Result<store::Database, String> {
-  let storage = settings.storage();
-  let database_path = storage.resolved_database_path();
-  if let Some(parent) = database_path.parent() {
-    std::fs::create_dir_all(parent).map_err(|error| format!("create data directory: {error}"))?;
-  }
-  store::open(&database_path, *storage.network())
-    .await
-    .map_err(|error| error.to_string())
 }
 
 fn build_runtime(ready: StoreReady) -> Task<Message> {
@@ -3391,16 +3380,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_opens_the_database_under_the_configured_directory() {
+    async fn it_opens_the_database_under_the_configured_directory_in_place() {
       let dir = tempfile::tempdir().expect("temp dir");
       let mut settings = config::Settings::default();
-      settings.storage_mut().set_db_dir(Some(dir.path().join("nested")));
+      let configured = dir.path().join("nested");
+      settings.storage_mut().set_db_dir(Some(configured.clone()));
+      settings.storage_mut().set_cache_dir(Some(dir.path().join("cache")));
 
-      let db = open_database(&settings).await.expect("the database opens");
+      let path = store::bootstrap::resolve_local_path(settings.storage()).expect("the path resolves");
+      let db = store::open(&path).await.expect("the database opens");
       drop(db);
+
+      assert_eq!(path, configured.join("pod.db"), "direct mode opens in place");
       assert!(
-        dir.path().join("nested").join("pod.db").exists(),
+        configured.join("pod.db").exists(),
         "the db file lands under the configured directory"
+      );
+      assert!(
+        !settings.storage().resolved_working_copy_path().exists(),
+        "a local path creates no working copy"
       );
     }
   }

@@ -6,6 +6,7 @@ use sqlx::{
 };
 
 pub mod asset_filter;
+pub mod bootstrap;
 pub mod fs_kind;
 pub mod images;
 pub mod lease;
@@ -29,23 +30,17 @@ pub enum Error {
   Sqlx(#[from] sqlx::Error),
 }
 
-pub async fn open(path: &Path, network: bool) -> Result<Database, Error> {
-  let journal_mode = if network {
-    SqliteJournalMode::Delete
-  } else {
-    SqliteJournalMode::Wal
-  };
-
+pub async fn open(path: &Path) -> Result<Database, Error> {
   let options = SqliteConnectOptions::new()
     .filename(path)
     .create_if_missing(true)
     .foreign_keys(true)
-    .journal_mode(journal_mode)
+    .journal_mode(SqliteJournalMode::Wal)
     // A 2MB default page cache forces the large seed transactions to spill
-    // dirty pages mid-flight; on a network drive each spill is many slow,
-    // synchronous writes. A 256MB cache keeps the seed in memory and flushes
-    // once at commit. NORMAL synchronous and an in-memory temp store cut the
-    // remaining fsync round-trips. See store::open tests for the assertions.
+    // dirty pages mid-flight, each a slow synchronous write. A 256MB cache
+    // keeps the seed in memory and flushes once at commit. NORMAL synchronous
+    // and an in-memory temp store cut the remaining fsync round-trips. See
+    // store::open tests for the assertions.
     .synchronous(SqliteSynchronous::Normal)
     .pragma("cache_size", "-262144")
     .pragma("temp_store", "MEMORY")
@@ -89,7 +84,7 @@ mod tests {
       let path = dir.path().join("test.db");
 
       assert!(!path.exists());
-      open(&path, false).await.unwrap();
+      open(&path).await.unwrap();
 
       assert!(path.exists());
     }
@@ -99,31 +94,16 @@ mod tests {
       let dir = tempdir().unwrap();
       let path = dir.path().join("test.db");
 
-      open(&path, false).await.unwrap();
-      open(&path, false).await.unwrap();
+      open(&path).await.unwrap();
+      open(&path).await.unwrap();
     }
 
     #[tokio::test]
-    async fn it_sets_delete_journal_mode_for_network_drives() {
+    async fn it_always_opens_in_wal_mode() {
       let dir = tempdir().unwrap();
       let path = dir.path().join("test.db");
 
-      let db = open(&path, true).await.unwrap();
-
-      let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-
-      assert_eq!(mode, "delete");
-    }
-
-    #[tokio::test]
-    async fn it_sets_wal_journal_mode_for_local_drives() {
-      let dir = tempdir().unwrap();
-      let path = dir.path().join("test.db");
-
-      let db = open(&path, false).await.unwrap();
+      let db = open(&path).await.unwrap();
 
       let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
         .fetch_one(&db.0)
@@ -138,7 +118,7 @@ mod tests {
       let dir = tempdir().unwrap();
       let path = dir.path().join("test.db");
 
-      let db = open(&path, true).await.unwrap();
+      let db = open(&path).await.unwrap();
 
       let cache_size: i64 = sqlx::query_scalar("PRAGMA cache_size").fetch_one(&db.0).await.unwrap();
       let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous").fetch_one(&db.0).await.unwrap();

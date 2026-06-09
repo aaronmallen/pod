@@ -628,7 +628,7 @@ fn enabled_features(app: &App) -> Vec<config::Feature> {
 
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
-    Some(Window::Main) => {
+    Some(Window::Main | Window::Splash) => {
       tracing::info!(target: "pod::lifecycle", "shutting down");
       iced::exit()
     }

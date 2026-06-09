@@ -18,6 +18,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 - The in-app update notification works again — it was unintentionally turned off in 0.5.0, so 0.5.0 and 0.5.1 never
   checked for or offered new versions. Once you're on 0.5.2 you'll be notified about future updates as usual.
+- Closing the startup splash screen now fully quits Pod. Previously it could leave a hidden background process running,
+  which stopped the app from reopening until that process was killed manually.
 
 ## [0.5.1]
 

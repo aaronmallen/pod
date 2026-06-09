@@ -37,7 +37,7 @@ objc2-foundation = { features = [
 ], version = "0.3" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 
 [dependencies]
 base64 = "0.22"

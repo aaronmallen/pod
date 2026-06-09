@@ -1823,8 +1823,10 @@ async fn insert_character_asset(
   tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
   asset: &CharacterAsset,
 ) -> Result<(), Error> {
+  // OR REPLACE evicts any row already holding this item_id under a different owner: item_id is a
+  // global PK, and the upstream per-owner DELETE cannot clear the sending alt's stale snapshot.
   sqlx::query(
-    "INSERT INTO character_assets \
+    "INSERT OR REPLACE INTO character_assets \
       (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_singleton, \
       is_blueprint_copy, is_active_ship, ship_name, container_id, depth, is_container) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1852,8 +1854,10 @@ async fn insert_corporation_asset(
   tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
   asset: &CorporationAsset,
 ) -> Result<(), Error> {
+  // OR REPLACE evicts any row already holding this item_id under a different corporation: item_id is
+  // a global PK, and the upstream per-owner DELETE cannot clear the losing corp's stale snapshot.
   sqlx::query(
-    "INSERT INTO corporation_assets \
+    "INSERT OR REPLACE INTO corporation_assets \
       (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity, is_singleton, \
       is_blueprint_copy, container_id, depth, is_container) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -3161,6 +3165,40 @@ mod asset_tests {
     }
 
     #[tokio::test]
+    async fn it_reclaims_an_item_id_held_by_another_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
+        .await
+        .unwrap();
+
+      replace_for_character(&db, 43, &[char_asset(100, 43, None)])
+        .await
+        .unwrap();
+
+      assert!(for_character(&db, 42).await.unwrap().is_empty());
+      let rows = for_character(&db, 43).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 100);
+      assert_eq!(count_for_character(&db, 42).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_crash_on_an_item_id_duplicated_within_one_batch() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(100, 42, None)])
+        .await
+        .unwrap();
+
+      let rows = for_character(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 100);
+    }
+
+    #[tokio::test]
     async fn it_upserts_a_single_row_in_place() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -3283,6 +3321,39 @@ mod asset_tests {
       );
       assert_eq!(roots.iter().map(CorporationAsset::item_id).collect::<Vec<_>>(), [100]);
       assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_reclaims_an_item_id_held_by_another_corporation() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let other_corp = 98_000_002;
+      let mut corp = Corporation::new(other_corp, "Other Corp", "OTC");
+      corp.set_ceo_id(42);
+      corp.set_creator_id(42);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(&db, &corp).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+        .await
+        .unwrap();
+
+      replace_for_corporation(&db, other_corp, &[corp_asset(100, other_corp, None)])
+        .await
+        .unwrap();
+
+      let owner = sqlx::query_scalar::<_, i64>("SELECT corporation_id FROM corporation_assets WHERE item_id = ?")
+        .bind(100_i64)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_assets WHERE item_id = ?")
+        .bind(100_i64)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(owner, other_corp);
+      assert_eq!(total, 1);
     }
 
     #[tokio::test]

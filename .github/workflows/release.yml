@@ -254,13 +254,16 @@ jobs:
             echo "::error::rendered installer.nsi not found; cannot verify the deep-link handler"
             exit 1
           fi
-          # installer.nsi is UTF-16LE; strip the null bytes to inspect the ASCII content.
-          text="$(tr -d '\0' < "$nsi")"
+          # installer.nsi is UTF-16LE with a BOM; decode it to UTF-8 so grep can
+          # inspect it. `tr -d '\0'` is not portable for this: in a UTF-8 locale
+          # tr/grep treat the raw UTF-16 bytes as invalid multibyte input and
+          # match nothing, which made this check spuriously fail on the runner.
+          text="$(iconv -f UTF-16 -t UTF-8 "$nsi")"
           printf '%s' "$text" | grep -qi 'eveauth-pod' \
             || { echo "::error::NSIS installer does not register the eveauth-pod scheme"; exit 1; }
           printf '%s\n' "$text" | grep -i 'eveauth-pod' | grep -q '%1' \
             || { echo "::error::NSIS eveauth-pod command is missing the %1 URL placeholder"; exit 1; }
-          if printf '%s' "$text" | grep -q '${BUNDLEID}'; then
+          if printf '%s' "$text" | grep -qF '${BUNDLEID}'; then
             echo "::warning::NSIS protocol description renders a literal \${BUNDLEID} (cargo-packager template limitation; the runtime HKCU self-registration overrides it per-user)"
           fi
           echo "NSIS deep-link handler verified: eveauth-pod registered with a \"%1\" command"

@@ -11,6 +11,7 @@ pub mod migration_guard;
 pub mod model;
 pub mod repo;
 pub mod search;
+pub mod share_meta;
 
 #[derive(Clone, Debug)]
 pub struct Database(pub SqlitePool);

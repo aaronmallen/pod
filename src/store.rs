@@ -8,6 +8,7 @@ use sqlx::{
 pub mod asset_filter;
 pub mod fs_kind;
 pub mod images;
+pub mod lease;
 pub mod migration_guard;
 pub mod model;
 pub mod repo;

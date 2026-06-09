@@ -1,4 +1,3 @@
-use super::deep_link;
 use crate::{
   clients::{
     self, esi,
@@ -28,7 +27,7 @@ pub struct SignedIn {
 }
 
 pub fn redirect_uri() -> String {
-  format!("{}://callback", deep_link::SCHEME)
+  "https://pod.aaronmallen.dev/auth/callback/".to_owned()
 }
 
 pub async fn complete_add_corporation(
@@ -148,6 +147,17 @@ mod tests {
       encode(r#"{"alg":"RS256","typ":"JWT"}"#),
       encode(&format!(r#"{{"sub":"{sub}","name":"Test Pilot","scp":[]}}"#)),
     )
+  }
+
+  mod redirect_uri {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_static_https_bounce_url() {
+      assert_eq!(redirect_uri(), "https://pod.aaronmallen.dev/auth/callback/");
+    }
   }
 
   mod parse_callback {

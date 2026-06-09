@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="referrer" content="no-referrer" />
+<title>Pod · Finishing sign-in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:       #15171B;
+    --paper-raised:#1B1E23;
+    --paper-sunk:  #0E0F12;
+    --rail:        #0A0B0E;
+    --ink:         #F4F2EC;
+    --muted:       rgba(244,242,236,0.55);
+    --very-muted:  rgba(244,242,236,0.35);
+    --rule:        rgba(244,242,236,0.10);
+    --rule-strong: rgba(244,242,236,0.18);
+    --plasma:      #3FB8DB;
+    --plasma-soft: rgba(63,184,219,0.12);
+    --plasma-ink:  #0A1B22;
+    --success:     #5BB97E;
+    --warning:     #D9B252;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "Space Grotesk", sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
+  .stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stage::before {
+    content: "";
+    position: absolute;
+    width: 720px; height: 720px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -58%);
+    background: radial-gradient(circle, rgba(63,184,219,0.10) 0%, rgba(63,184,219,0.0) 60%);
+    pointer-events: none;
+  }
+
+  .card {
+    position: relative;
+    width: 100%;
+    max-width: 470px;
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.4);
+    padding: 44px 44px 36px;
+    text-align: center;
+    /* Reveal driven by JS class so cloned/screenshot captures land on the visible end-state, not the hidden frame. */
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 520ms cubic-bezier(0.16,0.84,0.32,1),
+                transform 520ms cubic-bezier(0.16,0.84,0.32,1);
+  }
+  .card.in { opacity: 1; transform: translateY(0); }
+
+  .mark { display: block; margin: 0 auto; }
+  .mark .pip { transition: fill 240ms ease; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 26px 0 0;
+  }
+
+  h1 {
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 500;
+    font-size: 27px;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+    margin: 12px 0 0;
+    color: var(--ink);
+  }
+
+  .lede {
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 14px auto 0;
+    max-width: 360px;
+    text-wrap: pretty;
+  }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  /* primary action */
+  .actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin: 30px 0 0;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-width: 200px;
+    padding: 13px 24px;
+    border-radius: 9px;
+    border: 1px solid var(--plasma);
+    background: var(--plasma);
+    color: var(--plasma-ink);
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 14.5px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: filter 140ms ease, transform 80ms ease, box-shadow 160ms ease;
+    box-shadow: 0 0 0 4px rgba(63,184,219,0.08);
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: translateY(1px); }
+  .btn svg { display: block; }
+
+  /* secondary / failure affordance */
+  .fallback {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .fallback a {
+    color: var(--plasma);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(63,184,219,0.35);
+    padding-bottom: 1px;
+  }
+  .fallback a:hover { border-bottom-color: var(--plasma); }
+
+  /* trust note */
+  .trust {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    margin: 30px auto 0;
+    padding-top: 22px;
+    max-width: 360px;
+    border-top: 1px solid var(--rule);
+    text-align: left;
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--very-muted);
+  }
+  .trust svg { flex-shrink: 0; margin-top: 1px; color: var(--muted); }
+  .trust strong { color: var(--muted); font-weight: 500; }
+
+  /* status bar */
+  .statusbar {
+    height: 30px;
+    flex-shrink: 0;
+    background: var(--rail);
+    border-top: 1px solid rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(244,242,236,0.55);
+  }
+  .statusbar .cell {
+    padding: 0 14px;
+    height: 100%;
+    display: flex; align-items: center; gap: 8px;
+    border-right: 1px solid var(--rule);
+  }
+  .statusbar .key { color: rgba(244,242,236,0.35); }
+  .statusbar .val { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+  .statusbar .spacer { flex: 1; }
+  .statusbar .cell.end { border-right: 0; border-left: 1px solid var(--rule); }
+  .statusbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--plasma); }
+
+  /* state: declined */
+  body[data-state="declined"] .stage::before { background: radial-gradient(circle, rgba(217,178,82,0.08) 0%, rgba(217,178,82,0) 60%); }
+  body[data-state="declined"] .mark .pip { fill: var(--warning); }
+  body[data-state="declined"] .btn { border-color: var(--rule-strong); background: transparent; color: var(--ink); box-shadow: none; }
+  body[data-state="declined"] .btn:hover { background: rgba(244,242,236,0.04); border-color: var(--ink); filter: none; }
+  body[data-state="declined"] .statusbar .end-dot { background: var(--warning); }
+
+  @media (max-width: 520px) {
+    .card { padding: 36px 26px 30px; }
+    h1 { font-size: 23px; }
+    .statusbar .cell.mid { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card { transition: none; }
+  }
+</style>
+</head>
+<body data-state="finishing">
+  <main class="stage">
+    <div class="card" id="card">
+      <!-- Pod mark -->
+      <svg class="mark" width="46" height="46" viewBox="0 0 200 200" aria-hidden="true">
+        <line x1="42" y1="100" x2="42" y2="192" stroke="#F4F2EC" stroke-width="18" stroke-linecap="round"></line>
+        <line x1="158" y1="8" x2="158" y2="100" stroke="#F4F2EC" stroke-width="18" stroke-linecap="round"></line>
+        <circle cx="100" cy="100" r="58" fill="none" stroke="#F4F2EC" stroke-width="18"></circle>
+        <circle class="pip" cx="100" cy="100" r="10" fill="#0091B8"></circle>
+      </svg>
+
+      <p class="eyebrow" id="eyebrow">Pod · Authentication</p>
+      <h1 id="title">Almost there</h1>
+      <p class="lede" id="lede">Handing your sign-in back to Pod. If the app didn't come to the front, use the button below.</p>
+
+      <div class="actions">
+        <a class="btn" id="action" href="#">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M 12 4 L 20 8 L 20 16 L 12 20 L 4 16 L 4 8 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M 4 8 L 12 12 L 20 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <line x1="12" y1="12" x2="12" y2="20" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          <span id="action-label">Open Pod</span>
+        </a>
+        <p class="fallback" id="fallback"><span id="fallback-text">Pod didn't open?</span> <a href="#" id="retry">Try the handoff again</a></p>
+      </div>
+
+      <div class="trust">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M 12 3 L 19 6 L 19 11 C 19 16 16 19.5 12 21 C 8 19.5 5 16 5 11 L 5 6 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <span id="trust">Pod authenticates directly with <strong>EVE Online</strong>. This page only relays the handoff — it never sees your tokens.</span>
+      </div>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <div class="cell">
+      <span class="key">EVE</span>
+      <span class="val" id="eve-clock">--:--:--</span>
+    </div>
+    <div class="cell mid">
+      <span class="dot"></span>
+      <span>SSO · Callback</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="cell end">
+      <span class="dot end-dot"></span>
+      <span id="status-label">Returning to Pod</span>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      // ── EVE clock (UTC) ───────────────────────────────────────
+      var clock = document.getElementById('eve-clock');
+      function pad(n) { return String(n).padStart(2, '0'); }
+      function tick() {
+        var d = new Date();
+        clock.textContent = pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+      }
+      tick();
+      setInterval(tick, 1000);
+
+      // ── Reveal (class-driven so DOM-clone captures stay visible) ─
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          document.getElementById('card').classList.add('in');
+        });
+      });
+
+      // ── Build the handoff target ──────────────────────────────
+      // Forward the ENTIRE original query (code+state, or error+state)
+      // back to the desktop app over its registered scheme. PKCE means
+      // the authorization code is useless without the app's verifier,
+      // so relaying it through this page is safe.
+      var query = window.location.search || '';
+      var params = new URLSearchParams(query);
+      var declined = params.has('error') && !params.has('code');
+      var target = 'eveauth-pod://callback' + query;
+
+      var action = document.getElementById('action');
+      var retry = document.getElementById('retry');
+      action.setAttribute('href', target);
+      retry.setAttribute('href', target);
+
+      // ── Declined / cancelled path ─────────────────────────────
+      // EVE sent an error instead of a code. Reframe the page honestly,
+      // but still forward so the app observes the denial and can reset.
+      if (declined) {
+        document.body.setAttribute('data-state', 'declined');
+        document.getElementById('title').textContent = 'Sign-in cancelled';
+        document.getElementById('lede').textContent =
+          'The authorization wasn’t completed. Pod has been told to stand down — you can close this tab, or head back to the app to try again.';
+        document.getElementById('action-label').textContent = 'Return to Pod';
+        document.getElementById('fallback-text').textContent = 'Nothing happened?';
+        retry.textContent = 'Notify Pod again';
+        document.getElementById('status-label').textContent = 'Cancelled';
+      }
+
+      // ── Fire-and-forget auto handoff ──────────────────────────
+      // Custom-scheme navigation is unobservable: the browser never tells
+      // us whether the app caught it. So we attempt it once, then rest on
+      // the action button as the durable fallback. We never claim success.
+      var fired = false;
+      function handoff() {
+        if (fired) return;
+        fired = true;
+        try { window.location.href = target; } catch (e) {}
+        // Allow a manual retry shortly after the auto-attempt.
+        setTimeout(function () { fired = false; }, 1200);
+      }
+
+      // Re-arm on explicit user action (works even where auto-nav is blocked).
+      action.addEventListener('click', function () { fired = false; });
+      retry.addEventListener('click', function (e) {
+        e.preventDefault();
+        fired = false;
+        handoff();
+      });
+
+      // Auto-attempt once on load, just after first paint.
+      setTimeout(handoff, 400);
+    })();
+  </script>
+</body>
+</html>

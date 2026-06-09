@@ -20,6 +20,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
   checked for or offered new versions. Once you're on 0.5.2 you'll be notified about future updates as usual.
 - Closing the startup splash screen now fully quits Pod. Previously it could leave a hidden background process running,
   which stopped the app from reopening until that process was killed manually.
+- After signing in through your browser, the tab no longer sits spinning on EVE's login page — it now lands on a short
+  Pod page that hands you back to the app, with an "Open Pod" button if it doesn't switch over automatically.
 
 ## [0.5.1]
 

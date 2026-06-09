@@ -3,7 +3,7 @@ mod windows;
 
 use std::{
   sync::Arc,
-  time::{Duration, Instant},
+  time::{Duration, Instant, SystemTime},
 };
 
 use chrono::{DateTime, Utc};
@@ -73,6 +73,7 @@ const POPOVER_JOBS: [(JobKind, &str); 7] = [
   (JobKind::CharacterTelemetry, "Telemetry"),
   (JobKind::CharacterWallet, "Wallet"),
 ];
+const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
@@ -99,12 +100,14 @@ struct App {
   editor: Option<(window::Id, skill_plan_editor::State)>,
   esi_connected: bool,
   init_error: Option<String>,
+  last_push: Option<SystemTime>,
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
   pending_auth: Option<auth::Message>,
+  read_only: Option<HolderInfo>,
   route: Route,
   runtime: Option<Runtime>,
   sde_stale: bool,
@@ -116,6 +119,7 @@ struct App {
   store_ready: Option<StoreReady>,
   status: sync::SyncStatus,
   sync_popover_open: bool,
+  sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
   ui_state: UiState,
   updater: Option<updater::Handle>,
@@ -123,6 +127,29 @@ struct App {
   updater_toast_dismissed: bool,
   wallet: Option<wallet::State>,
   windows: Windows,
+}
+
+/// Identifies the machine that currently holds the storage lease, surfaced when this instance opens
+/// the share read-only. The read-only banner that consumes it lands in a follow-up task.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HolderInfo {
+  hostname: String,
+  machine_id: String,
+}
+
+impl From<store::lease::Outcome> for Option<HolderInfo> {
+  fn from(outcome: store::lease::Outcome) -> Self {
+    match outcome {
+      store::lease::Outcome::Acquired => None,
+      store::lease::Outcome::HeldBy {
+        hostname,
+        machine_id,
+      } => Some(HolderInfo {
+        hostname,
+        machine_id,
+      }),
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -153,11 +180,14 @@ enum Message {
   Compare(skills_compare::Message),
   FocusMainWindow,
   InitFailed(String),
+  LeaseHeartbeat,
   Mail(mail::Message),
   MailUnreadCounted(i64),
   Menu(menu::MenuAction),
   Nav(rail::Destination),
   OpenAbout,
+  PeriodicPush,
+  Pushed(Option<SystemTime>),
   Ready(Runtime),
   ReauthCharacter(i64),
   SeedProgress(splash::seed::Progress),
@@ -166,7 +196,7 @@ enum Message {
   Skills(skills::Message),
   SnoozesWoken(Vec<(i64, i64)>),
   Splash(splash::Message),
-  StoreOpened(StoreReady),
+  StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
   SyncPulse,
   ToggleSyncPopover,
@@ -213,7 +243,10 @@ impl Message {
       Message::CloseSyncPopover => "CloseSyncPopover",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::InitFailed(_) => "InitFailed",
+      Message::LeaseHeartbeat => "LeaseHeartbeat",
       Message::OpenAbout => "OpenAbout",
+      Message::PeriodicPush => "PeriodicPush",
+      Message::Pushed(_) => "Pushed",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
       Message::SeedProgress(_) => "SeedProgress",
@@ -309,7 +342,9 @@ impl std::fmt::Debug for Runtime {
 struct StoreReady {
   db: store::Database,
   http: Arc<http::Client>,
+  lease: Option<HolderInfo>,
   settings: config::Settings,
+  sync_session: Option<store::sync_session::SyncSession>,
 }
 
 impl std::fmt::Debug for StoreReady {
@@ -471,12 +506,14 @@ fn boot() -> (App, Task<Message>) {
     editor: None,
     esi_connected: true,
     init_error: None,
+    last_push: None,
     last_synced: None,
     mail: None,
     mail_unread: 0,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
     pending_auth: None,
+    read_only: None,
     route: Route::default(),
     runtime: None,
     sde_stale: false,
@@ -488,6 +525,7 @@ fn boot() -> (App, Task<Message>) {
     store_ready: None,
     status: sync::SyncStatus::new(),
     sync_popover_open: false,
+    sync_session: None,
     sync_tick: false,
     ui_state: window_state::load(),
     updater: updater.clone(),
@@ -511,7 +549,7 @@ async fn run_open_store(mut tx: Tx) {
   let message = match open_store_inner().await {
     Ok(ready) => {
       tracing::info!(target: "pod::lifecycle", "store opened");
-      Message::StoreOpened(ready)
+      Message::StoreOpened(Box::new(ready))
     }
     Err(error) => {
       tracing::error!(target: "pod::lifecycle", %error, "opening the store failed");
@@ -522,16 +560,51 @@ async fn run_open_store(mut tx: Tx) {
 }
 
 async fn open_store_inner() -> Result<StoreReady, String> {
-  let settings = config::load().map_err(|error| error.to_string())?;
+  let mut settings = config::load().map_err(|error| error.to_string())?;
+  let machine_id = persist_machine_id(&mut settings);
   let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(|error| error.to_string())?;
+  let sync_session = store::sync_session::SyncSession::from_config(settings.storage(), machine_id);
+  let lease = acquire_lease(sync_session.as_ref());
   run_migration_guard(&settings, &database_path);
   let db = store::open(&database_path).await.map_err(|error| error.to_string())?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {
     db,
     http,
+    lease,
     settings,
+    sync_session,
   })
+}
+
+/// Resolves a stable per-machine identity for the lease, persisting a freshly generated id so the
+/// same machine reclaims its own lease (rather than colliding with itself) on the next launch.
+fn persist_machine_id(settings: &mut config::Settings) -> String {
+  let had_id = settings.storage().machine_id().is_some();
+  let machine_id = settings.storage_mut().machine_id_or_generate();
+  if !had_id {
+    config::save(settings);
+  }
+  machine_id
+}
+
+fn acquire_lease(session: Option<&store::sync_session::SyncSession>) -> Option<HolderInfo> {
+  let session = session?;
+  match session.acquire(Utc::now()) {
+    Ok(outcome) => {
+      let holder: Option<HolderInfo> = outcome.into();
+      if let Some(holder) = &holder {
+        tracing::warn!(target: "pod::lifecycle", hostname = %holder.hostname, "the share is open elsewhere; opening read-only");
+      } else {
+        tracing::info!(target: "pod::lifecycle", "storage lease acquired");
+      }
+      holder
+    }
+    Err(error) => {
+      tracing::warn!(target: "pod::lifecycle", %error, "failed to acquire the storage lease");
+      None
+    }
+  }
 }
 
 fn run_migration_guard(settings: &config::Settings, database_path: &std::path::Path) {
@@ -577,6 +650,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     db,
     http,
     settings,
+    ..
   } = ready;
 
   let esi = Arc::new(
@@ -625,13 +699,33 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     Some(Window::Main | Window::Splash) => {
       tracing::info!(target: "pod::lifecycle", "shutting down");
-      iced::exit()
+      shutdown_storage(app).chain(iced::exit())
     }
     Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::About) => close_about_window(app, id),
     _ => window::close(id),
   }
+}
+
+/// On a clean exit in sync mode, flushes the working copy back to the share and releases the lease
+/// before the process exits, so the next launch sees a current canonical copy and an unheld share.
+fn shutdown_storage(app: &mut App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.take() else {
+    return Task::none();
+  };
+  Task::future(async move {
+    if let Err(error) = session.checkpoint_and_push().await {
+      tracing::warn!(target: "pod::lifecycle", %error, "exit checkpoint and push failed");
+    }
+    if let Err(error) = session.release() {
+      tracing::warn!(target: "pod::lifecycle", %error, "releasing the lease on exit failed");
+    }
+  })
+  .discard()
 }
 
 fn handle_focus_main_window(app: &App) -> Task<Message> {
@@ -1341,6 +1435,10 @@ fn subscription(app: &App) -> Subscription<Message> {
   if expected_job_stats(app).in_progress() {
     subs.push(iced::time::every(PULSE_INTERVAL).map(|_| Message::SyncPulse));
   }
+  if holding_lease(app) {
+    subs.push(iced::time::every(store::lease::HEARTBEAT_INTERVAL).map(|_| Message::LeaseHeartbeat));
+    subs.push(iced::time::every(PERIODIC_PUSH_INTERVAL).map(|_| Message::PeriodicPush));
+  }
   if app.sync_popover_open {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       matches!(
@@ -1661,13 +1759,16 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::InitFailed(error) => handle_init_failed(app, error),
+    Message::LeaseHeartbeat => handle_lease_heartbeat(app),
     Message::OpenAbout => open_about_window(app),
+    Message::PeriodicPush => handle_periodic_push(app),
+    Message::Pushed(mark) => handle_pushed(app, mark),
     Message::Ready(runtime) => handle_ready(app, runtime),
     Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
     Message::SeedProgress(progress) => on_seed_progress(app, progress),
     Message::SnoozesWoken(woken) => handle_snoozes_woken(app, woken),
     Message::Splash(msg) => update_splash(app, msg),
-    Message::StoreOpened(ready) => handle_store_opened(app, ready),
+    Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::SyncPulse => handle_sync_pulse(app),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
@@ -1810,13 +1911,97 @@ fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
 }
 
 fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {
+  app.sync_session = ready.sync_session.clone();
+  app.read_only = ready.lease.clone();
+  app.last_push = app
+    .sync_session
+    .as_ref()
+    .and_then(store::sync_session::SyncSession::last_write);
+  let recovery = recover_unsynced_changes(app);
   app.store_ready = Some(ready.clone());
-  splash::seed::seed(ready.db, ready.http).map(Message::SeedProgress)
+  Task::batch([
+    recovery,
+    splash::seed::seed(ready.db, ready.http).map(Message::SeedProgress),
+  ])
+}
+
+/// Pushes a working copy left ahead of the share by a prior crashed session (local generation >
+/// share generation) on the next same-machine launch, so the unsynced changes reach the canonical copy.
+fn recover_unsynced_changes(app: &App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  match app.sync_session.clone() {
+    Some(session) if session.has_unsynced_changes() => {
+      tracing::info!(target: "pod::lifecycle", "recovering unsynced local changes from a prior session");
+      push_task(session)
+    }
+    _ => Task::none(),
+  }
 }
 
 fn handle_sync_pulse(app: &mut App) -> Task<Message> {
   app.sync_tick = !app.sync_tick;
   Task::none()
+}
+
+fn holding_lease(app: &App) -> bool {
+  app.sync_session.is_some() && app.read_only.is_none()
+}
+
+fn handle_lease_heartbeat(app: &mut App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  Task::future(async move {
+    if let Err(error) = session.heartbeat(Utc::now()) {
+      tracing::warn!(target: "pod::lifecycle", %error, "lease heartbeat failed");
+    }
+  })
+  .discard()
+}
+
+fn handle_periodic_push(app: &mut App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  if !session.is_dirty_since(app.last_push) {
+    tracing::trace!(target: "pod::lifecycle", "periodic push skipped; no local writes since the last push");
+    return Task::none();
+  }
+  push_task(session)
+}
+
+fn handle_pushed(app: &mut App, mark: Option<SystemTime>) -> Task<Message> {
+  if let Some(mark) = mark {
+    app.last_push = Some(mark);
+    app.last_synced = Some(Utc::now());
+  }
+  Task::none()
+}
+
+/// Captures the working-copy write timestamp *before* the push so the debounce mark never races
+/// ahead of a write that lands mid-checkpoint; such a write simply re-pushes on the next tick.
+fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
+  let mark = session.last_write();
+  Task::future(async move {
+    match session.checkpoint_and_push().await {
+      Ok(()) => {
+        tracing::info!(target: "pod::lifecycle", "pushed the working copy to the share");
+        Message::Pushed(mark)
+      }
+      Err(error) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "checkpoint and push failed");
+        Message::Pushed(None)
+      }
+    }
+  })
 }
 
 fn handle_toggle_sync_popover(app: &mut App) -> Task<Message> {
@@ -2398,12 +2583,14 @@ mod tests {
       editor: None,
       esi_connected: true,
       init_error: None,
+      last_push: None,
       last_synced: None,
       mail: None,
       mail_unread: 0,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
       pending_auth: None,
+      read_only: None,
       route: Route::default(),
       runtime: None,
       sde_stale: false,
@@ -2415,6 +2602,7 @@ mod tests {
       store_ready: None,
       status: sync::SyncStatus::new(),
       sync_popover_open: false,
+      sync_session: None,
       sync_tick: false,
       ui_state: UiState::default(),
       updater: None,
@@ -2780,7 +2968,9 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
         settings: config::Settings::default(),
+        sync_session: None,
       });
 
       let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("seed boom".to_owned()));
@@ -2801,7 +2991,9 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
         settings: config::Settings::default(),
+        sync_session: None,
       });
 
       let _ = on_seed_progress(&mut app, splash::seed::Progress::Degraded("stale refresh".to_owned()));
@@ -2827,7 +3019,9 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
         settings: config::Settings::default(),
+        sync_session: None,
       });
 
       let _ = update(&mut app, Message::Splash(splash::Message::Retry));
@@ -3278,7 +3472,9 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
         settings: config::Settings::default(),
+        sync_session: None,
       });
 
       let _ = update(&mut app, Message::InitFailed("nope".to_owned()));
@@ -3352,6 +3548,80 @@ mod tests {
       let id = window::Id::unique();
       app.windows.register(id, Window::Main);
       let _ = update(&mut app, Message::Window(id, window::Event::Focused));
+    }
+
+    #[test]
+    fn a_held_foreign_lease_maps_to_read_only_holder_info() {
+      let holder: Option<HolderInfo> = store::lease::Outcome::HeldBy {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      }
+      .into();
+
+      assert_eq!(
+        holder,
+        Some(HolderInfo {
+          hostname: "studio-mac".to_owned(),
+          machine_id: "machine-b".to_owned(),
+        })
+      );
+    }
+
+    #[test]
+    fn an_acquired_lease_maps_to_no_read_only_state() {
+      let holder: Option<HolderInfo> = store::lease::Outcome::Acquired.into();
+
+      assert_eq!(holder, None);
+    }
+
+    #[test]
+    fn direct_mode_does_not_hold_a_lease_and_runs_no_lifecycle_io() {
+      let mut app = test_app();
+
+      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
+      let _ = handle_lease_heartbeat(&mut app);
+      let _ = handle_periodic_push(&mut app);
+    }
+
+    #[test]
+    fn a_read_only_session_neither_heartbeats_nor_pushes() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(!holding_lease(&app), "a read-only opener does not hold the lease");
+    }
+
+    #[test]
+    fn a_push_completion_advances_the_debounce_mark() {
+      let mut app = test_app();
+      let mark = SystemTime::now();
+
+      let _ = handle_pushed(&mut app, Some(mark));
+
+      assert_eq!(app.last_push, Some(mark));
+      assert!(
+        app.last_synced.is_some(),
+        "a successful push updates the last-synced clock"
+      );
+    }
+
+    #[test]
+    fn a_failed_push_leaves_the_debounce_mark_untouched() {
+      let mut app = test_app();
+
+      let _ = handle_pushed(&mut app, None);
+
+      assert_eq!(app.last_push, None, "a failed push must re-attempt next tick");
+    }
+
+    #[test]
+    fn direct_mode_runs_no_crash_recovery_push() {
+      let app = test_app();
+
+      let _ = recover_unsynced_changes(&app);
     }
 
     #[test]

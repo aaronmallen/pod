@@ -873,12 +873,15 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
     }
     Message::RemoveCharacterConfirmed(character_id) => {
       state.remove_confirm = None;
-      Task::perform(remove_character(db.clone(), character_id), Message::CharacterRemoved)
+      Task::perform(
+        remove_character(db.clone(), character_id, images::default_store()),
+        Message::CharacterRemoved,
+      )
     }
     Message::RemoveCorporationConfirmed(corporation_id) => {
       state.corp_remove_confirm = None;
       Task::perform(
-        remove_corporation(db.clone(), corporation_id),
+        remove_corporation(db.clone(), corporation_id, images::default_store()),
         Message::CorporationRemoved,
       )
     }
@@ -2064,32 +2067,30 @@ async fn ungroup_squad(db: &Database, squad_id: i64) -> Result<(), crate::store:
   Ok(())
 }
 
-async fn remove_character(db: Database, character_id: i64) -> Result<(), String> {
+async fn remove_character(db: Database, character_id: i64, images: images::Store) -> Result<(), String> {
   character::delete(&db, character_id)
     .await
     .map_err(|err| err.to_string())?;
 
-  let portrait = images::default_store().character_portrait_path(character_id);
-  if let Some(dir) = portrait.parent()
-    && let Err(err) = std::fs::remove_dir_all(dir)
+  let portrait = images.character_portrait_path(character_id);
+  if let Err(err) = std::fs::remove_file(&portrait)
     && err.kind() != std::io::ErrorKind::NotFound
   {
-    tracing::warn!(character_id, %err, "failed to remove character image directory");
+    tracing::warn!(character_id, %err, "failed to remove character portrait");
   }
   Ok(())
 }
 
-async fn remove_corporation(db: Database, corporation_id: i64) -> Result<(), String> {
+async fn remove_corporation(db: Database, corporation_id: i64, images: images::Store) -> Result<(), String> {
   infra::delete(&db, corporation_id, OwnerType::Corporation)
     .await
     .map_err(|err| err.to_string())?;
 
-  let logo = images::default_store().corporation_logo_path(corporation_id);
-  if let Some(dir) = logo.parent()
-    && let Err(err) = std::fs::remove_dir_all(dir)
+  let logo = images.corporation_logo_path(corporation_id);
+  if let Err(err) = std::fs::remove_file(&logo)
     && err.kind() != std::io::ErrorKind::NotFound
   {
-    tracing::warn!(corporation_id, %err, "failed to remove corporation image directory");
+    tracing::warn!(corporation_id, %err, "failed to remove corporation logo");
   }
   Ok(())
 }
@@ -4070,17 +4071,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_character_deletes_the_row_and_tolerates_a_missing_image_dir() {
+    async fn remove_character_deletes_only_its_portrait_and_leaves_siblings_intact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 424_242, "Removed Pilot").await;
+      let dir = tempfile::tempdir().unwrap();
+      let images = images::Store::new(dir.path().to_path_buf());
+      let target = images.character_portrait_path(424_242);
+      let sibling = images.character_portrait_path(111_111);
+      images.write(&target, &[1]).unwrap();
+      images.write(&sibling, &[2]).unwrap();
+
+      remove_character(db.clone(), 424_242, images.clone()).await.unwrap();
+
+      assert!(character::get(&db, 424_242).await.unwrap().is_none());
+      assert!(!target.exists());
+      assert!(sibling.exists());
+    }
+
+    #[tokio::test]
+    async fn remove_character_tolerates_a_missing_portrait() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 424_242, "Image-less Pilot").await;
+      let dir = tempfile::tempdir().unwrap();
+      let images = images::Store::new(dir.path().to_path_buf());
 
-      remove_character(db.clone(), 424_242).await.unwrap();
+      remove_character(db.clone(), 424_242, images).await.unwrap();
 
       assert!(character::get(&db, 424_242).await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn remove_corporation_drops_the_credential_and_tolerates_a_missing_image_dir() {
+    async fn remove_corporation_deletes_only_its_logo_and_leaves_siblings_intact() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 8242, "Director").await;
       infra::upsert(
@@ -4095,8 +4116,45 @@ mod tests {
       )
       .await
       .unwrap();
+      let dir = tempfile::tempdir().unwrap();
+      let images = images::Store::new(dir.path().to_path_buf());
+      let target = images.corporation_logo_path(525_252);
+      let sibling = images.corporation_logo_path(606_060);
+      images.write(&target, &[1]).unwrap();
+      images.write(&sibling, &[2]).unwrap();
 
-      remove_corporation(db.clone(), 525_252).await.unwrap();
+      remove_corporation(db.clone(), 525_252, images.clone()).await.unwrap();
+
+      assert!(
+        infra::get(&db, 525_252, OwnerType::Corporation)
+          .await
+          .unwrap()
+          .is_none()
+      );
+      assert!(!target.exists());
+      assert!(sibling.exists());
+    }
+
+    #[tokio::test]
+    async fn remove_corporation_tolerates_a_missing_logo() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 8242, "Director").await;
+      infra::upsert(
+        &db,
+        525_252,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9999,
+        Some(8242),
+        None,
+      )
+      .await
+      .unwrap();
+      let dir = tempfile::tempdir().unwrap();
+      let images = images::Store::new(dir.path().to_path_buf());
+
+      remove_corporation(db.clone(), 525_252, images).await.unwrap();
 
       assert!(
         infra::get(&db, 525_252, OwnerType::Corporation)
@@ -4484,7 +4542,10 @@ mod tests {
 
       let _ = update(&mut state, Message::RemoveCorporationConfirmed(2_000_001), &db);
       assert!(state.corp_remove_confirm.is_none());
-      remove_corporation(db.clone(), 2_000_001).await.unwrap();
+      let dir = tempfile::tempdir().unwrap();
+      remove_corporation(db.clone(), 2_000_001, images::Store::new(dir.path().to_path_buf()))
+        .await
+        .unwrap();
 
       reload(&mut state, &db).await;
       assert!(state.corps.is_empty());

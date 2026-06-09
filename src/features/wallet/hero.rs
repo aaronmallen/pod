@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use iced::{
   Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme,
   alignment::{Horizontal, Vertical},
@@ -23,6 +23,7 @@ const HOVER_DASH: [f32; 2] = [3.0, 3.0];
 struct Chart<'a> {
   hover: Option<f32>,
   points: &'a [NetWorthPoint],
+  window: (NaiveDate, NaiveDate),
 }
 
 impl Chart<'_> {
@@ -45,19 +46,16 @@ impl Chart<'_> {
   }
 
   fn draw_axis_labels(&self, frame: &mut canvas::Frame, width: f32, height: f32) {
-    let n = self.points.len();
-    if n < 2 {
-      return;
-    }
-    let span_days = n - 1;
+    let (start, end) = self.window;
+    let span_days = (end - start).num_days();
     for i in 0..=4 {
-      let idx = ((i as f32 / 4.0) * (n - 1) as f32).round() as usize;
-      let idx = idx.min(n - 1);
-      let label = x_axis_label(i, span_days, idx, n);
+      let t = i as f32 / 4.0;
+      let days_ago = ((1.0 - t) * span_days as f32).round() as i64;
+      let label = axis_label(days_ago, span_days);
       let align_x = tick_alignment(i);
       frame.fill_text(canvas::Text {
         content: label,
-        position: Point::new(self.x_at(idx, width), height - 4.0),
+        position: Point::new(t * width, height - 4.0),
         color: color::text::DIM,
         size: AXIS_LABEL_SIZE.into(),
         font: typography::mono::REGULAR,
@@ -275,7 +273,9 @@ impl Chart<'_> {
   }
 
   fn hovered(&self) -> Option<usize> {
-    self.hover.and_then(|fraction| hovered_index(self.points, fraction))
+    self
+      .hover
+      .and_then(|fraction| nearest_index(self.points, self.window, fraction))
   }
 
   fn is_up(&self) -> bool {
@@ -304,8 +304,7 @@ impl Chart<'_> {
   }
 
   fn x_at(&self, i: usize, width: f32) -> f32 {
-    let last = (self.points.len().max(2) - 1) as f32;
-    (i as f32 / last) * width
+    date_fraction(self.window, &self.points[i].date) * width
   }
 
   fn y_at(&self, value: f64, height: f32, range: (f64, f64)) -> f32 {
@@ -386,12 +385,14 @@ impl canvas::Program<Message> for Chart<'_> {
 }
 
 pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let sliced = super::sliced_series(state, now.date_naive());
+  let today = now.date_naive();
+  let window = super::timeframe_window(state.timeframe, today);
+  let sliced = super::sliced_series(state, today);
   let current = super::series_current(sliced);
   let change = super::series_change(sliced);
   let composition = super::scope_composition(state);
 
-  let displayed = hovered_value(state, sliced).or(current);
+  let displayed = hovered_value(state, sliced, window).or(current);
 
   let head = Row::with_children(vec![
     big_number(state, displayed, change),
@@ -402,7 +403,7 @@ pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .spacing(spacing::SPACE_6)
   .align_y(Vertical::Top);
 
-  let mut children: Vec<Element<'_, Message>> = vec![head.into(), graph(state, sliced)];
+  let mut children: Vec<Element<'_, Message>> = vec![head.into(), graph(state, sliced, window)];
   if let Some(stack) = composition_stack(state) {
     children.push(stack);
   }
@@ -431,18 +432,49 @@ pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .into()
 }
 
-fn hovered_value(state: &State, sliced: &[NetWorthPoint]) -> Option<f64> {
+fn hovered_value(state: &State, sliced: &[NetWorthPoint], window: (NaiveDate, NaiveDate)) -> Option<f64> {
   let fraction = state.chart_hover?;
-  hovered_index(sliced, fraction).map(|idx| sliced[idx].net_worth)
+  nearest_index(sliced, window, fraction).map(|idx| sliced[idx].net_worth)
 }
 
-fn hovered_index(sliced: &[NetWorthPoint], fraction: f32) -> Option<usize> {
-  if sliced.is_empty() {
-    return None;
+fn axis_label(days_ago: i64, span_days: i64) -> String {
+  if days_ago <= 0 {
+    return "today".to_owned();
   }
-  let last = sliced.len() - 1;
-  let idx = (fraction.clamp(0.0, 1.0) * last as f32).round() as usize;
-  Some(idx.min(last))
+  if span_days <= 30 {
+    format!("{days_ago}d ago")
+  } else if span_days <= 90 {
+    format!("{}w ago", ((days_ago + 3) / 7).max(1))
+  } else {
+    format!("{}mo ago", ((days_ago + 14) / 30).max(1))
+  }
+}
+
+fn date_fraction(window: (NaiveDate, NaiveDate), date: &str) -> f32 {
+  let (start, end) = window;
+  let span = (end - start).num_days().max(1) as f32;
+  let Some(day) = parse_day(date) else {
+    return 0.0;
+  };
+  (((day - start).num_days() as f32) / span).clamp(0.0, 1.0)
+}
+
+fn nearest_index(sliced: &[NetWorthPoint], window: (NaiveDate, NaiveDate), fraction: f32) -> Option<usize> {
+  let target = fraction.clamp(0.0, 1.0);
+  sliced
+    .iter()
+    .enumerate()
+    .min_by(|(_, a), (_, b)| {
+      let da = (date_fraction(window, &a.date) - target).abs();
+      let db = (date_fraction(window, &b.date) - target).abs();
+      da.total_cmp(&db)
+    })
+    .map(|(idx, _)| idx)
+}
+
+fn parse_day(date: &str) -> Option<NaiveDate> {
+  let prefix = date.split('T').next().unwrap_or(date);
+  NaiveDate::parse_from_str(prefix, "%Y-%m-%d").ok()
 }
 
 fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<'a, Message> {
@@ -608,7 +640,7 @@ fn timeframe_selector(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint]) -> Element<'a, Message> {
+fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint], window: (NaiveDate, NaiveDate)) -> Element<'a, Message> {
   if sliced.len() < 2 {
     return container(
       text("Net-worth history will appear after the next daily aggregation run.")
@@ -628,6 +660,7 @@ fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint]) -> Element<'a, Messa
   canvas(Chart {
     hover: state.chart_hover,
     points: sliced,
+    window,
   })
   .width(Length::Fill)
   .height(Length::Fixed(GRAPH_HEIGHT))
@@ -761,25 +794,17 @@ fn tick_alignment(tick: usize) -> Horizontal {
   }
 }
 
-fn x_axis_label(tick: usize, span_days: usize, idx: usize, n: usize) -> String {
-  let days_ago = (n - 1).saturating_sub(idx);
-  if tick == 4 || days_ago == 0 {
-    return "today".to_owned();
-  }
-  if span_days <= 30 {
-    format!("{days_ago}d ago")
-  } else if span_days <= 90 {
-    let weeks = (days_ago + 3) / 7;
-    format!("{}w ago", weeks.max(1))
-  } else {
-    let months = (days_ago + 14) / 30;
-    format!("{}mo ago", months.max(1))
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn day(date: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
+  }
+
+  fn window() -> (NaiveDate, NaiveDate) {
+    (day("2026-06-01"), day("2026-06-05"))
+  }
 
   fn point(net_worth: f64) -> NetWorthPoint {
     NetWorthPoint {
@@ -797,28 +822,58 @@ mod tests {
     }
   }
 
-  mod x_axis_label {
+  fn dated(date: &str, net_worth: f64) -> NetWorthPoint {
+    NetWorthPoint {
+      date: date.to_owned(),
+      liquid: 0.0,
+      net_worth,
+    }
+  }
+
+  mod axis_label {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn it_labels_the_last_tick_and_the_present_as_today() {
-      assert_eq!(super::x_axis_label(4, 10, 3, 10), "today");
-      assert_eq!(super::x_axis_label(2, 10, 9, 10), "today");
+    fn it_labels_the_present_as_today() {
+      assert_eq!(super::axis_label(0, 90), "today");
     }
 
     #[test]
     fn it_labels_short_spans_in_days() {
-      assert_eq!(super::x_axis_label(1, 20, 15, 21), "5d ago");
+      assert_eq!(super::axis_label(5, 30), "5d ago");
     }
 
     #[test]
     fn it_labels_medium_spans_in_weeks() {
-      assert_eq!(super::x_axis_label(1, 60, 40, 61), "3w ago");
+      assert_eq!(super::axis_label(21, 90), "3w ago");
     }
 
     #[test]
     fn it_labels_long_spans_in_months() {
-      assert_eq!(super::x_axis_label(1, 120, 60, 121), "2mo ago");
+      assert_eq!(super::axis_label(60, 365), "2mo ago");
+    }
+  }
+
+  mod date_fraction {
+    use super::*;
+
+    #[test]
+    fn it_places_the_window_edges_at_zero_and_one() {
+      assert_eq!(super::date_fraction(window(), "2026-06-01"), 0.0);
+      assert_eq!(super::date_fraction(window(), "2026-06-05"), 1.0);
+    }
+
+    #[test]
+    fn it_places_a_midpoint_date_partway_across() {
+      let frac = super::date_fraction(window(), "2026-06-03");
+
+      assert!((frac - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_clamps_dates_outside_the_window() {
+      assert_eq!(super::date_fraction(window(), "2026-05-01"), 0.0);
+      assert_eq!(super::date_fraction(window(), "2026-07-01"), 1.0);
     }
   }
 
@@ -868,6 +923,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       assert!(!chart.has_liquid());
@@ -879,49 +935,49 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       assert!(chart.has_liquid());
     }
   }
 
-  mod hovered_index {
+  mod nearest_index {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_maps_the_left_edge_to_the_first_point() {
-      let series = [point(1.0), point(2.0), point(3.0)];
+    fn it_maps_a_fraction_to_the_point_nearest_by_date() {
+      let series = [
+        dated("2026-06-01", 1.0),
+        dated("2026-06-03", 2.0),
+        dated("2026-06-05", 3.0),
+      ];
 
-      assert_eq!(super::hovered_index(&series, 0.0), Some(0));
+      assert_eq!(super::nearest_index(&series, window(), 0.0), Some(0));
+      assert_eq!(super::nearest_index(&series, window(), 0.5), Some(1));
+      assert_eq!(super::nearest_index(&series, window(), 1.0), Some(2));
     }
 
     #[test]
-    fn it_maps_the_right_edge_to_the_last_point() {
-      let series = [point(1.0), point(2.0), point(3.0)];
+    fn it_snaps_an_empty_left_region_to_the_earliest_data_point() {
+      let series = [dated("2026-06-04", 1.0), dated("2026-06-05", 2.0)];
 
-      assert_eq!(super::hovered_index(&series, 1.0), Some(2));
-    }
-
-    #[test]
-    fn it_rounds_to_the_nearest_point() {
-      let series = [point(1.0), point(2.0), point(3.0), point(4.0), point(5.0)];
-
-      assert_eq!(super::hovered_index(&series, 0.6), Some(2));
+      assert_eq!(super::nearest_index(&series, window(), 0.0), Some(0));
     }
 
     #[test]
     fn it_is_none_for_an_empty_series() {
-      assert_eq!(super::hovered_index(&[], 0.5), None);
+      assert_eq!(super::nearest_index(&[], window(), 0.5), None);
     }
 
     #[test]
     fn it_clamps_out_of_range_fractions() {
-      let series = [point(1.0), point(2.0)];
+      let series = [dated("2026-06-01", 1.0), dated("2026-06-05", 2.0)];
 
-      assert_eq!(super::hovered_index(&series, -1.0), Some(0));
-      assert_eq!(super::hovered_index(&series, 2.0), Some(1));
+      assert_eq!(super::nearest_index(&series, window(), -1.0), Some(0));
+      assert_eq!(super::nearest_index(&series, window(), 2.0), Some(1));
     }
   }
 
@@ -934,6 +990,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       let (min, max) = chart.value_range();
@@ -948,6 +1005,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       let (min, max) = chart.value_range();
@@ -968,6 +1026,7 @@ mod tests {
         Chart {
           hover: None,
           points: &rising,
+          window: window(),
         }
         .is_up()
       );
@@ -980,6 +1039,7 @@ mod tests {
         !Chart {
           hover: None,
           points: &falling,
+          window: window(),
         }
         .is_up()
       );
@@ -987,11 +1047,16 @@ mod tests {
 
     #[test]
     fn it_resolves_the_hovered_index_only_while_hovering() {
-      let points = [point(1.0), point(2.0), point(3.0)];
+      let points = [
+        dated("2026-06-01", 1.0),
+        dated("2026-06-03", 2.0),
+        dated("2026-06-05", 3.0),
+      ];
 
       let idle = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
       assert_eq!(idle.hovered(), None);
       assert_eq!(idle.marker_index(), 2);
@@ -999,6 +1064,7 @@ mod tests {
       let hovering = Chart {
         hover: Some(0.0),
         points: &points,
+        window: window(),
       };
       assert_eq!(hovering.hovered(), Some(0));
       assert_eq!(hovering.marker_index(), 0);
@@ -1027,6 +1093,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       let event = Event::Mouse(mouse::Event::CursorMoved {
@@ -1048,6 +1115,7 @@ mod tests {
       let chart = Chart {
         hover: Some(0.5),
         points: &points,
+        window: window(),
       };
 
       let event = Event::Mouse(mouse::Event::CursorMoved {
@@ -1063,6 +1131,7 @@ mod tests {
       let chart = Chart {
         hover: Some(0.5),
         points: &points,
+        window: window(),
       };
 
       let event = Event::Mouse(mouse::Event::CursorLeft);
@@ -1082,6 +1151,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       let event = Event::Mouse(mouse::Event::CursorLeft);
@@ -1099,6 +1169,7 @@ mod tests {
       let chart = Chart {
         hover: None,
         points: &points,
+        window: window(),
       };
 
       let event = Event::Window(iced::window::Event::Unfocused);

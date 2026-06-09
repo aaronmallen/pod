@@ -790,9 +790,14 @@ pub fn period_totals(state: &State) -> PeriodTotals {
   totals
 }
 
+pub fn timeframe_window(timeframe: Timeframe, today: NaiveDate) -> (NaiveDate, NaiveDate) {
+  let span = timeframe.days().saturating_sub(1) as i64;
+  (today - Duration::days(span), today)
+}
+
 pub fn sliced_series(state: &State, today: NaiveDate) -> &[NetWorthPoint] {
-  let span = state.timeframe.days().saturating_sub(1) as i64;
-  let cutoff = (today - Duration::days(span)).format("%Y-%m-%d").to_string();
+  let (start, _) = timeframe_window(state.timeframe, today);
+  let cutoff = start.format("%Y-%m-%d").to_string();
   let series = &state.net_worth_series;
   let start = series.partition_point(|point| point.date.as_str() < cutoff.as_str());
   &series[start..]

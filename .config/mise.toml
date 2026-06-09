@@ -10,7 +10,6 @@ description = "Lint all files"
 depends = ["lint:**"]
 
 [tools]
-aube = "latest"
 "cargo:cargo-audit" = "latest"
 "cargo:rust-code-analysis-cli" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
@@ -19,6 +18,7 @@ aube = "latest"
 "cargo:cargo-outdated" = "latest"
 "cargo:cargo-sort" = "latest"
 editorconfig-checker = "latest"
+"github:endevco/aube" = "latest"
 jq = "latest"
 markdownlint-cli2 = "latest"
 "npm:@colbymchenry/codegraph" = "latest"

@@ -33,6 +33,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron-right.svg"))
   }
 
+  pub fn compare() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/compare.svg"))
+  }
+
   pub fn copy() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/copy.svg"))
   }

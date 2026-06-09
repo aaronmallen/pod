@@ -67,6 +67,7 @@ pub struct Loaded {
 pub enum Message {
   CharacterChanged(i64),
   Loaded(Box<Loaded>),
+  OpenCompare,
   OpenPlanEditor(EditorSeed),
   PaneDrag(f32),
   PaneDragEnd,
@@ -158,6 +159,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.roster = roster;
       Task::none()
     }
+    Message::OpenCompare => Task::none(),
     Message::OpenPlanEditor(_) => Task::none(),
     Message::PaneDrag(x) => {
       state.left_pane.drag_to(x);

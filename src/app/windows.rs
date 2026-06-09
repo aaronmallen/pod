@@ -5,6 +5,7 @@ use iced::window;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
   About,
+  Compare,
   Main,
   SkillPlanEditor,
   Splash,
@@ -13,6 +14,7 @@ pub enum Window {
 impl Window {
   pub fn state_key(self) -> Option<&'static str> {
     match self {
+      Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
       Self::About | Self::Splash => None,
@@ -53,6 +55,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_maps_compare_to_a_stable_key() {
+      assert_eq!(Window::Compare.state_key(), Some("skills_compare"));
+    }
+
+    #[test]
     fn it_maps_main_to_a_stable_key() {
       assert_eq!(Window::Main.state_key(), Some("main"));
     }
@@ -75,6 +82,11 @@ mod tests {
     #[test]
     fn it_never_persists_about() {
       assert_eq!(Window::About.state_key(), None);
+    }
+
+    #[test]
+    fn it_gives_compare_and_the_editor_distinct_keys() {
+      assert_ne!(Window::Compare.state_key(), Window::SkillPlanEditor.state_key());
     }
   }
 }

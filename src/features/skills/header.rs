@@ -1,16 +1,21 @@
 use chrono::{DateTime, Utc};
-use iced::{Element, widget::text};
+use iced::{
+  Border, Element, Length, Padding,
+  alignment::Vertical,
+  widget::{Row, Space, button, text},
+};
 
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
 use crate::ui::{
   components::{
     header::{header as header_band, header_divider, stat_block},
+    icon::Icon,
     picker::{
       PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
       trigger_identity,
     },
   },
-  style::{color, typography},
+  style::{color, radius, spacing, typography},
 };
 
 pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -36,8 +41,9 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     queue_stat(queue.len(), remaining),
   ];
 
-  let mut right: Vec<Element<'a, Message>> = Vec::new();
+  let mut right: Vec<Element<'a, Message>> = vec![compare_button()];
   if let Some(seconds) = remaining.filter(|secs| *secs > 0) {
+    right.push(Space::new().width(Length::Fixed(spacing::SPACE_3)).into());
     right.push(stat_block(
       "Queue completes",
       format!("{} EVE", fmt_eta(now, seconds)),
@@ -47,6 +53,48 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
   }
 
   header_band(left, right)
+}
+
+fn compare_button<'a>() -> Element<'a, Message> {
+  let label = Row::with_children(vec![
+    Icon::compare().size(16.0).color(color::text::SECONDARY).render(),
+    text("Compare")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .align_y(Vertical::Center);
+
+  button(label)
+    .padding(Padding {
+      top: 7.0,
+      bottom: 7.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(Message::OpenCompare)
+    .style(|_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: None,
+        border: Border {
+          color: color::with_alpha(color::text::PRIMARY, if hover { 0.25 } else { 0.1 }),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: if hover {
+          color::text::PRIMARY
+        } else {
+          color::text::SECONDARY
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
 }
 
 fn character_picker(state: &State) -> Element<'_, Message> {

@@ -7,5 +7,6 @@ pub mod mail;
 pub mod settings;
 pub mod skill_plan_editor;
 pub mod skills;
+pub mod skills_compare;
 pub mod splash;
 pub mod wallet;

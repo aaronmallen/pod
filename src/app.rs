@@ -22,7 +22,7 @@ use crate::{
   config,
   features::{
     about, assets, auth, character_detail, character_manager, character_manager::OwnedPilot, mail, settings,
-    skill_plan_editor, skills, splash, wallet,
+    skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::{cache_cleaner, menu, updater},
   store,
@@ -45,6 +45,8 @@ use crate::{
 const ABOUT_WINDOW_HEIGHT: f32 = 240.0;
 const ABOUT_WINDOW_WIDTH: f32 = 360.0;
 const CHIP_OPEN_TINT_ALPHA: f32 = 0.06;
+const COMPARE_WINDOW_HEIGHT: f32 = 760.0;
+const COMPARE_WINDOW_WIDTH: f32 = 1100.0;
 const CONSOLE_DEFAULT_FILTER: &str = "warn,pod=info";
 const EDITOR_WINDOW_HEIGHT: f32 = 700.0;
 const EDITOR_WINDOW_WIDTH: f32 = 900.0;
@@ -93,6 +95,7 @@ struct App {
   character_detail: Option<character_detail::State>,
   character_manager: Option<character_manager::State>,
   coalescer: WriteCoalescer,
+  compare: Option<(window::Id, skills_compare::State)>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   esi_connected: bool,
   init_error: Option<String>,
@@ -147,6 +150,7 @@ enum Message {
   CharacterManager(character_manager::Message),
   ClockTick,
   CloseSyncPopover,
+  Compare(skills_compare::Message),
   FocusMainWindow,
   InitFailed(String),
   Mail(mail::Message),
@@ -189,6 +193,7 @@ impl Message {
       Message::Auth(_) => "Auth",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
+      Message::Compare(_) => "Compare",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::Menu(_) => "Menu",
@@ -462,6 +467,7 @@ fn boot() -> (App, Task<Message>) {
     character_detail: None,
     character_manager: None,
     coalescer: WriteCoalescer::new(),
+    compare: None,
     editor: None,
     esi_connected: true,
     init_error: None,
@@ -632,6 +638,7 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
       tracing::info!(target: "pod::lifecycle", "shutting down");
       iced::exit()
     }
+    Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::About) => close_about_window(app, id),
     _ => window::close(id),
@@ -1459,6 +1466,56 @@ fn transition_to_main(app: &mut App) -> Task<Message> {
   Task::batch([close, open_task.map(Message::WindowOpened)])
 }
 
+fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  let roster = app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_roster)
+    .unwrap_or_default();
+
+  let close_existing = match app.compare.take() {
+    Some((existing_id, _)) => {
+      app.windows.remove(existing_id);
+      window::close(existing_id)
+    }
+    None => Task::none(),
+  };
+
+  let (size, position) = restored_geometry(
+    &app.ui_state,
+    Window::Compare,
+    Size::new(COMPARE_WINDOW_WIDTH, COMPARE_WINDOW_HEIGHT),
+  );
+  let settings = window::Settings {
+    size,
+    position,
+    decorations: true,
+    resizable: true,
+    ..window::Settings::default()
+  };
+  let (id, open_task) = window::open(settings);
+  app.windows.register(id, Window::Compare);
+  app.compare = Some((id, skills_compare::State::new(seed_ids.clone(), roster)));
+
+  Task::batch([
+    close_existing,
+    open_task.map(Message::WindowOpened),
+    skills_compare::load(&db, seed_ids).map(Message::Compare),
+  ])
+}
+
+fn close_compare_window(app: &mut App, id: window::Id) -> Task<Message> {
+  if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) {
+    app.compare = None;
+  }
+  app.windows.remove(id);
+  window::close(id)
+}
+
 fn open_editor_window(app: &mut App, character_id: i64, seed: skill_plan_editor::Seed) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -1595,6 +1652,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Auth(msg) => handle_auth(app, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
+    Message::Compare(msg) => handle_compare(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::Menu(action) => handle_menu(app, action),
@@ -1905,6 +1963,35 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
   }
 }
 
+fn compare_seed_ids(app: &App) -> Vec<i64> {
+  let Some(manager) = app.character_manager.as_ref() else {
+    return Vec::new();
+  };
+
+  let mut by_sp: Vec<(i64, i64)> = character_manager::groups(manager)
+    .iter()
+    .flat_map(|group| group.cards.iter())
+    .chain(character_manager::unassigned(manager).iter())
+    .map(|card| (card.character_id, card.total_sp.unwrap_or(0)))
+    .collect();
+  by_sp.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+  let active = app.skills.as_ref().map(skills::State::active);
+  let mut seed_ids: Vec<i64> = Vec::new();
+  if let Some(active_id) = active.filter(|id| by_sp.iter().any(|(card_id, _)| card_id == id)) {
+    seed_ids.push(active_id);
+  }
+  for (card_id, _) in &by_sp {
+    if seed_ids.len() >= 3 {
+      break;
+    }
+    if !seed_ids.contains(card_id) {
+      seed_ids.push(*card_id);
+    }
+  }
+  seed_ids
+}
+
 fn owned_pilot_ids(app: &App) -> Vec<i64> {
   app
     .character_manager
@@ -2003,6 +2090,14 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
         _ => Task::none(),
       }
     }
+    skills::Message::OpenCompare => {
+      let seed_ids = compare_seed_ids(app);
+      if seed_ids.len() < 2 {
+        Task::none()
+      } else {
+        open_compare_window(app, seed_ids)
+      }
+    }
     skills::Message::OpenPlanEditor(seed) => match app.skills.as_ref().map(skills::State::active) {
       Some(id) => open_editor_window(app, id, seed),
       None => Task::none(),
@@ -2070,6 +2165,19 @@ fn mail_recipient_search(runtime: &Runtime, owner_id: i64, query: String, is_to:
       })
     },
   )
+}
+
+fn handle_compare(app: &mut App, msg: skills_compare::Message) -> Task<Message> {
+  match msg {
+    skills_compare::Message::CloseRequested => match app.compare.as_ref() {
+      Some((id, _)) => close_compare_window(app, *id),
+      None => Task::none(),
+    },
+    msg => match (app.compare.as_mut(), app.runtime.as_ref()) {
+      (Some((_, compare)), Some(runtime)) => skills_compare::update(compare, msg, &runtime.db).map(Message::Compare),
+      _ => Task::none(),
+    },
+  }
 }
 
 fn handle_skill_plan_editor(app: &mut App, msg: skill_plan_editor::Message) -> Task<Message> {
@@ -2262,6 +2370,10 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
       None => blank(),
     },
     Some(Window::Main) => main_view(app),
+    Some(Window::Compare) => match app.compare.as_ref() {
+      Some((compare_id, state)) if *compare_id == id => skills_compare::view(state).map(Message::Compare),
+      _ => blank(),
+    },
     Some(Window::SkillPlanEditor) => match app.editor.as_ref() {
       Some((editor_id, state)) if *editor_id == id => {
         skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
@@ -2293,6 +2405,7 @@ mod tests {
       character_detail: None,
       character_manager: None,
       coalescer: WriteCoalescer::new(),
+      compare: None,
       editor: None,
       esi_connected: true,
       init_error: None,
@@ -2618,6 +2731,32 @@ mod tests {
 
       assert!(app.editor.is_none(), "the editor state is cleared");
       assert_eq!(app.windows.kind(id), None, "the editor window is de-registered");
+    }
+
+    #[test]
+    fn it_clears_the_compare_window_and_deregisters_it_on_close() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Compare);
+      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = close_compare_window(&mut app, id);
+
+      assert!(app.compare.is_none(), "the compare state is cleared");
+      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
+    }
+
+    #[test]
+    fn it_closes_the_compare_window_when_it_requests_close() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Compare);
+      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = handle_compare(&mut app, skills_compare::Message::CloseRequested);
+
+      assert!(app.compare.is_none(), "the compare state is cleared");
+      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
     }
 
     #[test]

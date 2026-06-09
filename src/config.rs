@@ -328,7 +328,7 @@ fn resolve_log_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathB
   state_home.unwrap_or(fallback_root).join("pod").join("logs")
 }
 
-/// Locates the directory containing the bundled assets, preferring the dev manifest dir, then a macOS .app bundle's ../Resources, then the executable's own dir.
+/// Locates the directory containing the bundled assets, preferring the dev manifest dir, then the per-platform packaged candidates (see [`select_resource_dir`]).
 pub fn resource_dir() -> PathBuf {
   let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   if manifest.join("assets").is_dir() {
@@ -338,14 +338,30 @@ pub fn resource_dir() -> PathBuf {
   if let Ok(exe) = std::env::current_exe()
     && let Some(dir) = exe.parent()
   {
-    for candidate in [dir.join("../Resources"), dir.to_path_buf()] {
-      if candidate.join("assets").is_dir() {
-        return candidate;
-      }
+    let binary_name = exe.file_stem().and_then(|stem| stem.to_str());
+    if let Some(candidate) = select_resource_dir(dir, binary_name, |path| path.join("assets").is_dir()) {
+      return candidate;
     }
   }
 
   manifest
+}
+
+/// Probes the packaged-layout candidates in precedence order — `../Resources` (macOS .app), then
+/// `../lib/<binary_name>` (Linux FHS deb/pacman/AppImage, where the binary sits in `usr/bin`), then
+/// the executable's own dir (Windows/portable) — returning the first whose `assets` dir is present.
+fn select_resource_dir(
+  exe_dir: &Path,
+  binary_name: Option<&str>,
+  has_assets: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+  let mut candidates = vec![exe_dir.join("../Resources")];
+  if let Some(name) = binary_name {
+    candidates.push(exe_dir.join("../lib").join(name));
+  }
+  candidates.push(exe_dir.to_path_buf());
+
+  candidates.into_iter().find(|candidate| has_assets(candidate))
 }
 
 pub fn save(settings: &Settings) {
@@ -470,6 +486,70 @@ mod tests {
         "the fallback must not depend on the working directory"
       );
       assert_ne!(resolved, PathBuf::from("./pod/logs"));
+    }
+  }
+
+  mod select_resource_dir {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_selects_the_macos_resources_bundle() {
+      let exe_dir = PathBuf::from("/Applications/pod.app/Contents/MacOS");
+      let resources = exe_dir.join("../Resources");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources);
+
+      assert_eq!(resolved, Some(resources));
+    }
+
+    #[test]
+    fn it_selects_the_linux_lib_dir_for_the_fhs_layout() {
+      let exe_dir = PathBuf::from("/usr/bin");
+      let lib_dir = exe_dir.join("../lib").join("pod");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == lib_dir);
+
+      assert_eq!(resolved, Some(PathBuf::from("/usr/bin/../lib/pod")));
+    }
+
+    #[test]
+    fn it_selects_the_exe_dir_for_the_windows_layout() {
+      let exe_dir = PathBuf::from("C:/Program Files/pod");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == exe_dir);
+
+      assert_eq!(resolved, Some(exe_dir));
+    }
+
+    #[test]
+    fn it_prefers_the_resources_bundle_over_the_exe_dir() {
+      let exe_dir = PathBuf::from("/opt/pod");
+      let resources = exe_dir.join("../Resources");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources || *path == exe_dir);
+
+      assert_eq!(resolved, Some(resources));
+    }
+
+    #[test]
+    fn it_skips_the_linux_candidate_when_the_binary_name_is_unknown() {
+      let exe_dir = PathBuf::from("/usr/bin");
+      let lib_dir = exe_dir.join("../lib").join("pod");
+
+      let resolved = select_resource_dir(&exe_dir, None, |path| *path == lib_dir);
+
+      assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn it_returns_none_when_no_candidate_holds_the_assets() {
+      let exe_dir = PathBuf::from("/usr/bin");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |_| false);
+
+      assert_eq!(resolved, None);
     }
   }
 

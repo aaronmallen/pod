@@ -7,6 +7,23 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2]
+
+> [!IMPORTANT]
+> **This update must be installed manually.** A bug in 0.5.0 and 0.5.1 left the in-app updater turned off, so those
+> versions can't detect or offer this release on their own. Download and install 0.5.2 by hand — automatic updates
+> work again from this version onward.
+
+> [!WARNING]
+> **Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
+> Updating clears your existing local Pod data and starts fresh, so the first time you open it you'll need to sign in
+> and re-authorize all of your characters again.
+
+### Fixed
+
+- The in-app update notification works again — it was unintentionally turned off in 0.5.0, so 0.5.0 and 0.5.1 never
+  checked for or offered new versions. Once you're on 0.5.2 you'll be notified about future updates as usual.
+
 ## [0.5.1]
 
 > [!WARNING]
@@ -312,7 +329,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.1...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.2...HEAD
+[0.5.2]: https://github.com/aaronmallen/pod/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/aaronmallen/pod/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/aaronmallen/pod/compare/0.4.9...0.5.0
 [0.4.9]: https://github.com/aaronmallen/pod/compare/0.4.8...0.4.9

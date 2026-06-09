@@ -14,6 +14,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 > versions can't detect or offer this release on their own. Download and install 0.5.2 by hand — automatic updates
 > work again from this version onward.
 
+---
+
 > [!WARNING]
 > **Pod 0.5.0 is a complete rewrite of the app and is not backwards compatible with earlier versions.**
 > Updating clears your existing local Pod data and starts fresh, so the first time you open it you'll need to sign in

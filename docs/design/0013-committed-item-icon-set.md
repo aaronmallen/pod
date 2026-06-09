@@ -39,6 +39,15 @@ created: 2026-06-06
 > The Decision, Consequences, and Affected Areas below reflect this; the two-tier resolver and best-effort sync
 > long-tail are unchanged.
 >
+> **Revised 2026-06-09 (self-heal on cache miss):** the render layer no longer assumes a once-snapshotted path stays
+> valid, and non-owned entities now refetch too. A shared resolver (`images::resolve(&store, kind, id) -> ImageState`)
+> classifies each displayed image as `Fresh(path)` or `Stale { kind, id }` at **loader/model-build time** (reusing
+> `is_fresh`), loaders store the `ImageState` instead of a bare `Option<PathBuf>`, and a `Stale` descriptor renders the
+> initials placeholder. The app layer dispatches a deduped background `ensure_image(kind, id)` for each stale key
+> (public EVE image server, no credentials, atomic write), and on completion re-runs the originating loader so the
+> now-`Fresh` file swaps in with no user action. See
+> [Self-heal on cache miss](#self-heal-on-cache-miss-revised-2026-06-09).
+>
 > **History:** item/type icons were originally treated as synced data — fetched per-entity during sync with a fatal
 > fetch-failure rule (in a since-retired "Image Assets as Synced Data" ADR). This ADR replaces that approach for item
 > icons with the committed/CI-generated set described below, and absorbs the still-active portrait/logo decision from
@@ -145,10 +154,13 @@ The rules (revised 2026-06-08):
   Writes are atomic (write a temporary sibling, then rename).
 - **Not the HTTP cache.** Image fetches bypass `http_cache` via `http::Client::get_bytes_uncached`; `http_cache` stays
   JSON-response-only.
-- **The render layer reads locally.** The UI resolves the flat path and loads the file; it never triggers a fetch. A
-  missing file is **not** an integrity failure — it is a disposable-cache miss that is repopulated on the next sync. An
-  initials placeholder is shown whenever the cached file is absent (e.g. before a character's first sync completes or
-  after the cache has been cleared).
+- **The render layer reads locally.** The render hot path never stats the filesystem or triggers a fetch; freshness is
+  classified once at loader/model-build time via `images::resolve` (see
+  [Self-heal on cache miss](#self-heal-on-cache-miss-revised-2026-06-09)).
+  A missing file is **not** an integrity failure — it is a disposable-cache miss that resolves to a `Stale` descriptor,
+  draws an initials placeholder, and is repopulated by a background refetch (or the next sync). An initials placeholder
+  is shown whenever the cached file is absent (e.g. before a character's first sync completes or after the cache has
+  been cleared).
 - **Scope, freshness, and weekly staleness.** Character portraits are fetched by the character-profile job;
   corporation/alliance logos by the jobs that introduce those rows, bounded by the ids actually present in the data.
   Refresh keys off sync cadence, with an added **weekly (~7-day) sync-time staleness check**: a portrait/logo whose
@@ -158,6 +170,34 @@ The rules (revised 2026-06-08):
 Both item icons and portraits/logos are now non-fatal: item icons ship pre-generated and a missing/failing icon shows a
 silhouette, while a portrait/logo is a disposable cache entry whose absence shows a placeholder and is repopulated on
 the next sync.
+
+### Self-heal on cache miss (revised 2026-06-09)
+
+The evictable cache above closed the *durability* gap but left two *refetch* gaps: a view that snapshotted
+`portrait = Some(path)` once at load kept rendering a since-evicted file (iced silently drew nothing), and a portrait
+seen only through a **non-owned** entity (a pilot header, a skills-compare chip) had no recurring refetch trigger at
+all — the hourly profile jobs only refresh owned subjects. Self-heal makes every displayed image recover,
+ownership-agnostic:
+
+- **A descriptor, not a path.** `images::resolve(&store, kind, id) -> ImageState` returns `Fresh(path)` when the file
+  exists and `is_fresh` (the same 7-day TTL — no new freshness logic), else `Stale { kind, id }`. `ImageState::path()`
+  yields `Some` only when `Fresh`, so the avatar keeps its `Option<PathBuf>` interface and draws initials on `Stale`.
+  Loaders store the `ImageState` in their view models instead of a bare `Option<PathBuf>`, so classification still
+  happens at **loader/model-build time**, never per frame.
+- **A shared ensure-fetch command.** When a key is stale the app layer runs `ensure_image(kind, id)`: it re-checks
+  `is_fresh` (a concurrent writer may have filled it), then fetches the biggest size from the public EVE image server
+  (`character_portrait_url` / `corporation_logo_url` / `alliance_logo_url` + `get_bytes_uncached`, **no credentials for
+  any id**) and writes it through the existing atomic `.tmp`+rename `Store::write`. A fetch/write failure is **logged
+  and dropped**, never fatal.
+- **Dedup and reload, no loop.** An in-flight `HashSet<(kind, id)>` collapses the N avatars sharing one id into a single
+  fetch. After a feature loads, the app pulls its stale keys via a uniform `State::stale_images()` and dispatches the
+  new ones; on completion it re-runs the originating route's loader so the now-`Fresh` file swaps in. Because the
+  re-run resolves the file as `Fresh`, it yields no stale key and does not re-dispatch — the cascade terminates.
+
+**Accepted residual:** detection is at loader-build time, not render time. A file evicted **mid-session** while a view
+already holds a `Fresh` descriptor renders the initials placeholder (the avatar tolerates a vanished path) but does not
+refetch until that view's loader next runs — a tab switch, a sync tick, or another `ImageReady` reload. This is the
+deliberate tradeoff of loader-build detection over a per-frame `fs::exists` storm on the render hot path.
 
 ## Affected Areas
 
@@ -184,6 +224,14 @@ For synced portraits/logos (evictable cache, revised 2026-06-08):
   character-profile job fetches and writes the portrait before the commit.
 - Boot (`src/app.rs`) — constructs the production `Store` and passes it to the engine.
 - The render layer (`src/features/character_manager.rs`) — loads portraits from the store.
+
+For self-heal on cache miss (revised 2026-06-09):
+
+- `src/store/images.rs` — `ImageKind`, `ImageState`, the `resolve` descriptor, `image_path`, and `alliance_logo_path`.
+- `src/app.rs` — `Message::ImageReady`, the `pending_images` in-flight set, `ensure_image`, `dispatch_image_fetches`,
+  the post-load `collect_stale_images` hook, and the `image_reload` route re-run.
+- Each avatar-bearing feature (`character_detail`, and via follow-up adoption `assets`, `character_manager`, `mail`,
+  `skills`, `skills_compare`, `wallet`) — stores `ImageState` in its view models and exposes `State::stale_images()`.
 
 ## Consequences
 

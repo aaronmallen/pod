@@ -41,6 +41,44 @@ pub enum IconResolution {
   Missing,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ImageKind {
+  // AllianceLogo and CorporationLogo are constructed by feature adoptions that land separately; until then they are
+  // resolved/matched but not yet built in a non-test path.
+  #[allow(dead_code)]
+  AllianceLogo,
+  CharacterPortrait,
+  #[allow(dead_code)]
+  CorporationLogo,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImageState {
+  Fresh(PathBuf),
+  Stale { id: i64, kind: ImageKind },
+}
+
+impl ImageState {
+  pub fn path(&self) -> Option<PathBuf> {
+    match self {
+      ImageState::Fresh(path) => Some(path.clone()),
+      ImageState::Stale {
+        ..
+      } => None,
+    }
+  }
+
+  pub fn stale_key(&self) -> Option<(ImageKind, i64)> {
+    match self {
+      ImageState::Fresh(_) => None,
+      ImageState::Stale {
+        id,
+        kind,
+      } => Some((*kind, *id)),
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct Store {
   committed_items: Option<PathBuf>,
@@ -55,12 +93,24 @@ impl Store {
     }
   }
 
+  pub fn alliance_logo_path(&self, alliance_id: i64) -> PathBuf {
+    self.root.join("alliances").join(format!("{alliance_id}.png"))
+  }
+
   pub fn character_portrait_path(&self, character_id: i64) -> PathBuf {
     self.root.join("characters").join(format!("{character_id}.jpg"))
   }
 
   pub fn corporation_logo_path(&self, corporation_id: i64) -> PathBuf {
     self.root.join("corporations").join(format!("{corporation_id}.png"))
+  }
+
+  pub fn image_path(&self, kind: ImageKind, id: i64) -> PathBuf {
+    match kind {
+      ImageKind::AllianceLogo => self.alliance_logo_path(id),
+      ImageKind::CharacterPortrait => self.character_portrait_path(id),
+      ImageKind::CorporationLogo => self.corporation_logo_path(id),
+    }
   }
 
   pub fn resolve_type_icon(&self, type_id: i64, is_blueprint_copy: Option<bool>, size: Size) -> IconResolution {
@@ -137,9 +187,34 @@ pub fn is_fresh(path: &Path, max_age: Duration) -> bool {
     .is_ok_and(|modified| modified.elapsed().map_or(true, |age| age < max_age))
 }
 
+pub fn resolve(store: &Store, kind: ImageKind, id: i64) -> ImageState {
+  let path = store.image_path(kind, id);
+  if is_fresh(&path, STALE_AFTER) {
+    ImageState::Fresh(path)
+  } else {
+    ImageState::Stale {
+      id,
+      kind,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod alliance_logo_path {
+    use super::*;
+
+    #[test]
+    fn it_derives_a_flat_per_alliance_png_path() {
+      let store = Store::new(PathBuf::from("/data/images"));
+
+      let path = store.alliance_logo_path(99_000_001);
+
+      assert!(path.ends_with("alliances/99000001.png"), "got {path:?}");
+    }
+  }
 
   mod character_portrait_path {
     use super::*;
@@ -151,6 +226,44 @@ mod tests {
       let path = store.character_portrait_path(42);
 
       assert!(path.ends_with("characters/42.jpg"), "got {path:?}");
+    }
+  }
+
+  mod resolve {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_fresh_for_a_present_recent_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = Store::new(dir.path().to_path_buf());
+      let path = store.character_portrait_path(42);
+      store.write(&path, &[1]).unwrap();
+
+      let state = super::super::resolve(&store, ImageKind::CharacterPortrait, 42);
+
+      assert_eq!(state, ImageState::Fresh(path.clone()));
+      assert_eq!(state.path(), Some(path));
+      assert_eq!(state.stale_key(), None);
+    }
+
+    #[test]
+    fn it_resolves_stale_for_a_missing_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = Store::new(dir.path().to_path_buf());
+
+      let state = super::super::resolve(&store, ImageKind::CorporationLogo, 98_000_001);
+
+      assert_eq!(
+        state,
+        ImageState::Stale {
+          id: 98_000_001,
+          kind: ImageKind::CorporationLogo,
+        }
+      );
+      assert_eq!(state.path(), None);
+      assert_eq!(state.stale_key(), Some((ImageKind::CorporationLogo, 98_000_001)));
     }
   }
 

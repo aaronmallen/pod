@@ -18,7 +18,7 @@ pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot, search_rec
 use self::message_list::MessageRow;
 use crate::{
   store::{
-    Database,
+    Database, images,
     model::{
       CharacterMail,
       character_mail_view::{MailRender, UnifiedMail},
@@ -225,6 +225,10 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
   }
 
   pub fn roster(&self) -> &[RosterPilot] {

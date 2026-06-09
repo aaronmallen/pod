@@ -77,7 +77,7 @@ fn trigger(active: Option<&PickerPilot>, active_id: i64) -> Element<'_, Message>
   let portrait = TriggerPortrait {
     id: active_id,
     name: name.to_owned(),
-    path: active.and_then(|pilot| pilot.portrait.clone()),
+    path: active.and_then(|pilot| pilot.portrait.path()),
   };
 
   trigger_identity(name.to_owned(), corp.to_owned(), Some(portrait))
@@ -96,7 +96,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.id,
     pilot.name.clone(),
     pilot.corp.to_uppercase(),
-    pilot.portrait.clone(),
+    pilot.portrait.path(),
     Some(trailing),
     selected,
     Message::CharacterChanged(pilot.id),
@@ -171,14 +171,17 @@ mod tests {
 
   mod header {
     use super::*;
-    use crate::{config::Feature, features::character_detail::HeadStats};
+    use crate::{config::Feature, features::character_detail::HeadStats, store::images};
 
     fn pilot(id: i64, name: &str) -> PickerPilot {
       PickerPilot {
         corp: "TEST".to_owned(),
         id,
         name: name.to_owned(),
-        portrait: None,
+        portrait: images::ImageState::Stale {
+          id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
         total_sp: 47_320_400,
       }
     }

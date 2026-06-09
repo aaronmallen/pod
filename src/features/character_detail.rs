@@ -116,7 +116,7 @@ pub struct PickerPilot {
   pub corp: String,
   pub id: i64,
   pub name: String,
-  pub portrait: Option<std::path::PathBuf>,
+  pub portrait: images::ImageState,
   pub total_sp: i64,
 }
 
@@ -175,6 +175,14 @@ impl State {
 
   pub fn active(&self) -> i64 {
     self.active
+  }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    self
+      .roster
+      .iter()
+      .filter_map(|pilot| pilot.portrait.stale_key())
+      .collect()
   }
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
@@ -492,8 +500,7 @@ async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
     .flatten()
     .and_then(|state| state.total_sp)
     .unwrap_or(0);
-  let path = images::default_store().character_portrait_path(id);
-  let portrait = path.exists().then_some(path);
+  let portrait = images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id);
 
   PickerPilot {
     corp,
@@ -655,7 +662,10 @@ mod tests {
       corp: "TEST".to_owned(),
       id,
       name: name.to_owned(),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       total_sp: 47_320_400,
     }
   }
@@ -756,6 +766,32 @@ mod tests {
       let state = State::new(42, &[]);
 
       assert_eq!(state.active_tab, Tab::Clones);
+    }
+
+    #[test]
+    fn it_surfaces_stale_roster_portraits_as_image_keys() {
+      let mut state = State::new(42, &[]);
+      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 42),
+          (images::ImageKind::CharacterPortrait, 7),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_omits_fresh_roster_portraits_from_the_stale_keys() {
+      let mut state = State::new(42, &[]);
+      let mut fresh = pilot(42, "Test Pilot");
+      fresh.portrait = images::ImageState::Fresh(std::path::PathBuf::from("/tmp/42.jpg"));
+      state.roster = vec![fresh];
+
+      assert!(state.stale_images().is_empty());
     }
   }
 
@@ -1268,7 +1304,7 @@ mod tests {
       assert_eq!(pilot.name, "");
       assert_eq!(pilot.corp, "");
       assert_eq!(pilot.total_sp, 0);
-      assert!(pilot.portrait.is_none());
+      assert!(pilot.portrait.path().is_none());
     }
   }
 

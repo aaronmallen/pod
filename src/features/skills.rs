@@ -115,6 +115,10 @@ impl State {
   pub fn active(&self) -> i64 {
     self.active
   }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
+  }
 }
 
 #[derive(Clone, Debug)]

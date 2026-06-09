@@ -276,6 +276,10 @@ impl State {
     self.side_filter
   }
 
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
+  }
+
   pub fn timeframe(&self) -> Timeframe {
     self.timeframe
   }

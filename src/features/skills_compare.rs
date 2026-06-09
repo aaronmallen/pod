@@ -15,7 +15,7 @@ pub(super) use model::CompareModel;
 use crate::{
   features::{character_manager::OwnedPilot, skills::browse::SkillCatalog},
   store::{
-    Database,
+    Database, images,
     repo::{character, skills},
   },
   ui::{
@@ -137,12 +137,16 @@ impl State {
     &self.picker_query
   }
 
-  pub(super) fn selected_ids(&self) -> &[i64] {
+  pub(crate) fn selected_ids(&self) -> &[i64] {
     &self.selected_ids
   }
 
   pub(super) fn skill_catalog(&self) -> &SkillCatalog {
     &self.catalog
+  }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
   }
 }
 

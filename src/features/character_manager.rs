@@ -351,6 +351,10 @@ impl State {
   pub fn search_query(&self) -> &str {
     &self.search_query
   }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
+  }
 }
 
 pub fn load(db: &Database, enabled_features: Vec<Feature>) -> Task<Message> {

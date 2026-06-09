@@ -364,6 +364,10 @@ impl State {
     self.active
   }
 
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    Vec::new()
+  }
+
   pub(super) fn tab(&self) -> Tab {
     self.tab
   }

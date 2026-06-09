@@ -2,6 +2,7 @@ mod snooze_scheduler;
 mod windows;
 
 use std::{
+  collections::HashSet,
   sync::Arc,
   time::{Duration, Instant, SystemTime},
 };
@@ -107,6 +108,7 @@ struct App {
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
   pending_auth: Option<auth::Message>,
+  pending_images: HashSet<(store::images::ImageKind, i64)>,
   read_only: Option<HolderInfo>,
   route: Route,
   runtime: Option<Runtime>,
@@ -186,6 +188,11 @@ enum Message {
   CloseSyncPopover,
   Compare(skills_compare::Message),
   FocusMainWindow,
+  ImageReady {
+    id: i64,
+    kind: store::images::ImageKind,
+    ready: bool,
+  },
   InitFailed(String),
   LeaseHeartbeat,
   LockReleased,
@@ -253,6 +260,9 @@ impl Message {
       Message::ClockTick => "ClockTick",
       Message::CloseSyncPopover => "CloseSyncPopover",
       Message::FocusMainWindow => "FocusMainWindow",
+      Message::ImageReady {
+        ..
+      } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
       Message::LeaseHeartbeat => "LeaseHeartbeat",
       Message::OpenAbout => "OpenAbout",
@@ -527,6 +537,7 @@ fn boot() -> (App, Task<Message>) {
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
     pending_auth: None,
+    pending_images: HashSet::new(),
     read_only: None,
     route: Route::default(),
     runtime: None,
@@ -966,6 +977,133 @@ fn assets_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
   let runtime = app.runtime.as_ref()?;
   app.assets.as_ref()?;
   Some(assets::load(&runtime.db).map(Message::Assets))
+}
+
+fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
+  let mut keys = match app.route {
+    Route::Assets => app.assets.as_ref().map(assets::State::stale_images).unwrap_or_default(),
+    Route::CharacterDetail(_) => app
+      .character_detail
+      .as_ref()
+      .map(character_detail::State::stale_images)
+      .unwrap_or_default(),
+    Route::Characters => app
+      .character_manager
+      .as_ref()
+      .map(character_manager::State::stale_images)
+      .unwrap_or_default(),
+    Route::Mail => app.mail.as_ref().map(mail::State::stale_images).unwrap_or_default(),
+    Route::Settings => Vec::new(),
+    Route::Skills(_) => app.skills.as_ref().map(skills::State::stale_images).unwrap_or_default(),
+    Route::Wallet => app.wallet.as_ref().map(wallet::State::stale_images).unwrap_or_default(),
+  };
+  if let Some((_, compare)) = app.compare.as_ref() {
+    keys.extend(compare.stale_images());
+  }
+  keys
+}
+
+fn dispatch_image_fetches(app: &mut App, keys: Vec<(store::images::ImageKind, i64)>) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let mut tasks = Vec::new();
+  for (kind, id) in keys {
+    if !app.pending_images.insert((kind, id)) {
+      continue;
+    }
+    let client = Arc::clone(&runtime.eve_image);
+    tasks.push(Task::perform(
+      async move { ensure_image(client, kind, id).await },
+      move |ready| Message::ImageReady {
+        id,
+        kind,
+        ready,
+      },
+    ));
+  }
+  Task::batch(tasks)
+}
+
+async fn ensure_image(client: Arc<eve_image::Client>, kind: store::images::ImageKind, id: i64) -> bool {
+  use store::images::{self, ImageKind};
+
+  let store = images::default_store();
+  let path = store.image_path(kind, id);
+  if images::is_fresh(&path, images::STALE_AFTER) {
+    return true;
+  }
+
+  let url = match kind {
+    ImageKind::AllianceLogo => client.alliance_logo_url(id, images::LOGO_SIZE),
+    ImageKind::CharacterPortrait => client.character_portrait_url(id, images::PORTRAIT_SIZE),
+    ImageKind::CorporationLogo => client.corporation_logo_url(id, images::LOGO_SIZE),
+  };
+
+  match client.fetch(&url).await {
+    Ok(bytes) => match store.write(&path, &bytes) {
+      Ok(()) => true,
+      Err(error) => {
+        tracing::warn!(target: "pod::images", %error, ?kind, id, "writing a refetched image failed");
+        false
+      }
+    },
+    Err(error) => {
+      tracing::warn!(target: "pod::images", %error, ?kind, id, "refetching an evicted image failed");
+      false
+    }
+  }
+}
+
+fn handle_image_ready(app: &mut App, kind: store::images::ImageKind, id: i64, ready: bool) -> Task<Message> {
+  app.pending_images.remove(&(kind, id));
+  if ready { image_reload(app) } else { Task::none() }
+}
+
+fn image_reload(app: &App) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let mut tasks = Vec::new();
+  match app.route {
+    Route::Assets => {
+      if app.assets.is_some() {
+        tasks.push(assets::load(&runtime.db).map(Message::Assets));
+      }
+    }
+    Route::CharacterDetail(_) => {
+      if let Some(detail) = app.character_detail.as_ref() {
+        let owned = owned_pilot_ids(app);
+        tasks.push(character_detail::load(&runtime.db, detail.active(), owned).map(Message::CharacterDetail));
+      }
+    }
+    Route::Characters => {
+      if app.character_manager.is_some() {
+        tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
+      }
+    }
+    Route::Mail => {
+      if app.mail.is_some() {
+        tasks.push(mail::load(&runtime.db).map(Message::Mail));
+      }
+    }
+    Route::Settings => {}
+    Route::Skills(_) => {
+      if let Some(skills) = app.skills.as_ref() {
+        let owned = owned_pilot_ids(app);
+        tasks.push(skills::load(&runtime.db, skills.active(), owned).map(Message::Skills));
+      }
+    }
+    Route::Wallet => {
+      if app.wallet.is_some() {
+        tasks.push(wallet::load(&runtime.db).map(Message::Wallet));
+      }
+    }
+  }
+  if let Some((_, compare)) = app.compare.as_ref() {
+    tasks.push(skills_compare::load(&runtime.db, compare.selected_ids().to_vec()).map(Message::Compare));
+  }
+  Task::batch(tasks)
 }
 
 fn main_view(app: &App) -> Element<'_, Message> {
@@ -1802,10 +1940,19 @@ fn handle_about(app: &mut App, msg: about::Message) -> Task<Message> {
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
-  match dispatch_feature(app, message) {
+  let is_feature = message.feature_variant_name().is_some();
+  let task = match dispatch_feature(app, message) {
     Ok(task) => task,
     Err(message) => dispatch_lifecycle(app, *message),
+  };
+  if !is_feature {
+    return task;
   }
+  let stale = collect_stale_images(app);
+  if stale.is_empty() {
+    return task;
+  }
+  Task::batch([task, dispatch_image_fetches(app, stale)])
 }
 
 fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
@@ -1834,6 +1981,11 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::ClockTick => handle_clock_tick(app),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
+    Message::ImageReady {
+      id,
+      kind,
+      ready,
+    } => handle_image_ready(app, kind, id, ready),
     Message::InitFailed(error) => handle_init_failed(app, error),
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
     Message::LockReleased => handle_lock_released(app),
@@ -2812,6 +2964,7 @@ mod tests {
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
       pending_auth: None,
+      pending_images: HashSet::new(),
       read_only: None,
       route: Route::default(),
       runtime: None,
@@ -4272,6 +4425,46 @@ mod tests {
       app.route = Route::Assets;
 
       assert!(assets_reload_on_finished(&app, finished(JobKind::CharacterWallet)).is_none());
+    }
+  }
+
+  mod image_self_heal {
+    use super::*;
+    use crate::store::images::ImageKind;
+
+    #[tokio::test]
+    async fn it_marks_each_stale_key_in_flight_exactly_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _task = dispatch_image_fetches(
+        &mut app,
+        vec![(ImageKind::CharacterPortrait, 42), (ImageKind::CharacterPortrait, 42)],
+      );
+
+      assert!(app.pending_images.contains(&(ImageKind::CharacterPortrait, 42)));
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_redispatch_a_key_already_in_flight() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.pending_images.insert((ImageKind::CorporationLogo, 7));
+
+      let _task = dispatch_image_fetches(&mut app, vec![(ImageKind::CorporationLogo, 7)]);
+
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[test]
+    fn it_clears_the_pending_key_when_an_image_resolves() {
+      let mut app = test_app();
+      app.pending_images.insert((ImageKind::CharacterPortrait, 42));
+
+      let _task = handle_image_ready(&mut app, ImageKind::CharacterPortrait, 42, false);
+
+      assert!(app.pending_images.is_empty());
     }
   }
 

@@ -10,15 +10,20 @@ runs:
   using: "composite"
   steps:
     - uses: jdx/mise-action@v4
-    # Select sccache's GitHub Actions cache backend (no external S3/R2). These
-    # are written before sccache-action runs so it sees SCCACHE_GHA_ENABLED and
-    # exports the cache-service tokens; RUSTC_WRAPPER then makes every later
-    # cargo build in the job route rustc through sccache.
+    # Select sccache's GitHub Actions cache backend (no external S3/R2). Written
+    # before sccache-action runs so it sees SCCACHE_GHA_ENABLED and exports the
+    # cache-service tokens.
     - shell: bash
-      run: |-
-        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+      run: echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
     - uses: mozilla/sccache-action@v0.0.10
+    # Route rustc through sccache via the ABSOLUTE path the action just exported
+    # (SCCACHE_PATH), not the bare `sccache` name. On the Windows release runner
+    # the bare name was not resolvable from the cargo build spawned by
+    # `mise run package` (PATH did not propagate), failing with
+    # "could not execute process sccache ... (never executed)". The absolute path
+    # is PATH-independent and works on every OS.
+    - shell: bash
+      run: echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
     - uses: Swatinem/rust-cache@v2
       with:
         # A stable shared key (scoped per job/target via cache-key) keys the

@@ -13,7 +13,7 @@ use iced::{
 
 use super::Outcome;
 use crate::{
-  config::{Settings, StorageMode},
+  config::{Settings, StorageConfig, StorageMode},
   ui::{
     components::{backdrop, rule, status},
     style::{color, control, radius, shadow, spacing, typography},
@@ -121,6 +121,15 @@ pub struct PendingMove {
   to: PathBuf,
 }
 
+/// A request to migrate the on-disk database layout because the storage configuration crossed (or
+/// could have crossed) the Direct/Sync boundary. Carries the configuration as it was *before* the
+/// change so the lifecycle engine in `app.rs` can drive the async file migration with both ends in
+/// hand. The tab owns no migration machinery itself.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationRequest {
+  pub previous: StorageConfig,
+}
+
 /// Live sync/lease state observed from the lifecycle engine in `app.rs` and fed down into the view.
 /// The tab itself owns no sync machinery — it only renders this snapshot and routes actions back up.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -133,6 +142,7 @@ pub struct SyncStatus {
 pub struct State {
   drafts: HashMap<PathKind, String>,
   error: Option<String>,
+  migration: Option<MigrationRequest>,
   pending: Option<PendingMove>,
   sync: SyncStatus,
 }
@@ -153,6 +163,10 @@ impl State {
       holder,
       last_synced,
     };
+  }
+
+  pub fn take_migration(&mut self) -> Option<MigrationRequest> {
+    self.migration.take()
   }
 }
 
@@ -275,7 +289,19 @@ fn commit_override(kind: PathKind, to: PathBuf, settings: &mut Settings) {
   }
 }
 
-fn finish_move(pending: PendingMove, settings: &mut Settings) -> Result<(), String> {
+fn finish_move(pending: PendingMove, state: &mut State, settings: &mut Settings) -> Result<(), String> {
+  if pending.kind == PathKind::Database {
+    // The database family is migrated asynchronously by the lifecycle engine, which alone can run
+    // the WAL checkpoint a Sync→Direct consolidation needs. Repoint the config and hand it the
+    // pre-change snapshot; the relocate path below only moves plain directory trees (logs, cache).
+    let previous = settings.storage().clone();
+    commit_override(pending.kind, pending.to, settings);
+    state.migration = Some(MigrationRequest {
+      previous,
+    });
+    return Ok(());
+  }
+
   relocate(&pending.from, &pending.to).map_err(|error| {
     format!(
       "Couldn't move {} → {}: {error}",
@@ -308,7 +334,7 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
         return Outcome::None;
       };
       let kind = pending.kind;
-      match finish_move(pending, settings) {
+      match finish_move(pending, state, settings) {
         Ok(()) => {
           sync_draft(state, kind, settings);
           Outcome::Persist
@@ -367,7 +393,14 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
     }
     Message::SyncNow => Outcome::SyncNow,
     Message::SyncToggled(value) => {
+      let previous = settings.storage().clone();
       settings.storage_mut().set_network(value);
+      // Toggling sync flips the storage mode in place (the configured path is unchanged), so the
+      // database must migrate to the new layout: seed a working copy + sidecar when turning on,
+      // consolidate it back into a single file when turning off.
+      state.migration = Some(MigrationRequest {
+        previous,
+      });
       Outcome::Persist
     }
   }
@@ -1368,16 +1401,19 @@ mod tests {
   mod move_flow {
     use super::*;
 
+    // Drives the confirm/skip/cancel UX against the Log kind, whose move is a plain synchronous
+    // directory relocate. The Database kind defers its file work to the async layout migration and
+    // is exercised separately in `database_migration`.
     fn populated_pending() -> (State, Settings, tempfile::TempDir, tempfile::TempDir, PathBuf) {
       let from = tempdir().unwrap();
-      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      fs::write(from.path().join("pod.log"), b"data").unwrap();
       let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      settings.storage_mut().set_log_dir(Some(from.path().to_path_buf()));
       let dest_root = tempdir().unwrap();
       let dest = dest_root.path().join("relocated");
 
       let mut state = state();
-      let outcome = apply_destination(&mut state, PathKind::Database, dest.clone(), &mut settings);
+      let outcome = apply_destination(&mut state, PathKind::Log, dest.clone(), &mut settings);
 
       assert_eq!(outcome, Outcome::None, "raising the confirm does not persist yet");
       assert!(state.pending.is_some());
@@ -1392,9 +1428,9 @@ mod tests {
 
       assert_eq!(outcome, Outcome::Persist);
       assert!(state.pending.is_none());
-      assert!(dest.join("pod.db").exists(), "files moved to the destination");
-      assert!(!from.path().join("pod.db").exists(), "source emptied");
-      assert_eq!(*settings.storage().db_dir(), Some(dest));
+      assert!(dest.join("pod.log").exists(), "files moved to the destination");
+      assert!(!from.path().join("pod.log").exists(), "source emptied");
+      assert_eq!(*settings.storage().log_dir(), Some(dest));
     }
 
     #[test]
@@ -1406,28 +1442,81 @@ mod tests {
       assert_eq!(outcome, Outcome::Persist);
       assert!(state.pending.is_none());
       assert!(
-        from.path().join("pod.db").exists(),
+        from.path().join("pod.log").exists(),
         "skip leaves the old files in place"
       );
-      assert!(!dest.join("pod.db").exists(), "skip moves nothing");
-      assert_eq!(*settings.storage().db_dir(), Some(dest));
+      assert!(!dest.join("pod.log").exists(), "skip moves nothing");
+      assert_eq!(*settings.storage().log_dir(), Some(dest));
     }
 
     #[test]
     fn cancel_move_aborts_with_no_change() {
       let (mut state, mut settings, from, _dest_root, _dest) = populated_pending();
-      let before = settings.storage().db_dir().clone();
+      let before = settings.storage().log_dir().clone();
 
       let outcome = update(&mut state, Message::CancelMove, &mut settings);
 
       assert_eq!(outcome, Outcome::None);
       assert!(state.pending.is_none());
-      assert!(from.path().join("pod.db").exists(), "cancel touches nothing");
+      assert!(from.path().join("pod.log").exists(), "cancel touches nothing");
       assert_eq!(
-        *settings.storage().db_dir(),
+        *settings.storage().log_dir(),
         before,
         "cancel leaves the override untouched"
       );
+    }
+  }
+
+  mod database_migration {
+    use super::*;
+
+    fn populated_db_pending() -> (State, Settings, tempfile::TempDir, PathBuf) {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      let dest_root = tempdir().unwrap();
+      let dest = dest_root.path().join("relocated");
+
+      let mut state = state();
+      apply_destination(&mut state, PathKind::Database, dest.clone(), &mut settings);
+
+      (state, settings, dest_root, dest)
+    }
+
+    #[test]
+    fn confirming_a_database_move_commits_the_override_and_records_a_migration() {
+      let (mut state, mut settings, _dest_root, dest) = populated_db_pending();
+      let from_before = settings.storage().clone();
+
+      let outcome = update(&mut state, Message::ConfirmMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().db_dir(), Some(dest));
+      let migration = state
+        .take_migration()
+        .expect("a database move records a migration request");
+      assert_eq!(
+        migration.previous, from_before,
+        "the migration carries the pre-change configuration"
+      );
+    }
+
+    #[test]
+    fn toggling_sync_records_a_migration_with_the_previous_config() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      let before = settings.storage().clone();
+
+      let outcome = update(&mut state, Message::SyncToggled(true), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(settings.storage().network());
+      let migration = state
+        .take_migration()
+        .expect("the sync toggle records a migration request");
+      assert_eq!(migration.previous, before, "the previous config has sync off");
+      assert!(!migration.previous.network());
     }
   }
 
@@ -1545,12 +1634,12 @@ mod tests {
     #[test]
     fn a_failed_move_keeps_the_old_override_and_surfaces_an_error() {
       let from = tempdir().unwrap();
-      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      fs::write(from.path().join("pod.log"), b"data").unwrap();
       let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(from.path().to_path_buf()));
+      settings.storage_mut().set_log_dir(Some(from.path().to_path_buf()));
       let mut state = state();
       state.pending = Some(PendingMove {
-        kind: PathKind::Database,
+        kind: PathKind::Log,
         from: PathBuf::from("/no/such/pod/source/dir"),
         to: tempdir().unwrap().path().join("dest"),
       });
@@ -1560,7 +1649,7 @@ mod tests {
       assert_eq!(outcome, Outcome::None, "a failed move does not persist");
       assert!(state.error.is_some(), "the failure is surfaced");
       assert_eq!(
-        *settings.storage().db_dir(),
+        *settings.storage().log_dir(),
         Some(from.path().to_path_buf()),
         "the old override is left intact"
       );

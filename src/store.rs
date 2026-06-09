@@ -15,6 +15,7 @@ pub mod model;
 pub mod repo;
 pub mod search;
 pub mod share_meta;
+pub mod storage_migration;
 pub mod sync_copy;
 pub mod sync_session;
 

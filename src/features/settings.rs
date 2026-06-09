@@ -90,6 +90,10 @@ impl State {
   pub fn settings(&self) -> &Settings {
     &self.settings
   }
+
+  pub fn take_storage_migration(&mut self) -> Option<storage_tab::MigrationRequest> {
+    self.storage.take_migration()
+  }
 }
 
 pub fn load(state: &State) -> Task<Message> {

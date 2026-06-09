@@ -204,6 +204,7 @@ enum Message {
   Skills(skills::Message),
   SnoozesWoken(Vec<(i64, i64)>),
   Splash(splash::Message),
+  StorageMigrated,
   StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
   SyncPulse,
@@ -262,6 +263,7 @@ impl Message {
       Message::SeedProgress(_) => "SeedProgress",
       Message::SnoozesWoken(_) => "SnoozesWoken",
       Message::Splash(_) => "Splash",
+      Message::StorageMigrated => "StorageMigrated",
       Message::StoreOpened(_) => "StoreOpened",
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
@@ -1843,6 +1845,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::SeedProgress(progress) => on_seed_progress(app, progress),
     Message::SnoozesWoken(woken) => handle_snoozes_woken(app, woken),
     Message::Splash(msg) => update_splash(app, msg),
+    Message::StorageMigrated => Task::none(),
     Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::SyncPulse => handle_sync_pulse(app),
     Message::TakeOver => handle_take_over(app),
@@ -1965,7 +1968,12 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     return Task::none();
   };
   let (outcome, settings_task) = settings::update(state, msg);
-  let task = settings_task.map(Message::Settings);
+  let mut task = settings_task.map(Message::Settings);
+
+  if let Some(request) = state.take_storage_migration() {
+    let next = state.settings().storage().clone();
+    task = Task::batch(vec![task, migrate_storage(request.previous, next)]);
+  }
 
   match outcome {
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
@@ -2016,6 +2024,30 @@ fn release_lock(app: &App) -> Task<Message> {
       tracing::info!(target: "pod::lifecycle", "force-released the storage lease");
     }
     Message::LockReleased
+  })
+}
+
+/// Migrates the on-disk database layout after the storage configuration crossed (or could have
+/// crossed) the Direct/Sync boundary. Driven async because a Sync→Direct consolidation must run a
+/// WAL checkpoint; the change takes effect on next launch, when bootstrap resolves the new layout.
+fn migrate_storage(previous: config::StorageConfig, next: config::StorageConfig) -> Task<Message> {
+  let old_mode = previous.storage_mode();
+  let new_mode = next.storage_mode();
+  Task::future(async move {
+    match store::storage_migration::migrate(&previous, &next, old_mode, new_mode).await {
+      Ok(()) => tracing::info!(
+        target: "pod::lifecycle",
+        ?old_mode,
+        ?new_mode,
+        "migrated the database layout for the new storage location"
+      ),
+      Err(error) => tracing::warn!(
+        target: "pod::lifecycle",
+        %error,
+        "storage layout migration failed; the previous layout is left intact"
+      ),
+    }
+    Message::StorageMigrated
   })
 }
 

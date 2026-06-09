@@ -10,12 +10,44 @@ use sqlx::{Connection, SqliteConnection};
 
 use crate::store::share_meta::{read_generation, write_generation};
 
+const WAL_SIDECARS: [&str; 2] = ["-wal", "-shm"];
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
   #[error("io error: {0}")]
   Io(#[from] io::Error),
   #[error("database error: {0}")]
   Sqlx(#[from] sqlx::Error),
+}
+
+pub async fn checkpoint_into(source: &Path, destination: &Path) -> Result<(), Error> {
+  if let Some(parent) = destination.parent() {
+    fs::create_dir_all(parent)?;
+  }
+
+  // Stage the database alongside its -wal/-shm sidecars, fold the WAL in, then publish only the
+  // self-contained .db — the destination never gains a -wal/-shm trail and the source is untouched.
+  let staged = destination.with_extension("checkpoint-tmp");
+  fs::copy(source, &staged)?;
+  for suffix in WAL_SIDECARS {
+    let sidecar = with_suffix(source, suffix);
+    if sidecar.exists() {
+      fs::copy(&sidecar, with_suffix(&staged, suffix))?;
+    }
+  }
+
+  let result = checkpoint(&staged).await;
+  for suffix in WAL_SIDECARS {
+    let _ = fs::remove_file(with_suffix(&staged, suffix));
+  }
+  if let Err(error) = result {
+    let _ = fs::remove_file(&staged);
+    return Err(error);
+  }
+
+  fs::rename(&staged, destination)?;
+
+  Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +133,12 @@ fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
   fs::rename(&tmp, destination)?;
 
   Ok(())
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+  let mut name = path.as_os_str().to_owned();
+  name.push(suffix);
+  PathBuf::from(name)
 }
 
 #[cfg(test)]
@@ -255,6 +293,44 @@ mod tests {
 
       assert!(!layout.canonical.with_extension("db-wal").exists());
       assert!(!layout.canonical.with_extension("db-shm").exists());
+    }
+  }
+
+  mod checkpoint_into {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_writes_a_self_contained_copy_without_wal_sidecars() {
+      let layout = Layout::new();
+      let destination = layout.canonical.parent().unwrap().join("consolidated.db");
+      seed_wal_database(&layout.working_copy).await;
+
+      checkpoint_into(&layout.working_copy, &destination).await.unwrap();
+
+      let options = SqliteConnectOptions::new().filename(&destination);
+      let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+      let body: String = sqlx::query_scalar("SELECT body FROM note")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+      connection.close().await.unwrap();
+
+      assert_eq!(body, "hello");
+      assert!(!with_suffix(&destination, "-wal").exists());
+      assert!(!with_suffix(&destination, "-shm").exists());
+    }
+
+    #[tokio::test]
+    async fn it_leaves_the_source_in_place() {
+      let layout = Layout::new();
+      let destination = layout.canonical.parent().unwrap().join("consolidated.db");
+      seed_wal_database(&layout.working_copy).await;
+
+      checkpoint_into(&layout.working_copy, &destination).await.unwrap();
+
+      assert!(layout.working_copy.exists(), "the source is not consumed");
     }
   }
 

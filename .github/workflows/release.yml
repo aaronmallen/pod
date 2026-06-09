@@ -54,46 +54,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
-        with:
-          cache-key: release-icons
-
-      # Derive the cache key from the SDE build number WITHOUT downloading the
-      # multi-hundred-MB SDE zip: latest.jsonl is a one-line document carrying
-      # the same buildNumber the runtime keys on (src/clients/sde.rs). A failure
-      # here fails the release — we will not cache against an unknown SDE.
-      - name: Resolve SDE build number
-        id: sde
-        run: |
-          build="$(curl -fsS \
-            https://developers.eveonline.com/static-data/tranquility/latest.jsonl \
-            | jq -r '.buildNumber')"
-          if [ -z "$build" ] || [ "$build" = "null" ]; then
-            echo "::error::could not resolve SDE buildNumber from latest.jsonl"
-            exit 1
-          fi
-          echo "Resolved SDE buildNumber: $build"
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-
-      # Cross-release icon cache keyed on the SDE build number. An unchanged SDE
-      # is an exact hit: the generator below (SDE download + ~30k-icon CDN
-      # fetch) is skipped and the previously gated set is reused. A changed build
-      # number misses, so the generator runs a full cold fetch and its
-      # coverage-floor gate re-validates the set — keeping the CDN-outage canary
-      # intact. Exact key only (no restore-keys) so a miss is a true full fetch,
-      # not a warm base that could mask an outage affecting only new types.
-      - name: Cache item icons
-        id: icon-cache
-        uses: actions/cache@v5
-        with:
-          path: assets/images/items
-          key: item-images-sde-${{ steps.sde.outputs.build }}
 
       - name: Generate item icons
-        if: steps.icon-cache.outputs.cache-hit != 'true'
         run: mise run generate:item-images
 
       - name: Upload item icons
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: item-images
           path: assets/images/items
@@ -103,19 +69,6 @@ jobs:
       - create-release
       - generate-icons
     runs-on: macos-latest
-    # Build + notarize the two Apple arches as concurrent legs instead of
-    # sequentially in one job — the two serial notarytool --wait round-trips and
-    # cold target builds dominated the macOS critical path. publish-release's
-    # `needs: package-macos` joins on all legs, so it still sees both arches.
-    # fail-fast: false lets one arch's diagnostics surface even if the other
-    # fails (a failed leg still fails the job, so a half-built release is never
-    # published).
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
@@ -123,19 +76,15 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
-        with:
-          # Per-target scope so the two arch legs never share one target/ tree
-          # (rust-cache does not key on --target).
-          cache-key: release-macos-${{ matrix.target }}
 
       - name: Download item icons
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: item-images
           path: assets/images/items
 
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.target }}
+      - name: Add Rust targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
       - name: Import Apple certificate
         if: env.APPLE_CERTIFICATE != ''
@@ -153,19 +102,19 @@ jobs:
             -s -k "" build.keychain
           rm certificate.p12
 
-      - name: Build and package
-        run: mise run package --format dmg --target ${{ matrix.target }}
+      - name: Build and package (x86_64)
+        run: mise run package --format dmg --target x86_64-apple-darwin
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
-      - name: Notarize macOS app
+      - name: Notarize macOS app (x86_64)
         if: env.APPLE_ID != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          DMG=$(find . -path "*/${{ matrix.target }}/*" -name "*.dmg" | head -1)
+          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
@@ -173,10 +122,10 @@ jobs:
             --wait
           xcrun stapler staple "$DMG"
 
-      - name: Create app tarball for updater
+      - name: Create app tarball for updater (x86_64)
         run: |
           hdiutil detach /Volumes/PodUpdateMount || true
-          DMG=$(find . -path "*/${{ matrix.target }}/*" -name "*.dmg" | head -1)
+          DMG=$(find . -path "*/x86_64-apple-darwin/*" -name "*.dmg" | head -1)
           TARBALL="${DMG%.dmg}.app.tar.gz"
           hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
           APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
@@ -184,13 +133,52 @@ jobs:
           tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
           hdiutil detach /Volumes/PodUpdateMount
 
-      - name: Sign package for updater
+      - name: Sign package for updater (x86_64)
         if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
-          TARBALL=$(find . -path "*/${{ matrix.target }}/*" -name "*.app.tar.gz" | head -1)
+          TARBALL=$(find . -path "*/x86_64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
+          cargo-packager signer sign "$TARBALL"
+
+      - name: Build and package (aarch64)
+        run: mise run package --format dmg --target aarch64-apple-darwin
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
+      - name: Notarize macOS app (aarch64)
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Create app tarball for updater (aarch64)
+        run: |
+          DMG=$(find . -path "*/aarch64-apple-darwin/*" -name "*.dmg" | head -1)
+          TARBALL="${DMG%.dmg}.app.tar.gz"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/PodUpdateMount
+          APP=$(find /Volumes/PodUpdateMount -maxdepth 1 -name "*.app" | head -1)
+          xcrun stapler staple "$APP" || true
+          tar -czf "$TARBALL" -C /Volumes/PodUpdateMount "$(basename "$APP")"
+          hdiutil detach /Volumes/PodUpdateMount
+
+      - name: Sign package for updater (aarch64)
+        if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          TARBALL=$(find . -path "*/aarch64-apple-darwin/*" -name "*.app.tar.gz" | head -1)
           cargo-packager signer sign "$TARBALL"
 
       - name: Upload to release
@@ -214,11 +202,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
-        with:
-          cache-key: release-windows
 
       - name: Download item icons
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: item-images
           path: assets/images/items
@@ -226,28 +212,14 @@ jobs:
       - name: Add Rust target
         run: rustup target add x86_64-pc-windows-msvc
 
-      # Cache Chocolatey's download cache (the nupkg + the WiX installer that the
-      # package's install script pulls) keyed on the OS. The install step still
-      # always runs — so the WiX binaries and PATH are never cache-dependent — it
-      # just restores the download instead of re-fetching it on a second run.
-      - name: Cache WiX Toolset download
-        uses: actions/cache@v5
-        with:
-          path: ${{ github.workspace }}\.choco-cache
-          key: ${{ runner.os }}-wixtoolset
-
       - name: Install WiX Toolset v3
-        run: choco upgrade wixtoolset -y --cache-location="${{ github.workspace }}\.choco-cache"
+        run: choco upgrade wixtoolset -y
 
-      # One cargo build --release, both Windows formats packaged from it
-      # (cargo-packager accepts a comma-separated --formats). The eveauth-pod://
-      # scheme is declared statically in Cargo.toml's deep-link-protocols and the
-      # app self-registers the HKCU handler at runtime (self-heals if the exe
-      # moves), so deep-link delivery does not depend on a CI grep over the
-      # generated installer source — that check only ran at release time and
-      # added release-blocking brittleness without testing real behavior.
-      - name: Build and package (nsis, wix)
-        run: mise run package --format nsis,wix
+      - name: Build and package (nsis)
+        run: mise run package --format nsis
+
+      - name: Build and package (wix)
+        run: mise run package --format wix
 
       - name: Sign Windows installers
         if: env.WINDOWS_CERTIFICATE != ''
@@ -298,11 +270,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
-        with:
-          cache-key: release-linux
 
       - name: Download item icons
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: item-images
           path: assets/images/items
@@ -310,13 +280,11 @@ jobs:
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu
 
-      # One cargo build --release shared by all three native Linux formats
-      # (cargo-packager accepts a comma-separated --formats). The pacman bundler
-      # emits the PKGBUILD + source tarball consumed by the Docker makepkg step
-      # below, and Flatpak builds from the deb-extracted binary — so neither
-      # forces a second app rebuild.
-      - name: Build and package (deb, appimage, pacman)
-        run: mise run package --format deb,appimage,pacman
+      - name: Build and package (deb)
+        run: mise run package --format deb
+
+      - name: Build and package (appimage)
+        run: mise run package --format appimage
 
       - name: Sign package for updater
         if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
@@ -327,25 +295,8 @@ jobs:
           APPIMAGE=$(find . -name "*.AppImage" | head -1)
           cargo-packager signer sign "$APPIMAGE"
 
-      # Cache the archlinux:latest image so the multi-hundred-MB pull becomes a
-      # local docker load on a second run. The makepkg container still runs
-      # `pacman -Sy` to refresh its package DB, so a cached base image stays
-      # usable. Correctness is cache-independent: a miss pulls and saves it.
-      - name: Cache Arch Linux image
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/arch-image
-          key: ${{ runner.os }}-archlinux-latest
-
-      - name: Restore or pull Arch Linux image
-        run: |
-          if [ -f ~/.cache/arch-image/archlinux.tar ]; then
-            docker load -i ~/.cache/arch-image/archlinux.tar
-          else
-            docker pull archlinux:latest
-            mkdir -p ~/.cache/arch-image
-            docker save archlinux:latest -o ~/.cache/arch-image/archlinux.tar
-          fi
+      - name: Build and package (pacman)
+        run: mise run package --format pacman
 
       - name: Build pacman package
         run: |
@@ -373,23 +324,11 @@ jobs:
       - name: Install Flatpak tools
         run: sudo apt-get install -y flatpak flatpak-builder
 
-      # Cache the user Flatpak installation (the freedesktop Platform + Sdk
-      # runtimes) keyed on the OS + runtime version. --user installs live under
-      # $HOME, so actions/cache restores them without root-owned-path issues, and
-      # flatpak-builder --user resolves the cached runtime instead of
-      # re-downloading it. The install step stays idempotent, so a cache miss
-      # simply re-fetches — correctness never depends on the cache.
-      - name: Cache Flatpak runtime
-        uses: actions/cache@v5
-        with:
-          path: ~/.local/share/flatpak
-          key: ${{ runner.os }}-flatpak-freedesktop-24.08
-
       - name: Add Flathub remote
-        run: flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        run: sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Install Flatpak runtime
-        run: flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+        run: sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
       - name: Prepare binary tarball
         run: |
@@ -408,7 +347,7 @@ jobs:
         run: mise run generate:flatpak --path "../$TARBALL"
 
       - name: Build Flatpak
-        run: flatpak-builder --user --repo=repo build-dir flatpak/dev.aaronmallen.pod.yml
+        run: sudo flatpak-builder --repo=repo build-dir flatpak/dev.aaronmallen.pod.yml
 
       - name: Bundle Flatpak
         run: flatpak build-bundle repo dev.aaronmallen.pod.flatpak dev.aaronmallen.pod

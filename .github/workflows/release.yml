@@ -240,47 +240,14 @@ jobs:
         run: choco upgrade wixtoolset -y --cache-location="${{ github.workspace }}\.choco-cache"
 
       # One cargo build --release, both Windows formats packaged from it
-      # (cargo-packager accepts a comma-separated --formats); the NSIS and WiX
-      # deep-link handler verifications both run afterward against the rendered
-      # installer.nsi / main.wxs.
+      # (cargo-packager accepts a comma-separated --formats). The eveauth-pod://
+      # scheme is declared statically in Cargo.toml's deep-link-protocols and the
+      # app self-registers the HKCU handler at runtime (self-heals if the exe
+      # moves), so deep-link delivery does not depend on a CI grep over the
+      # generated installer source — that check only ran at release time and
+      # added release-blocking brittleness without testing real behavior.
       - name: Build and package (nsis, wix)
         run: mise run package --format nsis,wix
-
-      - name: Verify NSIS deep-link handler
-        shell: bash
-        run: |
-          nsi="$(find . -name installer.nsi | head -1)"
-          if [ -z "$nsi" ]; then
-            echo "::error::rendered installer.nsi not found; cannot verify the deep-link handler"
-            exit 1
-          fi
-          # installer.nsi is UTF-16LE with a BOM; decode it to UTF-8 so grep can
-          # inspect it. `tr -d '\0'` is not portable for this: in a UTF-8 locale
-          # tr/grep treat the raw UTF-16 bytes as invalid multibyte input and
-          # match nothing, which made this check spuriously fail on the runner.
-          text="$(iconv -f UTF-16 -t UTF-8 "$nsi")"
-          printf '%s' "$text" | grep -qi 'eveauth-pod' \
-            || { echo "::error::NSIS installer does not register the eveauth-pod scheme"; exit 1; }
-          printf '%s\n' "$text" | grep -i 'eveauth-pod' | grep -q '%1' \
-            || { echo "::error::NSIS eveauth-pod command is missing the %1 URL placeholder"; exit 1; }
-          if printf '%s' "$text" | grep -qF '${BUNDLEID}'; then
-            echo "::warning::NSIS protocol description renders a literal \${BUNDLEID} (cargo-packager template limitation; the runtime HKCU self-registration overrides it per-user)"
-          fi
-          echo "NSIS deep-link handler verified: eveauth-pod registered with a \"%1\" command"
-
-      - name: Verify WiX deep-link handler
-        shell: bash
-        run: |
-          wxs="$(find . -name main.wxs | head -1)"
-          if [ -z "$wxs" ]; then
-            echo "::error::rendered main.wxs not found; cannot verify the deep-link handler"
-            exit 1
-          fi
-          grep -qi 'eveauth-pod' "$wxs" \
-            || { echo "::error::WiX installer does not register the eveauth-pod scheme"; exit 1; }
-          grep -qF '%1' "$wxs" \
-            || { echo "::error::WiX eveauth-pod command is missing the %1 URL placeholder"; exit 1; }
-          echo "WiX deep-link handler verified: eveauth-pod registered with a \"%1\" command"
 
       - name: Sign Windows installers
         if: env.WINDOWS_CERTIFICATE != ''

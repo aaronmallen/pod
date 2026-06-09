@@ -10,6 +10,12 @@ pub const CHECK_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
 
 const COMMAND_BUFFER: usize = 8;
 
+// Derived from the crate repository at compile time so it can't silently go
+// missing: as an optional `option_env!` endpoint it was unset in the release
+// build, so `from_env` returned `None` and 0.5.0/0.5.1 shipped with the updater
+// disabled.
+const UPDATE_ENDPOINT: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "/releases/latest/download/latest.json");
+
 #[derive(Clone, Debug)]
 pub struct Config {
   pub endpoints: Vec<Url>,
@@ -18,12 +24,11 @@ pub struct Config {
 
 impl Config {
   pub fn from_env() -> Option<Self> {
-    let pubkey = option_env!("POD_UPDATER_PUBKEY")?.trim().to_owned();
+    let pubkey = option_env!("PACKAGER_PUBLIC_KEY")?.trim().to_owned();
     if pubkey.is_empty() {
       return None;
     }
-    let raw = option_env!("POD_UPDATER_ENDPOINT")?.trim();
-    let endpoint = Url::parse(raw).ok()?;
+    let endpoint = Url::parse(UPDATE_ENDPOINT).ok()?;
     Some(Self {
       endpoints: vec![endpoint],
       pubkey,

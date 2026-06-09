@@ -1,5 +1,22 @@
 name: Release
 
+# Release-candidate (RC) dry-run gating
+# -------------------------------------
+# A tag containing "-rc." (e.g. 0.5.3-rc.1) is treated as a release candidate:
+# the full build + package gauntlet runs and installers are uploaded as
+# ephemeral workflow artifacts (rc-macos / rc-windows / rc-linux), but no GitHub
+# release is created, no latest.json is generated, and the site is not deployed.
+# A bare numeric tag (0.5.3) runs the normal release + deploy path unchanged.
+#
+# Known limitations:
+#   * Detection is the literal "-rc." substring; other pre-release suffixes
+#     (-beta.N, -alpha.N) are NOT detected and would be treated as stable.
+#   * RC installer filenames carry the numeric Cargo.toml version (e.g. 0.5.3),
+#     not the rc number; RC identity lives in the tag + Actions run, not the
+#     binary.
+#   * latest.json / updater-manifest generation is the only stable-only step an
+#     RC does not exercise (it is deliberately suppressed).
+
 permissions:
   actions: write
   contents: write
@@ -14,7 +31,18 @@ on:
 jobs:
   wait-for-build:
     runs-on: ubuntu-latest
+    outputs:
+      is_rc: ${{ steps.detect-rc.outputs.is_rc }}
     steps:
+      - name: Detect release candidate
+        id: detect-rc
+        run: |
+          if [[ "${{ github.ref_name }}" == *-rc.* ]]; then
+            echo "is_rc=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_rc=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait for Build workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,6 +65,7 @@ jobs:
 
   create-release:
     needs: wait-for-build
+    if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -66,8 +95,10 @@ jobs:
 
   package-macos:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
+    if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: macos-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -182,6 +213,7 @@ jobs:
           cargo-packager signer sign "$TARBALL"
 
       - name: Upload to release
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -190,10 +222,23 @@ jobs:
             gh release upload "${{ github.ref_name }}" "$f"
           done
 
+      - name: Upload installers as artifacts (RC)
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-macos
+          if-no-files-found: error
+          path: |
+            **/*.dmg
+            **/*.app.tar.gz
+            **/*.app.tar.gz.sig
+
   package-windows:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
+    if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: windows-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -250,6 +295,7 @@ jobs:
           if ($nsis) { cargo-packager signer sign $nsis.FullName }
 
       - name: Upload to release
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -258,10 +304,23 @@ jobs:
             gh release upload "${{ github.ref_name }}" $_.FullName
           }
 
+      - name: Upload installers as artifacts (RC)
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-windows
+          if-no-files-found: error
+          path: |
+            **/*-setup.exe
+            **/*.msi
+            **/*.exe.sig
+
   package-linux:
     needs:
+      - wait-for-build
       - create-release
       - generate-icons
+    if: ${{ always() && needs.generate-icons.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
@@ -313,6 +372,7 @@ jobs:
             -exec cp {} target/release/ \;
 
       - name: Upload to release
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -353,17 +413,38 @@ jobs:
         run: flatpak build-bundle repo dev.aaronmallen.pod.flatpak dev.aaronmallen.pod
 
       - name: Upload Flatpak to release
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.ref_name }}" "$TARBALL" --clobber
           gh release upload "${{ github.ref_name }}" dev.aaronmallen.pod.flatpak --clobber
 
+      - name: Upload installers as artifacts (RC)
+        if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-linux
+          if-no-files-found: error
+          path: |
+            **/*.deb
+            **/*.AppImage
+            **/*.AppImage.sig
+            **/*.pkg.tar.zst
+            ${{ env.TARBALL }}
+            dev.aaronmallen.pod.flatpak
+
   publish-release:
     needs:
+      - wait-for-build
       - package-macos
       - package-windows
       - package-linux
+    if: >-
+      ${{ needs.wait-for-build.outputs.is_rc == 'false'
+        && needs.package-macos.result == 'success'
+        && needs.package-windows.result == 'success'
+        && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -455,6 +536,9 @@ jobs:
         run: gh release edit "${{ github.ref_name }}" --draft=false
 
   deploy-pages:
-    needs: publish-release
+    needs:
+      - wait-for-build
+      - publish-release
+    if: ${{ needs.wait-for-build.outputs.is_rc == 'false' }}
     uses: ./.github/workflows/deploy-pages.yml
     secrets: inherit

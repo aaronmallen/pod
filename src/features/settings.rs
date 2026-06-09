@@ -54,6 +54,8 @@ pub enum Message {
 pub enum Outcome {
   None,
   Persist,
+  ReleaseLock,
+  SyncNow,
 }
 
 #[derive(Debug)]
@@ -81,6 +83,10 @@ impl State {
     }
   }
 
+  pub fn set_sync_status(&mut self, holder: Option<String>, last_synced: Option<chrono::DateTime<chrono::Utc>>) {
+    self.storage.set_sync_status(holder, last_synced);
+  }
+
   pub fn settings(&self) -> &Settings {
     &self.settings
   }
@@ -94,7 +100,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   tags_tab::subscription(&state.tags).map(Message::Tags)
 }
 
-pub fn update(state: &mut State, message: Message) -> Task<Message> {
+pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
   let (outcome, task) = match message {
     Message::CategorySelected(category) => {
       state.active = category;
@@ -120,7 +126,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
   if outcome == Outcome::Persist {
     config::save(&state.settings);
   }
-  task
+  (outcome, task)
 }
 
 fn reset_active(state: &mut State) {

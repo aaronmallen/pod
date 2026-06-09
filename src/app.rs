@@ -188,6 +188,7 @@ enum Message {
   FocusMainWindow,
   InitFailed(String),
   LeaseHeartbeat,
+  LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
   Menu(menu::MenuAction),
@@ -1833,6 +1834,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::InitFailed(error) => handle_init_failed(app, error),
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
+    Message::LockReleased => handle_lock_released(app),
     Message::OpenAbout => open_about_window(app),
     Message::PeriodicPush => handle_periodic_push(app),
     Message::Pushed(mark) => handle_pushed(app, mark),
@@ -1962,7 +1964,15 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   let Some(state) = app.settings.as_mut() else {
     return Task::none();
   };
-  let task = settings::update(state, msg).map(Message::Settings);
+  let (outcome, settings_task) = settings::update(state, msg);
+  let task = settings_task.map(Message::Settings);
+
+  match outcome {
+    settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
+    settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
+    _ => {}
+  }
+
   if !features_changed {
     return task;
   }
@@ -1976,6 +1986,45 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     character_manager::load(&runtime.db, runtime.settings.features().enabled()).map(Message::CharacterManager);
 
   Task::batch(vec![task, reload])
+}
+
+/// Routes the storage tab's "Sync now" up to the lifecycle sync engine, checkpointing the working
+/// copy and pushing it to the share. A no-op unless this instance holds the lease in Sync mode.
+fn sync_now(app: &App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  match app.sync_session.clone() {
+    Some(session) => push_task(session),
+    None => Task::none(),
+  }
+}
+
+/// Routes the storage tab's "Release lock" up to the lifecycle lease engine, force-releasing the
+/// lease on the share so another machine can take over. A no-op unless this instance holds it.
+fn release_lock(app: &App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  Task::future(async move {
+    if let Err(error) = session.release() {
+      tracing::warn!(target: "pod::lifecycle", %error, "force-releasing the lease failed");
+    } else {
+      tracing::info!(target: "pod::lifecycle", "force-released the storage lease");
+    }
+    Message::LockReleased
+  })
+}
+
+fn refresh_storage_status(app: &mut App) {
+  let holder = app.read_only.as_ref().map(|holder| holder.hostname.clone());
+  let last_synced = app.last_synced;
+  if let Some(settings) = app.settings.as_mut() {
+    settings.set_sync_status(holder, last_synced);
+  }
 }
 
 fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
@@ -2053,11 +2102,17 @@ fn handle_periodic_push(app: &mut App) -> Task<Message> {
   push_task(session)
 }
 
+fn handle_lock_released(app: &mut App) -> Task<Message> {
+  refresh_storage_status(app);
+  Task::none()
+}
+
 fn handle_pushed(app: &mut App, mark: Option<SystemTime>) -> Task<Message> {
   if let Some(mark) = mark {
     app.last_push = Some(mark);
     app.last_synced = Some(Utc::now());
   }
+  refresh_storage_status(app);
   Task::none()
 }
 
@@ -2131,6 +2186,7 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
     }
     TakeOverOutcome::StillHeld(holder) => {
       app.read_only = Some(holder);
+      refresh_storage_status(app);
       Task::none()
     }
     TakeOverOutcome::Failed => Task::none(),
@@ -2361,6 +2417,7 @@ fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   let load_tags = settings::load(&settings_state).map(Message::Settings);
   app.settings = Some(settings_state);
   app.runtime = Some(runtime);
+  refresh_storage_status(app);
   Task::batch([
     load_roster.map(Message::CharacterManager),
     load_tags,

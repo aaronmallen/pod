@@ -4,6 +4,7 @@ use std::{
   path::{Path, PathBuf},
 };
 
+use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -12,7 +13,7 @@ use iced::{
 
 use super::Outcome;
 use crate::{
-  config::Settings,
+  config::{Settings, StorageMode},
   ui::{
     components::{backdrop, rule, status},
     style::{color, control, radius, shadow, spacing, typography},
@@ -30,12 +31,14 @@ pub enum Message {
   CancelMove,
   ConfirmMove,
   DismissError,
-  NetworkToggled(bool),
   PathEdited(PathKind, String),
   PathSubmitted(PathKind),
+  ReleaseLock,
   ResetToDefault(PathKind),
   RevealLogDir,
   SkipMove,
+  SyncNow,
+  SyncToggled(bool),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,7 +62,10 @@ impl PathKind {
   fn description(self) -> &'static str {
     match self {
       PathKind::Cache => "Portraits, item icons, and other ESI image cache. Safe to clear; rebuilt on demand.",
-      PathKind::Database => "Local SQLite database — character cache, mail bodies, market snapshots, and skill plans.",
+      PathKind::Database => {
+        "The canonical SQLite database — character cache, mail bodies, market snapshots, and skill \
+          plans. Point this at a shared volume to use the same data across machines."
+      }
       PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; capped at 30 days.",
     }
   }
@@ -67,7 +73,7 @@ impl PathKind {
   fn label(self) -> &'static str {
     match self {
       PathKind::Cache => "Pod Cache",
-      PathKind::Database => "Pod DB",
+      PathKind::Database => "Shared data location",
       PathKind::Log => "Pod Logs",
     }
   }
@@ -115,11 +121,20 @@ pub struct PendingMove {
   to: PathBuf,
 }
 
+/// Live sync/lease state observed from the lifecycle engine in `app.rs` and fed down into the view.
+/// The tab itself owns no sync machinery — it only renders this snapshot and routes actions back up.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SyncStatus {
+  holder: Option<String>,
+  last_synced: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Default)]
 pub struct State {
   drafts: HashMap<PathKind, String>,
   error: Option<String>,
   pending: Option<PendingMove>,
+  sync: SyncStatus,
 }
 
 impl State {
@@ -131,6 +146,13 @@ impl State {
         .collect(),
       ..State::default()
     }
+  }
+
+  pub fn set_sync_status(&mut self, holder: Option<String>, last_synced: Option<DateTime<Utc>>) {
+    self.sync = SyncStatus {
+      holder,
+      last_synced,
+    };
   }
 }
 
@@ -301,10 +323,6 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       state.error = None;
       Outcome::None
     }
-    Message::NetworkToggled(value) => {
-      settings.storage_mut().set_network(value);
-      Outcome::Persist
-    }
     Message::PathEdited(kind, value) => {
       state.drafts.insert(kind, value);
       Outcome::None
@@ -322,6 +340,7 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       }
       outcome
     }
+    Message::ReleaseLock => Outcome::ReleaseLock,
     Message::ResetToDefault(kind) => {
       state.error = None;
       let to = kind.default_dir();
@@ -344,6 +363,11 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       let kind = pending.kind;
       commit_override(pending.kind, pending.to, settings);
       sync_draft(state, kind, settings);
+      Outcome::Persist
+    }
+    Message::SyncNow => Outcome::SyncNow,
+    Message::SyncToggled(value) => {
+      settings.storage_mut().set_network(value);
       Outcome::Persist
     }
   }
@@ -478,10 +502,16 @@ fn path_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Messag
   if let Some(error) = state.error.as_ref() {
     children.push(error_banner(error));
   }
+  let mode = settings.storage().storage_mode();
   for kind in PathKind::ALL {
     children.push(path_card(state, kind, settings));
     if kind == PathKind::Database {
-      children.push(network_drive_row(*settings.storage().network()));
+      let detected = mode == StorageMode::Sync && !settings.storage().network();
+      children.push(sync_toggle_row(mode == StorageMode::Sync, detected));
+      if mode == StorageMode::Sync {
+        children.push(working_copy_row(settings));
+        children.push(sync_status_row(&state.sync));
+      }
     }
   }
 
@@ -663,7 +693,7 @@ fn custom_badge<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
+fn sync_toggle_row<'a>(checked: bool, detected: bool) -> Element<'a, Message> {
   let box_fill = if checked {
     color::accent::PLASMA
   } else {
@@ -699,7 +729,7 @@ fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
     });
 
   let mut label_row: Vec<Element<'a, Message>> = vec![
-    text("This path is on a network drive")
+    text("Sync this location across machines")
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -707,8 +737,8 @@ fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
       })
       .into(),
   ];
-  if checked {
-    label_row.push(wal_off_badge());
+  if detected {
+    label_row.push(pill("auto-detected"));
   }
   let label = Row::with_children(label_row)
     .align_y(Vertical::Center)
@@ -716,9 +746,9 @@ fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
 
   let explanation = container(
     text(
-      "Disables SQLite WAL mode for the Pod DB. WAL relies on shared-memory coordination that NFS, \
-        SMB, and other network filesystems don't implement reliably — leaving it on can corrupt the \
-        database. Pod falls back to journal_mode=DELETE (slower writes, but safe over the wire).",
+      "Pod keeps a fast local working copy of the database and syncs it to the shared location, so \
+        the same data follows you between machines. Network shares enable this automatically; turn it \
+        on to force syncing for a misdetected path.",
     )
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -736,19 +766,16 @@ fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Top);
 
-  let cell = container(
-    button(row)
-      .padding(0)
-      .width(Length::Fill)
-      .on_press(Message::NetworkToggled(!checked))
-      .style(|_, _| button::Style {
-        background: Some(Background::Color(iced::Color::TRANSPARENT)),
-        text_color: color::text::PRIMARY,
-        ..button::Style::default()
-      }),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
+  let mut toggle = button(row).padding(0).width(Length::Fill).style(|_, _| button::Style {
+    background: Some(Background::Color(iced::Color::TRANSPARENT)),
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  });
+  if !detected {
+    toggle = toggle.on_press(Message::SyncToggled(!checked));
+  }
+
+  let cell = container(toggle).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_3_5,
     right: 0.0,
     bottom: spacing::SPACE_6 - 6.0,
@@ -760,9 +787,113 @@ fn network_drive_row<'a>(checked: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn wal_off_badge<'a>() -> Element<'a, Message> {
+fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
+  let working_copy = settings.storage().resolved_working_copy_path();
+
+  let label = text("Local working copy")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+  let explanation =
+    text("Read-only — the live database runs here on local disk; the share never drives the DB over the wire.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      });
+  let path = text(working_copy.display().to_string())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(|_| text::Style {
+      color: Some(color::text::SECONDARY),
+    });
+
+  let cell = container(
+    Column::with_children(vec![label.into(), explanation.into(), path.into()])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: 0.0,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_6 + 4.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
+  let (dot_color, summary) = match &status.holder {
+    Some(machine) => (color::status::DANGER, format!("Currently open on {machine}")),
+    None => match status.last_synced {
+      Some(at) => {
+        let secs = (Utc::now() - at).num_seconds().max(0) as u64;
+        (
+          color::status::ONLINE,
+          format!("Last synced {}", status::format_since(secs)),
+        )
+      }
+      None => (color::text::TERTIARY, "Not synced yet".to_owned()),
+    },
+  };
+
+  let summary_row = Row::with_children(vec![
+    status::dot(dot_color),
+    text(summary)
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2)
+  .width(Length::Fill);
+
+  let sync_now = button(
+    text("Sync now")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::SyncNow)
+  .style(control::ghost_button);
+
+  let release = button(
+    text("Release lock")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::ReleaseLock)
+  .style(control::ghost_button);
+
+  let row = Row::with_children(vec![summary_row.into(), sync_now.into(), release.into()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  let cell = container(row).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: 0.0,
+    bottom: spacing::SPACE_6 - 6.0,
+    left: spacing::SPACE_6 + 4.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn pill<'a>(label: &'a str) -> Element<'a, Message> {
   container(
-    text("WAL off")
+    text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -1017,18 +1148,82 @@ mod tests {
     }
   }
 
-  mod network_toggle {
+  mod sync_toggle {
     use super::*;
 
     #[test]
-    fn it_persists_the_network_flag() {
+    fn it_persists_the_sync_override() {
       let mut state = state();
       let mut settings = Settings::default();
 
-      let outcome = update(&mut state, Message::NetworkToggled(true), &mut settings);
+      let outcome = update(&mut state, Message::SyncToggled(true), &mut settings);
 
       assert_eq!(outcome, Outcome::Persist);
       assert!(settings.storage().network());
+    }
+
+    #[test]
+    fn toggling_off_clears_the_sync_override() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_network(true);
+
+      let outcome = update(&mut state, Message::SyncToggled(false), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(!settings.storage().network());
+    }
+  }
+
+  mod sync_actions {
+    use super::*;
+
+    #[test]
+    fn sync_now_routes_an_outcome_without_touching_disk() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::SyncNow, &mut settings);
+
+      assert_eq!(outcome, Outcome::SyncNow);
+    }
+
+    #[test]
+    fn release_lock_routes_an_outcome_without_touching_disk() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::ReleaseLock, &mut settings);
+
+      assert_eq!(outcome, Outcome::ReleaseLock);
+    }
+
+    #[test]
+    fn set_sync_status_records_the_holder_and_last_synced() {
+      let mut state = state();
+      let at = Utc::now();
+
+      state.set_sync_status(Some("nas-mac".to_owned()), Some(at));
+
+      assert_eq!(state.sync.holder.as_deref(), Some("nas-mac"));
+      assert_eq!(state.sync.last_synced, Some(at));
+    }
+  }
+
+  mod labels {
+    use super::*;
+
+    #[test]
+    fn the_database_field_is_labelled_for_the_shared_location() {
+      assert_eq!(PathKind::Database.label(), "Shared data location");
+    }
+
+    #[test]
+    fn the_database_description_drops_journal_mode_wording() {
+      let description = PathKind::Database.description().to_lowercase();
+
+      assert!(!description.contains("wal"), "WAL framing must be gone");
+      assert!(!description.contains("journal"), "journal-mode framing must be gone");
     }
   }
 
@@ -1396,10 +1591,29 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_with_overrides_and_the_network_toggle() {
+    fn it_renders_sync_mode_with_the_working_copy_and_status_rows() {
       let mut settings = Settings::default();
       settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
       settings.storage_mut().set_network(true);
+      assert_eq!(
+        settings.storage().storage_mode(),
+        StorageMode::Sync,
+        "the override forces sync mode"
+      );
+      let mut state = state();
+      state.set_sync_status(None, Some(Utc::now()));
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn direct_mode_omits_the_sync_lease_controls() {
+      let settings = Settings::default();
+      assert_eq!(
+        settings.storage().storage_mode(),
+        StorageMode::Direct,
+        "a local path defaults to direct mode, so the working-copy and lease rows stay hidden"
+      );
       let state = state();
 
       let _el: Element<'_, Message> = view(&state, &settings);

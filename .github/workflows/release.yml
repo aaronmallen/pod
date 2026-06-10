@@ -88,7 +88,7 @@ jobs:
         run: mise run generate:item-images
 
       - name: Upload item icons
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: item-images
           path: assets/images/items
@@ -224,7 +224,7 @@ jobs:
 
       - name: Upload installers as artifacts (RC)
         if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rc-macos
           if-no-files-found: error
@@ -306,7 +306,7 @@ jobs:
 
       - name: Upload installers as artifacts (RC)
         if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rc-windows
           if-no-files-found: error
@@ -422,7 +422,7 @@ jobs:
 
       - name: Upload installers as artifacts (RC)
         if: ${{ needs.wait-for-build.outputs.is_rc == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rc-linux
           if-no-files-found: error

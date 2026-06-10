@@ -132,6 +132,13 @@ fn is_access_miss(error: &reqwest::Error) -> bool {
   )
 }
 
+fn is_unfetchable_character(error: &reqwest::Error) -> bool {
+  matches!(
+    error.status(),
+    Some(reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNPROCESSABLE_ENTITY)
+  )
+}
+
 async fn resolve_station(ctx: &JobCtx<'_>, station_id: i64) -> Result<(), Error> {
   if sde::get_station(ctx.db, station_id).await?.is_some() {
     return Ok(());
@@ -190,7 +197,7 @@ pub async fn resolve_solar_system(ctx: &JobCtx<'_>, system_id: i64) -> Result<()
   Ok(())
 }
 
-async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<(), Error> {
+pub(crate) async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<(), Error> {
   if org::get_corporation(ctx.db, owner_id).await?.is_some() {
     return Ok(());
   }
@@ -200,7 +207,20 @@ async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<()
   let ceo_id = info.ceo_id;
   let corporation = Corporation::from((owner_id, info));
 
-  let ceo_info = ctx.esi.character().public_info(ceo_id).await?;
+  // NPC corporations report ceo_id = 1 (EVE's "nobody"); GET /characters/1/ answers 422. A real
+  // CEO who has been biomassed answers 404. In either case persist the corporation without a CEO
+  // so station/structure owner names still resolve, instead of aborting the whole sync.
+  let ceo_info = match ctx.esi.character().public_info(ceo_id).await {
+    Ok(ceo_info) => ceo_info,
+    Err(Error::Http(error)) if is_unfetchable_character(&error) => {
+      if let Some(id) = corporation.alliance_id() {
+        ensure_alliance(ctx, id).await?;
+      }
+      org::upsert_corporation(ctx.db, &corporation).await?;
+      return Ok(());
+    }
+    Err(error) => return Err(error),
+  };
   let race_id = ceo_info.race_id;
   let bloodline_id = ceo_info.bloodline_id;
   let ceo = Character::from((ceo_id, ceo_info));
@@ -937,6 +957,123 @@ mod tests {
       );
       assert!(org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some());
       assert!(sde::get_faction(&harness.db, 500_001).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_persists_an_npc_corp_without_a_ceo_when_the_ceo_is_unprocessable() {
+      let server = MockServer::start().await;
+      // NPC corporations report ceo_id = 1, and GET /characters/1/ answers 422.
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 1, "creator_id": 1, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/1/"))
+        .respond_with(ResponseTemplate::new(422))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("a 422 CEO is tolerated, not fatal");
+
+      let corporation = org::get_corporation(&harness.db, OWNER_CORP_ID)
+        .await
+        .unwrap()
+        .expect("the NPC owner corporation is still persisted so station names resolve");
+      assert_eq!(corporation.name(), "Caldari Navy");
+      assert!(
+        character::get(&harness.db, 1).await.unwrap().is_none(),
+        "no CEO character row is created for an unfetchable NPC-corp CEO"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_corp_without_a_ceo_when_the_ceo_is_not_found() {
+      let server = MockServer::start().await;
+      // A biomassed player CEO answers 404; the corp must still persist.
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000,
+          "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/alliances/99000001/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
+        })))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("a 404 CEO is tolerated, not fatal");
+
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_some()
+      );
+      assert!(
+        org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some(),
+        "the corp's alliance row is ensured first so the deferred alliance_id FK holds at commit"
+      );
+      assert!(
+        character::get(&harness.db, 3_004_029).await.unwrap().is_none(),
+        "no CEO character row is created when the CEO 404s"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_propagates_a_non_miss_error_from_the_ceo_fetch() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let result = resolve_owner_corporation(&ctx, OWNER_CORP_ID).await;
+
+      assert!(
+        result.is_err(),
+        "a 500 CEO fetch still aborts; only 404/422 are tolerated"
+      );
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_none(),
+        "nothing is persisted when the CEO fetch fails with an untolerated status"
+      );
     }
 
     #[tokio::test]

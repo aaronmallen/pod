@@ -1,10 +1,10 @@
 use crate::{
   clients::{self, Error, esi::scopes, eve_sso::Grant},
   store::{
-    model::{Alliance, Bloodline, Character, CharacterTelemetry, Corporation, Faction, Race},
-    repo::{character, org, sde},
+    model::{CharacterTelemetry, Race},
+    repo::{character, sde},
   },
-  sync::{job::JobCtx, jobs::resolve::resolve_item_type, outcome::Outcome, subject::Subject},
+  sync::{job::JobCtx, jobs::resolve::resolve_item_type, outcome::Outcome, structure_resolution, subject::Subject},
 };
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
@@ -63,7 +63,7 @@ async fn resolve_station(ctx: &JobCtx<'_>, station_id: i64) -> Result<(), Error>
   let station = ctx.esi.universe().station(station_id).await?;
   resolve_item_type(ctx, i64::from(station.type_id)).await?;
   if let Some(owner_id) = station.owner {
-    resolve_owner_corporation(ctx, owner_id).await?;
+    structure_resolution::resolve_owner_corporation(ctx, owner_id).await?;
   }
   if let Some(race_id) = station.race_id {
     resolve_race(ctx, i64::from(race_id)).await?;
@@ -77,47 +77,6 @@ async fn resolve_station(ctx: &JobCtx<'_>, station_id: i64) -> Result<(), Error>
     &system.into(),
     &constellation.into(),
     &region.into(),
-  )
-  .await?;
-  Ok(())
-}
-
-async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -> Result<(), Error> {
-  if org::get_corporation(ctx.db, owner_id).await?.is_some() {
-    tracing::debug!(corporation_id = owner_id, "resolved station owner corporation from db");
-    return Ok(());
-  }
-  tracing::debug!(corporation_id = owner_id, "fetching station owner corporation from esi");
-  let info = ctx.esi.corporation().info(owner_id).await?;
-  let alliance_id = info.alliance_id;
-  let faction_id = info.faction_id;
-  let ceo_id = info.ceo_id;
-  let corporation = Corporation::from((owner_id, info));
-
-  let ceo_info = ctx.esi.character().public_info(ceo_id).await?;
-  let race_id = ceo_info.race_id;
-  let bloodline_id = ceo_info.bloodline_id;
-  let ceo = Character::from((ceo_id, ceo_info));
-
-  let alliance = match alliance_id {
-    Some(id) => Some(Alliance::from((id, ctx.esi.alliance().info(id).await?))),
-    None => None,
-  };
-  let faction = match faction_id {
-    Some(id) => Some(resolve_faction(ctx, id).await?),
-    None => None,
-  };
-  let race = resolve_race_model(ctx, i64::from(race_id)).await?;
-  let bloodline = resolve_bloodline(ctx, i64::from(bloodline_id)).await?;
-
-  character::upsert_with_org(
-    ctx.db,
-    &ceo,
-    &bloodline,
-    &race,
-    &corporation,
-    alliance.as_ref(),
-    faction.as_ref(),
   )
   .await?;
   Ok(())
@@ -152,42 +111,6 @@ async fn resolve_race_model(ctx: &JobCtx<'_>, race_id: i64) -> Result<Race, Erro
     .ok_or_else(|| Error::Internal(format!("race {race_id} not in /universe/races")))
 }
 
-async fn resolve_faction(ctx: &JobCtx<'_>, faction_id: i64) -> Result<Faction, Error> {
-  if let Some(faction) = sde::get_faction(ctx.db, faction_id).await? {
-    tracing::debug!(faction_id, "resolved faction from db");
-    return Ok(faction);
-  }
-  tracing::debug!(faction_id, "fetching faction from esi");
-  ctx
-    .esi
-    .faction()
-    .list()
-    .await?
-    .into_iter()
-    .find(|faction| faction.faction_id == faction_id)
-    .map(Faction::from)
-    .ok_or_else(|| Error::Internal(format!("faction {faction_id} not in /universe/factions")))
-}
-
-async fn resolve_bloodline(ctx: &JobCtx<'_>, bloodline_id: i64) -> Result<Bloodline, Error> {
-  if let Some(bloodline) = sde::get_bloodline(ctx.db, bloodline_id).await? {
-    tracing::debug!(bloodline_id, "resolved bloodline from db");
-    return Ok(bloodline);
-  }
-  let lookup_id = i32::try_from(bloodline_id)
-    .map_err(|_| Error::Internal(format!("bloodline id {bloodline_id} out of range for ESI lookup")))?;
-  tracing::debug!(bloodline_id, "fetching bloodline from esi");
-  ctx
-    .esi
-    .bloodlines()
-    .list()
-    .await?
-    .into_iter()
-    .find(|bloodline| bloodline.bloodline_id == lookup_id)
-    .map(Bloodline::from)
-    .ok_or_else(|| Error::Internal(format!("bloodline {bloodline_id} not in /universe/bloodlines")))
-}
-
 async fn resolve_structure(ctx: &JobCtx<'_>, grant: &Grant, structure_id: i64) -> Result<(), Error> {
   if sde::get_structure(ctx.db, structure_id).await?.is_some() {
     tracing::debug!(structure_id, "resolved structure from db");
@@ -203,7 +126,7 @@ async fn resolve_structure(ctx: &JobCtx<'_>, grant: &Grant, structure_id: i64) -
   tracing::debug!(structure_id, "fetching structure from esi");
   match ctx.esi.universe().structure(structure_id, grant).await {
     Ok(structure) => {
-      resolve_owner_corporation(ctx, structure.owner_id).await?;
+      structure_resolution::resolve_owner_corporation(ctx, structure.owner_id).await?;
       if let Some(type_id) = structure.type_id {
         resolve_item_type(ctx, i64::from(type_id)).await?;
       }
@@ -236,7 +159,10 @@ mod tests {
   use super::*;
   use crate::{
     clients::{esi, eve_image, http},
-    store::{self, images, repo::sde},
+    store::{
+      self, images,
+      repo::{org, sde},
+    },
     sync::job::{JobKey, JobKind},
   };
 
@@ -717,94 +643,6 @@ mod tests {
       run(&ctx).await.unwrap();
 
       assert!(character::telemetry(&db, 42).await.unwrap().is_none());
-    }
-  }
-
-  mod resolve_faction {
-    use super::*;
-
-    struct Harness {
-      db: store::Database,
-      esi: esi::Client,
-      image: eve_image::Client,
-      image_store: images::Store,
-      _images_dir: tempfile::TempDir,
-    }
-
-    async fn harness(server: &MockServer) -> Harness {
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      Harness {
-        db,
-        esi,
-        image,
-        image_store,
-        _images_dir: images_dir,
-      }
-    }
-
-    fn ctx<'a>(h: &'a Harness, grant: &'a Grant) -> JobCtx<'a> {
-      ctx_with_grant(&h.db, &h.esi, &h.image, &h.image_store, grant, 42)
-    }
-
-    async fn mount_factions(server: &MockServer) {
-      mount_json(
-        server,
-        "/universe/factions/",
-        serde_json::json!([
-          { "corporation_id": 1_000_035, "description": "The State.", "faction_id": 500_001, "is_unique": true,
-            "name": "Caldari State", "size_factor": 5.0, "station_count": 100, "station_system_count": 50 },
-        ]),
-      )
-      .await;
-    }
-
-    #[tokio::test]
-    async fn it_short_circuits_when_the_faction_is_already_cached() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/factions/"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let h = harness(&server).await;
-      sde::upsert_faction(&h.db, &Faction::new(500_001, "Caldari State", true, 5.0, 100, 50))
-        .await
-        .unwrap();
-      let grant = Grant::new_test("token", 42);
-
-      let faction = resolve_faction(&ctx(&h, &grant), 500_001).await.unwrap();
-
-      assert_eq!(faction.name(), "Caldari State");
-    }
-
-    #[tokio::test]
-    async fn it_fetches_a_faction_from_the_esi_list() {
-      let server = MockServer::start().await;
-      mount_factions(&server).await;
-      let h = harness(&server).await;
-      let grant = Grant::new_test("token", 42);
-
-      let faction = resolve_faction(&ctx(&h, &grant), 500_001).await.unwrap();
-
-      assert_eq!(faction.name(), "Caldari State");
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_the_faction_is_absent_from_the_esi_list() {
-      let server = MockServer::start().await;
-      mount_json(&server, "/universe/factions/", serde_json::json!([])).await;
-      let h = harness(&server).await;
-      let grant = Grant::new_test("token", 42);
-
-      let result = resolve_faction(&ctx(&h, &grant), 500_001).await;
-
-      assert!(matches!(result, Err(Error::Internal(_))));
     }
   }
 }

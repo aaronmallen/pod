@@ -15,6 +15,7 @@ pub mod glyph_badge;
 pub mod header;
 pub mod icon;
 pub mod icon_tile;
+pub mod line_chart;
 pub mod meter;
 pub mod panel_header;
 pub mod picker;

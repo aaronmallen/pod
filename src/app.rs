@@ -141,6 +141,12 @@ struct HolderInfo {
   machine_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyncNowOutcome {
+  Failed,
+  Reconciled { mark: Option<SystemTime>, pulled: bool },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TakeOverOutcome {
   Claimed,
@@ -218,6 +224,7 @@ enum Message {
   StorageMigrated,
   StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
+  SyncNowResolved(SyncNowOutcome),
   SyncPulse,
   TakeOver,
   TakeOverResolved(TakeOverOutcome),
@@ -281,6 +288,7 @@ impl Message {
       Message::Splash(_) => "Splash",
       Message::StorageMigrated => "StorageMigrated",
       Message::StoreOpened(_) => "StoreOpened",
+      Message::SyncNowResolved(_) => "SyncNowResolved",
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
       Message::TakeOverResolved(_) => "TakeOverResolved",
@@ -2089,6 +2097,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::OpenAbout => open_about_window(app),
     Message::PeriodicPull => handle_periodic_pull(app),
     Message::PeriodicPush => handle_periodic_push(app),
+    Message::SyncNowResolved(outcome) => handle_sync_now_resolved(app, outcome),
     Message::Pulled(pulled) => handle_pulled(app, pulled),
     Message::Pushed(mark) => handle_pushed(app, mark),
     Message::Ready(runtime) => handle_ready(app, runtime),
@@ -2261,15 +2270,58 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   Task::batch(vec![task, reload])
 }
 
-/// Routes the storage tab's "Sync now" up to the lifecycle sync engine, checkpointing the working
-/// copy and pushing it to the share. A no-op unless this instance holds the lease in Sync mode.
-fn sync_now(app: &App) -> Task<Message> {
-  if !holding_lease(app) {
+/// Routes the storage tab's "Sync now" action, always reporting an outcome rather than silently
+/// no-opping: read-only sessions delegate to take-over, otherwise it pushes when dirty and pulls
+/// when the share has advanced.
+fn sync_now(app: &mut App) -> Task<Message> {
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  if app.read_only.is_some() {
+    return handle_take_over(app);
+  }
+  let dirty = session.is_dirty_since(app.last_push);
+  let advanced = session.share_advanced();
+  if !dirty && !advanced {
+    app.last_synced = Some(Utc::now());
+    refresh_storage_status(app);
     return Task::none();
   }
-  match app.sync_session.clone() {
-    Some(session) => push_task(session),
-    None => Task::none(),
+  let mark = session.last_write();
+  Task::future(async move {
+    if dirty && let Err(error) = session.checkpoint_and_push().await {
+      tracing::warn!(target: "pod::lifecycle", %error, "sync now: push failed");
+      return Message::SyncNowResolved(SyncNowOutcome::Failed);
+    }
+    let pulled = if advanced {
+      matches!(tokio::task::spawn_blocking(move || session.pull()).await, Ok(Ok(true)))
+    } else {
+      false
+    };
+    Message::SyncNowResolved(SyncNowOutcome::Reconciled {
+      mark: if dirty { mark } else { None },
+      pulled,
+    })
+  })
+}
+
+fn handle_sync_now_resolved(app: &mut App, outcome: SyncNowOutcome) -> Task<Message> {
+  match outcome {
+    SyncNowOutcome::Reconciled {
+      mark,
+      pulled,
+    } => {
+      if let Some(mark) = mark {
+        app.last_push = Some(mark);
+      }
+      app.last_synced = Some(Utc::now());
+      if pulled {
+        app.roster_dirty = true;
+      }
+      refresh_storage_status(app);
+      Task::none()
+    }
+    SyncNowOutcome::Failed => Task::none(),
   }
 }
 
@@ -4312,6 +4364,52 @@ mod tests {
       let _ = handle_pulled(&mut app, false);
 
       assert!(app.last_synced.is_none(), "no pull means no new synced timestamp");
+    }
+
+    #[test]
+    fn sync_now_without_a_session_is_a_no_op() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = sync_now(&mut app);
+
+      assert!(
+        app.last_synced.is_none(),
+        "with no sync session there is nothing to sync"
+      );
+    }
+
+    #[test]
+    fn a_completed_reconcile_stamps_the_synced_time_and_refreshes_after_a_pull() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_sync_now_resolved(
+        &mut app,
+        SyncNowOutcome::Reconciled {
+          mark: None,
+          pulled: true,
+        },
+      );
+
+      assert!(
+        app.last_synced.is_some(),
+        "a completed 'Sync now' updates the visible last-synced status"
+      );
+      assert!(app.roster_dirty, "a pull marks the roster for a refresh");
+    }
+
+    #[test]
+    fn a_failed_sync_does_not_claim_success() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_sync_now_resolved(&mut app, SyncNowOutcome::Failed);
+
+      assert!(
+        app.last_synced.is_none(),
+        "a failed sync leaves the last-synced status stale"
+      );
     }
 
     #[test]

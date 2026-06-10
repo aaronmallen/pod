@@ -37,10 +37,10 @@ pub struct CardModel {
   pub character_id: i64,
   pub corp_ticker: String,
   pub docked: Option<bool>,
-  pub has_portrait: bool,
   pub location: Option<String>,
   pub name: String,
   pub needs_reauth: bool,
+  pub portrait: images::ImageState,
   pub position: i64,
   pub tags: Vec<TagChip>,
   pub total_sp: Option<i64>,
@@ -208,11 +208,13 @@ fn status_label(docked: Option<bool>) -> Option<&'static str> {
 }
 
 fn portrait(model: &CardModel) -> Element<'_, Message> {
-  let path = model
-    .has_portrait
-    .then(|| images::default_store().character_portrait_path(model.character_id));
-
-  let splash = avatar(model.character_id, &model.name, Length::Fill, PORTRAIT_HEIGHT, path);
+  let splash = avatar(
+    model.character_id,
+    &model.name,
+    Length::Fill,
+    PORTRAIT_HEIGHT,
+    model.portrait.path(),
+  );
 
   let Some(label) = status_label(model.docked) else {
     return splash;
@@ -579,10 +581,13 @@ mod tests {
       character_id: 12_345_678,
       corp_ticker: "CORP1".to_owned(),
       docked: Some(true),
-      has_portrait: false,
       location: Some("Jita IV - Moon 4".to_owned()),
       name: "Test Pilot".to_owned(),
       needs_reauth: false,
+      portrait: images::ImageState::Stale {
+        id: 12_345_678,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       position: 0,
       tags: vec![TagChip {
         color: Some(color::accent::PLASMA),

@@ -28,8 +28,8 @@ pub struct CorpCardModel {
   pub alliance_ticker: Option<String>,
   pub ceo: Option<String>,
   pub corporation_id: i64,
-  pub has_logo: bool,
   pub hq: Option<String>,
+  pub logo: images::ImageState,
   pub members: Option<i64>,
   pub name: String,
   pub tags: Vec<TagChip>,
@@ -62,15 +62,12 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
 }
 
 fn plate(model: &CorpCardModel) -> Element<'_, Message> {
-  let path = model
-    .has_logo
-    .then(|| images::default_store().corporation_logo_path(model.corporation_id));
   let logo = Avatar::new(
     model.corporation_id,
     &model.ticker,
     Length::Fixed(LOGO_SIZE),
     LOGO_SIZE,
-    path,
+    model.logo.path(),
   )
   .border(color::with_alpha(color::text::PRIMARY, 0.1), HAIRLINE)
   .radius(radius::SUBTLE)
@@ -306,8 +303,11 @@ mod tests {
       alliance_ticker: Some("IHP".to_owned()),
       ceo: Some("Vex Voronova".to_owned()),
       corporation_id: 98_000_001,
-      has_logo: false,
       hq: Some("Jita IV — Moon 4".to_owned()),
+      logo: images::ImageState::Stale {
+        id: 98_000_001,
+        kind: images::ImageKind::CorporationLogo,
+      },
       members: Some(1247),
       name: "Cobalt Syndicate".to_owned(),
       tags: Vec::new(),

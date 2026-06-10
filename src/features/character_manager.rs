@@ -353,7 +353,27 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    let group_cards = self.groups.iter().flat_map(|group| group.cards.iter());
+    let filtered_cards = match &self.filtered {
+      Some(Filtered::Loaded(cards)) => cards.as_slice(),
+      _ => &[],
+    };
+    let card_keys = group_cards
+      .chain(self.unassigned.iter())
+      .chain(filtered_cards.iter())
+      .filter_map(|card| card.portrait.stale_key());
+
+    let filtered_corps = match &self.corp_filtered {
+      Some(CorpFiltered::Loaded(corps)) => corps.as_slice(),
+      _ => &[],
+    };
+    let corp_keys = self
+      .corps
+      .iter()
+      .chain(filtered_corps.iter())
+      .filter_map(|corp| corp.logo.stale_key());
+
+    card_keys.chain(corp_keys).collect()
   }
 }
 
@@ -1564,10 +1584,10 @@ async fn build_card(
       |c| c.ticker().to_owned(),
     ),
     docked,
-    has_portrait: inputs.store.character_portrait_path(id).exists(),
     location,
     name: character.name().to_owned(),
     needs_reauth: needs_reauthorization(inputs.granted_scopes, inputs.required_scopes),
+    portrait: images::resolve(inputs.store, images::ImageKind::CharacterPortrait, id),
     position: inputs.position,
     tags: inputs.tags,
     total_sp: state.and_then(|s| s.total_sp),
@@ -1691,8 +1711,8 @@ async fn load_corps(db: &Database) -> Result<Vec<CorpCardModel>, crate::store::E
       alliance_ticker: alliance.as_ref().map(|a| a.ticker().to_owned()),
       ceo,
       corporation_id: id,
-      has_logo: store.corporation_logo_path(id).exists(),
       hq,
+      logo: images::resolve(&store, images::ImageKind::CorporationLogo, id),
       members: Some(i64::from(corp.member_count())),
       name: corp.name().to_owned(),
       tags: tags_by_corp.remove(&id).unwrap_or_default(),
@@ -1827,10 +1847,10 @@ fn card_from_row(row: character_card::CardRow, now: DateTime<Utc>) -> CardModel 
     character_id: row.character_id,
     corp_ticker: row.corp_ticker,
     docked: row.docked,
-    has_portrait: store.character_portrait_path(row.character_id).exists(),
     location: row.location,
     name: row.name,
     needs_reauth: false,
+    portrait: images::resolve(&store, images::ImageKind::CharacterPortrait, row.character_id),
     position: row.position.unwrap_or(0),
     tags: row
       .tags
@@ -1854,8 +1874,8 @@ fn corp_card_from_row(row: corporation_card::CardRow) -> CorpCardModel {
     alliance_ticker: row.alliance_ticker,
     ceo: row.ceo_name,
     corporation_id: row.corporation_id,
-    has_logo: store.corporation_logo_path(row.corporation_id).exists(),
     hq: row.hq_name,
+    logo: images::resolve(&store, images::ImageKind::CorporationLogo, row.corporation_id),
     members: Some(row.member_count),
     name: row.name,
     tags: row
@@ -2562,6 +2582,116 @@ mod tests {
     }
   }
 
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(character_id: i64, portrait: images::ImageState) -> CardModel {
+      CardModel {
+        accent: None,
+        character_id,
+        corp_ticker: "CORP".to_owned(),
+        docked: None,
+        location: None,
+        name: "Pilot".to_owned(),
+        needs_reauth: false,
+        portrait,
+        position: 0,
+        tags: Vec::new(),
+        total_sp: None,
+        training: None,
+        wallet_balance: None,
+      }
+    }
+
+    fn corp(corporation_id: i64, logo: images::ImageState) -> CorpCardModel {
+      CorpCardModel {
+        alliance: None,
+        alliance_ticker: None,
+        ceo: None,
+        corporation_id,
+        hq: None,
+        logo,
+        members: None,
+        name: "Corp".to_owned(),
+        tags: Vec::new(),
+        tax_rate: None,
+        ticker: "CORP".to_owned(),
+      }
+    }
+
+    fn fresh() -> images::ImageState {
+      images::ImageState::Fresh(std::path::PathBuf::from("/cache/portrait.jpg"))
+    }
+
+    fn stale_logo(id: i64) -> images::ImageState {
+      images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      }
+    }
+
+    fn stale_portrait(id: i64) -> images::ImageState {
+      images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      }
+    }
+
+    #[test]
+    fn it_is_empty_when_every_image_is_fresh() {
+      let mut state = State::new();
+      state.unassigned = vec![card(1, fresh())];
+      state.corps = vec![corp(2, fresh())];
+
+      assert!(state.stale_images().is_empty());
+    }
+
+    #[test]
+    fn it_collects_stale_portraits_and_logos_across_groups_unassigned_and_corps() {
+      let mut state = State::new();
+      state.groups = vec![SquadGroup {
+        accent: color::accent::PLASMA,
+        cards: vec![card(1, stale_portrait(1))],
+        color_hex: None,
+        description: None,
+        name: "Wing".to_owned(),
+        squad_id: 10,
+      }];
+      state.unassigned = vec![card(2, stale_portrait(2)), card(3, fresh())];
+      state.corps = vec![corp(4, stale_logo(4))];
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 1),
+          (images::ImageKind::CharacterPortrait, 2),
+          (images::ImageKind::CorporationLogo, 4),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_collects_stale_keys_from_the_filtered_card_and_corp_results() {
+      let mut state = State::new();
+      state.filtered = Some(Filtered::Loaded(vec![card(1, stale_portrait(1))]));
+      state.corp_filtered = Some(CorpFiltered::Loaded(vec![corp(2, stale_logo(2))]));
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 1),
+          (images::ImageKind::CorporationLogo, 2),
+        ]
+      );
+    }
+  }
+
   mod search {
     use pretty_assertions::assert_eq;
 
@@ -2636,7 +2766,7 @@ mod tests {
       assert_eq!(card.tags[0].name, "Mining");
       assert_eq!(card.tags[0].color, parse_hex(Some("#00CCFF")));
 
-      assert!(!card.has_logo);
+      assert_eq!(card.logo.stale_key(), Some((images::ImageKind::CorporationLogo, 2001)));
     }
 
     #[test]
@@ -2657,7 +2787,10 @@ mod tests {
       assert_eq!(card.tags[0].name, "PvP");
       assert_eq!(card.tags[0].color, parse_hex(Some("#FF0000")));
 
-      assert!(!card.has_portrait);
+      assert_eq!(
+        card.portrait.stale_key(),
+        Some((images::ImageKind::CharacterPortrait, 42))
+      );
     }
 
     #[test]
@@ -4621,8 +4754,11 @@ mod tests {
         alliance_ticker: Some("IHP".to_owned()),
         ceo: Some("Vex Voronova".to_owned()),
         corporation_id: 2_000_001,
-        has_logo: false,
         hq: Some("Jita IV — Moon 4".to_owned()),
+        logo: images::ImageState::Stale {
+          id: 2_000_001,
+          kind: images::ImageKind::CorporationLogo,
+        },
         members: Some(1247),
         name: "Cobalt Syndicate".to_owned(),
         tags: Vec::new(),

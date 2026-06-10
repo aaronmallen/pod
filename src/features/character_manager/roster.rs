@@ -743,7 +743,7 @@ fn message_text<'a>(content: String, fill: Color) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
   use super::{super::Drag, *};
-  use crate::features::character_manager::card::TagChip;
+  use crate::{features::character_manager::card::TagChip, store::images};
 
   fn card_model(id: i64) -> CardModel {
     card_model_at(id, 0)
@@ -755,10 +755,13 @@ mod tests {
       character_id: id,
       corp_ticker: "CORP1".to_owned(),
       docked: Some(true),
-      has_portrait: false,
       location: None,
       name: "Pilot".to_owned(),
       needs_reauth: false,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       position,
       tags: vec![TagChip {
         color: None,

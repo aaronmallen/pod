@@ -12,7 +12,7 @@ mod right_panel;
 mod training_hero;
 mod warning_strip;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{
@@ -117,7 +117,11 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    self
+      .roster
+      .iter()
+      .filter_map(|pilot| pilot.portrait.stale_key())
+      .collect()
   }
 }
 
@@ -126,7 +130,7 @@ struct PickerPilot {
   corp: String,
   id: i64,
   name: String,
-  portrait: Option<PathBuf>,
+  portrait: images::ImageState,
   total_sp: i64,
 }
 
@@ -362,8 +366,7 @@ async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
     .flatten()
     .and_then(|state| state.total_sp)
     .unwrap_or(0);
-  let path = images::default_store().character_portrait_path(id);
-  let portrait = path.exists().then_some(path);
+  let portrait = images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id);
 
   PickerPilot {
     corp,
@@ -513,7 +516,10 @@ mod tests {
       corp: "TEST".to_owned(),
       id,
       name: name.to_owned(),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       total_sp: 47_320_400,
     }
   }
@@ -877,7 +883,10 @@ mod tests {
       assert!(pilot.name.is_empty());
       assert!(pilot.corp.is_empty());
       assert_eq!(pilot.total_sp, 0);
-      assert!(pilot.portrait.is_none());
+      assert_eq!(
+        pilot.portrait.stale_key(),
+        Some((images::ImageKind::CharacterPortrait, 999))
+      );
     }
 
     #[tokio::test]
@@ -890,6 +899,38 @@ mod tests {
       assert_eq!(pilot.id, 42);
       assert_eq!(pilot.name, "Test Pilot");
       assert_eq!(pilot.corp, "TSC");
+    }
+  }
+
+  mod stale_images {
+    use std::path::PathBuf;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_a_stale_key_per_pilot_with_a_missing_portrait() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
+
+      assert_eq!(
+        state.stale_images(),
+        vec![
+          (images::ImageKind::CharacterPortrait, 42),
+          (images::ImageKind::CharacterPortrait, 7),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_skips_pilots_with_a_fresh_portrait() {
+      let mut fresh = pilot(42, "Test Pilot");
+      fresh.portrait = images::ImageState::Fresh(PathBuf::from("/cache/42.jpg"));
+      let mut state = State::new(42);
+      state.roster = vec![fresh];
+
+      assert!(state.stale_images().is_empty());
     }
   }
 

@@ -104,7 +104,7 @@ fn character_picker(state: &State) -> Element<'_, Message> {
   let portrait = TriggerPortrait {
     id: state.active,
     name: name.clone(),
-    path: active.and_then(|pilot| pilot.portrait.clone()),
+    path: active.and_then(|pilot| pilot.portrait.path()),
   };
 
   picker_trigger(
@@ -142,7 +142,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.id,
     pilot.name.clone(),
     pilot.corp.to_uppercase(),
-    pilot.portrait.clone(),
+    pilot.portrait.path(),
     Some(total_sp),
     selected,
     Message::CharacterChanged(pilot.id),
@@ -175,6 +175,7 @@ mod tests {
   use chrono::TimeZone as _;
 
   use super::*;
+  use crate::store::images;
 
   fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap()
@@ -185,7 +186,10 @@ mod tests {
       corp: "TEST".to_owned(),
       id,
       name: name.to_owned(),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       total_sp: 47_320_400,
     }
   }

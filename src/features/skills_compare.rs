@@ -309,12 +309,57 @@ mod tests {
   use iced::Color;
 
   use super::*;
+  use crate::features::skills::browse::{AttrKey, SkillCatalogEntry, SkillCatalogGroup};
 
   fn pilot(id: i64) -> OwnedPilot {
     OwnedPilot {
       color: Color::WHITE,
       id,
       name: format!("Pilot {id}"),
+    }
+  }
+
+  fn entry(type_id: i64, group_id: i64, rank: u8) -> SkillCatalogEntry {
+    SkillCatalogEntry {
+      group_id,
+      group_name: "Group".to_owned(),
+      name: format!("Skill {type_id}"),
+      primary_attr: AttrKey::Intelligence,
+      prereqs: Vec::new(),
+      rank,
+      secondary_attr: AttrKey::Memory,
+      type_id,
+    }
+  }
+
+  fn catalog() -> SkillCatalog {
+    SkillCatalog {
+      groups: vec![
+        SkillCatalogGroup {
+          id: 1,
+          name: "Gunnery".to_owned(),
+          skills: vec![entry(10, 1, 1), entry(11, 1, 2)],
+        },
+        SkillCatalogGroup {
+          id: 2,
+          name: "Missiles".to_owned(),
+          skills: vec![entry(20, 2, 4)],
+        },
+      ],
+    }
+  }
+
+  fn compare_model(levels: &[(i64, u8)], total_sp: u64) -> CompareModel {
+    CompareModel::build(&catalog(), levels.iter().copied().collect(), total_sp)
+  }
+
+  fn loaded(ids: &[(i64, &[(i64, u8)], u64)]) -> Loaded {
+    Loaded {
+      catalog: catalog(),
+      models: ids
+        .iter()
+        .map(|(id, levels, total_sp)| (*id, compare_model(levels, *total_sp)))
+        .collect(),
     }
   }
 
@@ -344,6 +389,172 @@ mod tests {
       let state = State::new(Vec::new(), Vec::new());
 
       assert_eq!(state.stale_images(), Vec::new());
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_stores_the_loaded_catalog_and_models_and_clears_loading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(
+        &mut state,
+        Message::DataLoaded(Box::new(loaded(&[(1, &[(10, 5)], 9_000_000), (2, &[(10, 1)], 1_000_000)]))),
+        &db,
+      );
+
+      assert!(!state.loading);
+      assert_eq!(state.skill_catalog().groups.len(), 2);
+      assert!(state.model(1).is_some());
+      assert!(state.model(2).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_group_open_then_closed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::GroupToggled(1), &db);
+      assert!(state.is_expanded(1));
+
+      let _ = update(&mut state, Message::GroupToggled(1), &db);
+      assert!(!state.is_expanded(1));
+    }
+
+    #[tokio::test]
+    async fn it_records_the_picker_query() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
+
+      assert_eq!(state.picker_query(), "alt");
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_query_when_the_picker_closes() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open());
+      assert_eq!(state.picker_query(), "alt");
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open());
+      assert_eq!(state.picker_query(), "");
+    }
+
+    #[tokio::test]
+    async fn it_adds_a_rostered_pilot_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2), pilot(3)]);
+      let _ = update(&mut state, Message::PickerToggled, &db);
+
+      let _ = update(&mut state, Message::PilotAdded(3), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2, 3]);
+      assert!(!state.picker_open());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_adding_an_already_selected_pilot() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PilotAdded(2), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_adding_a_pilot_outside_the_roster() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PilotAdded(99), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_pilot_only_when_more_than_two_remain() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2, 3], vec![pilot(1), pilot(2), pilot(3)]);
+
+      let _ = update(&mut state, Message::PilotRemoved(3), &db);
+      assert_eq!(state.selected_ids(), &[1, 2]);
+
+      let _ = update(&mut state, Message::PilotRemoved(2), &db);
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_treats_a_close_request_as_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::CloseRequested, &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    async fn populated() -> (State, Database) {
+      let db = crate::store::open_test().await.unwrap();
+      let roster = vec![pilot(1), pilot(2), pilot(3), pilot(4)];
+      let mut state = State::new(vec![1, 2, 3], roster);
+      let _ = update(
+        &mut state,
+        Message::DataLoaded(Box::new(loaded(&[
+          (1, &[(10, 5), (11, 5), (20, 5)], 9_000_000),
+          (2, &[(10, 1), (11, 0), (20, 0)], 1_000_000),
+          (3, &[(10, 4), (11, 4), (20, 4)], 5_000_000),
+        ]))),
+        &db,
+      );
+      (state, db)
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_collapsed_matrix() {
+      let (state, _db) = populated().await;
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_an_expanded_group() {
+      let (mut state, db) = populated().await;
+      let _ = update(&mut state, Message::GroupToggled(1), &db);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_picker_with_an_available_pilot() {
+      let (mut state, db) = populated().await;
+      let _ = update(&mut state, Message::PickerToggled, &db);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_picker_empty_state_when_no_pilot_matches() {
+      let (mut state, db) = populated().await;
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      let _ = update(&mut state, Message::PickerQueryChanged("zzzz".to_owned()), &db);
+
+      let _el: Element<'_, Message> = view(&state);
     }
   }
 }

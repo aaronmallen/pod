@@ -121,6 +121,7 @@ function parseChangelog(content: string): { version: string; notices: Alert[]; n
 }
 
 function serializeNotes(notes: Note[]): string {
+  if (notes.length === 0) return '[]';
   const items = notes.map(n => {
     return `  { tag: '${n.tag}', tone: '${n.tone}', text: ${JSON.stringify(n.text)} }`;
   });
@@ -128,6 +129,7 @@ function serializeNotes(notes: Note[]): string {
 }
 
 function serializeNotices(notices: Alert[]): string {
+  if (notices.length === 0) return '[]';
   const items = notices.map(a => {
     return `  { type: '${a.type}', tone: '${a.tone}', icon: '${a.icon}', text: ${JSON.stringify(a.text)} }`;
   });

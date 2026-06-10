@@ -110,6 +110,7 @@ struct App {
   pending_auth: Option<auth::Message>,
   pending_images: HashSet<(store::images::ImageKind, i64)>,
   read_only: Option<HolderInfo>,
+  roster_dirty: bool,
   route: Route,
   runtime: Option<Runtime>,
   sde_stale: bool,
@@ -540,6 +541,7 @@ fn boot() -> (App, Task<Message>) {
     pending_auth: None,
     pending_images: HashSet::new(),
     read_only: None,
+    roster_dirty: false,
     route: Route::default(),
     runtime: None,
     sde_stale: false,
@@ -2403,7 +2405,14 @@ fn recover_unsynced_changes(app: &App) -> Task<Message> {
 
 fn handle_sync_pulse(app: &mut App) -> Task<Message> {
   app.sync_tick = !app.sync_tick;
-  Task::none()
+  if !app.roster_dirty || app.character_manager.is_none() {
+    return Task::none();
+  }
+  app.roster_dirty = false;
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager)
 }
 
 fn holding_lease(app: &App) -> bool {
@@ -2921,9 +2930,9 @@ fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
   };
   app.last_synced = Some(app.now);
   let mut tasks: Vec<Task<Message>> = Vec::new();
-  if let (Some(_), Some(runtime)) = (&app.character_manager, &app.runtime) {
-    tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
-  }
+  // Defer the roster reload to the next SyncPulse so a burst of Finished events coalesces into one
+  // full-roster reload instead of starving the interactive DB pool with one reload each.
+  app.roster_dirty = true;
   if let Some(reload) = detail_reload_on_finished(app, key) {
     tasks.push(reload);
   }
@@ -3133,6 +3142,7 @@ mod tests {
       pending_auth: None,
       pending_images: HashSet::new(),
       read_only: None,
+      roster_dirty: false,
       route: Route::default(),
       runtime: None,
       sde_stale: false,
@@ -3362,6 +3372,33 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    fn finished_event(character_id: i64) -> sync::Event {
+      sync::Event::Finished {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(character_id)),
+        outcome: sync::Outcome::synced(),
+      }
+    }
+
+    #[test]
+    fn it_coalesces_a_burst_of_finished_events_into_one_pending_roster_refresh() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+
+      for character_id in 0..6 {
+        let _ = update(&mut app, Message::Sync(finished_event(character_id)));
+      }
+      assert!(
+        app.roster_dirty,
+        "a burst of Finished events marks the roster dirty once instead of reloading per event"
+      );
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.roster_dirty, "the pulse consumes the coalesced refresh");
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.roster_dirty, "a quiet pulse schedules no further reload");
+    }
 
     #[test]
     fn it_navigates_to_the_character_detail_for_the_selected_character() {

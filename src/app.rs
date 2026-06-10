@@ -74,6 +74,7 @@ const POPOVER_JOBS: [(JobKind, &str); 7] = [
   (JobKind::CharacterTelemetry, "Telemetry"),
   (JobKind::CharacterWallet, "Wallet"),
 ];
+const PERIODIC_PULL_INTERVAL: Duration = Duration::from_secs(60);
 const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
@@ -202,7 +203,9 @@ enum Message {
   Menu(menu::MenuAction),
   Nav(rail::Destination),
   OpenAbout,
+  PeriodicPull,
   PeriodicPush,
+  Pulled(bool),
   Pushed(Option<SystemTime>),
   Ready(Runtime),
   ReauthCharacter(i64),
@@ -267,7 +270,9 @@ impl Message {
       Message::InitFailed(_) => "InitFailed",
       Message::LeaseHeartbeat => "LeaseHeartbeat",
       Message::OpenAbout => "OpenAbout",
+      Message::PeriodicPull => "PeriodicPull",
       Message::PeriodicPush => "PeriodicPush",
+      Message::Pulled(_) => "Pulled",
       Message::Pushed(_) => "Pushed",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
@@ -1745,6 +1750,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   }
   if holding_lease(app) {
     subs.push(iced::time::every(store::lease::HEARTBEAT_INTERVAL).map(|_| Message::LeaseHeartbeat));
+    subs.push(iced::time::every(PERIODIC_PULL_INTERVAL).map(|_| Message::PeriodicPull));
     subs.push(iced::time::every(PERIODIC_PUSH_INTERVAL).map(|_| Message::PeriodicPush));
   }
   if app.sync_popover_open {
@@ -2081,7 +2087,9 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
     Message::LockReleased => handle_lock_released(app),
     Message::OpenAbout => open_about_window(app),
+    Message::PeriodicPull => handle_periodic_pull(app),
     Message::PeriodicPush => handle_periodic_push(app),
+    Message::Pulled(pulled) => handle_pulled(app, pulled),
     Message::Pushed(mark) => handle_pushed(app, mark),
     Message::Ready(runtime) => handle_ready(app, runtime),
     Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
@@ -2434,6 +2442,23 @@ fn handle_lease_heartbeat(app: &mut App) -> Task<Message> {
   .discard()
 }
 
+fn handle_periodic_pull(app: &mut App) -> Task<Message> {
+  if !holding_lease(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  if session.is_dirty_since(app.last_push) {
+    tracing::trace!(target: "pod::lifecycle", "periodic pull skipped; a local write is in flight");
+    return Task::none();
+  }
+  if !session.share_advanced() {
+    return Task::none();
+  }
+  pull_task(session)
+}
+
 fn handle_periodic_push(app: &mut App) -> Task<Message> {
   if !holding_lease(app) {
     return Task::none();
@@ -2446,6 +2471,36 @@ fn handle_periodic_push(app: &mut App) -> Task<Message> {
     return Task::none();
   }
   push_task(session)
+}
+
+fn handle_pulled(app: &mut App, pulled: bool) -> Task<Message> {
+  if pulled {
+    app.last_synced = Some(Utc::now());
+    app.roster_dirty = true;
+  }
+  refresh_storage_status(app);
+  Task::none()
+}
+
+fn pull_task(session: store::sync_session::SyncSession) -> Task<Message> {
+  Task::future(async move {
+    match tokio::task::spawn_blocking(move || session.pull()).await {
+      Ok(Ok(pulled)) => {
+        if pulled {
+          tracing::info!(target: "pod::lifecycle", "pulled newer changes from the share");
+        }
+        Message::Pulled(pulled)
+      }
+      Ok(Err(error)) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "pull from the share failed");
+        Message::Pulled(false)
+      }
+      Err(error) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "pull task panicked");
+        Message::Pulled(false)
+      }
+    }
+  })
 }
 
 fn handle_lock_released(app: &mut App) -> Task<Message> {
@@ -4233,6 +4288,30 @@ mod tests {
       assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
       let _ = handle_lease_heartbeat(&mut app);
       let _ = handle_periodic_push(&mut app);
+      let _ = handle_periodic_pull(&mut app);
+    }
+
+    #[test]
+    fn a_read_only_session_neither_pulls_nor_pushes() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(!holding_lease(&app), "a read-only opener does not pull from the share");
+      let _ = handle_periodic_pull(&mut app);
+      let _ = handle_periodic_push(&mut app);
+    }
+
+    #[test]
+    fn a_pull_that_changed_nothing_leaves_the_synced_marker_untouched() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_pulled(&mut app, false);
+
+      assert!(app.last_synced.is_none(), "no pull means no new synced timestamp");
     }
 
     #[test]

@@ -90,7 +90,7 @@ impl SyncCopy {
       return Ok(false);
     }
 
-    copy_file(&self.canonical, &self.working_copy)?;
+    publish_database(&self.canonical, &self.working_copy)?;
     write_generation(&self.marker, read_generation(&self.sidecar))?;
 
     Ok(true)
@@ -255,6 +255,25 @@ mod tests {
 
       assert_eq!(pulled, false);
       assert_eq!(fs::read(&layout.working_copy).unwrap(), b"local bytes");
+    }
+
+    #[test]
+    fn it_backs_up_a_non_empty_working_copy_before_overwriting_it() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"share bytes").unwrap();
+      fs::write(&layout.working_copy, b"local bytes").unwrap();
+      write_generation(&layout.sidecar, 6).unwrap();
+      write_generation(&layout.marker, 2).unwrap();
+
+      layout.engine().pull_if_newer().unwrap();
+
+      let backup = fs::read_dir(layout.working_copy.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .expect("the local copy is backed up before the pull overwrites it");
+      assert_eq!(fs::read(backup.path()).unwrap(), b"local bytes");
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"share bytes");
     }
   }
 

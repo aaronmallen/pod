@@ -86,8 +86,16 @@ impl SyncSession {
     }
   }
 
+  pub fn pull(&self) -> Result<bool, sync_copy::Error> {
+    self.engine.pull_if_newer()
+  }
+
   pub fn release(&self) -> io::Result<()> {
     self.lease.release(&self.share)
+  }
+
+  pub fn share_advanced(&self) -> bool {
+    read_generation(&self.sidecar) > read_generation(&self.marker)
   }
 
   /// Reclaims the share, but only once the foreign holder is gone. The re-check goes through
@@ -319,6 +327,64 @@ mod tests {
       let fixture = Fixture::new();
 
       assert_eq!(fixture.session.is_dirty_since(None), false);
+    }
+  }
+
+  mod share_advanced {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_true_when_the_share_generation_outruns_the_local_marker() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.sidecar, 5).unwrap();
+      write_generation(&fixture.marker, 3).unwrap();
+
+      assert_eq!(fixture.session.share_advanced(), true);
+    }
+
+    #[test]
+    fn it_is_false_when_the_generations_are_in_step() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.sidecar, 4).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      assert_eq!(fixture.session.share_advanced(), false);
+    }
+  }
+
+  mod pull {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_applies_the_newer_share_copy_to_the_working_copy() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.canonical, b"share data").unwrap();
+      write_generation(&fixture.sidecar, 7).unwrap();
+      write_generation(&fixture.marker, 2).unwrap();
+
+      let pulled = fixture.session.pull().unwrap();
+
+      assert_eq!(pulled, true);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"share data");
+      assert_eq!(read_generation(&fixture.marker), 7);
+    }
+
+    #[test]
+    fn it_pulls_nothing_when_the_generations_are_in_step() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.canonical, b"share data").unwrap();
+      fs::write(&fixture.working_copy, b"local data").unwrap();
+      write_generation(&fixture.sidecar, 3).unwrap();
+      write_generation(&fixture.marker, 3).unwrap();
+
+      let pulled = fixture.session.pull().unwrap();
+
+      assert_eq!(pulled, false);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"local data");
     }
   }
 

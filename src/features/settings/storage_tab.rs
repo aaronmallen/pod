@@ -43,6 +43,7 @@ pub enum Message {
   RevealLogDir,
   SkipMove,
   SyncNow,
+  SyncSuggestionDismissed,
   SyncToggled(bool),
 }
 
@@ -151,6 +152,7 @@ pub struct State {
   migration: Option<MigrationRequest>,
   pending: Option<PendingMove>,
   sync: SyncStatus,
+  sync_suggestion_dismissed: bool,
 }
 
 impl State {
@@ -414,6 +416,10 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       Outcome::Persist
     }
     Message::SyncNow => Outcome::SyncNow,
+    Message::SyncSuggestionDismissed => {
+      state.sync_suggestion_dismissed = true;
+      Outcome::None
+    }
     Message::SyncToggled(value) => {
       let previous = settings.storage().clone();
       settings.storage_mut().set_network(value);
@@ -561,8 +567,10 @@ fn path_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Messag
   for kind in PathKind::ALL {
     children.push(path_card(state, kind, settings));
     if kind == PathKind::Database {
-      let detected = mode == StorageMode::Sync && !settings.storage().network();
-      children.push(sync_toggle_row(mode == StorageMode::Sync, detected));
+      if settings.storage().suggests_network_sync() && !state.sync_suggestion_dismissed {
+        children.push(sync_suggestion_banner());
+      }
+      children.push(sync_toggle_row(mode == StorageMode::Sync));
       if mode == StorageMode::Sync {
         children.push(working_copy_row(settings));
         children.push(sync_status_row(&state.sync));
@@ -801,7 +809,7 @@ fn custom_badge<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn sync_toggle_row<'a>(checked: bool, detected: bool) -> Element<'a, Message> {
+fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
   let box_fill = if checked {
     color::accent::PLASMA
   } else {
@@ -836,27 +844,17 @@ fn sync_toggle_row<'a>(checked: bool, detected: bool) -> Element<'a, Message> {
       ..container::Style::default()
     });
 
-  let mut label_row: Vec<Element<'a, Message>> = vec![
-    text("Sync this location across machines")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-  ];
-  if detected {
-    label_row.push(pill("auto-detected"));
-  }
-  let label = Row::with_children(label_row)
-    .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2_5);
+  let label = text("Sync this location across machines")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
 
   let explanation = container(
     text(
       "Pod keeps a fast local working copy of the database and syncs it to the shared location, so \
-        the same data follows you between machines. Network shares enable this automatically; turn it \
-        on to force syncing for a misdetected path.",
+        the same data follows you between machines.",
     )
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -874,14 +872,15 @@ fn sync_toggle_row<'a>(checked: bool, detected: bool) -> Element<'a, Message> {
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Top);
 
-  let mut toggle = button(row).padding(0).width(Length::Fill).style(|_, _| button::Style {
-    background: Some(Background::Color(iced::Color::TRANSPARENT)),
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  });
-  if !detected {
-    toggle = toggle.on_press(Message::SyncToggled(!checked));
-  }
+  let toggle = button(row)
+    .padding(0)
+    .width(Length::Fill)
+    .on_press(Message::SyncToggled(!checked))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    });
 
   let cell = container(toggle).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_3_5,
@@ -999,27 +998,42 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
     .into()
 }
 
-fn pill<'a>(label: &'a str) -> Element<'a, Message> {
-  container(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
+fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
+  let copy = text("This looks like a network share \u{2014} enable syncing across machines.")
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::accent::PLASMA),
+    })
+    .width(Length::Fill);
+
+  let dismiss = button(
+    text("Dismiss")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM),
   )
   .padding(Padding {
-    top: 1.0,
-    right: spacing::UNIT + 2.0,
-    bottom: 1.0,
-    left: spacing::UNIT + 2.0,
+    top: spacing::UNIT,
+    right: spacing::SPACE_2,
+    bottom: spacing::UNIT,
+    left: spacing::SPACE_2,
   })
+  .on_press(Message::SyncSuggestionDismissed)
+  .style(control::ghost_button);
+
+  container(
+    Row::with_children(vec![copy.into(), dismiss.into()])
+      .align_y(Vertical::Center)
+      .spacing(spacing::SPACE_3),
+  )
+  .width(Length::Fill)
+  .padding(spacing::SPACE_3)
   .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
     border: Border {
       color: color::with_alpha(color::accent::PLASMA, 0.3),
       width: 1.0,
-      radius: radius::SUBTLE.into(),
+      radius: radius::CONTROL.into(),
     },
     ..container::Style::default()
   })
@@ -1280,6 +1294,19 @@ mod tests {
 
       assert_eq!(outcome, Outcome::Persist);
       assert!(!settings.storage().network());
+    }
+
+    #[test]
+    fn dismissing_the_network_suggestion_sets_the_flag_without_persisting() {
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::SyncSuggestionDismissed, &mut Settings::default());
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(
+        state.sync_suggestion_dismissed,
+        "the advisory stays dismissed for this session"
+      );
     }
   }
 

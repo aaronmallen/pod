@@ -584,21 +584,42 @@ async fn run_open_store(mut tx: Tx) {
   let _ = tx.send(message).await;
 }
 
-async fn open_store_inner() -> Result<StoreReady, String> {
-  let mut settings = config::load().map_err(|error| error.to_string())?;
+struct PreparedStore {
+  database_path: std::path::PathBuf,
+  lease: Option<HolderInfo>,
+  settings: config::Settings,
+  sync_session: Option<store::sync_session::SyncSession>,
+}
+
+fn store_err(error: impl std::fmt::Display) -> String {
+  error.to_string()
+}
+
+fn prepare_store() -> Result<PreparedStore, String> {
+  let mut settings = config::load().map_err(store_err)?;
   let machine_id = persist_machine_id(&mut settings);
-  let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(|error| error.to_string())?;
+  let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(store_err)?;
   let sync_session = store::sync_session::SyncSession::from_config(settings.storage(), machine_id);
   let lease = acquire_lease(sync_session.as_ref());
   run_migration_guard(&settings, &database_path);
-  let db = store::open(&database_path).await.map_err(|error| error.to_string())?;
+  Ok(PreparedStore {
+    database_path,
+    lease,
+    settings,
+    sync_session,
+  })
+}
+
+async fn open_store_inner() -> Result<StoreReady, String> {
+  let prepared = prepare_store()?;
+  let db = store::open(&prepared.database_path).await.map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {
     db,
     http,
-    lease,
-    settings,
-    sync_session,
+    lease: prepared.lease,
+    settings: prepared.settings,
+    sync_session: prepared.sync_session,
   })
 }
 
@@ -1026,7 +1047,7 @@ fn dispatch_image_fetches(app: &mut App, keys: Vec<(store::images::ImageKind, i6
 }
 
 async fn ensure_image(client: Arc<eve_image::Client>, kind: store::images::ImageKind, id: i64) -> bool {
-  use store::images::{self, ImageKind};
+  use store::images;
 
   let store = images::default_store();
   let path = store.image_path(kind, id);
@@ -1034,22 +1055,36 @@ async fn ensure_image(client: Arc<eve_image::Client>, kind: store::images::Image
     return true;
   }
 
-  let url = match kind {
+  match client.fetch(&image_url(&client, kind, id)).await {
+    Ok(bytes) => write_refetched(&store, &path, &bytes, kind, id),
+    Err(error) => {
+      tracing::warn!(target: "pod::images", %error, ?kind, id, "refetching an evicted image failed");
+      false
+    }
+  }
+}
+
+fn image_url(client: &eve_image::Client, kind: store::images::ImageKind, id: i64) -> String {
+  use store::images::{self, ImageKind};
+
+  match kind {
     ImageKind::AllianceLogo => client.alliance_logo_url(id, images::LOGO_SIZE),
     ImageKind::CharacterPortrait => client.character_portrait_url(id, images::PORTRAIT_SIZE),
     ImageKind::CorporationLogo => client.corporation_logo_url(id, images::LOGO_SIZE),
-  };
+  }
+}
 
-  match client.fetch(&url).await {
-    Ok(bytes) => match store.write(&path, &bytes) {
-      Ok(()) => true,
-      Err(error) => {
-        tracing::warn!(target: "pod::images", %error, ?kind, id, "writing a refetched image failed");
-        false
-      }
-    },
+fn write_refetched(
+  store: &store::images::Store,
+  path: &std::path::Path,
+  bytes: &[u8],
+  kind: store::images::ImageKind,
+  id: i64,
+) -> bool {
+  match store.write(path, bytes) {
+    Ok(()) => true,
     Err(error) => {
-      tracing::warn!(target: "pod::images", %error, ?kind, id, "refetching an evicted image failed");
+      tracing::warn!(target: "pod::images", %error, ?kind, id, "writing a refetched image failed");
       false
     }
   }
@@ -2515,15 +2550,20 @@ fn compare_seed_ids(app: &App) -> Vec<i64> {
     return Vec::new();
   };
 
-  let mut by_sp: Vec<(i64, i64)> = character_manager::groups(manager)
+  let by_sp: Vec<(i64, i64)> = character_manager::groups(manager)
     .iter()
     .flat_map(|group| group.cards.iter())
     .chain(character_manager::unassigned(manager).iter())
     .map(|card| (card.character_id, card.total_sp.unwrap_or(0)))
     .collect();
+  let active = app.skills.as_ref().map(skills::State::active);
+
+  compare_seeds(by_sp, active)
+}
+
+fn compare_seeds(mut by_sp: Vec<(i64, i64)>, active: Option<i64>) -> Vec<i64> {
   by_sp.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-  let active = app.skills.as_ref().map(skills::State::active);
   let mut seed_ids: Vec<i64> = Vec::new();
   if let Some(active_id) = active.filter(|id| by_sp.iter().any(|(card_id, _)| card_id == id)) {
     seed_ids.push(active_id);
@@ -4561,9 +4601,221 @@ mod tests {
     #[test]
     fn it_names_lifecycle_messages() {
       assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
+      assert_eq!(Message::CloseSyncPopover.variant_name(), "CloseSyncPopover");
+      assert_eq!(Message::FocusMainWindow.variant_name(), "FocusMainWindow");
+      assert_eq!(
+        Message::ImageReady {
+          id: 1,
+          kind: store::images::ImageKind::CharacterPortrait,
+          ready: true,
+        }
+        .variant_name(),
+        "ImageReady"
+      );
+      assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
+      assert_eq!(Message::LeaseHeartbeat.variant_name(), "LeaseHeartbeat");
       assert_eq!(Message::OpenAbout.variant_name(), "OpenAbout");
+      assert_eq!(Message::PeriodicPush.variant_name(), "PeriodicPush");
+      assert_eq!(Message::Pushed(None).variant_name(), "Pushed");
+      assert_eq!(Message::ReauthCharacter(1).variant_name(), "ReauthCharacter");
+      assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
+      assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
       assert_eq!(Message::SyncPulse.variant_name(), "SyncPulse");
+      assert_eq!(Message::TakeOver.variant_name(), "TakeOver");
+      assert_eq!(
+        Message::TakeOverResolved(TakeOverOutcome::Failed).variant_name(),
+        "TakeOverResolved"
+      );
+      assert_eq!(Message::ToggleSyncPopover.variant_name(), "ToggleSyncPopover");
+      assert_eq!(
+        Message::UpdaterAction(updater_banner::Action::Apply).variant_name(),
+        "UpdaterAction"
+      );
+      assert_eq!(Message::UpdaterDismissToast.variant_name(), "UpdaterDismissToast");
+      assert_eq!(
+        Message::UpdaterStateChanged(updater::State::default()).variant_name(),
+        "UpdaterStateChanged"
+      );
+      assert_eq!(Message::WindowOpened(window::Id::unique()).variant_name(), "WindowOpened");
       assert_eq!(Message::MailUnreadCounted(3).variant_name(), "MailUnreadCounted");
+    }
+  }
+
+  fn featured_app() -> App {
+    let mut app = test_app();
+    app.assets = Some(assets::State::new());
+    app.character_detail = Some(character_detail::State::new(1, &[]));
+    app.character_manager = Some(character_manager::State::new());
+    app.mail = Some(mail::State::new());
+    app.skills = Some(skills::State::new(1));
+    app.wallet = Some(wallet::State::new());
+    app
+  }
+
+  mod compare_seeds {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_leads_with_the_active_pilot_then_fills_by_descending_sp() {
+      let seeds = compare_seeds(vec![(1, 100), (2, 500), (3, 300)], Some(1));
+
+      assert_eq!(seeds, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn it_caps_the_selection_at_three_pilots() {
+      let seeds = compare_seeds(vec![(1, 10), (2, 20), (3, 30), (4, 40)], None);
+
+      assert_eq!(seeds, vec![4, 3, 2]);
+    }
+
+    #[test]
+    fn it_ignores_an_active_pilot_absent_from_the_cards() {
+      let seeds = compare_seeds(vec![(1, 10), (2, 20)], Some(99));
+
+      assert_eq!(seeds, vec![2, 1]);
+    }
+
+    #[test]
+    fn it_breaks_skill_point_ties_by_id() {
+      let seeds = compare_seeds(vec![(5, 100), (3, 100)], None);
+
+      assert_eq!(seeds, vec![3, 5]);
+    }
+  }
+
+  mod compare_seed_ids {
+    use super::*;
+
+    #[test]
+    fn it_returns_no_seeds_without_a_character_manager() {
+      let app = test_app();
+
+      assert!(super::super::compare_seed_ids(&app).is_empty());
+    }
+  }
+
+  mod image_url {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_builds_a_url_for_every_image_kind() {
+      use store::images::ImageKind;
+      let runtime = test_runtime().await;
+      let client = runtime.eve_image.as_ref();
+
+      assert!(!super::super::image_url(client, ImageKind::AllianceLogo, 1).is_empty());
+      assert!(!super::super::image_url(client, ImageKind::CharacterPortrait, 1).is_empty());
+      assert!(!super::super::image_url(client, ImageKind::CorporationLogo, 1).is_empty());
+    }
+  }
+
+  mod image_reload {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let app = featured_app();
+
+      let _ = super::super::image_reload(&app);
+    }
+
+    #[tokio::test]
+    async fn it_batches_a_reload_for_each_active_route() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+
+      for route in [
+        Route::Assets,
+        Route::CharacterDetail(1),
+        Route::Characters,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = super::super::image_reload(&app);
+      }
+    }
+
+    #[tokio::test]
+    async fn it_reloads_the_compare_window_when_one_is_open() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = super::super::image_reload(&app);
+    }
+  }
+
+  mod handle_skills {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_dispatches_each_skills_branch() {
+      use crate::features::skills::EditorSeed;
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = super::super::handle_skills(&mut app, skills::Message::CharacterChanged(1));
+      let _ = super::super::handle_skills(&mut app, skills::Message::OpenCompare);
+      let _ = super::super::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::New));
+      let _ = super::super::handle_skills(&mut app, skills::Message::PaneSettled("skills", 280.0));
+      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
+    }
+  }
+
+  mod dispatch_lifecycle {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_routes_each_lifecycle_message() {
+      let mut app = featured_app();
+
+      let messages = vec![
+        Message::ClockTick,
+        Message::CloseSyncPopover,
+        Message::FocusMainWindow,
+        Message::ImageReady {
+          id: 1,
+          kind: store::images::ImageKind::CharacterPortrait,
+          ready: true,
+        },
+        Message::InitFailed("boom".to_owned()),
+        Message::LeaseHeartbeat,
+        Message::LockReleased,
+        Message::OpenAbout,
+        Message::PeriodicPush,
+        Message::Pushed(None),
+        Message::ReauthCharacter(1),
+        Message::SeedProgress(splash::seed::Progress::Step("seeding".to_owned())),
+        Message::SnoozesWoken(Vec::new()),
+        Message::Splash(splash::Message::Tick),
+        Message::StorageMigrated,
+        Message::SyncPulse,
+        Message::TakeOver,
+        Message::TakeOverResolved(TakeOverOutcome::Failed),
+        Message::ToggleSyncPopover,
+        Message::UpdaterAction(updater_banner::Action::Apply),
+        Message::UpdaterDismissToast,
+        Message::UpdaterStateChanged(updater::State::default()),
+        Message::WindowOpened(window::Id::unique()),
+        Message::Wallet(wallet::Message::PickerToggled),
+      ];
+
+      for message in messages {
+        let _ = super::super::dispatch_lifecycle(&mut app, message);
+      }
     }
   }
 

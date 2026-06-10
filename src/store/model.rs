@@ -69,6 +69,7 @@ mod outbox;
 mod owned_corporation;
 mod race;
 mod region;
+mod saved_asset_filter;
 pub mod sde_picker_item;
 mod ship_mastery;
 mod skill_metadata;
@@ -179,6 +180,8 @@ pub use outbox::Model as Outbox;
 pub use owned_corporation::Model as OwnedCorporation;
 pub use race::Model as Race;
 pub use region::Model as Region;
+#[allow(unused_imports)]
+pub use saved_asset_filter::Model as SavedAssetFilter;
 pub use ship_mastery::Model as ShipMastery;
 pub use skill_metadata::Model as SkillMetadata;
 #[allow(unused_imports)]

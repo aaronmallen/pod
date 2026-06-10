@@ -8,8 +8,8 @@ use crate::store::{
   Database, Error,
   asset_filter::{ColumnSchema, FilterContext, WhereClause, compile_query},
   model::{
-    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAsset, StatRange, StatTemplate, Stockpile,
-    StockpileItem,
+    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAsset, SavedAssetFilter, StatRange, StatTemplate,
+    Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
       AssetCompleteness, AssetRenderRow, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery, InventoryRow,
@@ -2123,6 +2123,40 @@ async fn insert_items(
     inserted.push(item);
   }
   Ok(inserted)
+}
+
+pub async fn create_saved_filter(
+  db: &Database,
+  name: &str,
+  query: &str,
+  category: Option<&str>,
+) -> Result<SavedAssetFilter, Error> {
+  let filter = sqlx::query_as::<_, SavedAssetFilter>(
+    "INSERT INTO saved_asset_filters (name, query, category) VALUES (?, ?, ?) \
+    RETURNING category, id, name, query",
+  )
+  .bind(name)
+  .bind(query)
+  .bind(category)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(filter)
+}
+
+pub async fn delete_saved_filter(db: &Database, id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM saved_asset_filters WHERE id = ?")
+    .bind(id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+pub async fn saved_filters(db: &Database) -> Result<Vec<SavedAssetFilter>, Error> {
+  let rows =
+    sqlx::query_as::<_, SavedAssetFilter>("SELECT category, id, name, query FROM saved_asset_filters ORDER BY id ASC")
+      .fetch_all(&db.0)
+      .await?;
+  Ok(rows)
 }
 
 #[cfg(test)]
@@ -6277,6 +6311,94 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
 
       assert_eq!(location_name(&db, 60_003_760).await.unwrap(), None);
+    }
+  }
+}
+
+#[cfg(test)]
+mod saved_filter_tests {
+  use super::*;
+  use crate::store;
+
+  mod create_saved_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_inserts_a_filter_with_a_category() {
+      let db = store::open_test().await.unwrap();
+
+      let created = create_saved_filter(&db, "Ships", "category:ship", Some("ship"))
+        .await
+        .unwrap();
+
+      assert!(created.id() > 0);
+      assert_eq!(created.name(), "Ships");
+      assert_eq!(created.query(), "category:ship");
+      assert_eq!(created.category().as_deref(), Some("ship"));
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_filter_with_a_null_category() {
+      let db = store::open_test().await.unwrap();
+
+      let created = create_saved_filter(&db, "Everything", "tritanium", None).await.unwrap();
+
+      assert_eq!(created.category(), &None);
+      assert_eq!(created.query(), "tritanium");
+    }
+  }
+
+  mod saved_filters {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_every_filter_ordered_by_id() {
+      let db = store::open_test().await.unwrap();
+      let first = create_saved_filter(&db, "All", "", None).await.unwrap();
+      let second = create_saved_filter(&db, "Modules", "category:module", Some("module"))
+        .await
+        .unwrap();
+
+      let all = saved_filters(&db).await.unwrap();
+
+      assert_eq!(
+        all.iter().map(|f| f.id()).collect::<Vec<_>>(),
+        [first.id(), second.id()]
+      );
+      assert_eq!(all[0].category(), &None);
+      assert_eq!(all[1].category().as_deref(), Some("module"));
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_when_there_are_no_filters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(saved_filters(&db).await.unwrap().is_empty());
+    }
+  }
+
+  mod delete_saved_filter {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_removes_the_filter() {
+      let db = store::open_test().await.unwrap();
+      let created = create_saved_filter(&db, "Doomed", "", None).await.unwrap();
+
+      delete_saved_filter(&db, created.id()).await.unwrap();
+
+      assert!(saved_filters(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_a_missing_filter() {
+      let db = store::open_test().await.unwrap();
+
+      delete_saved_filter(&db, 999_999).await.unwrap();
     }
   }
 }

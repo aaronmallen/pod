@@ -23,7 +23,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      StatTemplate,
+      SavedAssetFilter, StatTemplate,
       asset_query::{
         GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
       },
@@ -123,6 +123,13 @@ impl Category {
       Category::Ship => Some("ship"),
     }
   }
+
+  fn from_key(key: Option<&str>) -> Category {
+    Category::ALL
+      .into_iter()
+      .find(|category| category.key() == key)
+      .unwrap_or(Category::All)
+  }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,6 +176,7 @@ pub struct Loaded {
   geo_tree: GeoTree,
   inventory: Vec<InventoryRow>,
   roster: Vec<RosterPilot>,
+  saved_filters: Vec<SavedAssetFilter>,
   totals: InventoryTotals,
   values: values::ValueSummary,
   nav: tracker::NavSeries,
@@ -211,9 +219,20 @@ pub enum Message {
   #[allow(dead_code)]
   PaneSettled(&'static str, f32),
   PickerToggled,
+  SaveFilterCancelled,
+  SaveFilterConfirmed,
+  SaveFilterNameChanged(String),
+  SaveFilterOpened,
+  SavedFilterContextMenuClosed,
+  SavedFilterCreated(Option<i64>, Vec<SavedAssetFilter>),
+  SavedFilterDeleted(i64),
+  SavedFilterRightPressed(i64),
+  SavedFilterSelected(i64),
+  SavedFiltersReloaded(Vec<SavedAssetFilter>),
   ScopeSelected(Scope),
   SearchChanged(String),
   SearchSubmitted,
+  SidebarCursorMoved(iced::Point),
   SortSelected(SortColumn),
   StockpileCardRightPressed(i64),
   StockpileContextMenuClosed,
@@ -262,6 +281,13 @@ pub(super) struct StockpileContextMenu {
   pub name: String,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct SavedFilterContextMenu {
+  pub anchor: iced::Point,
+  pub id: i64,
+  pub name: String,
+}
+
 #[derive(Debug)]
 pub struct State {
   abyssals_filter: PaneDrag,
@@ -280,7 +306,13 @@ pub struct State {
   inventory_loading: bool,
   picker_open: bool,
   roster: Vec<RosterPilot>,
+  saved_filter_active: Option<i64>,
+  saved_filter_context_menu: Option<SavedFilterContextMenu>,
+  saved_filter_draft_name: String,
+  saved_filter_modal_open: bool,
+  saved_filters: Vec<SavedAssetFilter>,
   search: String,
+  sidebar_cursor: Option<iced::Point>,
   sort: SortColumn,
   sort_dir: SortDirection,
   sidebar: PaneDrag,
@@ -326,7 +358,13 @@ impl State {
       inventory_loading: false,
       picker_open: false,
       roster: Vec::new(),
+      saved_filter_active: None,
+      saved_filter_context_menu: None,
+      saved_filter_draft_name: String::new(),
+      saved_filter_modal_open: false,
+      saved_filters: Vec::new(),
       search: String::new(),
+      sidebar_cursor: None,
       sidebar: PaneDrag::new(SIDEBAR_DEFAULT_WIDTH),
       sort: SortColumn::Value,
       sort_dir: SortDirection::Descending,
@@ -405,6 +443,43 @@ impl State {
 
   pub(super) fn category(&self) -> Category {
     self.category
+  }
+
+  pub(super) fn saved_filters(&self) -> &[SavedAssetFilter] {
+    &self.saved_filters
+  }
+
+  pub(super) fn saved_filter_active(&self) -> Option<i64> {
+    self.saved_filter_active
+  }
+
+  pub(super) fn saved_filter_modal_open(&self) -> bool {
+    self.saved_filter_modal_open
+  }
+
+  pub(super) fn saved_filter_draft_name(&self) -> &str {
+    &self.saved_filter_draft_name
+  }
+
+  pub(super) fn saved_filter_context_menu(&self) -> Option<&SavedFilterContextMenu> {
+    self.saved_filter_context_menu.as_ref()
+  }
+
+  // The string captured by a "save filter" action: the raw query when present,
+  // else `category:<key>` when only a category pill is set, else empty.
+  pub(super) fn save_filter_capture(&self) -> String {
+    let search = self.search.trim();
+    if !search.is_empty() {
+      return search.to_owned();
+    }
+    match self.category.key() {
+      Some(key) => format!("category:{key}"),
+      None => String::new(),
+    }
+  }
+
+  pub(super) fn can_save_filter(&self) -> bool {
+    !self.search.trim().is_empty() || self.category != Category::All
   }
 
   pub(super) fn roster(&self) -> &[RosterPilot] {
@@ -689,6 +764,18 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
     Message::GeoNodeSelected(_) | Message::GeoNodeToggled(_) => update_geo(state, message, db),
 
+    Message::SaveFilterCancelled
+    | Message::SaveFilterConfirmed
+    | Message::SaveFilterNameChanged(_)
+    | Message::SaveFilterOpened
+    | Message::SavedFilterContextMenuClosed
+    | Message::SavedFilterCreated(..)
+    | Message::SavedFilterDeleted(_)
+    | Message::SavedFilterRightPressed(_)
+    | Message::SavedFilterSelected(_)
+    | Message::SavedFiltersReloaded(_)
+    | Message::SidebarCursorMoved(_) => update_saved_filter(state, message, db),
+
     Message::StockpileCardRightPressed(_)
     | Message::StockpileContextMenuClosed
     | Message::StockpileCursorMoved(_)
@@ -751,6 +838,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
         geo_tree,
         inventory,
         roster,
+        saved_filters,
         totals,
         values,
         nav,
@@ -758,6 +846,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
         abyssals,
       } = *loaded;
       state.corporations = corporations;
+      state.saved_filters = saved_filters;
       state.inventory_has_more = inventory.len() as i64 == INVENTORY_PAGE_SIZE;
       state.inventory = inventory;
       state.inventory_loading = false;
@@ -792,6 +881,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
       state.chart_hover = None;
       state.geo_selected = GeoSelection::All;
       state.geo_expanded.clear();
+      state.saved_filter_active = None;
       reload(db, scope, InventoryView::from_state(state))
     }
     Message::TabSelected(tab) => {
@@ -853,7 +943,117 @@ fn update_geo(state: &mut State, message: Message, db: &Database) -> Task<Messag
         return Task::none();
       }
       state.geo_selected = selection;
+      // Selecting a location clears any active saved filter (mutually exclusive).
+      if !matches!(selection, GeoSelection::All) {
+        state.saved_filter_active = None;
+      }
       reload(db, state.active, InventoryView::from_state(state))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn update_saved_filter(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::SidebarCursorMoved(point) => {
+      state.sidebar_cursor = Some(point);
+      Task::none()
+    }
+    Message::SaveFilterOpened => {
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = String::new();
+      Task::none()
+    }
+    Message::SaveFilterCancelled => {
+      state.saved_filter_modal_open = false;
+      state.saved_filter_draft_name = String::new();
+      Task::none()
+    }
+    Message::SaveFilterNameChanged(name) => {
+      state.saved_filter_draft_name = name;
+      Task::none()
+    }
+    Message::SaveFilterConfirmed => {
+      let name = state.saved_filter_draft_name.trim().to_owned();
+      if name.is_empty() {
+        return Task::none();
+      }
+      let query = state.search.trim().to_owned();
+      let category = state.category.key().map(str::to_owned);
+      state.saved_filter_modal_open = false;
+      state.saved_filter_draft_name = String::new();
+      let db = db.clone();
+      Task::perform(
+        async move {
+          let created = assets::create_saved_filter(&db, &name, &query, category.as_deref()).await;
+          let filters = assets::saved_filters(&db).await.unwrap_or_default();
+          (created.ok().map(|filter| filter.id()), filters)
+        },
+        |(new_id, filters)| Message::SavedFilterCreated(new_id, filters),
+      )
+    }
+    Message::SavedFilterCreated(new_id, filters) => {
+      state.saved_filters = filters;
+      let Some(id) = new_id else {
+        return Task::none();
+      };
+      // Selecting the new filter clears any geo selection (mutually exclusive).
+      state.saved_filter_active = Some(id);
+      state.geo_selected = GeoSelection::All;
+      Task::none()
+    }
+    Message::SavedFiltersReloaded(filters) => {
+      state.saved_filters = filters;
+      Task::none()
+    }
+    Message::SavedFilterSelected(id) => {
+      // Re-clicking the active filter clears it.
+      if state.saved_filter_active == Some(id) {
+        state.saved_filter_active = None;
+        state.search = String::new();
+        state.category = Category::All;
+        return reload(db, state.active, InventoryView::from_state(state));
+      }
+      let Some(filter) = state.saved_filters.iter().find(|filter| filter.id() == id) else {
+        return Task::none();
+      };
+      state.saved_filter_active = Some(id);
+      state.search = filter.query().to_owned();
+      state.category = Category::from_key(filter.category().as_deref());
+      // Mutually exclusive with geo selection.
+      state.geo_selected = GeoSelection::All;
+      reload(db, state.active, InventoryView::from_state(state))
+    }
+    Message::SavedFilterRightPressed(id) => {
+      if let (Some(anchor), Some(filter)) = (
+        state.sidebar_cursor,
+        state.saved_filters.iter().find(|filter| filter.id() == id),
+      ) {
+        state.saved_filter_context_menu = Some(SavedFilterContextMenu {
+          anchor,
+          id,
+          name: filter.name().to_owned(),
+        });
+      }
+      Task::none()
+    }
+    Message::SavedFilterContextMenuClosed => {
+      state.saved_filter_context_menu = None;
+      Task::none()
+    }
+    Message::SavedFilterDeleted(id) => {
+      state.saved_filter_context_menu = None;
+      if state.saved_filter_active == Some(id) {
+        state.saved_filter_active = None;
+      }
+      let db = db.clone();
+      Task::perform(
+        async move {
+          assets::delete_saved_filter(&db, id).await.ok();
+          assets::saved_filters(&db).await.unwrap_or_default()
+        },
+        Message::SavedFiltersReloaded,
+      )
     }
     _ => Task::none(),
   }
@@ -1343,12 +1543,14 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
   let nav = tracker::load_series(&db, scope).await;
   let stockpiles = stockpiles::load_cards(&db).await;
   let abyssals = abyssals::load_cards(&db, scope, &roster).await;
+  let saved_filters = assets::saved_filters(&db).await.unwrap_or_default();
 
   Loaded {
     corporations,
     geo_tree,
     inventory,
     roster,
+    saved_filters,
     totals,
     values,
     nav,
@@ -1762,6 +1964,7 @@ mod tests {
           geo_tree: GeoTree::default(),
           inventory: vec![],
           roster: vec![pilot(7)],
+          saved_filters: vec![],
           totals: InventoryTotals {
             items: 5,
             locations: 2,
@@ -2127,6 +2330,215 @@ mod tests {
         state.geo_is_collapsed(GeoNodeKey::Region(10)),
         "the scope change re-collapses every group"
       );
+    }
+  }
+
+  mod saved_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn filter(id: i64, name: &str, query: &str, category: Option<&str>) -> SavedAssetFilter {
+      SavedAssetFilter {
+        category: category.map(str::to_owned),
+        id,
+        name: name.to_owned(),
+        query: query.to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_clears_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_draft_name = "stale".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterOpened, &db);
+
+      assert!(state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn it_cancels_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "Jita".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterCancelled, &db);
+
+      assert!(!state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn it_records_the_draft_name() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::SaveFilterNameChanged("Jita modules".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.saved_filter_draft_name(), "Jita modules");
+    }
+
+    #[tokio::test]
+    async fn confirming_with_an_empty_name_keeps_the_modal_open() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "   ".to_owned();
+      state.search = "tritanium".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
+
+      assert!(state.saved_filter_modal_open());
+    }
+
+    #[tokio::test]
+    async fn confirming_closes_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "Ships".to_owned();
+      state.category = Category::Ship;
+
+      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
+
+      assert!(!state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn a_created_filter_is_recorded_selected_and_clears_the_geo_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.geo_selected = GeoSelection::System(30);
+
+      let _ = update(
+        &mut state,
+        Message::SavedFilterCreated(Some(5), vec![filter(5, "Ships", "category:ship", Some("ship"))]),
+        &db,
+      );
+
+      assert_eq!(state.saved_filters().len(), 1);
+      assert_eq!(state.saved_filter_active(), Some(5));
+      assert_eq!(state.geo_selected(), GeoSelection::All);
+    }
+
+    #[tokio::test]
+    async fn selecting_a_filter_restores_its_query_and_category_and_clears_the_location() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
+      state.geo_selected = GeoSelection::System(30);
+
+      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
+
+      assert_eq!(state.saved_filter_active(), Some(5));
+      assert_eq!(state.search(), "name:Rifter");
+      assert_eq!(state.category(), Category::Module);
+      assert_eq!(state.geo_selected(), GeoSelection::All);
+    }
+
+    #[tokio::test]
+    async fn re_selecting_the_active_filter_clears_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
+      state.saved_filter_active = Some(5);
+      state.search = "name:Rifter".to_owned();
+      state.category = Category::Module;
+
+      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+      assert_eq!(state.search(), "");
+      assert_eq!(state.category(), Category::All);
+    }
+
+    #[tokio::test]
+    async fn selecting_a_location_clears_the_active_saved_filter() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_active = Some(5);
+
+      let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+    }
+
+    #[tokio::test]
+    async fn deleting_the_active_filter_clears_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
+      state.saved_filter_active = Some(5);
+
+      let _ = update(&mut state, Message::SavedFilterDeleted(5), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+    }
+
+    #[tokio::test]
+    async fn a_reloaded_list_replaces_the_saved_filters() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(1, "Old", "", None)];
+
+      let _ = update(
+        &mut state,
+        Message::SavedFiltersReloaded(vec![filter(2, "New", "name:Rifter", None)]),
+        &db,
+      );
+
+      assert_eq!(state.saved_filters().len(), 1);
+      assert_eq!(state.saved_filters()[0].id(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_capture_preview_prefers_the_query_then_falls_back_to_the_category() {
+      let mut state = State::new();
+      state.search = "  name:Rifter  ".to_owned();
+      assert_eq!(state.save_filter_capture(), "name:Rifter");
+
+      state.search = String::new();
+      state.category = Category::Ship;
+      assert_eq!(state.save_filter_capture(), "category:ship");
+
+      state.category = Category::All;
+      assert_eq!(state.save_filter_capture(), "");
+    }
+
+    #[tokio::test]
+    async fn can_save_is_gated_on_a_query_or_a_non_all_category() {
+      let mut state = State::new();
+      assert!(!state.can_save_filter());
+
+      state.search = "tritanium".to_owned();
+      assert!(state.can_save_filter());
+
+      state.search = String::new();
+      state.category = Category::Module;
+      assert!(state.can_save_filter());
+    }
+
+    #[tokio::test]
+    async fn right_pressing_a_filter_opens_its_context_menu_at_the_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
+      state.sidebar_cursor = Some(iced::Point::new(12.0, 34.0));
+
+      let _ = update(&mut state, Message::SavedFilterRightPressed(5), &db);
+
+      let menu = state.saved_filter_context_menu().expect("a context menu");
+      assert_eq!(menu.id, 5);
+      assert_eq!(menu.name, "Ships");
     }
   }
 

@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text},
+  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text},
 };
 
 use super::{GeoNodeKey, GeoSelection, Message, Owner, Scope, State, fmt_count, fmt_isk, resolve_scope_owner};
@@ -12,8 +12,14 @@ use crate::{
     repo::assets,
   },
   ui::{
-    components::{eyebrow::eyebrow, icon::Icon},
-    style::{color, spacing, typography},
+    components::{
+      context_menu::{self, Item},
+      eyebrow::eyebrow,
+      icon::Icon,
+      rule,
+      text_input::TextInput,
+    },
+    style::{color, radius, spacing, typography},
   },
 };
 
@@ -124,10 +130,173 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-  Column::with_children(vec![header.into(), body.into()])
+  let column = Column::with_children(vec![
+    saved_filters_section(state),
+    rule_divider(),
+    header.into(),
+    body.into(),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  // Track the cursor so a right-click on a saved-filter row can anchor its menu.
+  mouse_area(column).on_move(Message::SidebarCursorMoved).into()
+}
+
+fn rule_divider<'a>() -> Element<'a, Message> {
+  container(Space::new())
     .width(Length::Fill)
-    .height(Length::Fill)
+    .height(Length::Fixed(1.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.1))),
+      ..container::Style::default()
+    })
     .into()
+}
+
+fn saved_filters_section(state: &State) -> Element<'_, Message> {
+  let header = Row::with_children(vec![
+    eyebrow("Saved filters", Some(color::text::SECONDARY)),
+    Space::new().width(Length::Fill).into(),
+    button(eyebrow("+ new", Some(color::accent::PLASMA)))
+      .padding(0)
+      .on_press(Message::SaveFilterOpened)
+      .style(|_, _| button::Style::default())
+      .into(),
+  ])
+  .width(Length::Fill)
+  .align_y(Vertical::Center);
+
+  let mut children: Vec<Element<'_, Message>> = vec![
+    container(header)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        right: spacing::SPACE_3_5,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_3_5,
+      })
+      .into(),
+  ];
+
+  for filter in state.saved_filters() {
+    children.push(saved_filter_row(
+      filter,
+      state.saved_filter_active() == Some(filter.id()),
+    ));
+  }
+
+  Column::with_children(children).width(Length::Fill).into()
+}
+
+fn saved_filter_row(filter: &crate::store::model::SavedAssetFilter, active: bool) -> Element<'_, Message> {
+  let chip_bg = if active {
+    color::accent::PLASMA
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.1)
+  };
+  let chip_color = if active {
+    color::surface::BASE
+  } else {
+    color::text::SECONDARY
+  };
+  let chip = container(
+    text("\u{2605}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(move |_| text::Style {
+        color: Some(chip_color),
+      }),
+  )
+  .width(Length::Fixed(14.0))
+  .height(Length::Fixed(14.0))
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(chip_bg)),
+    border: Border {
+      radius: radius::SUBTLE.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  let name_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.78)
+  };
+
+  let hint = saved_filter_hint(filter);
+
+  let row = Row::with_children(vec![
+    chip.into(),
+    text(filter.name().to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(name_color),
+      })
+      .width(Length::Fill)
+      .into(),
+    text(hint)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let id = filter.id();
+  let pressable = button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::UNIT + 1.0,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::UNIT + 1.0,
+      left: spacing::SPACE_3_5,
+    })
+    .on_press(Message::SavedFilterSelected(id))
+    .style(move |_, status| {
+      let background = if active {
+        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)))
+      } else if matches!(status, button::Status::Hovered) {
+        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
+      } else {
+        None
+      };
+      button::Style {
+        background,
+        border: Border {
+          radius: 0.0.into(),
+          ..Border::default()
+        },
+        ..button::Style::default()
+      }
+    });
+
+  mouse_area(pressable)
+    .on_right_press(Message::SavedFilterRightPressed(id))
+    .into()
+}
+
+fn saved_filter_hint(filter: &crate::store::model::SavedAssetFilter) -> String {
+  const MAX: usize = 22;
+  let query = filter.query().trim();
+  if !query.is_empty() {
+    return if query.chars().count() > MAX {
+      let truncated: String = query.chars().take(MAX - 1).collect();
+      format!("{truncated}\u{2026}")
+    } else {
+      query.to_owned()
+    };
+  }
+  match filter.category() {
+    Some(category) => category.clone(),
+    None => "all assets".to_owned(),
+  }
 }
 
 fn push_region<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, region: &'a GeoRegionNode) {
@@ -400,6 +569,263 @@ fn node_row(spec: RowSpec<'_>) -> Element<'_, Message> {
         },
         ..button::Style::default()
       }
+    })
+    .into()
+}
+
+pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
+  let valid = !state.saved_filter_draft_name().trim().is_empty();
+  let capture = state.save_filter_capture();
+
+  let title = Row::with_children(vec![
+    container(
+      text("\u{2605}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::accent::PLASMA),
+        }),
+    )
+    .width(Length::Fixed(22.0))
+    .height(Length::Fixed(22.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+      border: Border {
+        radius: radius::SUBTLE.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into(),
+    text("Save filter")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .width(Length::Fill)
+      .into(),
+    modal_close_button(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  let name_field = Column::with_children(vec![
+    eyebrow("Filter name", Some(color::text::SECONDARY)),
+    TextInput::new(
+      "e.g. Jita modules",
+      state.saved_filter_draft_name(),
+      Message::SaveFilterNameChanged,
+    )
+    .font_size(typography::size::MD)
+    .padding(spacing::SPACE_2)
+    .on_submit(Message::SaveFilterConfirmed)
+    .render(),
+  ])
+  .spacing(spacing::UNIT + 1.0)
+  .width(Length::Fill);
+
+  let mut body_children: Vec<Element<'_, Message>> = vec![name_field.into()];
+  if !capture.is_empty() {
+    body_children.push(
+      Column::with_children(vec![
+        eyebrow("Captures", Some(color::text::SECONDARY)),
+        container(
+          text(capture)
+            .font(typography::mono::REGULAR)
+            .size(typography::size::SM)
+            .style(|_| text::Style {
+              color: Some(color::accent::PLASMA),
+            }),
+        )
+        .width(Length::Fill)
+        .padding(Padding {
+          top: spacing::UNIT,
+          right: spacing::SPACE_2_5,
+          bottom: spacing::UNIT,
+          left: spacing::SPACE_2_5,
+        })
+        .style(|_| container::Style {
+          background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+          border: Border {
+            color: color::with_alpha(color::accent::PLASMA, 0.3),
+            width: 1.0,
+            radius: radius::SUBTLE.into(),
+          },
+          ..container::Style::default()
+        })
+        .into(),
+      ])
+      .spacing(spacing::UNIT + 1.0)
+      .width(Length::Fill)
+      .into(),
+    );
+  }
+
+  let body = Column::with_children(body_children)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill);
+
+  let footer = Row::with_children(vec![
+    Space::new().width(Length::Fill).into(),
+    modal_secondary_button("Cancel", Message::SaveFilterCancelled),
+    modal_primary_button("Save filter", valid),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  let panel = container(
+    Column::with_children(vec![
+      modal_section(title.into()),
+      rule::horizontal(),
+      modal_section(body.into()),
+      rule::horizontal(),
+      modal_section(footer.into()),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fixed(420.0))
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.12),
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    ..container::Style::default()
+  });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+pub(super) fn context_menu_view(menu: &super::SavedFilterContextMenu) -> Element<'_, Message> {
+  let items = vec![Item::danger("Delete", Message::SavedFilterDeleted(menu.id))];
+  context_menu::context_menu(&menu.name, items, menu.anchor)
+}
+
+fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+  container(content)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .into()
+}
+
+fn modal_close_button<'a>() -> Element<'a, Message> {
+  button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::UNIT + 1.0,
+    right: spacing::SPACE_2,
+    bottom: spacing::UNIT + 1.0,
+    left: spacing::SPACE_2,
+  })
+  .on_press(Message::SaveFilterCancelled)
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      text_color: color::text::SECONDARY,
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn modal_secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+  button(
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  })
+  .on_press(message)
+  .style(|_, status| {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, if hovered { 0.28 } else { 0.1 }),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn modal_primary_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Message> {
+  let label_color = if enabled {
+    color::surface::BASE
+  } else {
+    color::text::TERTIARY
+  };
+  let mut button = button(
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(label_color),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  });
+  if enabled {
+    button = button.on_press(Message::SaveFilterConfirmed);
+  }
+  button
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(if enabled {
+        color::accent::PLASMA
+      } else {
+        color::with_alpha(color::text::PRIMARY, 0.1)
+      })),
+      border: Border {
+        color: if enabled {
+          color::accent::PLASMA
+        } else {
+          color::with_alpha(color::text::PRIMARY, 0.1)
+        },
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..button::Style::default()
     })
     .into()
 }

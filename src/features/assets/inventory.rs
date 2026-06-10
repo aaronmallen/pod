@@ -49,7 +49,15 @@ const FILTER_HELP_KEYS: [(&str, &str, &str); 9] = [
 ];
 
 pub(super) fn filter_bar(state: &State) -> Element<'_, Message> {
-  let search = container(search_field(state)).padding(Padding {
+  let search = container(
+    Row::with_children(vec![
+      container(search_field(state)).width(Length::Fill).into(),
+      save_filter_button(state.can_save_filter()),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
     top: spacing::SPACE_3_5,
     right: HEADER_SIDE_PADDING,
     bottom: spacing::SPACE_3,
@@ -178,6 +186,71 @@ fn search_field(state: &State) -> Element<'_, Message> {
   .on_submit(Message::SearchSubmitted)
   .trailing(trailing.into())
   .render()
+}
+
+fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
+  let (label_color, glyph_color) = if enabled {
+    (color::accent::PLASMA, color::accent::PLASMA)
+  } else {
+    (color::text::TERTIARY, color::text::TERTIARY)
+  };
+
+  let content = Row::with_children(vec![
+    text("\u{2605}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(glyph_color),
+      })
+      .into(),
+    text("Save")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(move |_| text::Style {
+        color: Some(label_color),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let mut button = button(content).padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  });
+  if enabled {
+    button = button.on_press(Message::SaveFilterOpened);
+  }
+  button
+    .style(move |_, status| {
+      if !enabled {
+        return button::Style {
+          background: Some(Background::Color(color::surface::SUNKEN)),
+          border: Border {
+            color: color::with_alpha(color::text::PRIMARY, 0.1),
+            width: 1.0,
+            radius: radius::CONTROL.into(),
+          },
+          ..button::Style::default()
+        };
+      }
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(color::with_alpha(
+          color::accent::PLASMA,
+          if hovered { 0.18 } else { 0.1 },
+        ))),
+        border: Border {
+          color: color::with_alpha(color::accent::PLASMA, if hovered { 0.6 } else { 0.4 }),
+          width: 1.0,
+          radius: radius::CONTROL.into(),
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
 }
 
 fn help_toggle<'a>(open: bool) -> Element<'a, Message> {

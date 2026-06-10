@@ -102,6 +102,30 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .into();
   }
 
+  if state.tab() == Tab::Inventory && state.saved_filter_modal_open() {
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::backdrop(Message::SaveFilterCancelled),
+      tree::save_filter_modal(state),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
+  if state.tab() == Tab::Inventory
+    && let Some(menu) = state.saved_filter_context_menu()
+  {
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::backdrop(Message::SavedFilterContextMenuClosed),
+      tree::context_menu_view(menu),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
   let multibuy_export = (state.tab() == Tab::Stockpiles)
     .then(|| state.stockpile_multibuy_export())
     .flatten()

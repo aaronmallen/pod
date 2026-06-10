@@ -281,10 +281,6 @@ pub fn cache_dir() -> PathBuf {
     .join("pod")
 }
 
-pub fn config_file_path() -> Option<PathBuf> {
-  config_path().ok()
-}
-
 fn config_path() -> Result<PathBuf, Error> {
   dir_spec::config_home()
     .map(|dir| dir.join("pod").join("config.toml"))

@@ -5,7 +5,6 @@ use muda::{Menu, MenuId, MenuItem, PredefinedMenuItem, accelerator};
 
 pub const ABOUT_ID: &str = "pod.menu.about";
 pub const CHECK_UPDATES_ID: &str = "pod.menu.check_updates";
-pub const CLEAR_CACHE_ID: &str = "pod.menu.clear_cache";
 pub const QUIT_ID: &str = "pod.menu.quit";
 
 static SENDER: Mutex<Option<iced::futures::channel::mpsc::Sender<MenuAction>>> = Mutex::new(None);
@@ -14,7 +13,6 @@ static SENDER: Mutex<Option<iced::futures::channel::mpsc::Sender<MenuAction>>> =
 pub enum MenuAction {
   About,
   CheckUpdates,
-  ClearCache,
   Quit,
 }
 
@@ -22,7 +20,6 @@ pub fn action_for_id(id: &MenuId) -> Option<MenuAction> {
   match id.as_ref() {
     ABOUT_ID => Some(MenuAction::About),
     CHECK_UPDATES_ID => Some(MenuAction::CheckUpdates),
-    CLEAR_CACHE_ID => Some(MenuAction::ClearCache),
     QUIT_ID => Some(MenuAction::Quit),
     _ => None,
   }
@@ -56,7 +53,6 @@ fn build() -> Result<Menu, muda::Error> {
 
   let about = MenuItem::with_id(ABOUT_ID, "About Pod", true, None);
   let check_updates = MenuItem::with_id(CHECK_UPDATES_ID, "Check for Updates…", true, None);
-  let clear_cache = MenuItem::with_id(CLEAR_CACHE_ID, "Clear Cache", true, None);
 
   let quit_accelerator = accelerator::Accelerator::new(Some(accelerator::Modifiers::META), accelerator::Code::KeyQ);
   let quit = MenuItem::with_id(QUIT_ID, "Quit", true, Some(quit_accelerator));
@@ -66,7 +62,6 @@ fn build() -> Result<Menu, muda::Error> {
     &about,
     &PredefinedMenuItem::separator(),
     &check_updates,
-    &clear_cache,
     &PredefinedMenuItem::separator(),
     &quit,
   ])?;
@@ -125,14 +120,6 @@ mod tests {
       assert_eq!(
         action_for_id(&MenuId::new(CHECK_UPDATES_ID)),
         Some(MenuAction::CheckUpdates)
-      );
-    }
-
-    #[test]
-    fn it_maps_the_clear_cache_id() {
-      assert_eq!(
-        action_for_id(&MenuId::new(CLEAR_CACHE_ID)),
-        Some(MenuAction::ClearCache)
       );
     }
 

@@ -25,7 +25,7 @@ use crate::{
     about, assets, auth, character_detail, character_manager, character_manager::OwnedPilot, mail, settings,
     skill_plan_editor, skills, skills_compare, splash, wallet,
   },
-  services::{cache_cleaner, menu, updater},
+  services::{menu, updater},
   store,
   sync::{self, JobKey, JobKind, Phase, Subject},
   ui::{
@@ -617,7 +617,6 @@ fn prepare_store() -> Result<PreparedStore, String> {
   let database_path = store::bootstrap::resolve_local_path(settings.storage()).map_err(store_err)?;
   let sync_session = store::sync_session::SyncSession::from_config(settings.storage(), machine_id);
   let lease = acquire_lease(sync_session.as_ref());
-  run_migration_guard(&settings, &database_path);
   Ok(PreparedStore {
     database_path,
     lease,
@@ -676,17 +675,6 @@ fn acquire_lease(session: Option<&store::sync_session::SyncSession>) -> Option<H
       None
     }
   }
-}
-
-fn run_migration_guard(settings: &config::Settings, database_path: &std::path::Path) {
-  store::migration_guard::MigrationGuard::new(
-    settings.storage().resolved_cache_dir(),
-    database_path.to_path_buf(),
-    splash::seed::sde_version_path(),
-    window_state::state_path(),
-    config::config_file_path(),
-  )
-  .run();
 }
 
 fn build_runtime(ready: StoreReady) -> Task<Message> {
@@ -2013,25 +2001,8 @@ fn handle_menu(app: &mut App, action: menu::MenuAction) -> Task<Message> {
       }
       Task::none()
     }
-    menu::MenuAction::ClearCache => clear_cache(app),
     menu::MenuAction::Quit => shutdown(app),
   }
-}
-
-fn clear_cache(app: &App) -> Task<Message> {
-  let storage = app
-    .runtime
-    .as_ref()
-    .map(|runtime| runtime.settings.storage().clone())
-    .or_else(|| config::load().ok().map(|settings| settings.storage().clone()));
-  if let Some(storage) = storage {
-    tokio::task::spawn_blocking(move || {
-      if let Err(error) = cache_cleaner::clear(&storage) {
-        tracing::warn!(target: "pod::lifecycle", %error, "clearing the cache failed");
-      }
-    });
-  }
-  Task::none()
 }
 
 fn open_about_window(app: &mut App) -> Task<Message> {
@@ -4117,14 +4088,6 @@ mod tests {
 
       let _about = handle_menu(&mut app, menu::MenuAction::About);
       let _check = handle_menu(&mut app, menu::MenuAction::CheckUpdates);
-      let _clear = handle_menu(&mut app, menu::MenuAction::ClearCache);
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_a_freshly_loaded_storage_when_clearing_the_cache_pre_runtime() {
-      let app = test_app();
-
-      let _task = clear_cache(&app);
     }
 
     #[test]

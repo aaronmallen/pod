@@ -10,7 +10,6 @@ pub mod bootstrap;
 pub mod fs_kind;
 pub mod images;
 pub mod lease;
-pub mod migration_guard;
 pub mod model;
 pub mod reconcile;
 pub mod repo;

@@ -9,7 +9,7 @@ use crate::{
   config::Settings,
   store::{Database, model::Tag, repo::infra},
   ui::{
-    components::{backdrop, chip, color_picker, rule, status},
+    components::{backdrop, chip, color_picker, icon::Icon, rule, status, text_input::TextInput},
     style::{color, radius, spacing, typography},
   },
 };
@@ -607,35 +607,12 @@ fn sort_selector(state: &State) -> Element<'_, Message> {
 }
 
 fn filter_field(state: &State) -> Element<'_, Message> {
-  container(
-    Row::with_children(vec![
-      text("\u{2315}")
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
-        })
-        .into(),
-      text_input("Filter\u{2026}", &state.query)
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .padding(Padding::ZERO)
-        .on_input(Message::FilterChanged)
-        .style(plain_input_style)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .width(Length::Fixed(180.0))
-  .padding(Padding {
-    top: 7.0,
-    right: spacing::SPACE_3,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-  })
-  .style(sunken_well_style)
-  .into()
+  TextInput::new("Filter\u{2026}", &state.query, Message::FilterChanged)
+    .leading_icon(Icon::search())
+    .background(color::surface::SUNKEN)
+    .font_size(typography::size::MD)
+    .width(Length::Fixed(180.0))
+    .render()
 }
 
 fn meta_strip(state: &State) -> Element<'_, Message> {

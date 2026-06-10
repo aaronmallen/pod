@@ -22,8 +22,8 @@ const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 96.0;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
 
-pub(super) fn shell(state: &State, _now: DateTime<Utc>) -> Element<'_, Message> {
-  let body = Column::with_children(vec![header::header(state), self::body(state)])
+pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  let body = Column::with_children(vec![header::header(state), self::body(state, now)])
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -120,8 +120,8 @@ pub(super) fn shell(state: &State, _now: DateTime<Utc>) -> Element<'_, Message> 
   base.into()
 }
 
-fn body(state: &State) -> Element<'_, Message> {
-  Column::with_children(vec![tab_strip(state), tab_body(state)])
+fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  Column::with_children(vec![tab_strip(state), tab_body(state, now)])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -195,7 +195,7 @@ fn values_count(state: &State) -> String {
   fmt_count(count)
 }
 
-fn tab_body(state: &State) -> Element<'_, Message> {
+fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   match state.tab() {
     Tab::Inventory => inventory_body(state),
     Tab::Abyssals => abyssals_body(state),
@@ -221,7 +221,7 @@ fn tab_body(state: &State) -> Element<'_, Message> {
     .height(Length::Fill)
     .into(),
     Tab::Tracker => container(
-      scrollable(tracker::body(state.nav()))
+      scrollable(tracker::body(state.nav(), state.chart_hover(), now))
         .style(crate::ui::style::control::scrollbar)
         .width(Length::Fill)
         .height(Length::Fill),

@@ -194,6 +194,7 @@ pub enum Message {
   AbyssalStatTemplatesLoaded(Vec<StatTemplate>),
   AbyssalTypeModalClosed,
   AbyssalTypeModalOpened,
+  AssetChartHovered(Option<f32>),
   CategorySelected(Category),
   ContainerChildrenLoaded(i64, Vec<InventoryRow>),
   ContainerToggled(i64),
@@ -266,6 +267,7 @@ pub struct State {
   abyssals_filter: PaneDrag,
   active: Scope,
   category: Category,
+  chart_hover: Option<f32>,
   corporations: Vec<RosterCorp>,
   expanded_containers: HashSet<i64>,
   geo_expanded: HashSet<GeoNodeKey>,
@@ -311,6 +313,7 @@ impl State {
       abyssals_filter: PaneDrag::new(ABYSSALS_FILTER_DEFAULT_WIDTH),
       active: Scope::default(),
       category: Category::default(),
+      chart_hover: None,
       corporations: Vec::new(),
       expanded_containers: HashSet::new(),
       geo_expanded: HashSet::new(),
@@ -426,6 +429,10 @@ impl State {
 
   pub(super) fn nav(&self) -> &tracker::NavSeries {
     &self.nav
+  }
+
+  pub(super) fn chart_hover(&self) -> Option<f32> {
+    self.chart_hover
   }
 
   pub(super) fn stockpiles(&self) -> &[stockpiles::StockpileCard] {
@@ -663,7 +670,8 @@ fn effective_filter(category: Category, search: &str) -> String {
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::CategorySelected(_)
+    Message::AssetChartHovered(_)
+    | Message::CategorySelected(_)
     | Message::FilterExamplePicked(_)
     | Message::InventoryHelpToggled
     | Message::Loaded(_)
@@ -781,12 +789,18 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
         return Task::none();
       }
       state.active = scope;
+      state.chart_hover = None;
       state.geo_selected = GeoSelection::All;
       state.geo_expanded.clear();
       reload(db, scope, InventoryView::from_state(state))
     }
     Message::TabSelected(tab) => {
+      state.chart_hover = None;
       state.tab = tab;
+      Task::none()
+    }
+    Message::AssetChartHovered(fraction) => {
+      state.chart_hover = fraction;
       Task::none()
     }
     Message::SearchChanged(query) => {

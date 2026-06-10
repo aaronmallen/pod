@@ -1,21 +1,25 @@
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme,
+  Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  mouse,
   widget::{Column, Row, canvas, container, text},
 };
 
 use super::{HEADER_SIDE_PADDING, Message, Scope, fmt_isk};
 use crate::{
   store::{Database, repo::finance as net_worth},
-  ui::style::{color, radius, spacing, typography},
+  ui::{
+    components::line_chart::{ChartPoint, LineChart},
+    style::{color, radius, spacing, typography},
+  },
 };
 
 const WINDOW_DAYS: i64 = 90;
 const AVG_WINDOW_DAYS: usize = 30;
 const GRAPH_HEIGHT: f32 = 280.0;
-const PLOT_PAD_Y: f32 = 16.0;
+const PLOT_PAD_TOP: f32 = 16.0;
+const PLOT_PAD_BOTTOM: f32 = 24.0;
+const VALUE_PAD: f64 = 0.12;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct NavPoint {
@@ -29,12 +33,6 @@ pub struct NavSeries {
 }
 
 impl NavSeries {
-  fn gridline_ys(height: f32) -> Vec<f32> {
-    (0..=4)
-      .map(|i| PLOT_PAD_Y + (i as f32 / 4.0) * (height - PLOT_PAD_Y * 2.0))
-      .collect()
-  }
-
   fn change(&self) -> Option<(f64, f64)> {
     let first = self.points.first()?.value;
     let last = self.points.last()?.value;
@@ -45,6 +43,18 @@ impl NavSeries {
       0.0
     };
     Some((delta, pct))
+  }
+
+  fn chart_points(&self) -> Vec<ChartPoint> {
+    self
+      .points
+      .iter()
+      .map(|point| ChartPoint {
+        date: point.date.clone(),
+        liquid: None,
+        value: point.value,
+      })
+      .collect()
   }
 
   fn current(&self) -> Option<f64> {
@@ -71,43 +81,12 @@ impl NavSeries {
       .fold(None, |acc, v| Some(acc.map_or(v, |m: f64| m.min(v))))
   }
 
-  fn plot_points(&self, width: f32, height: f32, range: (f64, f64)) -> Vec<Point> {
-    self
-      .points
-      .iter()
-      .enumerate()
-      .map(|(index, point)| Point::new(self.x_at(index, width), self.y_at(point.value, height, range)))
-      .collect()
-  }
-
   fn thirty_day_avg(&self) -> Option<f64> {
     if self.points.is_empty() {
       return None;
     }
     let tail = &self.points[self.points.len().saturating_sub(AVG_WINDOW_DAYS)..];
     Some(tail.iter().map(|p| p.value).sum::<f64>() / tail.len() as f64)
-  }
-
-  fn value_range(&self) -> (f64, f64) {
-    let min = self.low().unwrap_or(0.0);
-    let max = self.high().unwrap_or(1.0);
-    if (max - min).abs() < f64::EPSILON {
-      return (min - 1.0, max + 1.0);
-    }
-    let pad = (max - min) * 0.12;
-    (min - pad, max + pad)
-  }
-
-  fn x_at(&self, index: usize, width: f32) -> f32 {
-    let last = (self.points.len().max(2) - 1) as f32;
-    (index as f32 / last) * width
-  }
-
-  fn y_at(&self, value: f64, height: f32, range: (f64, f64)) -> f32 {
-    let (min, max) = range;
-    let plot_h = height - PLOT_PAD_Y * 2.0;
-    let t = ((value - min) / (max - min)) as f32;
-    PLOT_PAD_Y + plot_h - t.clamp(0.0, 1.0) * plot_h
   }
 }
 
@@ -143,13 +122,18 @@ pub(super) async fn load_series(db: &Database, scope: Scope) -> NavSeries {
   }
 }
 
-pub(super) fn body(series: &NavSeries) -> Element<'_, Message> {
+fn window(now: DateTime<Utc>) -> (NaiveDate, NaiveDate) {
+  let end = now.date_naive();
+  (end - Duration::days(WINDOW_DAYS), end)
+}
+
+pub(super) fn body(series: &NavSeries, hover: Option<f32>, now: DateTime<Utc>) -> Element<'_, Message> {
   if series.points.is_empty() {
     return empty_state();
   }
 
   let stats = stat_tiles(series);
-  let chart = chart_card(series);
+  let chart = chart_card(series, hover, now);
 
   container(
     Column::with_children(vec![stats, chart])
@@ -248,7 +232,7 @@ fn stat_tile<'a>(label: &'a str, value: String, sub: Option<String>, value_color
     .into()
 }
 
-fn chart_card(series: &NavSeries) -> Element<'_, Message> {
+fn chart_card(series: &NavSeries, hover: Option<f32>, now: DateTime<Utc>) -> Element<'_, Message> {
   let heading = Row::with_children(vec![
     text("Net asset value \u{b7} 90 days")
       .font(typography::body::MEDIUM)
@@ -268,9 +252,24 @@ fn chart_card(series: &NavSeries) -> Element<'_, Message> {
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center);
 
-  let chart = canvas(Chart {
-    series,
-  })
+  let line_color = if series.is_rising() {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
+
+  let chart = canvas(
+    LineChart::new(
+      series.chart_points(),
+      window(now),
+      line_color,
+      fmt_isk,
+      Message::AssetChartHovered,
+    )
+    .hover(hover)
+    .padding(PLOT_PAD_TOP, PLOT_PAD_BOTTOM)
+    .value_pad(VALUE_PAD),
+  )
   .width(Length::Fill)
   .height(Length::Fixed(GRAPH_HEIGHT));
 
@@ -291,79 +290,6 @@ fn chart_card(series: &NavSeries) -> Element<'_, Message> {
     ..container::Style::default()
   })
   .into()
-}
-
-struct Chart<'a> {
-  series: &'a NavSeries,
-}
-
-impl canvas::Program<Message> for Chart<'_> {
-  type State = ();
-
-  fn draw(
-    &self,
-    _state: &Self::State,
-    renderer: &Renderer,
-    _theme: &Theme,
-    bounds: Rectangle,
-    _cursor: mouse::Cursor,
-  ) -> Vec<canvas::Geometry> {
-    let mut frame = canvas::Frame::new(renderer, bounds.size());
-    let width = bounds.width;
-    let height = bounds.height;
-    if self.series.points.is_empty() {
-      return vec![frame.into_geometry()];
-    }
-    let range = self.series.value_range();
-    let plot = self.series.plot_points(width, height, range);
-    let line_color = if self.series.is_rising() {
-      color::accent::PLASMA
-    } else {
-      color::status::DANGER
-    };
-
-    let grid_stroke = canvas::Stroke::default()
-      .with_width(1.0)
-      .with_color(color::with_alpha(color::text::PRIMARY, 0.06));
-    stroke_gridlines(&mut frame, width, height, grid_stroke);
-    frame.fill(
-      &area_path(&plot, height - PLOT_PAD_Y),
-      color::with_alpha(line_color, 0.12),
-    );
-    frame.stroke(
-      &line_path(&plot),
-      canvas::Stroke::default().with_width(1.5).with_color(line_color),
-    );
-    frame.fill(&canvas::Path::circle(plot[plot.len() - 1], 3.5), line_color);
-
-    vec![frame.into_geometry()]
-  }
-}
-
-fn stroke_gridlines(frame: &mut canvas::Frame, width: f32, height: f32, stroke: canvas::Stroke) {
-  for y in NavSeries::gridline_ys(height) {
-    frame.stroke(&canvas::Path::line(Point::new(0.0, y), Point::new(width, y)), stroke);
-  }
-}
-
-fn area_path(plot: &[Point], baseline: f32) -> canvas::Path {
-  canvas::Path::new(|builder| {
-    builder.move_to(Point::new(plot[0].x, baseline));
-    for point in plot {
-      builder.line_to(*point);
-    }
-    builder.line_to(Point::new(plot[plot.len() - 1].x, baseline));
-    builder.close();
-  })
-}
-
-fn line_path(plot: &[Point]) -> canvas::Path {
-  canvas::Path::new(|builder| {
-    builder.move_to(plot[0]);
-    for point in &plot[1..] {
-      builder.line_to(*point);
-    }
-  })
 }
 
 fn empty_state<'a>() -> Element<'a, Message> {
@@ -411,6 +337,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_averages_the_trailing_window() {
+      let series = sample_series();
+      assert_eq!(series.thirty_day_avg(), Some(1_125.0));
+    }
+
+    #[test]
     fn it_computes_current_change_high_and_low() {
       let series = sample_series();
 
@@ -423,62 +355,11 @@ mod tests {
     }
 
     #[test]
-    fn it_averages_the_trailing_window() {
-      let series = sample_series();
-      assert_eq!(series.thirty_day_avg(), Some(1_125.0));
-    }
-
-    #[test]
     fn it_has_no_stats_for_an_empty_series() {
       let series = NavSeries::default();
       assert_eq!(series.current(), None);
       assert_eq!(series.change(), None);
       assert_eq!(series.thirty_day_avg(), None);
-    }
-  }
-
-  mod render {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_tracker_body_from_a_sample_series() {
-      let series = sample_series();
-      let _el: Element<'_, Message> = body(&series);
-    }
-
-    #[test]
-    fn it_renders_the_empty_tracker_body() {
-      let series = NavSeries::default();
-      let _el: Element<'_, Message> = body(&series);
-    }
-  }
-
-  mod geometry {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_plots_every_point_spanning_the_full_width() {
-      let series = sample_series();
-      let range = series.value_range();
-      let plot = series.plot_points(300.0, 280.0, range);
-
-      assert_eq!(plot.len(), 4);
-      assert_eq!(plot[0].x, 0.0);
-      assert_eq!(plot[3].x, 300.0);
-      for point in &plot {
-        assert!(point.y >= PLOT_PAD_Y - f32::EPSILON);
-        assert!(point.y <= 280.0 - PLOT_PAD_Y + f32::EPSILON);
-      }
-    }
-
-    #[test]
-    fn it_lays_five_evenly_spaced_gridlines() {
-      let ys = NavSeries::gridline_ys(280.0);
-      assert_eq!(ys.len(), 5);
-      assert_eq!(ys[0], PLOT_PAD_Y);
-      assert_eq!(ys[4], 280.0 - PLOT_PAD_Y);
     }
 
     #[test]
@@ -490,15 +371,53 @@ mod tests {
       assert!(!falling.is_rising());
       assert!(NavSeries::default().is_rising());
     }
+  }
+
+  mod chart_points {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
-    fn it_builds_the_area_and_line_paths_over_the_plotted_points() {
-      let series = sample_series();
-      let range = series.value_range();
-      let plot = series.plot_points(300.0, 280.0, range);
+    fn it_maps_each_nav_point_to_a_value_without_a_liquid_series() {
+      let points = sample_series().chart_points();
 
-      let _line = line_path(&plot);
-      let _area = area_path(&plot, 280.0 - PLOT_PAD_Y);
+      assert_eq!(points.len(), 4);
+      assert_eq!(points[0].date, "2026-03-05");
+      assert_eq!(points[0].value, 1_000.0);
+      assert!(points.iter().all(|point| point.liquid.is_none()));
+    }
+  }
+
+  mod window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_spans_the_fixed_ninety_day_window_ending_today() {
+      let now = "2026-06-10T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+
+      let (start, end) = super::window(now);
+
+      assert_eq!(end, NaiveDate::from_ymd_opt(2026, 6, 10).unwrap());
+      assert_eq!((end - start).num_days(), WINDOW_DAYS);
+    }
+  }
+
+  mod render {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_empty_tracker_body() {
+      let series = NavSeries::default();
+      let _el: Element<'_, Message> = body(&series, None, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_the_tracker_body_from_a_sample_series() {
+      let series = sample_series();
+      let _el: Element<'_, Message> = body(&series, Some(0.5), Utc::now());
     }
   }
 }

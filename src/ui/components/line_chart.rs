@@ -83,7 +83,6 @@ impl<'a, Message> LineChart<'a, Message> {
     self
   }
 
-  #[allow(dead_code)]
   pub fn padding(mut self, top: f32, bottom: f32) -> Self {
     self.pad_top = top;
     self.pad_bottom = bottom;
@@ -93,7 +92,6 @@ impl<'a, Message> LineChart<'a, Message> {
   /// Sets the fractional whitespace added above and below the data range.
   ///
   /// For example, `0.08` adds 8% of `(max - min)` to each end of the Y axis.
-  #[allow(dead_code)]
   pub fn value_pad(mut self, value_pad: f64) -> Self {
     self.value_pad = value_pad;
     self

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
   config::{StorageConfig, StorageMode},
-  store::sync_copy::SyncCopy,
+  store::{reconcile, sync_copy::SyncCopy},
 };
 
 /// errno 18: rename refused because source and destination live on different filesystems, which
@@ -23,9 +23,19 @@ pub enum Error {
 }
 
 pub fn resolve_local_path(storage: &StorageConfig) -> Result<PathBuf, Error> {
+  let canonical = storage.resolved_database_path();
+  let working_copy = storage.resolved_working_copy_path();
   match storage.storage_mode() {
-    StorageMode::Direct => resolve_direct(&storage.resolved_database_path(), &storage.resolved_working_copy_path()),
-    StorageMode::Sync => resolve_sync(&storage.resolved_database_path(), &storage.resolved_working_copy_path()),
+    StorageMode::Direct => {
+      let resolved = resolve_direct(&canonical, &working_copy)?;
+      // After resolve so a lingering working copy is adopted before stale Sync artifacts are removed.
+      reconcile::clean_direct_artifacts(&canonical, &working_copy);
+      Ok(resolved)
+    }
+    StorageMode::Sync => {
+      reconcile::reconcile_sync(&canonical, &working_copy)?;
+      resolve_sync(&canonical, &working_copy)
+    }
   }
 }
 

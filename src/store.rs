@@ -12,6 +12,7 @@ pub mod images;
 pub mod lease;
 pub mod migration_guard;
 pub mod model;
+pub mod reconcile;
 pub mod repo;
 pub mod search;
 pub mod share_meta;

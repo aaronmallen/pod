@@ -7,6 +7,40 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.3]
+
+### Added
+
+- You can now store your Pod database on a shared or network drive and use it from more than one machine — Pod keeps a
+  fast local working copy, syncs it to the shared copy in the background, and coordinates so only one machine writes at
+  a time. If another machine holds the lock you'll see a read-only banner with a one-click "Take over".
+- The Settings screen now has Sync controls for the data location — a toggle to sync that location across machines, a
+  live sync and lock-status line, and "Sync now" and "Release lock" actions.
+- New Skills Compare window — open it from the Compare button in the Skills header to line up to three characters
+  side by side, with a skill-level matrix, mastery averages, and summary stats (total SP, skills at V and IV+).
+- The wallet net-worth chart now plots a separate liquid-ISK line alongside net worth, and the hover tooltip gains a
+  "Liquid" row so you can see how much of your worth is cash on hand.
+- A new About tab in Settings shows Pod's version, build, license, and GitHub link, plus the EVE Online trademark
+  notice — giving Windows and Linux users the same information the macOS menu already provided.
+
+### Changed
+
+- Portraits and logos now reappear on their own if the system clears them from the image cache while Pod is open —
+  including characters and corporations you don't own — instead of showing initials until you take some action.
+- Changing your data location or toggling sync now safely migrates the database between local and shared layouts, so
+  you never land on a locked, duplicated, or broken database after the switch.
+- The wallet net-worth timeframe selector (3M / 6M / 1Y) now actually zooms the chart by calendar date — a short
+  history crowds into the recent edge of a longer window instead of every timeframe looking identical.
+
+### Fixed
+
+- Item type icons no longer render blank on Linux (AppImage, .deb, and pacman packages) — Pod now finds its bundled
+  icons in the packaged layout.
+- Asset sync no longer gets permanently stuck when an item moves between two of your characters or corporations — it
+  previously failed every retry with a database conflict until the item moved back.
+- Removing a single character or corporation no longer wipes every other portrait or logo — only that subject's
+  cached image is removed.
+
 ## [0.5.2]
 
 > [!IMPORTANT]
@@ -328,7 +362,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.2...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.3...HEAD
+[0.5.3]: https://github.com/aaronmallen/pod/compare/0.5.2...0.5.3
 [0.5.2]: https://github.com/aaronmallen/pod/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/aaronmallen/pod/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/aaronmallen/pod/compare/0.4.9...0.5.0

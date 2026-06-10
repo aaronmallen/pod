@@ -7,7 +7,6 @@ use iced::{
 use super::{AbyssalCard, stat_row, tier_badge, type_icon_tile};
 use crate::{
   features::assets::{Message, fmt_isk},
-  store::images,
   ui::{
     components::{avatar::Avatar, card::card, icon::Icon},
     style::{color, radius, spacing, typography},
@@ -24,14 +23,12 @@ pub(super) fn view(card_data: &AbyssalCard) -> Element<'_, Message> {
 }
 
 fn footer(card_data: &AbyssalCard) -> Element<'_, Message> {
-  let portrait_path = images::default_store().character_portrait_path(card_data.character_id);
-  let portrait = portrait_path.exists().then_some(portrait_path);
   let portrait_tile = Avatar::new(
     card_data.character_id,
     card_data.owner_name.clone(),
     Length::Fixed(AVATAR_SIZE),
     AVATAR_SIZE,
-    portrait,
+    card_data.portrait.path(),
   )
   .radius(AVATAR_SIZE / 2.0)
   .view();
@@ -176,7 +173,7 @@ fn stats(card_data: &AbyssalCard) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::features::assets::abyssals::AbyssalStat;
+  use crate::{features::assets::abyssals::AbyssalStat, store::images};
 
   fn card_with(estimate: Option<f64>, price_unavailable: bool, location: &str) -> AbyssalCard {
     AbyssalCard {
@@ -187,6 +184,10 @@ mod tests {
       location: location.to_owned(),
       module_name: "Heavy Assault Missile Launcher II".to_owned(),
       owner_name: "Vex".to_owned(),
+      portrait: images::ImageState::Stale {
+        id: 7,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       price_unavailable,
       stats: vec![AbyssalStat {
         attribute_id: 50,

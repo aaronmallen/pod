@@ -538,7 +538,10 @@ mod tests {
       corp: "TST".to_owned(),
       id,
       name: name.to_owned(),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 

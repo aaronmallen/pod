@@ -35,7 +35,7 @@ fn group_block<'a>(label: String, members: &[&'a AbyssalCard]) -> Element<'a, Me
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::features::assets::abyssals::AbyssalStat;
+  use crate::{features::assets::abyssals::AbyssalStat, store::images};
 
   fn card(item_id: i64, module: &str, group_type_id: i64) -> AbyssalCard {
     AbyssalCard {
@@ -46,6 +46,10 @@ mod tests {
       location: "Jita IV - Moon 4".to_owned(),
       module_name: module.to_owned(),
       owner_name: "Vex".to_owned(),
+      portrait: images::ImageState::Stale {
+        id: 7,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       price_unavailable: false,
       stats: vec![AbyssalStat {
         attribute_id: 50,

@@ -497,7 +497,7 @@ mod tests {
     use crate::{
       features::assets::RosterPilot,
       store::{
-        self,
+        self, images,
         model::{
           Alliance, Bloodline, Character, CharacterAsset, Constellation, Corporation, Gender, ItemCategory, ItemGroup,
           Race, Region, SolarSystem, Station,
@@ -646,7 +646,10 @@ mod tests {
         corp: "TSC".to_owned(),
         id: CHARACTER_ID,
         name: "Pilot".to_owned(),
-        portrait: None,
+        portrait: images::ImageState::Stale {
+          id: CHARACTER_ID,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       }
     }
 

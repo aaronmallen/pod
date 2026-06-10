@@ -15,7 +15,7 @@ use super::{Message, RosterPilot, Scope};
 pub(super) use crate::store::model::{StatRange, StatTemplate, abyssal_source_type_filter::SourceTypeFilter};
 use crate::{
   store::{
-    Database,
+    Database, images,
     model::AbyssalItem,
     repo::{assets, character, sde},
   },
@@ -44,6 +44,7 @@ pub struct AbyssalCard {
   pub(super) location: String,
   pub(super) module_name: String,
   pub(super) owner_name: String,
+  pub(super) portrait: images::ImageState,
   pub(super) price_unavailable: bool,
   pub(super) stats: Vec<AbyssalStat>,
   pub(super) tier_label: String,
@@ -274,6 +275,11 @@ async fn build_card(
     location: String::new(),
     module_name: base.name.clone(),
     owner_name: owner_name.to_owned(),
+    portrait: images::resolve(
+      &images::default_store(),
+      images::ImageKind::CharacterPortrait,
+      item.character_id(),
+    ),
     price_unavailable: item.muta_price_synced().is_some() && item.muta_price_isk().is_none(),
     stats,
     tier_label: type_name_of(db, item.mutator_type_id()).await,
@@ -409,6 +415,10 @@ mod tests {
       location: "Jita IV - Moon 4".to_owned(),
       module_name: module.to_owned(),
       owner_name: "Vex".to_owned(),
+      portrait: images::ImageState::Stale {
+        id: 7,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       price_unavailable: false,
       stats: vec![stat(50, 47.0, 41.0, (28.0, 56.0)), stat(51, 8.5, 7.1, (5.0, 12.0))],
       tier_label: tier.to_owned(),

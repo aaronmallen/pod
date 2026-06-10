@@ -9,10 +9,7 @@ mod tracker;
 mod tree;
 mod values;
 
-use std::{
-  collections::{HashMap, HashSet},
-  path::PathBuf,
-};
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use iced::{Element, Task, widget::text_editor};
@@ -139,12 +136,13 @@ pub struct RosterPilot {
   pub corp: String,
   pub id: i64,
   pub name: String,
-  pub portrait: Option<PathBuf>,
+  pub portrait: images::ImageState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RosterCorp {
   pub id: i64,
+  pub logo: images::ImageState,
   pub name: String,
   pub ticker: String,
 }
@@ -365,7 +363,13 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    self
+      .roster
+      .iter()
+      .filter_map(|pilot| pilot.portrait.stale_key())
+      .chain(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()))
+      .chain(self.abyssals.iter().filter_map(|card| card.portrait.stale_key()))
+      .collect()
   }
 
   pub(super) fn tab(&self) -> Tab {
@@ -1475,8 +1479,11 @@ async fn load_roster(db: &Database) -> Vec<RosterPilot> {
       .flatten()
       .map(|c| c.ticker().to_owned())
       .unwrap_or_default();
-    let path = images::default_store().character_portrait_path(character.id());
-    let portrait = path.exists().then_some(path);
+    let portrait = images::resolve(
+      &images::default_store(),
+      images::ImageKind::CharacterPortrait,
+      character.id(),
+    );
     roster.push(RosterPilot {
       corp,
       id: character.id(),
@@ -1494,6 +1501,7 @@ async fn load_corporations(db: &Database) -> Vec<RosterCorp> {
     .into_iter()
     .map(|corp| RosterCorp {
       id: corp.id(),
+      logo: images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id()),
       name: corp.name().to_owned(),
       ticker: corp.ticker().to_owned(),
     })
@@ -1546,15 +1554,81 @@ mod tests {
       corp: "TST".to_owned(),
       id,
       name: format!("Pilot {id}"),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 
   fn corp(id: i64) -> RosterCorp {
     RosterCorp {
       id,
+      logo: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      },
       name: format!("Corp {id}"),
       ticker: "CRP".to_owned(),
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fresh_pilot(id: i64) -> RosterPilot {
+      RosterPilot {
+        corp: "TST".to_owned(),
+        id,
+        name: format!("Pilot {id}"),
+        portrait: images::ImageState::Fresh(std::path::PathBuf::from(format!("/cache/{id}.jpg"))),
+      }
+    }
+
+    #[test]
+    fn it_is_empty_when_every_model_is_fresh() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![fresh_pilot(7)], Vec::new());
+
+      assert_eq!(state.stale_images(), Vec::new());
+    }
+
+    #[test]
+    fn it_collects_stale_portraits_logos_and_abyssal_cards() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![pilot(7), fresh_pilot(9)], vec![corp(98)]);
+      state.set_abyssals_for_test(
+        vec![abyssals::AbyssalCard {
+          character_id: 11,
+          estimate: None,
+          group_type_id: 2410,
+          item_id: 1,
+          location: String::new(),
+          module_name: "Module".to_owned(),
+          owner_name: "Vex".to_owned(),
+          portrait: images::ImageState::Stale {
+            id: 11,
+            kind: images::ImageKind::CharacterPortrait,
+          },
+          price_unavailable: false,
+          stats: Vec::new(),
+          tier_label: "Gravid".to_owned(),
+        }],
+        Vec::new(),
+        abyssals::Filters::default(),
+        false,
+      );
+
+      assert_eq!(
+        state.stale_images(),
+        vec![
+          (images::ImageKind::CharacterPortrait, 7),
+          (images::ImageKind::CorporationLogo, 98),
+          (images::ImageKind::CharacterPortrait, 11),
+        ]
+      );
     }
   }
 
@@ -1791,6 +1865,10 @@ mod tests {
           location: String::new(),
           module_name: "Module".to_owned(),
           owner_name: "Vex".to_owned(),
+          portrait: images::ImageState::Stale {
+            id: 1,
+            kind: images::ImageKind::CharacterPortrait,
+          },
           price_unavailable: false,
           stats: Vec::new(),
           tier_label: "Gravid".to_owned(),

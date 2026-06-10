@@ -618,11 +618,11 @@ fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp
 fn owner_cell<'a>(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> Element<'a, Message> {
   let pilot = roster.iter().find(|pilot| pilot.id == owner_id);
   let name = owner_label(owner_id, roster, corporations);
-  let portrait = pilot.and_then(|pilot| pilot.portrait.clone()).or_else(|| {
-    corporations.iter().find(|corp| corp.id == owner_id).and_then(|_| {
-      let logo = images::default_store().corporation_logo_path(owner_id);
-      logo.exists().then_some(logo)
-    })
+  let portrait = pilot.and_then(|pilot| pilot.portrait.path()).or_else(|| {
+    corporations
+      .iter()
+      .find(|corp| corp.id == owner_id)
+      .and_then(|corp| corp.logo.path())
   });
 
   let swatch = container(avatar(
@@ -853,7 +853,10 @@ mod tests {
       corp: "TST".to_owned(),
       id,
       name: name.to_owned(),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 
@@ -910,6 +913,10 @@ mod tests {
     fn it_resolves_a_corporation_owner_to_its_name() {
       let corp = RosterCorp {
         id: 2_000,
+        logo: images::ImageState::Stale {
+          id: 2_000,
+          kind: images::ImageKind::CorporationLogo,
+        },
         name: "Test Corp".to_owned(),
         ticker: "TC".to_owned(),
       };

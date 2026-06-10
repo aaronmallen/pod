@@ -368,6 +368,7 @@ struct StoreReady {
   http: Arc<http::Client>,
   lease: Option<HolderInfo>,
   settings: config::Settings,
+  sync_db: store::Database,
   sync_session: Option<store::sync_session::SyncSession>,
 }
 
@@ -616,12 +617,18 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   // mount can't wedge the async boot worker — the first window renders independent of this finishing.
   let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
   let db = store::open(&prepared.database_path).await.map_err(store_err)?;
+  // Separate pool reserved for the sync engine so interactive auth/roster reads never queue behind
+  // sync workers for a connection.
+  let sync_db = store::open_sync_pool(&prepared.database_path)
+    .await
+    .map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {
     db,
     http,
     lease: prepared.lease,
     settings: prepared.settings,
+    sync_db,
     sync_session: prepared.sync_session,
   })
 }
@@ -700,6 +707,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     http,
     lease,
     settings,
+    sync_db,
     ..
   } = ready;
   let read_only = lease.is_some();
@@ -718,7 +726,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     inert_sync()
   } else {
     let started = sync::spawn(
-      db.clone(),
+      sync_db,
       Arc::clone(&esi),
       sso.clone(),
       Arc::clone(&eve_image),
@@ -3496,6 +3504,7 @@ mod tests {
       app.splash = Some(splash::State::default());
       app.store_ready = Some(StoreReady {
         db: db.clone(),
+        sync_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -3519,6 +3528,7 @@ mod tests {
       app.splash = Some(splash::State::default());
       app.store_ready = Some(StoreReady {
         db: db.clone(),
+        sync_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -3547,6 +3557,7 @@ mod tests {
       });
       app.store_ready = Some(StoreReady {
         db: db.clone(),
+        sync_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -4000,6 +4011,7 @@ mod tests {
       app.splash = Some(splash::State::default());
       app.store_ready = Some(StoreReady {
         db: db.clone(),
+        sync_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),

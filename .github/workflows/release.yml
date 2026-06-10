@@ -554,7 +554,7 @@ jobs:
           fi
 
           payload=$(jq -n \
-            --arg title "$title" \
+            --arg title "$title Released" \
             --arg description "$body" \
             --arg url "$url" \
             '{embeds: [{title: $title, description: $description, url: $url, color: 4176091}]}')

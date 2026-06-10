@@ -9,6 +9,8 @@ pub mod layout {
   pub const CARD_HEIGHT: f32 = 400.0;
   pub const GRID_MAX_WIDTH: f32 = 1280.0;
   pub const HEADER_HEIGHT: f32 = 92.0;
+  pub const MIN_WINDOW_HEIGHT: f32 = 600.0;
+  pub const MIN_WINDOW_WIDTH: f32 = 800.0;
   pub const SPLASH_HEIGHT: f32 = 320.0;
   pub const SPLASH_WIDTH: f32 = 480.0;
   pub const STATUS_BAR_HEIGHT: f32 = 27.0;

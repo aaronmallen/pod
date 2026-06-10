@@ -42,6 +42,10 @@ pub fn is_in_range(geometry: &WindowGeometry) -> bool {
   coord_in_range(geometry.x) && coord_in_range(geometry.y)
 }
 
+pub fn is_size_in_range(geometry: &WindowGeometry) -> bool {
+  dimension_in_range(geometry.width) && dimension_in_range(geometry.height)
+}
+
 pub fn is_position_valid(geometry: &WindowGeometry, monitors: &[Rect]) -> bool {
   if !coord_in_range(geometry.x) || !coord_in_range(geometry.y) {
     tracing::warn!(
@@ -70,6 +74,10 @@ pub fn is_position_valid(geometry: &WindowGeometry, monitors: &[Rect]) -> bool {
 
 fn coord_in_range(v: f32) -> bool {
   v.is_finite() && (MIN_COORD..=MAX_COORD).contains(&v)
+}
+
+fn dimension_in_range(v: f32) -> bool {
+  v.is_finite() && v > 0.0 && v <= MAX_COORD
 }
 
 #[cfg(test)]
@@ -231,6 +239,48 @@ mod tests {
     fn it_rejects_a_non_finite_position() {
       assert_eq!(is_in_range(&geometry(f32::NAN, 0.0)), false);
       assert_eq!(is_in_range(&geometry(0.0, f32::INFINITY)), false);
+    }
+  }
+
+  mod is_size_in_range {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn sized(width: f32, height: f32) -> WindowGeometry {
+      WindowGeometry {
+        height,
+        width,
+        x: 0.0,
+        y: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_accepts_a_normal_size() {
+      assert_eq!(is_size_in_range(&sized(1200.0, 800.0)), true);
+    }
+
+    #[test]
+    fn it_rejects_a_zero_dimension() {
+      assert_eq!(is_size_in_range(&sized(0.0, 800.0)), false);
+      assert_eq!(is_size_in_range(&sized(1200.0, 0.0)), false);
+    }
+
+    #[test]
+    fn it_rejects_a_negative_dimension() {
+      assert_eq!(is_size_in_range(&sized(-1200.0, 800.0)), false);
+    }
+
+    #[test]
+    fn it_rejects_a_non_finite_dimension() {
+      assert_eq!(is_size_in_range(&sized(f32::NAN, 800.0)), false);
+      assert_eq!(is_size_in_range(&sized(1200.0, f32::INFINITY)), false);
+    }
+
+    #[test]
+    fn it_rejects_an_absurdly_large_dimension() {
+      assert_eq!(is_size_in_range(&sized(16385.0, 800.0)), false);
     }
   }
 }

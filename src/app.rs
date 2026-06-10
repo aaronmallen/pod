@@ -1825,7 +1825,14 @@ fn resolve_window_geometry(
     return (default, window::Position::Centered);
   };
 
-  let size = Size::new(geometry.width, geometry.height);
+  let size = if validity::is_size_in_range(&geometry) {
+    Size::new(
+      geometry.width.max(spacing::layout::MIN_WINDOW_WIDTH),
+      geometry.height.max(spacing::layout::MIN_WINDOW_HEIGHT),
+    )
+  } else {
+    default
+  };
   let position_valid = if monitors.is_empty() {
     validity::is_in_range(&geometry)
   } else {
@@ -3419,6 +3426,63 @@ mod tests {
 
       let (_, out_of_range) = resolve_window_geometry(Some(geometry(-50.0, 90.0)), &[], DEFAULT);
       assert!(matches!(out_of_range, window::Position::Centered));
+    }
+
+    fn sized(width: f32, height: f32) -> WindowGeometry {
+      WindowGeometry {
+        height,
+        width,
+        x: 100.0,
+        y: 100.0,
+      }
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_a_zero_sized_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(0.0, 0.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT, "a 0x0 saved size never reopens broken");
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_negative_or_non_finite_dimensions() {
+      assert_eq!(
+        resolve_window_geometry(Some(sized(-1200.0, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(f32::NAN, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(1200.0, f32::INFINITY)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_an_absurdly_large_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(999_999.0, 999_999.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT);
+    }
+
+    #[test]
+    fn it_clamps_a_valid_size_below_the_floor_up_to_the_minimum() {
+      let (size, _) = resolve_window_geometry(Some(sized(700.0, 500.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(
+        size,
+        Size::new(800.0, 600.0),
+        "a too-small but valid size is raised to the floor"
+      );
+    }
+
+    #[test]
+    fn it_restores_a_size_at_or_above_the_floor_unchanged() {
+      let (size, _) = resolve_window_geometry(Some(sized(900.0, 650.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(900.0, 650.0));
     }
   }
 

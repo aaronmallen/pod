@@ -271,9 +271,10 @@ async fn load_summary(db: Database, character_id: i64, owned: Vec<i64>) -> Loade
     roster.push(picker_pilot(&db, id).await);
   }
 
-  let queue = character::skillqueue(&db, character_id).await.unwrap_or_default();
+  let now = Utc::now();
+  let queue = queue_timing::active_queue(character::skillqueue(&db, character_id).await.unwrap_or_default(), now);
 
-  let computed = queue::load_computed_queue(&db, character_id, Utc::now()).await;
+  let computed = queue::load_computed_queue(&db, character_id, now).await;
 
   let attributes = load_attributes_tab(&db, character_id, &queue).await;
 
@@ -991,7 +992,7 @@ mod tests {
     async fn it_assembles_the_roster_queue_and_computed_model() {
       let db = crate::store::open_test().await.unwrap();
       seed_character(&db, 42, "Test Pilot").await;
-      character::replace_skillqueue(&db, 42, &[entry(Some("2026-06-03T12:00:00Z"))])
+      character::replace_skillqueue(&db, 42, &[entry(Some("2999-06-03T12:00:00Z"))])
         .await
         .unwrap();
 

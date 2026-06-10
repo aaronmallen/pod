@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use super::{
   format::sp_per_sec,
-  queue_timing::{queue_entry_progress, sp_for_range},
+  queue_timing::{active_queue, queue_entry_progress, sp_for_range},
 };
 use crate::store::{
   Database,
@@ -189,7 +189,7 @@ pub fn compute_sp_rate(pair: (Attr, Attr), attrs: &AttrValues) -> f64 {
 }
 
 pub async fn load_computed_queue(db: &Database, character_id: i64, now: DateTime<Utc>) -> ComputedQueue {
-  let queue = character::skillqueue(db, character_id).await.unwrap_or_default();
+  let queue = active_queue(character::skillqueue(db, character_id).await.unwrap_or_default(), now);
 
   let attrs = effective_attr_values(db, character_id).await;
   let skill_meta = resolve_skill_meta(db, character_id, &queue).await;

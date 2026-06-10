@@ -14,6 +14,26 @@ pub fn roman(level: i64) -> String {
   }
 }
 
+/// Drops queue entries whose `finish_date` has already passed so the first remaining entry is the
+/// one genuinely in progress.
+///
+/// ESI does not always prune a just-finished skill before the next sync, leaving a completed entry
+/// at the head of the raw queue. An entry is dropped only when its `finish_date` parses and is
+/// `<= now`; entries with a null or unparseable `finish_date` (paused queue) are preserved. Mirrors
+/// the `finish_date > now` predicate in `character::current_skillqueue`.
+pub fn active_queue(queue: Vec<CharacterSkillqueue>, now: DateTime<Utc>) -> Vec<CharacterSkillqueue> {
+  queue
+    .into_iter()
+    .filter(|entry| {
+      entry
+        .finish_date()
+        .as_deref()
+        .and_then(parse_timestamp)
+        .is_none_or(|finish| finish > now)
+    })
+    .collect()
+}
+
 pub fn queue_entry_progress_sp(
   level_start_sp: i64,
   level_end_sp: i64,
@@ -110,6 +130,75 @@ mod tests {
       skill_id: 3300,
       start_date: start_date.map(ToOwned::to_owned),
       training_start_sp,
+    }
+  }
+
+  mod active_queue {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const LONG_RANGE_TARGETING: i64 = 3428;
+    const SIGNATURE_ANALYSIS: i64 = 3426;
+
+    fn queued(queue_position: i64, skill_id: i64, finish_date: Option<&str>) -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        character_id: 42,
+        finish_date: finish_date.map(ToOwned::to_owned),
+        finished_level: 5,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position,
+        skill_id,
+        start_date: Some("2026-06-01T00:00:00Z".to_owned()),
+        training_start_sp: None,
+      }
+    }
+
+    #[test]
+    fn it_drops_a_finished_head_and_surfaces_the_next_entry() {
+      let queue = vec![
+        queued(0, LONG_RANGE_TARGETING, Some("2026-06-05T00:00:00Z")),
+        queued(1, SIGNATURE_ANALYSIS, Some("2026-06-20T00:00:00Z")),
+      ];
+      let now = at(2026, 6, 6, 0);
+
+      let remaining = active_queue(queue, now);
+
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].skill_id(), SIGNATURE_ANALYSIS);
+    }
+
+    #[test]
+    fn it_keeps_a_future_finish_date_entry() {
+      let queue = vec![queued(0, SIGNATURE_ANALYSIS, Some("2026-06-20T00:00:00Z"))];
+
+      let remaining = active_queue(queue, at(2026, 6, 6, 0));
+
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].skill_id(), SIGNATURE_ANALYSIS);
+    }
+
+    #[test]
+    fn it_preserves_a_paused_entry_with_a_null_finish_date() {
+      let queue = vec![queued(0, SIGNATURE_ANALYSIS, None)];
+
+      let remaining = active_queue(queue, at(2026, 6, 6, 0));
+
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].skill_id(), SIGNATURE_ANALYSIS);
+    }
+
+    #[test]
+    fn it_returns_empty_when_every_entry_has_already_finished() {
+      let queue = vec![
+        queued(0, LONG_RANGE_TARGETING, Some("2026-06-05T00:00:00Z")),
+        queued(1, SIGNATURE_ANALYSIS, Some("2026-06-05T12:00:00Z")),
+      ];
+
+      let remaining = active_queue(queue, at(2026, 6, 6, 0));
+
+      assert!(remaining.is_empty());
     }
   }
 

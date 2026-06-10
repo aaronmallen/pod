@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -352,16 +352,44 @@ async fn authorized_corporation_ids(db: &Database, corporation_ids: &[i64]) -> R
   Ok(visible)
 }
 
+const ASSET_WRITE_BATCH_SIZE: usize = 500;
+
 pub async fn replace_for_character(db: &Database, character_id: i64, assets: &[CharacterAsset]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
-  sqlx::query("DELETE FROM character_assets WHERE character_id = ?")
+  replace_for_character_batched(db, character_id, assets, ASSET_WRITE_BATCH_SIZE).await
+}
+
+/// Reconciles a character's assets to `assets`, committing in batches rather than one atomic transaction.
+///
+/// Upserting the new set before pruning stale ids (instead of deleting all first) and committing each batch
+/// releases SQLite's single write lock between batches so interactive writes can interleave. The cost is that a
+/// concurrent reader may transiently observe a superset (a stale row not yet pruned) but never a missing current
+/// row; the final state is identical to a delete-all-then-insert-all replace.
+async fn replace_for_character_batched(
+  db: &Database,
+  character_id: i64,
+  assets: &[CharacterAsset],
+  batch_size: usize,
+) -> Result<(), Error> {
+  let new_ids: HashSet<i64> = assets.iter().map(CharacterAsset::item_id).collect();
+  let existing: Vec<i64> = sqlx::query_scalar("SELECT item_id FROM character_assets WHERE character_id = ?")
     .bind(character_id)
-    .execute(&mut *tx)
+    .fetch_all(&db.0)
     .await?;
-  for asset in assets {
-    insert_character_asset(&mut tx, asset).await?;
+  let stale: Vec<i64> = existing.into_iter().filter(|id| !new_ids.contains(id)).collect();
+
+  let batch_size = batch_size.max(1);
+  for chunk in assets.chunks(batch_size) {
+    let mut tx = db.0.begin().await?;
+    for asset in chunk {
+      insert_character_asset(&mut tx, asset).await?;
+    }
+    tx.commit().await?;
+    tokio::task::yield_now().await;
   }
-  tx.commit().await?;
+  for chunk in stale.chunks(batch_size) {
+    delete_character_assets(db, character_id, chunk).await?;
+    tokio::task::yield_now().await;
+  }
   Ok(())
 }
 
@@ -370,15 +398,67 @@ pub async fn replace_for_corporation(
   corporation_id: i64,
   assets: &[CorporationAsset],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
-  sqlx::query("DELETE FROM corporation_assets WHERE corporation_id = ?")
+  replace_for_corporation_batched(db, corporation_id, assets, ASSET_WRITE_BATCH_SIZE).await
+}
+
+async fn replace_for_corporation_batched(
+  db: &Database,
+  corporation_id: i64,
+  assets: &[CorporationAsset],
+  batch_size: usize,
+) -> Result<(), Error> {
+  let new_ids: HashSet<i64> = assets.iter().map(CorporationAsset::item_id).collect();
+  let existing: Vec<i64> = sqlx::query_scalar("SELECT item_id FROM corporation_assets WHERE corporation_id = ?")
     .bind(corporation_id)
-    .execute(&mut *tx)
+    .fetch_all(&db.0)
     .await?;
-  for asset in assets {
-    insert_corporation_asset(&mut tx, asset).await?;
+  let stale: Vec<i64> = existing.into_iter().filter(|id| !new_ids.contains(id)).collect();
+
+  let batch_size = batch_size.max(1);
+  for chunk in assets.chunks(batch_size) {
+    let mut tx = db.0.begin().await?;
+    for asset in chunk {
+      insert_corporation_asset(&mut tx, asset).await?;
+    }
+    tx.commit().await?;
+    tokio::task::yield_now().await;
   }
-  tx.commit().await?;
+  for chunk in stale.chunks(batch_size) {
+    delete_corporation_assets(db, corporation_id, chunk).await?;
+    tokio::task::yield_now().await;
+  }
+  Ok(())
+}
+
+async fn delete_character_assets(db: &Database, character_id: i64, item_ids: &[i64]) -> Result<(), Error> {
+  if item_ids.is_empty() {
+    return Ok(());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM character_assets WHERE character_id = ");
+  builder.push_bind(character_id);
+  builder.push(" AND item_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in item_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
+  builder.build().execute(&db.0).await?;
+  Ok(())
+}
+
+async fn delete_corporation_assets(db: &Database, corporation_id: i64, item_ids: &[i64]) -> Result<(), Error> {
+  if item_ids.is_empty() {
+    return Ok(());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM corporation_assets WHERE corporation_id = ");
+  builder.push_bind(corporation_id);
+  builder.push(" AND item_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in item_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
+  builder.build().execute(&db.0).await?;
   Ok(())
 }
 
@@ -3311,6 +3391,44 @@ mod asset_tests {
 
       assert_eq!(count_for_character(&db, 42).await.unwrap(), 0);
     }
+
+    #[tokio::test]
+    async fn it_upserts_and_prunes_across_write_batch_boundaries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let initial: Vec<_> = (100..105).map(|id| char_asset(id, 42, None)).collect();
+
+      // Batch size 2 over 5 rows forces three separate upsert transactions.
+      replace_for_character_batched(&db, 42, &initial, 2).await.unwrap();
+      let mut ids: Vec<_> = for_character(&db, 42)
+        .await
+        .unwrap()
+        .iter()
+        .map(CharacterAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101, 102, 103, 104],
+        "every row survives multiple upsert batches"
+      );
+
+      // Re-replace with a subset so three ids go stale and are pruned across multiple delete batches.
+      let next: Vec<_> = (100..102).map(|id| char_asset(id, 42, None)).collect();
+      replace_for_character_batched(&db, 42, &next, 2).await.unwrap();
+      let mut ids: Vec<_> = for_character(&db, 42)
+        .await
+        .unwrap()
+        .iter()
+        .map(CharacterAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101],
+        "stale rows are pruned across delete batches, final state matches the new set"
+      );
+    }
   }
 
   mod corporation_assets {
@@ -3411,6 +3529,45 @@ mod asset_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].quantity(), 7);
       assert_eq!(rows[0].container_id(), Some(99));
+    }
+
+    #[tokio::test]
+    async fn it_upserts_and_prunes_across_write_batch_boundaries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let initial: Vec<_> = (100..105).map(|id| corp_asset(id, CORP_ID, None)).collect();
+
+      replace_for_corporation_batched(&db, CORP_ID, &initial, 2)
+        .await
+        .unwrap();
+      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
+        .await
+        .unwrap()
+        .iter()
+        .map(CorporationAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101, 102, 103, 104],
+        "every row survives multiple upsert batches"
+      );
+
+      let next: Vec<_> = (100..102).map(|id| corp_asset(id, CORP_ID, None)).collect();
+      replace_for_corporation_batched(&db, CORP_ID, &next, 2).await.unwrap();
+      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
+        .await
+        .unwrap()
+        .iter()
+        .map(CorporationAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101],
+        "stale rows are pruned across delete batches, final state matches the new set"
+      );
     }
   }
 

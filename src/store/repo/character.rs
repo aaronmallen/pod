@@ -1164,6 +1164,14 @@ pub async fn killmails(db: &Database, character_id: i64) -> Result<Vec<Character
   Ok(rows)
 }
 
+pub async fn killmail_ids(db: &Database, character_id: i64) -> Result<HashSet<i64>, Error> {
+  let ids = sqlx::query_scalar::<_, i64>("SELECT killmail_id FROM character_killmails WHERE character_id = ?")
+    .bind(character_id)
+    .fetch_all(&db.0)
+    .await?;
+  Ok(ids.into_iter().collect())
+}
+
 pub async fn killmails_needing_recheck(db: &Database) -> Result<Vec<CharacterKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CharacterKillEntry>(
     "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \

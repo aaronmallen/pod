@@ -8,9 +8,9 @@ pub struct Attacker {
   pub final_blow: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Item {
+  #[allow(dead_code)]
   pub flag: i64,
   #[serde(default)]
   pub quantity_destroyed: Option<i64>,
@@ -35,7 +35,6 @@ pub struct Victim {
   pub character_id: Option<i64>,
   #[serde(default)]
   pub corporation_id: Option<i64>,
-  #[allow(dead_code)]
   #[serde(default)]
   pub items: Vec<Item>,
   pub ship_type_id: i64,

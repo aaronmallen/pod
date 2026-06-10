@@ -41,7 +41,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn recent_killmails(&self, corporation_id: i64) -> Result<Vec<RecentKillmail>, clients::Error> {
     let url = self
       .esi

@@ -6,20 +6,17 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(dead_code)]
 pub struct LocalValue {
   pub destroyed: f64,
   pub destroyed_and_dropped: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)]
 pub struct PriceTable {
   prices: HashMap<i64, f64>,
 }
 
 impl PriceTable {
-  #[allow(dead_code)]
   pub fn from_market_prices(prices: &[MarketPrice]) -> Self {
     Self {
       prices: prices
@@ -34,14 +31,12 @@ impl PriceTable {
     }
   }
 
-  #[allow(dead_code)]
   pub fn unit_price(&self, type_id: i64) -> f64 {
     self.prices.get(&type_id).copied().unwrap_or(0.0)
   }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(dead_code)]
 pub struct Resolution {
   pub destroyed: f64,
   pub source: ValueSource,
@@ -49,14 +44,12 @@ pub struct Resolution {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
 pub enum ValueSource {
   Local,
   Zkill,
 }
 
 impl ValueSource {
-  #[allow(dead_code)]
   pub fn as_str(self) -> &'static str {
     match self {
       ValueSource::Local => "local",
@@ -68,7 +61,6 @@ impl ValueSource {
 /// Computes destroyed-only and destroyed+dropped totals using the same item basis as zKill's
 /// `totalValue` (hull + destroyed + dropped), so that replacing the local fallback with a zKill
 /// value causes no visible discontinuity in the displayed figure.
-#[allow(dead_code)]
 pub fn local_value(items: &[Item], ship_type_id: i64, prices: &PriceTable) -> LocalValue {
   let mut destroyed = prices.unit_price(ship_type_id);
   let mut dropped = 0.0;
@@ -85,7 +77,6 @@ pub fn local_value(items: &[Item], ship_type_id: i64, prices: &PriceTable) -> Lo
   }
 }
 
-#[allow(dead_code)]
 pub async fn resolve(
   zkill: &zkillboard::Client,
   killmail_id: i64,

@@ -1,3 +1,4 @@
+pub mod about_tab;
 pub mod features_tab;
 pub mod storage_tab;
 pub mod tags_tab;
@@ -27,9 +28,12 @@ pub enum Category {
   Features,
   Storage,
   Tags,
+  About,
 }
 
 impl Category {
+  /// The categories that appear in the normal top-of-rail list, in order. `About` is excluded here
+  /// because it is pinned to the bottom of the rail, separated from the rest.
   const ALL: [Category; 3] = [Category::Features, Category::Storage, Category::Tags];
 
   fn label(self) -> &'static str {
@@ -37,12 +41,14 @@ impl Category {
       Category::Features => "Features",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
+      Category::About => "About",
     }
   }
 }
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  About(about_tab::Message),
   CategorySelected(Category),
   Features(features_tab::Message),
   ResetToDefaults,
@@ -106,6 +112,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 
 pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
   let (outcome, task) = match message {
+    Message::About(msg) => (about_tab::update(msg), Task::none()),
     Message::CategorySelected(category) => {
       state.active = category;
       (Outcome::None, Task::none())
@@ -138,7 +145,7 @@ fn reset_active(state: &mut State) {
   match state.active {
     Category::Features => *state.settings.features_mut() = *defaults.features(),
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
-    Category::Tags => {}
+    Category::Tags | Category::About => {}
   }
 }
 
@@ -218,15 +225,33 @@ fn categories_pane(state: &State) -> Element<'_, Message> {
 
   let mut rows: Vec<Element<'_, Message>> = vec![heading.into()];
   for category in Category::ALL {
-    rows.push(category_row(state, category));
+    rows.push(category_row(state, category, badge_for(state, category)));
   }
 
-  let column = Column::with_children(rows).width(Length::Fill).padding(Padding {
-    top: 18.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3_5,
-  });
+  // Push About to the bottom of the rail and fence it off from the working categories so it reads as
+  // a separate, always-available surface rather than another preference group.
+  rows.push(Space::new().height(Length::Fill).into());
+  rows.push(
+    container(rule::horizontal())
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_2,
+        left: 0.0,
+      })
+      .into(),
+  );
+  rows.push(category_row(state, Category::About, String::new()));
+
+  let column = Column::with_children(rows)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top: 18.0,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3_5,
+    });
 
   let pane = container(column)
     .width(Length::Fixed(CATEGORIES_PANE_WIDTH))
@@ -241,7 +266,7 @@ fn categories_pane(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-fn category_row(state: &State, category: Category) -> Element<'_, Message> {
+fn category_row(state: &State, category: Category, badge: String) -> Element<'_, Message> {
   let active = state.active == category;
   let label_color = if active {
     color::text::PRIMARY
@@ -254,7 +279,7 @@ fn category_row(state: &State, category: Category) -> Element<'_, Message> {
     color::text::SECONDARY
   };
 
-  let row = Row::with_children(vec![
+  let mut row_children: Vec<Element<'_, Message>> = vec![
     text(category.label())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -263,16 +288,21 @@ fn category_row(state: &State, category: Category) -> Element<'_, Message> {
         color: Some(label_color),
       })
       .into(),
-    text(badge_for(state, category))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(badge_color),
-      })
-      .into(),
-  ])
-  .align_y(Vertical::Center)
-  .spacing(spacing::SPACE_2_5);
+  ];
+  if !badge.is_empty() {
+    row_children.push(
+      text(badge)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(move |_| text::Style {
+          color: Some(badge_color),
+        })
+        .into(),
+    );
+  }
+  let row = Row::with_children(row_children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5);
 
   let cell = container(row)
     .width(Length::Fill)
@@ -336,6 +366,7 @@ fn badge_for(state: &State, category: Category) -> String {
     Category::Features => features_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
+    Category::About => String::new(),
   }
 }
 
@@ -344,6 +375,7 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
+    Category::About => about_tab::view().map(Message::About),
   }
 }
 
@@ -402,10 +434,20 @@ mod tests {
 
   #[tokio::test]
   async fn view_renders_each_category() {
-    for category in Category::ALL {
+    let categories = Category::ALL.into_iter().chain(std::iter::once(Category::About));
+    for category in categories {
       let mut state = state().await;
       state.active = category;
       let _el: Element<'_, Message> = view(&state);
     }
+  }
+
+  #[tokio::test]
+  async fn the_about_category_can_be_selected() {
+    let mut state = state().await;
+
+    let _task = update(&mut state, Message::CategorySelected(Category::About));
+
+    assert_eq!(state.active, Category::About);
   }
 }

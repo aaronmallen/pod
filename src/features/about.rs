@@ -11,9 +11,27 @@ use crate::ui::{
 
 const GITHUB_URL: &str = "https://github.com/aaronmallen/pod";
 
+const NOTICE_MAX_WIDTH: f32 = 480.0;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUILD_DATE: &str = env!("POD_BUILD_DATE");
 const GIT_SHA: &str = env!("POD_GIT_SHA");
+
+/// The EVE Online Developer License trademark/attribution notice, required on a user-visible
+/// surface. Defined once here and reused by the in-app Settings "About" tab so the two never drift.
+pub const TRADEMARK_NOTICE: &str = "EVE Online and the EVE logo are the registered trademarks of \
+  Fenris Creations (formerly CCP hf.). All rights reserved worldwide. All other trademarks are the \
+  property of their respective owners. EVE Online, the EVE logo, EVE and all associated logos and \
+  designs are the intellectual property of Fenris Creations. All artwork, screenshots, characters, \
+  vehicles, storylines, world facts or other recognizable features of the intellectual property \
+  relating to these trademarks are likewise the intellectual property of Fenris Creations. Fenris \
+  Creations has granted permission to Pod to use EVE Online and all associated logos and designs \
+  for promotional and information purposes but does not endorse, and is not in any way affiliated \
+  with, Pod. Fenris Creations is in no way responsible for the content on or functioning of this \
+  program, nor can it be liable for any damage arising from the use of this program.";
+
+/// Short copyright line shown alongside the trademark notice.
+pub const TRADEMARK_COPYRIGHT: &str = "\u{00a9} Fenris Creations. All rights reserved.";
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -66,6 +84,22 @@ pub fn view<'a>() -> Element<'a, Message> {
     color: Some(color::text::TERTIARY),
   });
 
+  let notice = container(
+    text(TRADEMARK_NOTICE)
+      .size(typography::size::XS)
+      .align_x(Horizontal::Center)
+      .style(|_| text::Style {
+        color: Some(color::text::TERTIARY),
+      }),
+  )
+  .max_width(NOTICE_MAX_WIDTH);
+
+  let copyright = text(TRADEMARK_COPYRIGHT)
+    .size(typography::size::XS)
+    .style(|_| text::Style {
+      color: Some(color::text::TERTIARY),
+    });
+
   let content = column([
     title.into(),
     Space::new().height(Length::Fixed(spacing::UNIT)).into(),
@@ -78,6 +112,10 @@ pub fn view<'a>() -> Element<'a, Message> {
     license.into(),
     Space::new().height(Length::Fixed(spacing::UNIT)).into(),
     github_link(),
+    Space::new().height(Length::Fixed(spacing::SPACE_6)).into(),
+    notice.into(),
+    Space::new().height(Length::Fixed(spacing::SPACE_2)).into(),
+    copyright.into(),
   ])
   .align_x(Horizontal::Center);
 
@@ -146,6 +184,33 @@ mod tests {
     fn it_captures_a_build_date_and_git_sha_at_compile_time() {
       assert!(!BUILD_DATE.is_empty());
       assert!(!GIT_SHA.is_empty());
+    }
+  }
+
+  mod trademark {
+    use super::*;
+
+    #[test]
+    fn the_notice_reads_verbatim_without_whitespace_drift() {
+      assert_eq!(
+        TRADEMARK_NOTICE,
+        "EVE Online and the EVE logo are the registered trademarks of Fenris Creations (formerly \
+        CCP hf.). All rights reserved worldwide. All other trademarks are the property of their \
+        respective owners. EVE Online, the EVE logo, EVE and all associated logos and designs are \
+        the intellectual property of Fenris Creations. All artwork, screenshots, characters, \
+        vehicles, storylines, world facts or other recognizable features of the intellectual \
+        property relating to these trademarks are likewise the intellectual property of Fenris \
+        Creations. Fenris Creations has granted permission to Pod to use EVE Online and all \
+        associated logos and designs for promotional and information purposes but does not \
+        endorse, and is not in any way affiliated with, Pod. Fenris Creations is in no way \
+        responsible for the content on or functioning of this program, nor can it be liable for \
+        any damage arising from the use of this program."
+      );
+    }
+
+    #[test]
+    fn the_copyright_line_names_fenris_creations() {
+      assert_eq!(TRADEMARK_COPYRIGHT, "\u{00a9} Fenris Creations. All rights reserved.");
     }
   }
 }

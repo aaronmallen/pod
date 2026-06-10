@@ -4394,6 +4394,9 @@ mod tests {
       let configured = dir.path().join("nested");
       settings.storage_mut().set_db_dir(Some(configured.clone()));
       settings.storage_mut().set_cache_dir(Some(dir.path().join("cache")));
+      settings
+        .storage_mut()
+        .set_working_copy_dir(Some(dir.path().join("working-copy")));
 
       let path = store::bootstrap::resolve_local_path(settings.storage()).expect("the path resolves");
       let db = store::open(&path).await.expect("the database opens");

@@ -152,6 +152,7 @@ mod tests {
       let mut storage = StorageConfig::default();
       storage.set_db_dir(Some(share.clone()));
       storage.set_cache_dir(Some(cache));
+      storage.set_working_copy_dir(Some(dir.path().join("working-copy")));
       storage.set_network(true);
 
       let session = SyncSession::from_config(&storage, "machine-a".to_owned()).expect("sync mode yields a session");
@@ -192,6 +193,7 @@ mod tests {
       let mut storage = StorageConfig::default();
       storage.set_db_dir(Some(share));
       storage.set_cache_dir(Some(dir.path().join("cache")));
+      storage.set_working_copy_dir(Some(dir.path().join("working-copy")));
       storage.set_network(true);
 
       let session = SyncSession::from_config(&storage, "machine-a".to_owned()).unwrap();

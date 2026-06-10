@@ -188,11 +188,15 @@ pub struct StorageConfig {
   #[getset(get = "pub")]
   #[serde(default)]
   network: bool,
+  /// Internal-only override: never persisted or user-settable so the live working copy can't be
+  /// redirected onto a network FS.
+  #[serde(skip)]
+  working_copy_dir: Option<PathBuf>,
 }
 
 impl StorageConfig {
-  fn mode_from(network_override: bool, kind: FsKind) -> StorageMode {
-    if network_override || kind.is_network() {
+  fn mode_from(network_override: bool) -> StorageMode {
+    if network_override {
       StorageMode::Sync
     } else {
       StorageMode::Direct
@@ -229,17 +233,32 @@ impl StorageConfig {
 
   pub fn resolved_working_copy_path(&self) -> PathBuf {
     self
-      .resolved_cache_dir()
-      .join(WORKING_COPY_SUBDIR)
+      .resolved_working_copy_dir(fs_kind::detect)
       .join(WORKING_COPY_DB_NAME)
   }
 
-  pub fn storage_mode(&self) -> StorageMode {
-    self.storage_mode_with(fs_kind::detect)
+  fn resolved_working_copy_dir(&self, detect: impl Fn(&Path) -> FsKind) -> PathBuf {
+    let base = self.working_copy_dir.clone().unwrap_or_else(default_working_copy_dir);
+    // The working copy must stay local; redirect to a temp-dir fallback if the base is on a network FS.
+    if detect(&base).is_network() {
+      return local_working_copy_fallback();
+    }
+    base
   }
 
-  fn storage_mode_with(&self, detect: impl Fn(&Path) -> FsKind) -> StorageMode {
-    Self::mode_from(self.network, detect(&self.resolved_db_dir()))
+  pub fn storage_mode(&self) -> StorageMode {
+    Self::mode_from(self.network)
+  }
+
+  /// Advisory for a UI hint only: reports a network db_dir while sync is off. Never changes the mode.
+  #[allow(dead_code)]
+  pub fn suggests_network_sync(&self) -> bool {
+    self.suggests_network_sync_with(fs_kind::detect)
+  }
+
+  #[allow(dead_code)]
+  fn suggests_network_sync_with(&self, detect: impl Fn(&Path) -> FsKind) -> bool {
+    !self.network && detect(&self.resolved_db_dir()).is_network()
   }
 }
 
@@ -278,6 +297,21 @@ pub fn data_dir() -> PathBuf {
 
 fn resolve_data_dir(data_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
   data_home.unwrap_or(fallback_root).join("pod")
+}
+
+fn default_working_copy_dir() -> PathBuf {
+  resolve_working_copy_dir(dir_spec::state_home(), std::env::temp_dir())
+}
+
+fn local_working_copy_fallback() -> PathBuf {
+  std::env::temp_dir().join("pod").join(WORKING_COPY_SUBDIR)
+}
+
+fn resolve_working_copy_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathBuf {
+  state_home
+    .unwrap_or(fallback_root)
+    .join("pod")
+    .join(WORKING_COPY_SUBDIR)
 }
 
 #[allow(dead_code)]
@@ -610,45 +644,71 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn it_is_direct_with_the_opt_in_flag_off() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.storage_mode(), StorageMode::Direct);
+    }
+
+    #[test]
+    fn it_stays_direct_for_a_network_db_dir_when_the_opt_in_flag_is_off() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
+
+      assert_eq!(
+        storage.storage_mode(),
+        StorageMode::Direct,
+        "a network FS no longer auto-flips Sync; entering Sync is opt-in only"
+      );
+    }
+
+    #[test]
+    fn it_is_sync_only_when_the_opt_in_flag_is_set() {
+      let mut storage = StorageConfig::default();
+      storage.set_network(true);
+
+      assert_eq!(storage.storage_mode(), StorageMode::Sync);
+    }
+  }
+
+  mod suggests_network_sync {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
     fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
       move |_| kind
     }
 
     #[test]
-    fn it_is_direct_for_a_local_path_with_no_override() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.storage_mode_with(always(FsKind::Local)), StorageMode::Direct);
-    }
-
-    #[test]
-    fn it_is_sync_when_detection_reports_a_network_path() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.storage_mode_with(always(FsKind::Network)), StorageMode::Sync);
-    }
-
-    #[test]
-    fn it_forces_sync_when_the_manual_flag_is_set_even_when_detection_says_local() {
-      let mut storage = StorageConfig::default();
-      storage.set_network(true);
-
-      assert_eq!(storage.storage_mode_with(always(FsKind::Local)), StorageMode::Sync);
-    }
-
-    #[test]
-    fn it_detects_against_the_resolved_db_dir() {
+    fn it_suggests_sync_when_the_db_dir_is_on_a_network_fs_and_sync_is_off() {
       let mut storage = StorageConfig::default();
       storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
       let seen = std::cell::RefCell::new(None);
 
-      let mode = storage.storage_mode_with(|path| {
+      let suggests = storage.suggests_network_sync_with(|path| {
         *seen.borrow_mut() = Some(path.to_path_buf());
-        FsKind::Local
+        FsKind::Network
       });
 
-      assert_eq!(mode, StorageMode::Direct);
+      assert!(suggests, "the advisory fires for a network db_dir while in Direct mode");
       assert_eq!(seen.into_inner(), Some(PathBuf::from("/mnt/nas/pod")));
+    }
+
+    #[test]
+    fn it_does_not_suggest_when_sync_is_already_on() {
+      let mut storage = StorageConfig::default();
+      storage.set_network(true);
+
+      assert!(!storage.suggests_network_sync_with(always(FsKind::Network)));
+    }
+
+    #[test]
+    fn it_does_not_suggest_for_a_local_db_dir() {
+      let storage = StorageConfig::default();
+
+      assert!(!storage.suggests_network_sync_with(always(FsKind::Local)));
     }
   }
 
@@ -657,21 +717,51 @@ mod tests {
 
     use super::*;
 
+    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
+      move |_| kind
+    }
+
     #[test]
-    fn it_lives_under_the_evictable_cache_dir() {
+    fn it_stays_off_the_cache_dir_even_when_cache_points_at_a_network_path() {
       let mut storage = StorageConfig::default();
-      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+      storage.set_cache_dir(Some(PathBuf::from("/mnt/nas/cache")));
 
       let path = storage.resolved_working_copy_path();
 
-      assert!(path.starts_with(storage.resolved_cache_dir()));
+      assert!(
+        !path.starts_with("/mnt/nas/cache"),
+        "the live working copy is never placed under the configurable (evictable, network-capable) cache_dir"
+      );
       assert_eq!(path.file_name().unwrap(), "pod.db");
+    }
+
+    #[test]
+    fn it_redirects_to_a_local_fallback_when_the_base_is_on_a_network_fs() {
+      let mut storage = StorageConfig::default();
+      storage.set_working_copy_dir(Some(PathBuf::from("/mnt/nas/wc")));
+
+      let dir = storage.resolved_working_copy_dir(always(FsKind::Network));
+
+      assert_eq!(
+        dir,
+        local_working_copy_fallback(),
+        "a network working-copy base is rejected for the local fallback"
+      );
+    }
+
+    #[test]
+    fn it_keeps_a_local_base_in_place() {
+      let mut storage = StorageConfig::default();
+      storage.set_working_copy_dir(Some(PathBuf::from("/var/local/wc")));
+
+      let dir = storage.resolved_working_copy_dir(always(FsKind::Local));
+
+      assert_eq!(dir, PathBuf::from("/var/local/wc"));
     }
 
     #[test]
     fn it_is_distinct_from_the_shared_db_path() {
       let mut storage = StorageConfig::default();
-      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
       storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
 
       assert_ne!(storage.resolved_working_copy_path(), storage.resolved_database_path());

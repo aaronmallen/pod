@@ -273,6 +273,7 @@ mod tests {
     let mut storage = StorageConfig::default();
     storage.set_db_dir(Some(db_dir.to_path_buf()));
     storage.set_cache_dir(Some(cache_dir.to_path_buf()));
+    storage.set_working_copy_dir(Some(cache_dir.join("working-copy")));
     storage.set_network(network);
     storage
   }

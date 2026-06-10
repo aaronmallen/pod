@@ -30,6 +30,10 @@ impl Handle {
     let _ = self.commands.try_send(Command::RunNow(subject));
   }
 
+  pub fn shutdown(&self) {
+    let _ = self.commands.try_send(Command::Shutdown);
+  }
+
   pub fn withdraw(&self, subject: Subject) {
     let _ = self.commands.try_send(Command::Withdraw(subject));
   }
@@ -52,6 +56,20 @@ mod tests {
       rx.recv().await,
       Some(Command::Drain),
       "the nudge is a unit, data-free Drain command"
+    );
+  }
+
+  #[tokio::test]
+  async fn it_sends_a_shutdown_command() {
+    let (tx, mut rx) = mpsc::channel(4);
+    let handle = Handle::new(tx);
+
+    handle.shutdown();
+
+    assert_eq!(
+      rx.recv().await,
+      Some(Command::Shutdown),
+      "shutdown sends the loop-breaking Shutdown command"
     );
   }
 

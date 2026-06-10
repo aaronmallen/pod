@@ -6,5 +6,6 @@ pub enum Command {
   Drain,
   Enroll(Subject),
   RunNow(Subject),
+  Shutdown,
   Withdraw(Subject),
 }

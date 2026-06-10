@@ -63,6 +63,10 @@ impl Handle {
     let _ = self.commands.try_send(Command::Restart);
   }
 
+  pub fn shutdown(&self) {
+    let _ = self.commands.try_send(Command::Shutdown);
+  }
+
   pub fn state(&self) -> State {
     self.state.borrow().clone()
   }
@@ -115,6 +119,7 @@ enum Command {
   Apply,
   Check,
   Restart,
+  Shutdown,
 }
 
 struct Engine {
@@ -222,7 +227,7 @@ impl Engine {
           Some(Command::Apply) => self.apply().await,
           Some(Command::Check) => self.check().await,
           Some(Command::Restart) => self.restart(),
-          None => break,
+          Some(Command::Shutdown) | None => break,
         },
       }
     }
@@ -278,6 +283,23 @@ mod tests {
   #[test]
   fn state_defaults_to_idle() {
     assert_eq!(State::default(), State::Idle);
+  }
+
+  #[tokio::test]
+  async fn shutdown_sends_the_loop_breaking_command() {
+    let (commands, mut rx) = mpsc::channel(4);
+    let (_state_tx, state) = watch::channel(State::Idle);
+    let handle = Handle {
+      commands,
+      state,
+    };
+
+    handle.shutdown();
+
+    assert!(
+      matches!(rx.recv().await, Some(Command::Shutdown)),
+      "shutdown sends the Shutdown command that breaks the updater run loop"
+    );
   }
 
   #[test]

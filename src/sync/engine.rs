@@ -278,6 +278,7 @@ impl Engine {
       Command::Drain => self.drain_at = now,
       Command::Enroll(subject) => self.enroll_subject(subject, now).await,
       Command::RunNow(subject) => self.schedule.run_now(subject, now),
+      Command::Shutdown => {} // intercepted in the run loop before reaching here; arm exists for exhaustiveness
       Command::Withdraw(subject) => self.schedule.withdraw(subject),
     }
   }
@@ -381,6 +382,10 @@ impl Engine {
           self.emit(Event::Heartbeat);
         }
         command = commands.recv() => match command {
+          Some(Command::Shutdown) => {
+            in_flight.shutdown().await;
+            break;
+          }
           Some(command) => self.handle_command(command).await,
           None => break,
         },
@@ -784,6 +789,22 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_breaks_the_run_loop_on_a_shutdown_command() {
+      let server = MockServer::start().await;
+      let (handle, mut events, _db, _images) = spawn_engine(server.uri()).await;
+
+      handle.shutdown();
+
+      let drained =
+        tokio::time::timeout(Duration::from_secs(5), async { while events.recv().await.is_some() {} }).await;
+
+      assert!(
+        drained.is_ok(),
+        "shutdown breaks the loop, dropping the engine and closing its event channel"
+      );
     }
 
     #[tokio::test]

@@ -760,16 +760,62 @@ fn enabled_features(app: &App) -> Vec<config::Feature> {
 }
 
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
-  match app.windows.kind(id) {
-    Some(Window::Main | Window::Splash) => {
-      tracing::info!(target: "pod::lifecycle", "shutting down");
-      shutdown_storage(app).chain(iced::exit())
-    }
+  let close = match app.windows.kind(id) {
     Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::About) => close_about_window(app, id),
-    _ => window::close(id),
+    _ => {
+      app.windows.remove(id);
+      window::close(id)
+    }
+  };
+  Task::batch([close, shutdown_if_last_window(app)])
+}
+
+fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
+  let Some(kind) = app.windows.remove(id) else {
+    return Task::none();
+  };
+  match kind {
+    Window::About if app.about == Some(id) => app.about = None,
+    Window::Compare if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) => app.compare = None,
+    Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
+    _ => {}
   }
+  shutdown_if_last_window(app)
+}
+
+fn shutdown_if_last_window(app: &mut App) -> Task<Message> {
+  if app.windows.is_empty() {
+    shutdown(app)
+  } else {
+    Task::none()
+  }
+}
+
+fn shutdown(app: &mut App) -> Task<Message> {
+  tracing::info!(target: "pod::lifecycle", "shutting down");
+  let checkpoint = shutdown_storage(app);
+  stop_engines(app);
+  checkpoint.chain(Task::batch([iced::exit(), exit_process()]))
+}
+
+fn stop_engines(app: &App) {
+  if let Some(runtime) = app.runtime.as_ref() {
+    runtime.sync.shutdown();
+  }
+  if let Some(updater) = app.updater.as_ref() {
+    updater.shutdown();
+  }
+}
+
+/// Hard backstop that guarantees the process exits even if a tokio task refuses to drain after
+/// `iced::exit()`. Fires only after the storage checkpoint completes (it is chained after it).
+fn exit_process() -> Task<Message> {
+  Task::future(async {
+    std::process::exit(0);
+  })
+  .discard()
 }
 
 /// On a clean exit in sync mode, flushes the working copy back to the share and releases the lease
@@ -1916,10 +1962,7 @@ fn handle_menu(app: &mut App, action: menu::MenuAction) -> Task<Message> {
       Task::none()
     }
     menu::MenuAction::ClearCache => clear_cache(app),
-    menu::MenuAction::Quit => {
-      tracing::info!(target: "pod::lifecycle", "shutting down");
-      iced::exit()
-    }
+    menu::MenuAction::Quit => shutdown(app),
   }
 }
 
@@ -2828,6 +2871,10 @@ fn handle_window(app: &mut App, id: window::Id, event: window::Event) -> Task<Me
     window::Event::CloseRequested => {
       flush_pending_save(app);
       handle_close_requested(app, id)
+    }
+    window::Event::Closed => {
+      flush_pending_save(app);
+      on_window_closed(app, id)
     }
     _ => Task::none(),
   }
@@ -3955,6 +4002,75 @@ mod tests {
       let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
 
       assert!(app.editor.is_none(), "an OS close of the editor clears its state");
+    }
+
+    #[test]
+    fn it_keeps_the_app_alive_when_main_closes_while_a_secondary_window_is_open() {
+      let mut app = test_app();
+      let main_id = window::Id::unique();
+      let editor_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
+
+      assert_eq!(app.windows.kind(main_id), None, "the main window is gone");
+      assert_eq!(
+        app.windows.kind(editor_id),
+        Some(Window::SkillPlanEditor),
+        "the still-open editor keeps the app alive"
+      );
+      assert!(!app.windows.is_empty(), "a surviving window means no shutdown yet");
+    }
+
+    #[test]
+    fn it_empties_the_registry_when_the_final_window_closes_after_main() {
+      let mut app = test_app();
+      let main_id = window::Id::unique();
+      let editor_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
+      let _ = update(&mut app, Message::Window(editor_id, window::Event::CloseRequested));
+
+      assert!(
+        app.windows.is_empty(),
+        "closing the last window empties the registry and shuts down"
+      );
+    }
+
+    #[test]
+    fn it_tears_down_on_an_os_kill_that_skips_the_close_request() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::SkillPlanEditor);
+      app.editor = Some((id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
+
+      assert!(app.editor.is_none(), "a compositor-killed editor clears its state");
+      assert!(
+        app.windows.is_empty(),
+        "the destroyed window leaves an empty registry, triggering shutdown"
+      );
+    }
+
+    #[test]
+    fn a_close_event_for_an_already_removed_window_is_a_no_op() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Main);
+
+      let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
+      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
+
+      assert!(
+        app.windows.is_empty(),
+        "the late Closed event finds nothing to remove and does not re-trigger"
+      );
     }
 
     #[test]

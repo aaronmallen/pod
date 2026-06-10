@@ -32,6 +32,10 @@ impl Windows {
     self.ids.iter().find(|(_, kind)| **kind == window).map(|(id, _)| *id)
   }
 
+  pub fn is_empty(&self) -> bool {
+    self.ids.is_empty()
+  }
+
   pub fn kind(&self, id: window::Id) -> Option<Window> {
     self.ids.get(&id).copied()
   }
@@ -48,6 +52,40 @@ impl Windows {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod is_empty {
+    use super::*;
+
+    #[test]
+    fn it_is_empty_before_any_window_registers() {
+      let windows = Windows::default();
+
+      assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn it_is_not_empty_while_a_window_is_registered() {
+      let mut windows = Windows::default();
+      windows.register(window::Id::unique(), Window::Main);
+
+      assert!(!windows.is_empty());
+    }
+
+    #[test]
+    fn it_becomes_empty_again_once_the_last_window_is_removed() {
+      let mut windows = Windows::default();
+      let main = window::Id::unique();
+      let editor = window::Id::unique();
+      windows.register(main, Window::Main);
+      windows.register(editor, Window::SkillPlanEditor);
+
+      windows.remove(main);
+      assert!(!windows.is_empty(), "one window still open keeps the app alive");
+
+      windows.remove(editor);
+      assert!(windows.is_empty(), "removing the final window empties the registry");
+    }
+  }
 
   mod state_key {
     use pretty_assertions::assert_eq;

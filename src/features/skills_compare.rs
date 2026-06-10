@@ -311,6 +311,8 @@ mod tests {
   use super::*;
   use crate::features::skills::browse::{AttrKey, SkillCatalogEntry, SkillCatalogGroup};
 
+  type PilotSeed<'a> = (i64, &'a [(i64, u8)], u64);
+
   fn pilot(id: i64) -> OwnedPilot {
     OwnedPilot {
       color: Color::WHITE,
@@ -353,7 +355,7 @@ mod tests {
     CompareModel::build(&catalog(), levels.iter().copied().collect(), total_sp)
   }
 
-  fn loaded(ids: &[(i64, &[(i64, u8)], u64)]) -> Loaded {
+  fn loaded(ids: &[PilotSeed]) -> Loaded {
     Loaded {
       catalog: catalog(),
       models: ids
@@ -404,7 +406,10 @@ mod tests {
 
       let _ = update(
         &mut state,
-        Message::DataLoaded(Box::new(loaded(&[(1, &[(10, 5)], 9_000_000), (2, &[(10, 1)], 1_000_000)]))),
+        Message::DataLoaded(Box::new(loaded(&[
+          (1, &[(10, 5)], 9_000_000),
+          (2, &[(10, 1)], 1_000_000),
+        ]))),
         &db,
       );
 

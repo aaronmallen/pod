@@ -4636,7 +4636,10 @@ mod tests {
         Message::UpdaterStateChanged(updater::State::default()).variant_name(),
         "UpdaterStateChanged"
       );
-      assert_eq!(Message::WindowOpened(window::Id::unique()).variant_name(), "WindowOpened");
+      assert_eq!(
+        Message::WindowOpened(window::Id::unique()).variant_name(),
+        "WindowOpened"
+      );
       assert_eq!(Message::MailUnreadCounted(3).variant_name(), "MailUnreadCounted");
     }
   }

@@ -535,6 +535,33 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --draft=false
 
+      - name: Announce release on Discord
+        if: env.DISCORD_RELEASE_WEBHOOK_URL != ''
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          release=$(gh release view "$TAG" --json body,name,url)
+          title=$(jq -r '.name' <<< "$release")
+          url=$(jq -r '.url' <<< "$release")
+          body=$(jq -r '.body' <<< "$release")
+
+          more=$'\n\n[→ full changelog]('"$url"$')'
+          limit=4096
+          if [ "${#body}" -gt "$limit" ]; then
+            body="${body:0:$((limit - ${#more}))}$more"
+          fi
+
+          payload=$(jq -n \
+            --arg title "$title" \
+            --arg description "$body" \
+            --arg url "$url" \
+            '{embeds: [{title: $title, description: $description, url: $url, color: 4176091}]}')
+
+          curl -fsSL -X POST -H "Content-Type: application/json" \
+            -d "$payload" "$DISCORD_RELEASE_WEBHOOK_URL"
+
   deploy-pages:
     needs:
       - wait-for-build

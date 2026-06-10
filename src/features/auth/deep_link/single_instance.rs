@@ -52,11 +52,7 @@ fn accept_loop(listener: PrimaryLock, deliver: impl Fn(String)) {
       Ok(mut stream) => {
         let mut payload = String::new();
         if stream.read_to_string(&mut payload).is_ok() {
-          match classify(payload.trim()) {
-            Some(Signal::Url(url)) => deliver(url),
-            Some(Signal::Focus) => super::deliver_focus(),
-            None => {}
-          }
+          dispatch_signal(payload.trim(), &deliver);
         }
       }
       Err(error) => {
@@ -64,6 +60,14 @@ fn accept_loop(listener: PrimaryLock, deliver: impl Fn(String)) {
         break;
       }
     }
+  }
+}
+
+fn dispatch_signal(payload: &str, deliver: &impl Fn(String)) {
+  match classify(payload) {
+    Some(Signal::Url(url)) => deliver(url),
+    Some(Signal::Focus) => super::deliver_focus(),
+    None => {}
   }
 }
 
@@ -172,6 +176,35 @@ mod tests {
         second.is_none(),
         "a second bind on a held name fails (a primary already runs)"
       );
+    }
+  }
+
+  mod dispatch_signal {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_delivers_a_callback_url_to_the_handler() {
+      let url = format!("{}://callback?code=a&state=b", super::super::super::SCHEME);
+      let (tx, rx) = std::sync::mpsc::channel();
+
+      dispatch_signal(&url, &move |delivered| {
+        let _ = tx.send(delivered);
+      });
+
+      assert_eq!(rx.recv().unwrap(), url);
+    }
+
+    #[test]
+    fn it_ignores_a_payload_that_is_neither_a_callback_nor_a_ping() {
+      let (tx, rx) = std::sync::mpsc::channel();
+
+      dispatch_signal("https://evil.example/callback", &move |delivered| {
+        let _ = tx.send(delivered);
+      });
+
+      assert!(rx.try_recv().is_err(), "an unrecognized payload reaches no handler");
     }
   }
 

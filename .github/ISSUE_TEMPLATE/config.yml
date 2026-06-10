@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or Help
+    url: https://github.com/aaronmallen/pod/discussions/new?category=q-a
+    about: Ask a question or get help — please use Discussions, not issues.
+  - name: Report a Security Vulnerability
+    url: https://github.com/aaronmallen/pod/security/advisories/new
+    about: Privately report a security vulnerability via a GitHub security advisory.
+  - name: Community Discord
+    url: https://discord.gg/VZpQ56pcHw
+    about: Chat with the community and the maintainers.
+  - name: Documentation & Changelog
+    url: https://pod.aaronmallen.dev
+    about: Read the docs and the latest release notes.

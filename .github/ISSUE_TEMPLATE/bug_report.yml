@@ -1,0 +1,77 @@
+name: Bug Report
+description: Report a problem with Pod
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please **search the existing issues** first to
+        avoid duplicates, then fill in the details below so we can reproduce and triage it quickly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps that trigger the problem.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: pod-version
+    attributes:
+      label: Pod version
+      description: Found in Settings → About
+      placeholder: 0.5.3
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: e.g. macOS 15.5, Windows 11 23H2, Ubuntu 24.04
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & screenshots
+      description: Paste relevant logs or attach screenshots. Logs render as a code block.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: before-submitting
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched the existing issues for a duplicate.
+          required: true
+        - label: I am on the latest version of Pod.
+          required: true

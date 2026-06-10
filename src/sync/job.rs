@@ -25,6 +25,7 @@ pub enum JobKind {
   CharacterWallet,
   CorporationProfile,
   CorporationWallet,
+  KillmailReconcile,
   MarketPrices,
   NetWorthSnapshot,
 }
@@ -47,6 +48,7 @@ impl JobKind {
     JobKind::CharacterWallet,
     JobKind::CorporationProfile,
     JobKind::CorporationWallet,
+    JobKind::KillmailReconcile,
     JobKind::MarketPrices,
     JobKind::NetWorthSnapshot,
   ];
@@ -66,7 +68,7 @@ impl JobKind {
       Self::CharacterClones => Some(Feature::CloneMonitoring),
       Self::CharacterContacts => Some(Feature::Contacts),
       Self::CharacterContracts => Some(Feature::Wallet),
-      Self::CharacterKillmails => Some(Feature::CombatLog),
+      Self::CharacterKillmails | Self::KillmailReconcile => Some(Feature::CombatLog),
       Self::CharacterMail => Some(Feature::Mail),
       Self::CharacterMarketOrders => Some(Feature::Wallet),
       Self::CharacterNotifications => Some(Feature::EveNotifications),
@@ -180,7 +182,7 @@ impl JobKind {
       Self::CharacterKillmails | Self::CharacterMail | Self::CharacterNotifications | Self::CharacterTelemetry => {
         Duration::from_secs(300)
       }
-      Self::MarketPrices => Duration::from_secs(6 * 3600),
+      Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
     }
   }
@@ -215,7 +217,7 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      Self::MarketPrices => &[],
+      Self::KillmailReconcile | Self::MarketPrices => &[],
       Self::NetWorthSnapshot => &[],
     }
   }
@@ -287,6 +289,7 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
   match ctx.key.kind {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
+    JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationWallet => super::jobs::corporation_wallet::run(ctx).await,
     JobKind::MarketPrices => super::jobs::market_prices::run(ctx).await,
@@ -409,6 +412,7 @@ mod tests {
 
       #[test]
       fn it_marks_only_subjectless_kinds_as_global() {
+        assert!(JobKind::KillmailReconcile.is_global());
         assert!(JobKind::MarketPrices.is_global());
         assert!(JobKind::NetWorthSnapshot.is_global());
 

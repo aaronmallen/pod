@@ -1172,6 +1172,42 @@ pub async fn killmail_ids(db: &Database, character_id: i64) -> Result<HashSet<i6
   Ok(ids.into_iter().collect())
 }
 
+pub async fn killmail_record_absent_recheck(
+  db: &Database,
+  character_id: i64,
+  killmail_id: i64,
+  finalize: bool,
+) -> Result<(), Error> {
+  sqlx::query(
+    "UPDATE character_killmails SET value_recheck_count = value_recheck_count + 1, value_final = ? \
+    WHERE character_id = ? AND killmail_id = ?",
+  )
+  .bind(finalize)
+  .bind(character_id)
+  .bind(killmail_id)
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
+pub async fn killmail_upgrade_to_zkill(
+  db: &Database,
+  character_id: i64,
+  killmail_id: i64,
+  value_isk: f64,
+) -> Result<(), Error> {
+  sqlx::query(
+    "UPDATE character_killmails SET value_isk = ?, value_source = 'zkill', value_final = 1 \
+    WHERE character_id = ? AND killmail_id = ?",
+  )
+  .bind(value_isk)
+  .bind(character_id)
+  .bind(killmail_id)
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
 pub async fn killmails_needing_recheck(db: &Database) -> Result<Vec<CharacterKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CharacterKillEntry>(
     "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \

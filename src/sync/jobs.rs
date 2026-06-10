@@ -14,6 +14,7 @@ pub mod character_telemetry;
 pub mod character_wallet;
 pub mod corporation_profile;
 pub mod corporation_wallet;
+pub mod killmail_reconcile;
 pub mod killmail_value;
 pub mod market_prices;
 pub mod names;

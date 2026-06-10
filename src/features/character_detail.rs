@@ -61,6 +61,7 @@ impl DetailDataType {
       | JobKind::CharacterWallet
       | JobKind::CorporationProfile
       | JobKind::CorporationWallet
+      | JobKind::KillmailReconcile
       | JobKind::MarketPrices
       | JobKind::NetWorthSnapshot => None,
     }

@@ -49,7 +49,6 @@ impl Client {
     self.feed(&format!("characterID/{character_id}/losses/")).await
   }
 
-  #[allow(dead_code)]
   pub async fn value_for_kill(&self, killmail_id: i64) -> Result<Option<f64>, clients::Error> {
     let killmails = self.feed(&format!("killID/{killmail_id}/")).await?;
     Ok(killmails.first().map(|killmail| killmail.zkb.total_value))

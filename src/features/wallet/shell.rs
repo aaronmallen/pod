@@ -187,9 +187,9 @@ fn division_caption<'a>(text_value: &str) -> Element<'a, Message> {
 }
 
 fn tabs(state: &State) -> Element<'_, Message> {
-  let journal_count = super::filtered_journal(state).len();
-  let market_count = super::filtered_market(state).len();
-  let contract_count = super::filtered_contracts(state).len();
+  let journal_count = state.journal_total;
+  let market_count = state.market_total;
+  let contract_count = state.contract_total;
   let items = [
     (Tab::Market, "Market", market_count),
     (Tab::Contracts, "Contracts", contract_count),

@@ -106,6 +106,56 @@ pub async fn contracts_page(
   Ok(rows)
 }
 
+pub async fn count_contracts_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_contracts WHERE character_id = ?")
+    .bind(character_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
+pub async fn count_journal_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_wallet_journal WHERE character_id = ?")
+    .bind(character_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
+pub async fn count_journal_for_corporation(db: &Database, corporation_id: i64, division: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>(
+    "SELECT COUNT(*) FROM corporation_wallet_journal WHERE corporation_id = ? AND division = ?",
+  )
+  .bind(corporation_id)
+  .bind(division)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(count)
+}
+
+pub async fn count_transactions_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_wallet_transaction WHERE character_id = ?")
+    .bind(character_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
+pub async fn count_transactions_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  division: i64,
+) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>(
+    "SELECT COUNT(*) FROM corporation_wallet_transaction WHERE corporation_id = ? AND division = ?",
+  )
+  .bind(corporation_id)
+  .bind(division)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(count)
+}
+
 pub async fn escrow(db: &Database, character_id: i64) -> Result<Option<ContractEscrow>, Error> {
   let row = sqlx::query_as::<_, ContractEscrow>(
     "SELECT character_id, escrow, escrow_collateral, escrow_price FROM character_contract_escrow \
@@ -887,6 +937,26 @@ mod contract_tests {
     }
   }
 
+  mod count_contracts_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_characters_contracts() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      seed_contract(&db, 42, 1, "finished", "2026-01-01T00:00:00Z", Some(100.0), None).await;
+      seed_contract(&db, 42, 2, "outstanding", "2026-02-01T00:00:00Z", Some(200.0), None).await;
+      seed_contract(&db, 43, 3, "finished", "2026-03-01T00:00:00Z", Some(300.0), None).await;
+
+      assert_eq!(super::count_contracts_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_contracts_for_character(&db, 43).await.unwrap(), 1);
+      assert_eq!(super::count_contracts_for_character(&db, 99).await.unwrap(), 0);
+    }
+  }
+
   mod contracts_page {
     use pretty_assertions::assert_eq;
 
@@ -1450,6 +1520,43 @@ mod corporation_wallet_tests {
         .unwrap();
 
       assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
+    }
+  }
+
+  mod count_journal_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      append_corporation_wallet_journal(&db, &[journal_entry(1, 1), journal_entry(2, 1), journal_entry(3, 2)])
+        .await
+        .unwrap();
+
+      assert_eq!(count_journal_for_corporation(&db, CORP, 1).await.unwrap(), 2);
+      assert_eq!(count_journal_for_corporation(&db, CORP, 2).await.unwrap(), 1);
+      assert_eq!(count_journal_for_corporation(&db, CORP, 3).await.unwrap(), 0);
+    }
+  }
+
+  mod count_transactions_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      append_corporation_wallet_transaction(&db, &[transaction(1, 1), transaction(2, 1), transaction(3, 2)])
+        .await
+        .unwrap();
+
+      assert_eq!(count_transactions_for_corporation(&db, CORP, 1).await.unwrap(), 2);
+      assert_eq!(count_transactions_for_corporation(&db, CORP, 2).await.unwrap(), 1);
     }
   }
 }
@@ -2911,6 +3018,59 @@ mod wallet_tests {
       .execute(&db.0)
       .await
       .unwrap();
+  }
+
+  mod count_journal_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_characters_journal_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::append_wallet_journal(
+        &db,
+        &[
+          make_entry(42, 1, Some(10.0), Some(110.0)),
+          make_entry(42, 2, Some(20.0), Some(130.0)),
+          make_entry(43, 3, Some(5.0), Some(5.0)),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::count_journal_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_journal_for_character(&db, 43).await.unwrap(), 1);
+      assert_eq!(super::count_journal_for_character(&db, 99).await.unwrap(), 0);
+    }
+  }
+
+  mod count_transactions_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_characters_transactions() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::append_wallet_transaction(
+        &db,
+        &[
+          make_transaction(42, 1, 5.0),
+          make_transaction(42, 2, 6.0),
+          make_transaction(43, 3, 7.0),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::count_transactions_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_transactions_for_character(&db, 43).await.unwrap(), 1);
+    }
   }
 
   mod append_wallet_journal {

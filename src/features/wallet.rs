@@ -169,12 +169,15 @@ impl MorePage {
 
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
+  contract_total: i64,
   contracts: Vec<ContractEntry>,
   corp_divisions: Vec<CorpDivision>,
   corporations: Vec<RosterCorp>,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
+  journal_total: i64,
   market: Vec<MarketEntry>,
+  market_total: i64,
   net_worth_series: Vec<NetWorthPoint>,
   periods: Vec<CharacterWalletPeriodSummary>,
   right_rail_width: f32,
@@ -206,13 +209,16 @@ pub struct State {
   active: Scope,
   active_division: i64,
   chart_hover: Option<f32>,
+  contract_total: i64,
   contracts: Vec<ContractEntry>,
   corp_divisions: Vec<CorpDivision>,
   corporations: Vec<RosterCorp>,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
+  journal_total: i64,
   loading_more: bool,
   market: Vec<MarketEntry>,
+  market_total: i64,
   net_worth_series: Vec<NetWorthPoint>,
   periods: Vec<CharacterWalletPeriodSummary>,
   picker_open: bool,
@@ -233,13 +239,16 @@ impl State {
       active: Scope::default(),
       active_division: DEFAULT_DIVISION,
       chart_hover: None,
+      contract_total: 0,
       contracts: Vec::new(),
       corp_divisions: Vec::new(),
       corporations: Vec::new(),
       financials: Vec::new(),
       journal: Vec::new(),
+      journal_total: 0,
       loading_more: false,
       market: Vec::new(),
+      market_total: 0,
       net_worth_series: Vec::new(),
       periods: Vec::new(),
       picker_open: false,
@@ -444,23 +453,29 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::Loaded(loaded) => {
       let Loaded {
+        contract_total,
         contracts,
         corp_divisions,
         corporations,
         financials,
         journal,
+        journal_total,
         market,
+        market_total,
         net_worth_series,
         periods,
         right_rail_width,
         roster,
       } = *loaded;
+      state.contract_total = contract_total;
       state.contracts = contracts;
       state.corp_divisions = corp_divisions;
       state.corporations = corporations;
       state.financials = financials;
       state.journal = journal;
+      state.journal_total = journal_total;
       state.market = market;
+      state.market_total = market_total;
       state.net_worth_series = net_worth_series;
       state.periods = periods;
       if !state.right_rail.is_active() {
@@ -575,19 +590,42 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
 
   let scope_ids = resolve_scope_ids(scope, &roster, &corporations);
 
-  let (journal, market, contracts, corp_divisions) = match scope {
+  let (journal, market, contracts, corp_divisions, journal_total, market_total, contract_total) = match scope {
     Scope::Corporation(corp_id) => {
       let journal = loaders::load_corp_journal(&db, corp_id, division).await;
       let market = loaders::load_corp_market(&db, corp_id, division).await;
       let corp_divisions = load_corp_divisions(&db, corp_id).await;
-      (journal, market, Vec::new(), corp_divisions)
+      let journal_total = finance::count_journal_for_corporation(&db, corp_id, division)
+        .await
+        .unwrap_or(0);
+      let market_total = finance::count_transactions_for_corporation(&db, corp_id, division)
+        .await
+        .unwrap_or(0);
+      (
+        journal,
+        market,
+        Vec::new(),
+        corp_divisions,
+        journal_total,
+        market_total,
+        0,
+      )
     }
     Scope::All | Scope::Character(_) => {
       let limit = PAGE_SIZE as i64;
       let journal = loaders::load_journal_page(&db, &scope_ids, None, limit).await;
       let market = loaders::load_market_page(&db, &scope_ids, None, limit).await;
       let contracts = loaders::load_contracts_page(&db, &scope_ids, None, limit).await;
-      (journal, market, contracts, Vec::new())
+      let (journal_total, market_total, contract_total) = count_character_totals(&db, &scope_ids).await;
+      (
+        journal,
+        market,
+        contracts,
+        Vec::new(),
+        journal_total,
+        market_total,
+        contract_total,
+      )
     }
   };
 
@@ -600,17 +638,32 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     .unwrap_or(RIGHT_RAIL_DEFAULT_WIDTH);
 
   Loaded {
+    contract_total,
     contracts,
     corp_divisions,
     corporations,
     financials,
     journal,
+    journal_total,
     market,
+    market_total,
     net_worth_series,
     periods,
     right_rail_width,
     roster,
   }
+}
+
+async fn count_character_totals(db: &Database, scope_ids: &[i64]) -> (i64, i64, i64) {
+  let mut journal_total = 0;
+  let mut market_total = 0;
+  let mut contract_total = 0;
+  for &id in scope_ids {
+    journal_total += finance::count_journal_for_character(db, id).await.unwrap_or(0);
+    market_total += finance::count_transactions_for_character(db, id).await.unwrap_or(0);
+    contract_total += finance::count_contracts_for_character(db, id).await.unwrap_or(0);
+  }
+  (journal_total, market_total, contract_total)
 }
 
 async fn load_corp_divisions(db: &Database, corporation_id: i64) -> Vec<CorpDivision> {
@@ -1408,12 +1461,15 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(Loaded {
+          contract_total: 0,
           contracts: vec![],
           corp_divisions: vec![],
           corporations: vec![],
           financials: vec![financials(7, Some(10.0))],
           journal: vec![],
+          journal_total: 0,
           market: vec![],
+          market_total: 0,
           net_worth_series: vec![],
           periods: vec![],
           right_rail_width: 280.0,
@@ -2483,12 +2539,15 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(Loaded {
+          contract_total: 0,
           contracts: vec![],
           corp_divisions: vec![],
           corporations: vec![corp(98_000_001, "Test Corp")],
           financials: vec![financials(1, Some(100.0)), financials(2, Some(50.0))],
           journal: vec![journal_entry(1, Some(10.0), "bounty_prizes", "ratting")],
+          journal_total: 1,
           market: vec![market_entry(1, true, "Tritanium", "Jita IV")],
+          market_total: 1,
           net_worth_series: vec![nw_point("2026-06-01", 150.0), nw_point("2026-06-02", 175.0)],
           periods: vec![period(1, 100.0, 40.0)],
           right_rail_width: 280.0,

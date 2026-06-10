@@ -1118,13 +1118,16 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
   sqlx::query(
     "INSERT INTO character_killmails \
       (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
-      value_isk, attacker_count, final_blow, kill_time, synced_at) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT (character_id, killmail_id) DO UPDATE SET \
       kill_hash = excluded.kill_hash, is_kill = excluded.is_kill, ship_type_id = excluded.ship_type_id, \
       victim_id = excluded.victim_id, victim_corp_id = excluded.victim_corp_id, system_id = excluded.system_id, \
-      value_isk = excluded.value_isk, attacker_count = excluded.attacker_count, final_blow = excluded.final_blow, \
-      kill_time = excluded.kill_time, synced_at = excluded.synced_at",
+      value_isk = excluded.value_isk, value_destroyed_isk = excluded.value_destroyed_isk, \
+      value_source = excluded.value_source, value_recheck_count = excluded.value_recheck_count, \
+      value_final = excluded.value_final, attacker_count = excluded.attacker_count, \
+      final_blow = excluded.final_blow, kill_time = excluded.kill_time, synced_at = excluded.synced_at",
   )
   .bind(killmail.character_id())
   .bind(killmail.killmail_id())
@@ -1135,6 +1138,10 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
   .bind(killmail.victim_corp_id())
   .bind(killmail.system_id())
   .bind(killmail.value_isk())
+  .bind(killmail.value_destroyed_isk())
+  .bind(killmail.value_source())
+  .bind(killmail.value_recheck_count())
+  .bind(killmail.value_final())
   .bind(killmail.attacker_count())
   .bind(killmail.final_blow())
   .bind(killmail.kill_time())
@@ -1147,10 +1154,23 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
 pub async fn killmails(db: &Database, character_id: i64) -> Result<Vec<CharacterKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CharacterKillEntry>(
     "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
-      value_isk, attacker_count, final_blow, kill_time, synced_at FROM character_killmails \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at FROM character_killmails \
     WHERE character_id = ? ORDER BY kill_time DESC, killmail_id DESC",
   )
   .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn killmails_needing_recheck(db: &Database) -> Result<Vec<CharacterKillEntry>, Error> {
+  let rows = sqlx::query_as::<_, CharacterKillEntry>(
+    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at FROM character_killmails \
+    WHERE value_source = 'local' AND value_final = 0 ORDER BY kill_time DESC, killmail_id DESC",
+  )
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -3360,7 +3380,11 @@ mod killmail_tests {
       ship_type_id: 587,
       synced_at: "2024-01-02T00:00:00Z".to_owned(),
       system_id: 30_000_142,
+      value_destroyed_isk: 0.0,
+      value_final: false,
       value_isk,
+      value_recheck_count: 0,
+      value_source: "zkill".to_owned(),
       victim_corp_id: Some(3003),
       victim_id: Some(2002),
     }
@@ -3396,6 +3420,24 @@ mod killmail_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].value_isk(), 9999.0);
     }
+
+    #[tokio::test]
+    async fn it_round_trips_the_value_provenance_fields() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut kill = entry(42, 100, 1234.5);
+      kill.value_destroyed_isk = 1000.0;
+      kill.value_final = true;
+      kill.value_recheck_count = 3;
+      kill.value_source = "local".to_owned();
+      upsert_killmail(&db, &kill).await.unwrap();
+
+      let rows = killmails(&db, 42).await.unwrap();
+      assert_eq!(rows[0].value_destroyed_isk(), 1000.0);
+      assert_eq!(rows[0].value_final(), true);
+      assert_eq!(rows[0].value_recheck_count(), 3);
+      assert_eq!(rows[0].value_source(), "local");
+    }
   }
 
   mod killmails {
@@ -3417,6 +3459,33 @@ mod killmail_tests {
       let rows = killmails(&db, 42).await.unwrap();
 
       assert_eq!(rows.iter().map(|k| k.killmail_id()).collect::<Vec<_>>(), [200, 100]);
+    }
+  }
+
+  mod killmails_needing_recheck {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_non_final_local_killmails() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut on_zkill = entry(42, 100, 1.0);
+      on_zkill.value_source = "zkill".to_owned();
+      let mut pending = entry(42, 200, 2.0);
+      pending.value_source = "local".to_owned();
+      pending.value_final = false;
+      let mut finalized = entry(42, 300, 3.0);
+      finalized.value_source = "local".to_owned();
+      finalized.value_final = true;
+      upsert_killmail(&db, &on_zkill).await.unwrap();
+      upsert_killmail(&db, &pending).await.unwrap();
+      upsert_killmail(&db, &finalized).await.unwrap();
+
+      let rows = killmails_needing_recheck(&db).await.unwrap();
+
+      assert_eq!(rows.iter().map(|k| k.killmail_id()).collect::<Vec<_>>(), [200]);
     }
   }
 }

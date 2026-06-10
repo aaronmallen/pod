@@ -87,7 +87,11 @@ async fn assemble(
     ship_type_id: detail.victim.ship_type_id,
     synced_at: synced_at.to_owned(),
     system_id: detail.solar_system_id,
+    value_destroyed_isk: 0.0,
+    value_final: false,
     value_isk: killmail.zkb.total_value,
+    value_recheck_count: 0,
+    value_source: "zkill".to_owned(),
     victim_corp_id: detail.victim.corporation_id,
     victim_id: detail.victim.character_id,
   })

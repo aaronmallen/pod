@@ -23,8 +23,17 @@ pub struct Model {
   pub synced_at: String,
   #[getset(get_copy = "pub")]
   pub system_id: i64,
+  /// Destroyed-only ISK loss; `value_isk` covers destroyed + dropped (the zKill display total).
+  #[getset(get_copy = "pub")]
+  pub value_destroyed_isk: f64,
+  #[getset(get_copy = "pub")]
+  pub value_final: bool,
   #[getset(get_copy = "pub")]
   pub value_isk: f64,
+  #[getset(get_copy = "pub")]
+  pub value_recheck_count: i64,
+  #[getset(get = "pub")]
+  pub value_source: String,
   #[getset(get_copy = "pub")]
   pub victim_corp_id: Option<i64>,
   #[getset(get_copy = "pub")]

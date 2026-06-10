@@ -651,7 +651,11 @@ mod tests {
       ship_type_id: 587,
       synced_at: "2024-01-02T00:00:00Z".to_owned(),
       system_id: 30_000_142,
+      value_destroyed_isk: 0.0,
+      value_final: false,
       value_isk: 1234.5,
+      value_recheck_count: 0,
+      value_source: "zkill".to_owned(),
       victim_corp_id,
       victim_id,
     }

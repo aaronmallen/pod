@@ -7,7 +7,6 @@ use iced::{
 use super::{HEADER_HEIGHT, Message, State};
 use crate::{
   features::skills::fmt_sp,
-  store::images,
   ui::{
     components::{
       avatar::Avatar,
@@ -136,7 +135,7 @@ fn chip(state: &State, pilot_id: i64) -> Element<'_, Message> {
   let accent = state.pilot_accent(pilot_id);
   let name = state.pilot_name(pilot_id).to_owned();
   let total_sp = state.model(pilot_id).map(|model| model.total_sp).unwrap_or(0);
-  let portrait = portrait_path(pilot_id);
+  let portrait = state.portrait(pilot_id).path();
 
   let identity = Column::with_children(vec![
     text(name.clone())
@@ -261,16 +260,11 @@ fn pilot_row(state: &State, pilot_id: i64) -> Element<'_, Message> {
     pilot_id,
     name,
     String::new(),
-    portrait_path(pilot_id),
+    state.portrait(pilot_id).path(),
     trailing,
     false,
     Message::PilotAdded(pilot_id),
   )
-}
-
-fn portrait_path(pilot_id: i64) -> Option<std::path::PathBuf> {
-  let path = images::default_store().character_portrait_path(pilot_id);
-  path.exists().then_some(path)
 }
 
 fn remove_button(state: &State, pilot_id: i64) -> Element<'_, Message> {

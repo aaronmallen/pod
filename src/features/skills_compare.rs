@@ -137,6 +137,10 @@ impl State {
     &self.picker_query
   }
 
+  pub(super) fn portrait(&self, pilot_id: i64) -> images::ImageState {
+    images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, pilot_id)
+  }
+
   pub(crate) fn selected_ids(&self) -> &[i64] {
     &self.selected_ids
   }
@@ -146,7 +150,11 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    self
+      .selected_ids
+      .iter()
+      .filter_map(|id| self.portrait(*id).stale_key())
+      .collect()
   }
 }
 
@@ -294,4 +302,48 @@ async fn load_pilot(db: Database, catalog: SkillCatalog, id: i64) -> (i64, Compa
     .unwrap_or(0);
 
   (id, CompareModel::build(&catalog, levels, total_sp))
+}
+
+#[cfg(test)]
+mod tests {
+  use iced::Color;
+
+  use super::*;
+
+  fn pilot(id: i64) -> OwnedPilot {
+    OwnedPilot {
+      color: Color::WHITE,
+      id,
+      name: format!("Pilot {id}"),
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_a_stale_key_for_each_uncached_pilot() {
+      let roster = vec![pilot(900_000_001), pilot(900_000_002)];
+      let state = State::new(vec![900_000_001, 900_000_002], roster);
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 900_000_001),
+          (images::ImageKind::CharacterPortrait, 900_000_002),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_is_empty_with_no_selected_pilots() {
+      let state = State::new(Vec::new(), Vec::new());
+
+      assert_eq!(state.stale_images(), Vec::new());
+    }
+  }
 }

@@ -7,7 +7,6 @@ use iced::{
 use super::{LABEL_COLUMN_WIDTH, Message, State};
 use crate::{
   features::skills::fmt_sp,
-  store::images,
   ui::{
     components::{avatar::Avatar, eyebrow::eyebrow_text, rule},
     style::{color, radius, spacing, typography},
@@ -74,8 +73,7 @@ pub(super) fn summary(state: &State) -> Element<'_, Message> {
 fn head_cell(state: &State, pilot_id: i64) -> Element<'_, Message> {
   let name = state.pilot_name(pilot_id).to_owned();
   let accent = state.pilot_accent(pilot_id);
-  let portrait_path = images::default_store().character_portrait_path(pilot_id);
-  let portrait = portrait_path.exists().then_some(portrait_path);
+  let portrait = state.portrait(pilot_id).path();
 
   let head = Row::with_children(vec![
     Avatar::new(

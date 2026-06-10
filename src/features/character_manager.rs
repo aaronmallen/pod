@@ -69,6 +69,7 @@ pub struct State {
   filtered: Option<Filtered>,
   groups: Vec<SquadGroup>,
   load_error: Option<String>,
+  pending: HashMap<i64, CardModel>,
   reauth_by_id: HashMap<i64, bool>,
   remove_confirm: Option<RemoveConfirm>,
   search_generation: u64,
@@ -379,6 +380,58 @@ impl State {
 
 pub fn load(db: &Database, enabled_features: Vec<Feature>) -> Task<Message> {
   Task::perform(load_roster(db.clone(), enabled_features), Message::CharactersLoaded)
+}
+
+/// Shows a placeholder card built from just the character id and JWT name, with no `characters` row required yet.
+pub fn insert_signed_in_card(state: &mut State, character_id: i64, name: String) {
+  let card = synthesize_pending_card(character_id, name, &images::default_store());
+  state.pending.insert(character_id, card.clone());
+  if !roster_contains(state, character_id) {
+    state.unassigned.push(card);
+  }
+}
+
+/// Re-appends placeholder cards after each load, retiring one only once its real row appears, so a freshly added card
+/// does not vanish while its first sync is still in flight.
+fn merge_pending(state: &mut State) {
+  let loaded: HashSet<i64> = state
+    .groups
+    .iter()
+    .flat_map(|group| group.cards.iter())
+    .chain(state.unassigned.iter())
+    .map(|card| card.character_id)
+    .collect();
+  state.pending.retain(|id, _| !loaded.contains(id));
+  for card in state.pending.values() {
+    state.unassigned.push(card.clone());
+  }
+}
+
+fn roster_contains(state: &State, character_id: i64) -> bool {
+  state
+    .groups
+    .iter()
+    .flat_map(|group| group.cards.iter())
+    .chain(state.unassigned.iter())
+    .any(|card| card.character_id == character_id)
+}
+
+fn synthesize_pending_card(character_id: i64, name: String, store: &images::Store) -> CardModel {
+  CardModel {
+    accent: None,
+    character_id,
+    corp_ticker: "\u{2014}".to_owned(),
+    docked: None,
+    location: None,
+    name,
+    needs_reauth: false,
+    portrait: images::resolve(store, images::ImageKind::CharacterPortrait, character_id),
+    position: i64::MAX,
+    tags: Vec::new(),
+    total_sp: None,
+    training: None,
+    wallet_balance: None,
+  }
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -889,6 +942,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       state.unassigned = unassigned;
       state.unassigned_squad_id = unassigned_squad_id;
       state.load_error = None;
+      merge_pending(state);
       Task::none()
     }
     Message::CharactersLoaded(Err(error)) => {
@@ -2122,6 +2176,89 @@ async fn remove_corporation(db: Database, corporation_id: i64, images: images::S
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod insert_signed_in_card {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn real_card(character_id: i64) -> CardModel {
+      CardModel {
+        accent: None,
+        character_id,
+        corp_ticker: "TST".to_owned(),
+        docked: Some(false),
+        location: None,
+        name: format!("Pilot {character_id}"),
+        needs_reauth: false,
+        portrait: images::ImageState::Stale {
+          id: character_id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+        position: 0,
+        tags: Vec::new(),
+        total_sp: Some(5_000_000),
+        training: None,
+        wallet_balance: Some(1.0),
+      }
+    }
+
+    #[test]
+    fn it_renders_a_card_from_the_jwt_name_with_no_characters_row() {
+      let mut state = State::new();
+
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
+
+      let card = state
+        .unassigned
+        .iter()
+        .find(|card| card.character_id == 42)
+        .expect("the synthesized card is visible immediately");
+      assert_eq!(card.name, "New Pilot");
+      assert!(
+        state.pending.contains_key(&42),
+        "it is tracked as pending until its real row loads"
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_card_after_a_load_that_still_lacks_its_row() {
+      let mut state = State::new();
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
+
+      // A full load completes but the new character's sync has not created its row yet.
+      state.groups = Vec::new();
+      state.unassigned = vec![real_card(7)];
+      merge_pending(&mut state);
+
+      assert!(
+        state.unassigned.iter().any(|card| card.character_id == 42),
+        "the onboarding card survives a load without its row, instead of vanishing"
+      );
+      assert!(state.pending.contains_key(&42));
+    }
+
+    #[test]
+    fn it_drops_the_placeholder_once_the_real_row_loads() {
+      let mut state = State::new();
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
+
+      // The sync backfill created the characters row; the next load carries the real card.
+      state.groups = Vec::new();
+      state.unassigned = vec![real_card(42)];
+      merge_pending(&mut state);
+
+      assert!(
+        !state.pending.contains_key(&42),
+        "the placeholder is retired once the real card loads"
+      );
+      assert_eq!(
+        state.unassigned.iter().filter(|card| card.character_id == 42).count(),
+        1,
+        "the real card supersedes the placeholder with no duplicate"
+      );
+    }
+  }
 
   mod card_failure {
     use pretty_assertions::assert_eq;

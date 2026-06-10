@@ -2584,7 +2584,12 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
   let mut tasks = vec![task.map(Message::Auth)];
   let enrolled = match event {
     Some(auth::Event::CorporationAdded(added)) => Some(sync::Subject::Corporation(added.corporation_id)),
-    Some(auth::Event::SignedIn(signed)) => Some(sync::Subject::Character(signed.character_id)),
+    Some(auth::Event::SignedIn(signed)) => {
+      if let Some(state) = app.character_manager.as_mut() {
+        character_manager::insert_signed_in_card(state, signed.character_id, signed.character_name);
+      }
+      Some(sync::Subject::Character(signed.character_id))
+    }
     None => None,
   };
   if let Some(subject) = enrolled {

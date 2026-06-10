@@ -409,11 +409,7 @@ fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
 
 fn journal_character_col(state: &State, character_id: i64) -> Element<'_, Message> {
   let name = owner_name(state, character_id);
-  let portrait = state
-    .roster
-    .iter()
-    .find(|pilot| pilot.id == character_id)
-    .and_then(|pilot| pilot.portrait.clone());
+  let portrait = roster_portrait(state, character_id);
 
   Avatar::new(character_id, name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
     .radius(radius::SUBTLE)
@@ -564,11 +560,7 @@ fn type_icon<'a>(type_id: i64) -> Element<'a, Message> {
 
 fn character_cell(state: &State, character_id: i64, width: Length) -> Element<'_, Message> {
   let name = owner_name(state, character_id);
-  let portrait = state
-    .roster
-    .iter()
-    .find(|pilot| pilot.id == character_id)
-    .and_then(|pilot| pilot.portrait.clone());
+  let portrait = roster_portrait(state, character_id);
 
   let swatch = Avatar::new(character_id, &name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
     .radius(radius::SUBTLE)
@@ -678,17 +670,37 @@ fn contract_counterparty(entry: &ContractEntry) -> (Option<&str>, Option<i64>) {
   }
 }
 
-fn party_portrait(id: i64) -> Option<std::path::PathBuf> {
+fn roster_portrait(state: &State, character_id: i64) -> Option<std::path::PathBuf> {
+  state
+    .roster
+    .iter()
+    .find(|pilot| pilot.id == character_id)
+    .and_then(|pilot| pilot.portrait.path())
+}
+
+pub(super) struct PartyImage {
+  pub(super) path: Option<std::path::PathBuf>,
+  pub(super) stale: Vec<(images::ImageKind, i64)>,
+}
+
+pub(super) fn party_image(store: &images::Store, id: i64) -> PartyImage {
   if id <= 0 {
-    return None;
+    return PartyImage {
+      path: None,
+      stale: Vec::new(),
+    };
   }
-  let store = images::default_store();
-  let portrait = store.character_portrait_path(id);
-  if portrait.exists() {
-    return Some(portrait);
+  let portrait = images::resolve(store, images::ImageKind::CharacterPortrait, id);
+  let logo = images::resolve(store, images::ImageKind::CorporationLogo, id);
+  let path = portrait.path().or_else(|| logo.path());
+  let stale = match path {
+    Some(_) => Vec::new(),
+    None => [portrait.stale_key(), logo.stale_key()].into_iter().flatten().collect(),
+  };
+  PartyImage {
+    path,
+    stale,
   }
-  let logo = store.corporation_logo_path(id);
-  logo.exists().then_some(logo)
 }
 
 fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element<'a, Message> {
@@ -701,7 +713,7 @@ fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element
       &label,
       Length::Fixed(ROW_AVATAR),
       ROW_AVATAR,
-      party_portrait(entity_id),
+      party_image(&images::default_store(), entity_id).path,
     )
     .radius(radius::SUBTLE)
     .view();
@@ -1170,6 +1182,48 @@ mod tests {
       let mut state = State::new();
       let _ = crate::features::wallet::update(&mut state, Message::PickerToggled, &db);
       let _el: Element<'_, Message> = shell(&state, now());
+    }
+  }
+
+  mod party_image {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_yields_no_path_and_no_stale_keys_for_a_non_positive_id() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::super::party_image(&store, 0);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.is_empty());
+    }
+
+    #[test]
+    fn it_prefers_a_cached_portrait_over_a_logo() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+      let portrait = store.character_portrait_path(42);
+      store.write(&portrait, &[1]).unwrap();
+
+      let resolved = super::super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, Some(portrait));
+      assert!(resolved.stale.is_empty());
+    }
+
+    #[test]
+    fn it_surfaces_both_candidate_keys_when_neither_image_is_cached() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
+      assert!(resolved.stale.contains(&(images::ImageKind::CorporationLogo, 42)));
     }
   }
 

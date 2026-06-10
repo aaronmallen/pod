@@ -4,8 +4,6 @@ mod loaders;
 mod shell;
 mod side_filter;
 
-use std::path::PathBuf;
-
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iced::{Element, Task};
 
@@ -109,13 +107,14 @@ pub struct RosterPilot {
   pub id: i64,
   pub liquid: Option<f64>,
   pub name: String,
-  pub portrait: Option<PathBuf>,
+  pub portrait: images::ImageState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RosterCorp {
   pub id: i64,
   pub liquid: Option<f64>,
+  pub logo: images::ImageState,
   pub name: String,
   pub ticker: String,
 }
@@ -277,7 +276,16 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    let store = images::default_store();
+    let mut keys: Vec<(images::ImageKind, i64)> = Vec::new();
+    keys.extend(self.roster.iter().filter_map(|pilot| pilot.portrait.stale_key()));
+    keys.extend(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()));
+    for id in self.contracts.iter().flat_map(contract_party_ids) {
+      keys.extend(shell::party_image(&store, id).stale);
+    }
+    let mut seen = std::collections::HashSet::new();
+    keys.retain(|key| seen.insert(*key));
+    keys
   }
 
   pub fn timeframe(&self) -> Timeframe {
@@ -689,6 +697,14 @@ fn resolve_scope_ids(scope: Scope, roster: &[RosterPilot], _corporations: &[Rost
   }
 }
 
+fn contract_party_ids(entry: &ContractEntry) -> Vec<i64> {
+  [Some(entry.issuer_id), entry.acceptor_id, entry.assignee_id]
+    .into_iter()
+    .flatten()
+    .filter(|id| *id > 0)
+    .collect()
+}
+
 async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   let characters = character::all_owned(db).await.unwrap_or_default();
   let financials = finance::financials_all(db).await.unwrap_or_default();
@@ -703,13 +719,17 @@ async fn load_roster(db: &Database) -> Vec<RosterPilot> {
       .flatten()
       .map(|c| c.ticker().to_owned())
       .unwrap_or_default();
-    let portrait_path = images::default_store().character_portrait_path(character.id());
+    let portrait = images::resolve(
+      &images::default_store(),
+      images::ImageKind::CharacterPortrait,
+      character.id(),
+    );
     roster.push(RosterPilot {
       corp,
       id: character.id(),
       liquid: liquid_by_id.get(&character.id()).copied().flatten(),
       name: character.name().to_owned(),
-      portrait: portrait_path.exists().then_some(portrait_path),
+      portrait,
     });
   }
   roster
@@ -726,9 +746,11 @@ async fn load_corporations(db: &Database) -> Vec<RosterCorp> {
         .into_iter()
         .map(|division| division.balance()),
     );
+    let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
     roster.push(RosterCorp {
       id: corp.id(),
       liquid,
+      logo,
       name: corp.name().to_owned(),
       ticker: corp.ticker().to_owned(),
     });
@@ -1040,7 +1062,10 @@ mod tests {
       id,
       liquid,
       name: format!("Pilot {id}"),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 
@@ -1066,6 +1091,7 @@ mod tests {
     RosterCorp {
       id,
       liquid: None,
+      logo: corp_logo_stale(id),
       name: name.to_owned(),
       ticker: "TSTC".to_owned(),
     }
@@ -1075,8 +1101,16 @@ mod tests {
     RosterCorp {
       id,
       liquid,
+      logo: corp_logo_stale(id),
       name: format!("Corp {id}"),
       ticker: "TSTC".to_owned(),
+    }
+  }
+
+  fn corp_logo_stale(id: i64) -> images::ImageState {
+    images::ImageState::Stale {
+      id,
+      kind: images::ImageKind::CorporationLogo,
     }
   }
 
@@ -1110,6 +1144,57 @@ mod tests {
       state.active = Scope::Corporation(98_000_001);
 
       assert!(state.scope_ids().is_empty());
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fresh_portrait() -> images::ImageState {
+      images::ImageState::Fresh(std::path::PathBuf::from("/cache/characters/1.jpg"))
+    }
+
+    #[test]
+    fn it_is_empty_when_every_model_image_is_fresh() {
+      let mut state = State::new();
+      state.roster = vec![RosterPilot {
+        corp: "TST".to_owned(),
+        id: 1,
+        liquid: None,
+        name: "Pilot 1".to_owned(),
+        portrait: fresh_portrait(),
+      }];
+      state.corporations = vec![RosterCorp {
+        id: 98_000_001,
+        liquid: None,
+        logo: images::ImageState::Fresh(std::path::PathBuf::from("/cache/corporations/98000001.png")),
+        name: "Corp".to_owned(),
+        ticker: "TSTC".to_owned(),
+      }];
+
+      assert!(state.stale_images().is_empty());
+    }
+
+    #[test]
+    fn it_collects_the_stale_portrait_and_logo_keys() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.corporations = vec![corp(98_000_001, "Corp")];
+
+      let keys = state.stale_images();
+
+      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 1)));
+      assert!(keys.contains(&(images::ImageKind::CorporationLogo, 98_000_001)));
+    }
+
+    #[test]
+    fn it_deduplicates_repeated_keys() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(1, None)];
+
+      assert_eq!(state.stale_images(), vec![(images::ImageKind::CharacterPortrait, 1)]);
     }
   }
 
@@ -2226,12 +2311,7 @@ mod tests {
     #[test]
     fn it_renders_a_corp_scope_with_divisions() {
       let mut state = State::new();
-      state.corporations = vec![RosterCorp {
-        id: 98_000_001,
-        liquid: None,
-        name: "Test Corp".to_owned(),
-        ticker: "TSTC".to_owned(),
-      }];
+      state.corporations = vec![corp(98_000_001, "Test Corp")];
       state.active = Scope::Corporation(98_000_001);
       state.corp_divisions = vec![
         corp_division(1, Some("Master Wallet"), Some(1_000.0)),
@@ -2244,12 +2324,7 @@ mod tests {
     #[test]
     fn it_renders_a_corp_scope_with_no_divisions_synced() {
       let mut state = State::new();
-      state.corporations = vec![RosterCorp {
-        id: 98_000_001,
-        liquid: None,
-        name: "Test Corp".to_owned(),
-        ticker: "TSTC".to_owned(),
-      }];
+      state.corporations = vec![corp(98_000_001, "Test Corp")];
       state.active = Scope::Corporation(98_000_001);
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
@@ -2389,12 +2464,7 @@ mod tests {
       .await
       .unwrap();
 
-      let corporations = vec![RosterCorp {
-        id: 90_000_001,
-        liquid: None,
-        name: "Test Corp".to_owned(),
-        ticker: "TSC".to_owned(),
-      }];
+      let corporations = vec![corp(90_000_001, "Test Corp")];
       let series = super::load_net_worth_series(&db, Scope::All, &[42], &corporations).await;
 
       assert_eq!(series.len(), 1);

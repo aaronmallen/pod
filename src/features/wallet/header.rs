@@ -2,18 +2,15 @@ use chrono::{DateTime, Utc};
 use iced::Element;
 
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
-use crate::{
-  store::images,
-  ui::{
-    components::{
-      header::{header as shared_header, header_divider, stat_block},
-      picker::{
-        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
-        picker_trigger, trigger_identity,
-      },
+use crate::ui::{
+  components::{
+    header::{header as shared_header, header_divider, stat_block},
+    picker::{
+      PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
+      picker_trigger, trigger_identity,
     },
-    style::color,
   },
+  style::color,
 };
 
 pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
@@ -70,7 +67,7 @@ fn trigger(state: &State) -> Element<'_, Message> {
         Some(TriggerPortrait {
           id: pilot.id,
           name: pilot.name.clone(),
-          path: pilot.portrait.clone(),
+          path: pilot.portrait.path(),
         }),
       ),
       None => trigger_identity("Character", String::new(), None),
@@ -82,17 +79,12 @@ fn trigger(state: &State) -> Element<'_, Message> {
         Some(TriggerPortrait {
           id: corp.id,
           name: corp.name.clone(),
-          path: corp_logo_path(corp.id),
+          path: corp.logo.path(),
         }),
       ),
       None => trigger_identity("Corporation", String::new(), None),
     },
   }
-}
-
-fn corp_logo_path(corporation_id: i64) -> Option<std::path::PathBuf> {
-  let path = images::default_store().corporation_logo_path(corporation_id);
-  path.exists().then_some(path)
 }
 
 pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
@@ -144,7 +136,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.id,
     pilot.name.clone(),
     sub,
-    pilot.portrait.clone(),
+    pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
     Message::ScopeSelected(Scope::Character(pilot.id)),
@@ -156,7 +148,7 @@ fn corp_row<'a>(state: &'a State, corp: &'a RosterCorp) -> Element<'a, Message> 
     corp.id,
     corp.name.clone(),
     corp.ticker.clone(),
-    corp_logo_path(corp.id),
+    corp.logo.path(),
     None,
     matches!(state.active(), Scope::Corporation(id) if id == corp.id),
     Message::ScopeSelected(Scope::Corporation(corp.id)),
@@ -166,6 +158,7 @@ fn corp_row<'a>(state: &'a State, corp: &'a RosterCorp) -> Element<'a, Message> 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::store::images;
 
   fn pilot(id: i64) -> RosterPilot {
     RosterPilot {
@@ -173,7 +166,10 @@ mod tests {
       id,
       liquid: Some(1_000.0),
       name: format!("Pilot {id}"),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 
@@ -181,6 +177,10 @@ mod tests {
     RosterCorp {
       id,
       liquid: None,
+      logo: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      },
       name: format!("Corp {id}"),
       ticker: "CRP".to_owned(),
     }

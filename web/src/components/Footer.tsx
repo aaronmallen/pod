@@ -49,9 +49,9 @@ export function Footer({ release }: Props) {
             <span style={{ fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em' }}>Pod</span>
           </div>
           <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.6, maxWidth: 360 }}>
-            An independent, fan-made companion. Not affiliated with or endorsed by CCP hf.
-            Pod uses the public ESI (EVE Swagger Interface) to read your character data
-            {'—'} with your explicit consent, on your machine, at your pace.
+            An independent, fan-made companion. Pod uses the public ESI (EVE Swagger
+            Interface) to read your character data {'—'} with your explicit consent, on
+            your machine, at your pace.
           </div>
         </div>
 
@@ -75,6 +75,30 @@ export function Footer({ release }: Props) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{
+        maxWidth: 1320, margin: '0 auto',
+        padding: '0 40px 40px',
+      }}>
+        <div style={{
+          borderTop: `1px solid ${T.rule}`,
+          paddingTop: 28,
+          fontSize: 11, color: T.veryMuted, lineHeight: 1.7, maxWidth: 920,
+        }}>
+          EVE Online and the EVE logo are the registered trademarks of Fenris Creations
+          (formerly CCP hf.). All rights reserved worldwide. All other trademarks are the
+          property of their respective owners. EVE Online, the EVE logo, EVE and all
+          associated logos and designs are the intellectual property of Fenris Creations.
+          All artwork, screenshots, characters, vehicles, storylines, world facts or other
+          recognizable features of the intellectual property relating to these trademarks
+          are likewise the intellectual property of Fenris Creations. Fenris Creations has
+          granted permission to Pod to use EVE Online and all associated logos and designs
+          for promotional and information purposes but does not endorse, and is not in any
+          way affiliated with, Pod. Fenris Creations is in no way responsible for the
+          content on or functioning of this website, nor can it be liable for any damage
+          arising from the use of this website.
+        </div>
       </div>
 
       <div style={{

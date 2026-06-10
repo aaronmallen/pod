@@ -113,33 +113,15 @@ impl Chart<'_> {
     }
     let baseline = height - PLOT_PAD_BOTTOM;
 
-    let fill = canvas::Path::new(|builder| {
-      builder.move_to(Point::new(self.x_at(0, width), baseline));
-      for (i, point) in self.points.iter().enumerate() {
-        builder.line_to(Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range)));
-      }
-      builder.line_to(Point::new(self.x_at(self.points.len() - 1, width), baseline));
-      builder.close();
-    });
     frame.fill(
-      &fill,
+      &self.liquid_fill_path(width, height, range, baseline),
       canvas::gradient::Linear::new(Point::new(0.0, PLOT_PAD_TOP), Point::new(0.0, baseline))
         .add_stop(0.0, color::with_alpha(color::accent::PLASMA, 0.2))
         .add_stop(1.0, color::with_alpha(color::accent::PLASMA, 0.0)),
     );
 
-    let line = canvas::Path::new(|builder| {
-      for (i, point) in self.points.iter().enumerate() {
-        let p = Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range));
-        if i == 0 {
-          builder.move_to(p);
-        } else {
-          builder.line_to(p);
-        }
-      }
-    });
     frame.stroke(
-      &line,
+      &self.liquid_line_path(width, height, range),
       canvas::Stroke::default()
         .with_width(1.75)
         .with_color(color::with_alpha(color::accent::PLASMA, 0.92)),
@@ -280,6 +262,30 @@ impl Chart<'_> {
 
   fn is_up(&self) -> bool {
     super::series_change(self.points) >= 0.0
+  }
+
+  fn liquid_fill_path(&self, width: f32, height: f32, range: (f64, f64), baseline: f32) -> canvas::Path {
+    canvas::Path::new(|builder| {
+      builder.move_to(Point::new(self.x_at(0, width), baseline));
+      for (i, point) in self.points.iter().enumerate() {
+        builder.line_to(Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range)));
+      }
+      builder.line_to(Point::new(self.x_at(self.points.len() - 1, width), baseline));
+      builder.close();
+    })
+  }
+
+  fn liquid_line_path(&self, width: f32, height: f32, range: (f64, f64)) -> canvas::Path {
+    canvas::Path::new(|builder| {
+      for (i, point) in self.points.iter().enumerate() {
+        let p = Point::new(self.x_at(i, width), self.y_at(point.liquid, height, range));
+        if i == 0 {
+          builder.move_to(p);
+        } else {
+          builder.line_to(p);
+        }
+      }
+    })
   }
 
   fn marker_index(&self) -> usize {

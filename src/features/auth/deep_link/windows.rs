@@ -33,12 +33,20 @@ fn write_handler() -> std::io::Result<()> {
     return Ok(());
   }
 
+  write_scheme_root(&hkcu)?;
+  write_command_key(&hkcu, &command_path, &command)
+}
+
+fn write_scheme_root(hkcu: &RegKey) -> std::io::Result<()> {
   let (scheme_key, _) = hkcu.create_subkey(format!(r"Software\Classes\{SCHEME}"))?;
   scheme_key.set_value("", &PROTOCOL_DESCRIPTION)?;
   scheme_key.set_value("URL Protocol", &"")?;
-  let (command_key, _) = hkcu.create_subkey(&command_path)?;
-  command_key.set_value("", &command)?;
+  Ok(())
+}
 
+fn write_command_key(hkcu: &RegKey, command_path: &str, command: &str) -> std::io::Result<()> {
+  let (command_key, _) = hkcu.create_subkey(command_path)?;
+  command_key.set_value("", &command)?;
   Ok(())
 }
 

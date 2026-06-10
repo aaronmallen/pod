@@ -611,7 +611,10 @@ fn prepare_store() -> Result<PreparedStore, String> {
 }
 
 async fn open_store_inner() -> Result<StoreReady, String> {
-  let prepared = prepare_store()?;
+  // SEAM (networked-drive storage rework): store prep performs a blocking copy off the (possibly
+  // network) share in Sync mode plus lease file IO. Run it on a blocking thread so a stalled or slow
+  // mount can't wedge the async boot worker — the first window renders independent of this finishing.
+  let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
   let db = store::open(&prepared.database_path).await.map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {

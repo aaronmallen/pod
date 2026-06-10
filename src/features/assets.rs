@@ -9,7 +9,10 @@ mod tracker;
 mod tree;
 mod values;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+  collections::{HashMap, HashSet},
+  time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use iced::{Element, Task, widget::text_editor};
@@ -36,6 +39,7 @@ use crate::{
 
 const INVENTORY_PAGE_SIZE: i64 = 200;
 const INVENTORY_SCROLL_THRESHOLD: f32 = 0.85;
+const SEARCH_DEBOUNCE_MS: u64 = 200;
 const HEADER_SIDE_PADDING: f32 = 28.0;
 
 const SIDEBAR_PANE_KEY: &str = "assets.sidebar";
@@ -231,6 +235,10 @@ pub enum Message {
   SavedFiltersReloaded(Vec<SavedAssetFilter>),
   ScopeSelected(Scope),
   SearchChanged(String),
+  SearchReloaded {
+    generation: u64,
+    loaded: Box<Loaded>,
+  },
   SearchSubmitted,
   SidebarCursorMoved(iced::Point),
   SortSelected(SortColumn),
@@ -312,6 +320,7 @@ pub struct State {
   saved_filter_modal_open: bool,
   saved_filters: Vec<SavedAssetFilter>,
   search: String,
+  search_generation: u64,
   sidebar_cursor: Option<iced::Point>,
   sort: SortColumn,
   sort_dir: SortDirection,
@@ -364,6 +373,7 @@ impl State {
       saved_filter_modal_open: false,
       saved_filters: Vec::new(),
       search: String::new(),
+      search_generation: 0,
       sidebar_cursor: None,
       sidebar: PaneDrag::new(SIDEBAR_DEFAULT_WIDTH),
       sort: SortColumn::Value,
@@ -699,6 +709,70 @@ fn reload(db: &Database, scope: Scope, inventory: InventoryView) -> Task<Message
   })
 }
 
+fn reload_filtered(state: &mut State, db: &Database) -> Task<Message> {
+  state.search_generation = state.search_generation.wrapping_add(1);
+  reload(db, state.active, InventoryView::from_state(state))
+}
+
+fn trigger_search(state: &mut State, db: &Database) -> Task<Message> {
+  state.search_generation = state.search_generation.wrapping_add(1);
+  run_search(
+    db.clone(),
+    state.active,
+    InventoryView::from_state(state),
+    state.search_generation,
+  )
+}
+
+fn run_search(db: Database, scope: Scope, view: InventoryView, generation: u64) -> Task<Message> {
+  Task::perform(
+    async move {
+      tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+      load_assets(db, scope, view).await
+    },
+    move |loaded| Message::SearchReloaded {
+      generation,
+      loaded: Box::new(loaded),
+    },
+  )
+}
+
+fn apply_loaded(state: &mut State, loaded: Loaded) {
+  let Loaded {
+    corporations,
+    geo_tree,
+    inventory,
+    roster,
+    saved_filters,
+    totals,
+    values,
+    nav,
+    stockpiles,
+    abyssals,
+  } = loaded;
+  state.corporations = corporations;
+  state.saved_filters = saved_filters;
+  state.inventory_has_more = inventory.len() as i64 == INVENTORY_PAGE_SIZE;
+  state.inventory = inventory;
+  state.inventory_loading = false;
+  state.expanded_containers.clear();
+  state.inventory_children.clear();
+  state.roster = roster;
+  state.totals = totals;
+  state.values = values;
+  state.nav = nav;
+  state.stockpiles = stockpiles;
+  state.abyssals = abyssals.cards;
+  state.abyssal_source_types = abyssals.source_types;
+  state.abyssal_filters = abyssals::Filters::default();
+  state.abyssal_picker_open = false;
+  state.abyssal_slider_edit = None;
+  state.abyssal_slider_edit_text = String::new();
+  state.abyssal_stat_templates = Vec::new();
+  state.abyssal_visible_count = ABYSSAL_PAGE_SIZE;
+  state.geo_tree = geo_tree;
+}
+
 #[derive(Clone, Debug)]
 struct InventoryView {
   filter: String,
@@ -753,6 +827,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::PickerToggled
     | Message::ScopeSelected(_)
     | Message::SearchChanged(_)
+    | Message::SearchReloaded {
+      ..
+    }
     | Message::SearchSubmitted
     | Message::SortSelected(_)
     | Message::TabSelected(_) => update_inventory(state, message, db),
@@ -833,39 +910,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::Loaded(loaded) => {
-      let Loaded {
-        corporations,
-        geo_tree,
-        inventory,
-        roster,
-        saved_filters,
-        totals,
-        values,
-        nav,
-        stockpiles,
-        abyssals,
-      } = *loaded;
-      state.corporations = corporations;
-      state.saved_filters = saved_filters;
-      state.inventory_has_more = inventory.len() as i64 == INVENTORY_PAGE_SIZE;
-      state.inventory = inventory;
-      state.inventory_loading = false;
-      state.expanded_containers.clear();
-      state.inventory_children.clear();
-      state.roster = roster;
-      state.totals = totals;
-      state.values = values;
-      state.nav = nav;
-      state.stockpiles = stockpiles;
-      state.abyssals = abyssals.cards;
-      state.abyssal_source_types = abyssals.source_types;
-      state.abyssal_filters = abyssals::Filters::default();
-      state.abyssal_picker_open = false;
-      state.abyssal_slider_edit = None;
-      state.abyssal_slider_edit_text = String::new();
-      state.abyssal_stat_templates = Vec::new();
-      state.abyssal_visible_count = ABYSSAL_PAGE_SIZE;
-      state.geo_tree = geo_tree;
+      apply_loaded(state, *loaded);
+      Task::none()
+    }
+    Message::SearchReloaded {
+      generation,
+      loaded,
+    } => {
+      if generation == state.search_generation {
+        apply_loaded(state, *loaded);
+      }
       Task::none()
     }
     Message::PickerToggled => {
@@ -882,7 +936,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
       state.geo_selected = GeoSelection::All;
       state.geo_expanded.clear();
       state.saved_filter_active = None;
-      reload(db, scope, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     Message::TabSelected(tab) => {
       state.chart_hover = None;
@@ -895,15 +949,15 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
     }
     Message::SearchChanged(query) => {
       state.search = query;
-      Task::none()
+      trigger_search(state, db)
     }
-    Message::SearchSubmitted => reload(db, state.active, InventoryView::from_state(state)),
+    Message::SearchSubmitted => trigger_search(state, db),
     Message::CategorySelected(category) => {
       if state.category == category {
         return Task::none();
       }
       state.category = category;
-      reload(db, state.active, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     Message::SortSelected(column) => {
       if state.sort == column {
@@ -915,7 +969,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
         state.sort = column;
         state.sort_dir = SortDirection::Descending;
       }
-      reload(db, state.active, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     Message::InventoryHelpToggled => {
       state.inventory_help_open = !state.inventory_help_open;
@@ -924,7 +978,7 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
     Message::FilterExamplePicked(query) => {
       state.search = query.to_owned();
       state.inventory_help_open = false;
-      reload(db, state.active, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     _ => Task::none(),
   }
@@ -947,7 +1001,7 @@ fn update_geo(state: &mut State, message: Message, db: &Database) -> Task<Messag
       if !matches!(selection, GeoSelection::All) {
         state.saved_filter_active = None;
       }
-      reload(db, state.active, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     _ => Task::none(),
   }
@@ -1012,7 +1066,7 @@ fn update_saved_filter(state: &mut State, message: Message, db: &Database) -> Ta
         state.saved_filter_active = None;
         state.search = String::new();
         state.category = Category::All;
-        return reload(db, state.active, InventoryView::from_state(state));
+        return reload_filtered(state, db);
       }
       let Some(filter) = state.saved_filters.iter().find(|filter| filter.id() == id) else {
         return Task::none();
@@ -1022,7 +1076,7 @@ fn update_saved_filter(state: &mut State, message: Message, db: &Database) -> Ta
       state.category = Category::from_key(filter.category().as_deref());
       // Mutually exclusive with geo selection.
       state.geo_selected = GeoSelection::All;
-      reload(db, state.active, InventoryView::from_state(state))
+      reload_filtered(state, db)
     }
     Message::SavedFilterRightPressed(id) => {
       if let (Some(anchor), Some(filter)) = (
@@ -1952,6 +2006,26 @@ mod tests {
 
     use super::*;
 
+    fn loaded_with_items(items: i64) -> Box<Loaded> {
+      Box::new(Loaded {
+        corporations: vec![],
+        geo_tree: GeoTree::default(),
+        inventory: vec![],
+        roster: vec![],
+        saved_filters: vec![],
+        totals: InventoryTotals {
+          items,
+          locations: 1,
+          value: 0.0,
+          volume: 0.0,
+        },
+        values: values::ValueSummary::default(),
+        nav: tracker::NavSeries::default(),
+        stockpiles: vec![],
+        abyssals: abyssals::AbyssalsData::default(),
+      })
+    }
+
     #[tokio::test]
     async fn it_records_the_loaded_roster_and_totals() {
       let db = crate::store::open_test().await.unwrap();
@@ -2024,6 +2098,70 @@ mod tests {
 
       let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
       assert_eq!(state.search, "tritanium");
+    }
+
+    #[tokio::test]
+    async fn it_bumps_the_search_generation_on_each_keystroke() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("r".to_owned()), &db);
+      let _ = update(&mut state, Message::SearchChanged("ri".to_owned()), &db);
+
+      assert_eq!(state.search_generation, 2);
+    }
+
+    #[tokio::test]
+    async fn it_applies_search_results_for_the_current_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.search_generation = 7;
+      state.totals.items = 99;
+
+      let _ = update(
+        &mut state,
+        Message::SearchReloaded {
+          generation: 7,
+          loaded: loaded_with_items(5),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 5);
+    }
+
+    #[tokio::test]
+    async fn it_drops_search_results_from_a_superseded_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.search_generation = 8;
+      state.totals.items = 99;
+
+      let _ = update(
+        &mut state,
+        Message::SearchReloaded {
+          generation: 7,
+          loaded: loaded_with_items(5),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 99, "a stale keystroke's result is ignored");
+    }
+
+    #[tokio::test]
+    async fn it_invalidates_in_flight_searches_when_a_discrete_reload_runs() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("rifter".to_owned()), &db);
+      let stale_generation = state.search_generation;
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+
+      assert_ne!(
+        state.search_generation, stale_generation,
+        "changing category supersedes the pending search"
+      );
     }
 
     #[tokio::test]

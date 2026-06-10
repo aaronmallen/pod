@@ -353,6 +353,48 @@ mod tests {
     }
   }
 
+  mod resolve_race_model {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_fetches_a_race_from_esi_when_absent_from_the_db() {
+      let server = MockServer::start().await;
+      mount_races(&server).await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let race = super::super::resolve_race_model(&ctx, 1).await.unwrap();
+
+      assert_eq!(race.name(), "Caldari");
+    }
+
+    #[tokio::test]
+    async fn it_returns_a_db_cached_race_without_fetching() {
+      let server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      sde::upsert_race(&db, &Race::new(1, 500_001, "The Caldari.", "Caldari"))
+        .await
+        .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 1);
+
+      let race = super::super::resolve_race_model(&ctx, 1).await.unwrap();
+
+      assert_eq!(race.name(), "Caldari");
+    }
+  }
+
   mod run {
     use super::*;
 

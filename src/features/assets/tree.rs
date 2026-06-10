@@ -914,6 +914,53 @@ mod tests {
 
       let _el: Element<'_, Message> = pane(&state);
     }
+
+    fn saved_filter(id: i64, name: &str, query: &str, category: Option<&str>) -> crate::store::model::SavedAssetFilter {
+      crate::store::model::SavedAssetFilter {
+        category: category.map(str::to_owned),
+        id,
+        name: name.to_owned(),
+        query: query.to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_an_active_saved_filter_row_with_a_query_hint() {
+      let filter = saved_filter(1, "Ships", "ship", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
+    }
+
+    #[test]
+    fn it_renders_an_inactive_saved_filter_row_with_a_category_hint() {
+      let filter = saved_filter(2, "Modules", "", Some("module"));
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
+    }
+
+    #[test]
+    fn it_renders_a_saved_filter_row_with_an_all_assets_hint() {
+      let filter = saved_filter(3, "Everything", "", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
+    }
+
+    #[test]
+    fn it_renders_a_saved_filter_row_with_a_truncated_long_query_hint() {
+      let filter = saved_filter(4, "Long", "a very long search query that exceeds the hint limit", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
+    }
+
+    #[test]
+    fn it_renders_an_enabled_modal_primary_button() {
+      let _el: Element<'_, Message> = modal_primary_button("Save", true);
+    }
+
+    #[test]
+    fn it_renders_a_disabled_modal_primary_button() {
+      let _el: Element<'_, Message> = modal_primary_button("Save", false);
+    }
   }
 
   mod db {

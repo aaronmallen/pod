@@ -427,10 +427,10 @@ jobs:
           name: rc-linux
           if-no-files-found: error
           path: |
-            **/*.deb
-            **/*.AppImage
-            **/*.AppImage.sig
-            **/*.pkg.tar.zst
+            target/release/*.deb
+            target/release/*.AppImage
+            target/release/*.AppImage.sig
+            target/release/*.pkg.tar.zst
             ${{ env.TARBALL }}
             dev.aaronmallen.pod.flatpak
 

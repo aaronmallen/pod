@@ -2321,6 +2321,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_opens_a_context_menu_at_the_cursor_then_closes_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(
+        &mut state,
+        Message::StockpileCursorMoved(iced::Point::new(20.0, 40.0)),
+        &db,
+      );
+      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
+      assert_eq!(state.stockpile_context_menu.as_ref().map(|menu| menu.id), Some(7));
+
+      let _ = update(&mut state, Message::StockpileContextMenuClosed, &db);
+      assert!(state.stockpile_context_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_right_press_without_a_cursor_anchor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
+
+      assert!(state.stockpile_context_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_card_expanded_then_collapsed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
+      assert!(state.stockpile_expanded.contains(&7));
+
+      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
+      assert!(!state.stockpile_expanded.contains(&7));
+    }
+
+    #[tokio::test]
+    async fn it_opens_changes_and_closes_the_multibuy_export() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportOpened(7), &db);
+      assert_eq!(state.stockpile_multibuy_export, Some(7));
+      assert!(!state.stockpile_multibuy_copied);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileMultibuyModeChanged(stockpiles::MultibuyMode::Remaining),
+        &db,
+      );
+      assert_eq!(state.stockpile_multibuy_mode, stockpiles::MultibuyMode::Remaining);
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(7), &db);
+      assert!(state.stockpile_multibuy_copied);
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportClosed, &db);
+      assert!(state.stockpile_multibuy_export.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_multibuy_copy_for_an_unknown_card() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(404), &db);
+
+      assert!(!state.stockpile_multibuy_copied);
+    }
+
+    #[tokio::test]
     async fn it_edits_the_draft_name_and_item_rows() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();

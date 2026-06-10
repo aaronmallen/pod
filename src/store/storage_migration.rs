@@ -534,6 +534,56 @@ mod tests {
       assert_eq!(read_generation(&generation_marker(&new.resolved_database_path())), 6);
       assert!(!old.resolved_database_path().exists(), "the old share copy is moved");
     }
+
+    #[tokio::test]
+    async fn it_moves_the_working_copy_and_its_wal_sidecars_when_the_cache_path_changes() {
+      let root = tempdir().unwrap();
+      let old = config(&root.path().join("share-a"), &root.path().join("cache-a"), true);
+      let new = config(&root.path().join("share-b"), &root.path().join("cache-b"), true);
+      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
+      fs::write(old.resolved_database_path(), b"canonical").unwrap();
+      fs::create_dir_all(old.resolved_working_copy_path().parent().unwrap()).unwrap();
+      fs::write(old.resolved_working_copy_path(), b"working").unwrap();
+      write_generation(&generation_marker(&old.resolved_working_copy_path()), 9).unwrap();
+      fs::write(with_suffix(&old.resolved_working_copy_path(), "-wal"), b"wal").unwrap();
+      fs::write(with_suffix(&old.resolved_working_copy_path(), "-shm"), b"shm").unwrap();
+
+      migrate(&old, &new, StorageMode::Sync, StorageMode::Sync).await.unwrap();
+
+      assert_eq!(fs::read(new.resolved_working_copy_path()).unwrap(), b"working");
+      assert_eq!(
+        read_generation(&generation_marker(&new.resolved_working_copy_path())),
+        9
+      );
+      assert_eq!(
+        fs::read(with_suffix(&new.resolved_working_copy_path(), "-wal")).unwrap(),
+        b"wal"
+      );
+      assert!(
+        !old.resolved_working_copy_path().exists(),
+        "the old working copy is moved, not left behind"
+      );
+      assert!(!with_suffix(&old.resolved_working_copy_path(), "-shm").exists());
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_share_path_is_unchanged() {
+      let root = tempdir().unwrap();
+      let share = root.path().join("share");
+      let cache = root.path().join("cache");
+      let old = config(&share, &cache, true);
+      let new = config(&share, &cache, true);
+      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
+      fs::write(old.resolved_database_path(), b"canonical").unwrap();
+
+      migrate(&old, &new, StorageMode::Sync, StorageMode::Sync).await.unwrap();
+
+      assert_eq!(
+        fs::read(old.resolved_database_path()).unwrap(),
+        b"canonical",
+        "an in-place share keeps its canonical copy untouched"
+      );
+    }
   }
 
   mod direct_to_direct {

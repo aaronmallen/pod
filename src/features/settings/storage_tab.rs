@@ -66,7 +66,7 @@ impl PathKind {
         "The canonical SQLite database — character cache, mail bodies, market snapshots, and skill \
           plans. Point this at a shared volume to use the same data across machines."
       }
-      PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; capped at 30 days.",
+      PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; retains 5 daily files.",
     }
   }
 

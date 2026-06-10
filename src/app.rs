@@ -63,7 +63,7 @@ const FILE_FILTER: &str = "warn,\
   wgpu_core=warn,\
   wgpu_hal=warn,\
   sqlx=warn,\
-  sqlx::query=trace";
+  sqlx::query=warn";
 const POPOVER_BOTTOM_OFFSET: f32 = spacing::layout::STATUS_BAR_HEIGHT + 1.0 + 4.0;
 const POPOVER_JOBS: [(JobKind, &str); 7] = [
   (JobKind::AssetSync, "Assets"),
@@ -439,7 +439,7 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
         .filename_prefix("pod")
         .filename_suffix("log")
         .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .max_log_files(7)
+        .max_log_files(5)
         .build(log_dir);
       match appender {
         Ok(appender) => {

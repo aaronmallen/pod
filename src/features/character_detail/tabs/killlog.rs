@@ -44,6 +44,7 @@ pub struct KillLogEntry {
   pub ship_type_id: i64,
   pub system_name: Option<String>,
   pub system_security: f64,
+  pub value_destroyed_isk: f64,
   pub value_isk: f64,
   pub victim_corp: String,
   pub victim_name: String,
@@ -90,10 +91,10 @@ fn compute_stats(entries: &[KillLogEntry]) -> KillStats {
   for entry in entries {
     if entry.is_kill {
       stats.kill_count += 1;
-      stats.kill_isk += entry.value_isk;
+      stats.kill_isk += entry.value_destroyed_isk;
     } else {
       stats.loss_count += 1;
-      stats.loss_isk += entry.value_isk;
+      stats.loss_isk += entry.value_destroyed_isk;
     }
   }
   stats
@@ -559,6 +560,10 @@ mod tests {
   use super::*;
 
   fn entry(killmail_id: i64, is_kill: bool, value_isk: f64) -> KillLogEntry {
+    entry_with(killmail_id, is_kill, value_isk, value_isk)
+  }
+
+  fn entry_with(killmail_id: i64, is_kill: bool, value_isk: f64, value_destroyed_isk: f64) -> KillLogEntry {
     KillLogEntry {
       attacker_count: 3,
       final_blow: is_kill,
@@ -569,6 +574,7 @@ mod tests {
       ship_type_id: 587,
       system_name: Some("Jita".to_owned()),
       system_security: 0.9,
+      value_destroyed_isk,
       value_isk,
       victim_corp: "Hostile Corp".to_owned(),
       victim_name: "Target Pilot".to_owned(),
@@ -640,6 +646,19 @@ mod tests {
       assert_eq!(stats.kill_isk, 1_500_000.0);
       assert_eq!(stats.loss_count, 1);
       assert_eq!(stats.loss_isk, 2_000_000.0);
+    }
+
+    #[test]
+    fn it_uses_the_destroyed_only_basis_not_the_displayed_total() {
+      let entries = vec![
+        entry_with(1, true, 1_000_000.0, 800_000.0),
+        entry_with(2, false, 2_000_000.0, 1_200_000.0),
+      ];
+
+      let stats = compute_stats(&entries);
+
+      assert_eq!(stats.kill_isk, 800_000.0);
+      assert_eq!(stats.loss_isk, 1_200_000.0);
     }
   }
 

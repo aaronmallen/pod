@@ -406,6 +406,7 @@ async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLog
       ship_type_id: row.ship_type_id(),
       system_name,
       system_security,
+      value_destroyed_isk: row.value_destroyed_isk(),
       value_isk: row.value_isk(),
       victim_corp,
       victim_name,

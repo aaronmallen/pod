@@ -303,7 +303,7 @@ fn composition_stack(state: &State) -> Option<Element<'_, Message>> {
         .width(Length::FillPortion(share))
         .height(Length::Fixed(BAR_HEIGHT))
         .style(move |_| container::Style {
-          background: Some(Background::Color(slice_color(index))),
+          background: Some(Background::Color(color::chart::series(index))),
           ..container::Style::default()
         })
         .into()
@@ -334,7 +334,7 @@ fn composition_stack(state: &State) -> Option<Element<'_, Message>> {
       Row::with_children(vec![
         container(Space::new().width(Length::Fixed(8.0)).height(Length::Fixed(8.0)))
           .style(move |_| container::Style {
-            background: Some(Background::Color(slice_color(index))),
+            background: Some(Background::Color(color::chart::series(index))),
             border: Border {
               radius: radius::SUBTLE.into(),
               ..Border::default()
@@ -372,17 +372,6 @@ fn composition_stack(state: &State) -> Option<Element<'_, Message>> {
     .spacing(spacing::SPACE_2)
     .into(),
   )
-}
-
-fn slice_color(index: usize) -> Color {
-  let hues = [
-    color::accent::PLASMA,
-    color::status::ONLINE,
-    color::status::DANGER,
-    color::chart::GOLD,
-    color::chart::VIOLET,
-  ];
-  hues[index % hues.len()]
 }
 
 #[cfg(test)]

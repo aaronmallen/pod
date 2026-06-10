@@ -29,7 +29,7 @@ const TOP_ITEM_COUNT: usize = 10;
 pub struct ValueSummary {
   pub(super) by_category: Vec<CategoryValue>,
   pub(super) by_location: Vec<LocationValue>,
-  pub(super) matrix_locations: Vec<i64>,
+  pub(super) matrix_locations: Vec<MatrixLocation>,
   pub(super) matrix_rows: Vec<MatrixRow>,
   pub(super) top_items: Vec<TopItem>,
   pub(super) total_value: f64,
@@ -43,8 +43,15 @@ pub(super) struct CategoryValue {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LocationValue {
+  pub label: Option<String>,
   pub location_id: i64,
   pub value: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MatrixLocation {
+  pub label: Option<String>,
+  pub location_id: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,12 +101,17 @@ fn by_category(rows: &[InventoryRow]) -> Vec<CategoryValue> {
 
 fn by_location(rows: &[InventoryRow]) -> Vec<LocationValue> {
   let mut totals: HashMap<i64, f64> = HashMap::new();
+  let mut labels: HashMap<i64, String> = HashMap::new();
   for row in rows {
     *totals.entry(row.location_id).or_default() += row.value;
+    if let Some(label) = &row.location_label {
+      labels.entry(row.location_id).or_insert_with(|| label.clone());
+    }
   }
   let mut out: Vec<LocationValue> = totals
     .into_iter()
     .map(|(location_id, value)| LocationValue {
+      label: labels.get(&location_id).cloned(),
       location_id,
       value,
     })
@@ -108,8 +120,14 @@ fn by_location(rows: &[InventoryRow]) -> Vec<LocationValue> {
   out
 }
 
-fn matrix_locations(rows: &[InventoryRow]) -> Vec<i64> {
-  by_location(rows).into_iter().map(|l| l.location_id).collect()
+fn matrix_locations(rows: &[InventoryRow]) -> Vec<MatrixLocation> {
+  by_location(rows)
+    .into_iter()
+    .map(|l| MatrixLocation {
+      label: l.label,
+      location_id: l.location_id,
+    })
+    .collect()
 }
 
 fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot]) -> Vec<MatrixRow> {
@@ -199,8 +217,12 @@ pub(super) fn body(summary: &ValueSummary) -> Element<'_, Message> {
 
 fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
   let mut header_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Character", Horizontal::Left)];
-  for location_id in &summary.matrix_locations {
-    header_cells.push(matrix_label_cell(&format!("Loc {location_id}"), Horizontal::Right));
+  for location in &summary.matrix_locations {
+    let label = location
+      .label
+      .clone()
+      .unwrap_or_else(|| format!("Loc {}", location.location_id));
+    header_cells.push(matrix_label_cell(&label, Horizontal::Right));
   }
   header_cells.push(matrix_label_cell("Total", Horizontal::Right));
 
@@ -225,8 +247,8 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
       Horizontal::Left,
       color::text::PRIMARY,
     )];
-    for location_id in &summary.matrix_locations {
-      let value = matrix_row.cells.get(location_id).copied().unwrap_or(0.0);
+    for location in &summary.matrix_locations {
+      let value = matrix_row.cells.get(&location.location_id).copied().unwrap_or(0.0);
       let label = if value <= 0.0 {
         "\u{2014}".to_owned()
       } else {
@@ -261,11 +283,11 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
   }
 
   let mut footer_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Column total", Horizontal::Left)];
-  for location_id in &summary.matrix_locations {
+  for location in &summary.matrix_locations {
     let column_total: f64 = summary
       .matrix_rows
       .iter()
-      .map(|r| r.cells.get(location_id).copied().unwrap_or(0.0))
+      .map(|r| r.cells.get(&location.location_id).copied().unwrap_or(0.0))
       .sum();
     footer_cells.push(matrix_numeric_cell(fmt_isk(column_total), color::accent::PLASMA));
   }
@@ -339,7 +361,7 @@ fn category_card(summary: &ValueSummary) -> Element<'_, Message> {
         .width(Length::FillPortion(portion.max(1)))
         .height(Length::Fixed(spacing::SPACE_2_5))
         .style(move |_| container::Style {
-          background: Some(Background::Color(category_hue(index))),
+          background: Some(Background::Color(color::chart::series(index))),
           ..container::Style::default()
         })
         .into()
@@ -367,7 +389,7 @@ fn category_card(summary: &ValueSummary) -> Element<'_, Message> {
           .width(Length::Fixed(spacing::SPACE_2_5))
           .height(Length::Fixed(spacing::SPACE_2_5))
           .style(move |_| container::Style {
-            background: Some(Background::Color(category_hue(index))),
+            background: Some(Background::Color(color::chart::series(index))),
             border: Border {
               radius: radius::SUBTLE.into(),
               ..Border::default()
@@ -498,11 +520,6 @@ fn card<'a>(title: &'a str, body: Element<'a, Message>) -> Element<'a, Message> 
   )
 }
 
-fn category_hue(index: usize) -> iced::Color {
-  let alpha = 0.85 - (index % 5) as f32 * 0.12;
-  color::with_alpha(color::accent::PLASMA, alpha.max(0.3))
-}
-
 fn empty_state<'a>() -> Element<'a, Message> {
   shared_empty_state("No valued assets in this scope.").render()
 }
@@ -512,6 +529,18 @@ mod tests {
   use super::*;
 
   fn row(type_name: &str, category: &str, owner_id: i64, location_id: i64, quantity: i64, value: f64) -> InventoryRow {
+    labeled_row(type_name, category, owner_id, location_id, None, quantity, value)
+  }
+
+  fn labeled_row(
+    type_name: &str,
+    category: &str,
+    owner_id: i64,
+    location_id: i64,
+    location_label: Option<&str>,
+    quantity: i64,
+    value: f64,
+  ) -> InventoryRow {
     InventoryRow {
       category: category.to_owned(),
       container_id: None,
@@ -522,7 +551,7 @@ mod tests {
       is_container: false,
       item_id: value as i64,
       location_id,
-      location_label: None,
+      location_label: location_label.map(str::to_owned),
       owner_id,
       quantity,
       row_volume: 10.0,
@@ -577,6 +606,60 @@ mod tests {
     fn it_yields_an_empty_summary_for_no_rows() {
       let summary = summarize(&[], &[]);
       assert_eq!(summary, ValueSummary::default());
+    }
+  }
+
+  mod by_location {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_threads_the_location_label_onto_each_value() {
+      let rows = vec![labeled_row(
+        "Rifter",
+        "ship",
+        7,
+        60_003_760,
+        Some("Jita IV - Moon 4"),
+        1,
+        1_000.0,
+      )];
+
+      let out = super::super::by_location(&rows);
+
+      assert_eq!(out[0].location_id, 60_003_760);
+      assert_eq!(out[0].label.as_deref(), Some("Jita IV - Moon 4"));
+    }
+
+    #[test]
+    fn it_leaves_the_label_absent_when_no_row_carries_one() {
+      let rows = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
+
+      let out = super::super::by_location(&rows);
+
+      assert_eq!(out[0].label, None);
+    }
+  }
+
+  mod matrix_locations {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_carries_the_label_and_id_for_each_column() {
+      let rows = vec![
+        labeled_row("Rifter", "ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1, 1_000.0),
+        labeled_row("Rupture", "ship", 8, 60_008_494, None, 1, 2_000.0),
+      ];
+
+      let out = super::super::matrix_locations(&rows);
+
+      assert_eq!(out[0].location_id, 60_008_494);
+      assert_eq!(out[0].label, None);
+      assert_eq!(out[1].location_id, 60_003_760);
+      assert_eq!(out[1].label.as_deref(), Some("Jita IV - Moon 4"));
     }
   }
 

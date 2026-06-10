@@ -30,6 +30,17 @@ pub mod chart {
     b: 0.86,
     a: 1.0,
   };
+
+  pub fn series(index: usize) -> Color {
+    const PALETTE: [Color; 5] = [
+      super::accent::PLASMA,
+      super::status::ONLINE,
+      super::status::DANGER,
+      GOLD,
+      VIOLET,
+    ];
+    PALETTE[index % PALETTE.len()]
+  }
 }
 
 pub mod state {
@@ -128,5 +139,33 @@ pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
   iced::Color {
     a: alpha,
     ..base
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  mod chart {
+    mod series {
+      use pretty_assertions::{assert_eq, assert_ne};
+
+      use super::super::super::chart::series;
+
+      #[test]
+      fn it_returns_distinct_colors_across_the_palette() {
+        let palette = [series(0), series(1), series(2), series(3), series(4)];
+
+        for (i, a) in palette.iter().enumerate() {
+          for b in &palette[i + 1..] {
+            assert_ne!(a, b);
+          }
+        }
+      }
+
+      #[test]
+      fn it_cycles_the_palette_beyond_its_length() {
+        assert_eq!(series(0), series(5));
+        assert_eq!(series(2), series(7));
+      }
+    }
   }
 }

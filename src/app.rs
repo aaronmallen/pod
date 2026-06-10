@@ -947,13 +947,30 @@ fn navigate_to_wallet(app: &mut App) -> Task<Message> {
   }
 }
 
-fn navigate_to_mail(app: &mut App) -> Task<Message> {
+fn navigate_to_mail(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Mail);
-  app.mail = Some(mail::State::new().with_restored_panes(&app.ui_state));
-  match app.runtime.as_ref() {
-    Some(runtime) => mail::load(&runtime.db).map(Message::Mail),
-    None => Task::none(),
+  match target {
+    Some(id) => {
+      app.mail = Some(mail::State::new(id).with_restored_panes(&app.ui_state));
+      match app.runtime.as_ref() {
+        Some(runtime) => mail::load(&runtime.db, id).map(Message::Mail),
+        None => Task::none(),
+      }
+    }
+    None => {
+      app.mail = Some(mail::State::new(mail::EMPTY_MAIL_SELECTION).with_restored_panes(&app.ui_state));
+      Task::none()
+    }
   }
+}
+
+fn resolve_mail_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> Option<i64> {
+  if let Some(id) = last_selected
+    && roster.iter().any(|pilot| pilot.id == id)
+  {
+    return Some(id);
+  }
+  roster.first().map(|pilot| pilot.id)
 }
 
 fn mail_clock_reload(app: &App) -> Task<Message> {
@@ -1190,8 +1207,9 @@ fn image_reload(app: &App) -> Task<Message> {
       }
     }
     Route::Mail => {
-      if app.mail.is_some() {
-        tasks.push(mail::load(&runtime.db).map(Message::Mail));
+      if let Some(state) = app.mail.as_ref() {
+        let mail::Scope::Character(id) = state.active();
+        tasks.push(mail::load(&runtime.db, id).map(Message::Mail));
       }
     }
     Route::Settings => {}
@@ -2870,7 +2888,15 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
       let owned = roster.iter().map(|pilot| pilot.id).collect();
       navigate_to_skills(app, target, owned)
     }
-    rail::Destination::Mail => navigate_to_mail(app),
+    rail::Destination::Mail => {
+      let roster = app
+        .character_manager
+        .as_ref()
+        .map(character_manager::owned_roster)
+        .unwrap_or_default();
+      let target = resolve_mail_target(&roster, app.selected_character);
+      navigate_to_mail(app, target)
+    }
     rail::Destination::Wallet => navigate_to_wallet(app),
     rail::Destination::Assets => navigate_to_assets(app),
     other => {
@@ -3906,7 +3932,7 @@ mod tests {
       app.character_manager = Some(character_manager::State::new());
       app.character_detail = Some(character_detail::State::new(1, &[]));
       app.skills = Some(skills::State::new(1));
-      app.mail = Some(mail::State::new());
+      app.mail = Some(mail::State::new(42));
       app.wallet = Some(wallet::State::new());
       app.assets = Some(assets::State::new());
       app
@@ -4050,7 +4076,7 @@ mod tests {
     #[test]
     fn it_routes_a_mail_compose_input_to_a_no_op_without_a_runtime() {
       let mut app = test_app();
-      app.mail = Some(mail::State::new());
+      app.mail = Some(mail::State::new(42));
 
       let _ = update(&mut app, Message::Mail(mail::Message::ComposeToInput("Ve".to_owned())));
     }
@@ -4077,12 +4103,12 @@ mod tests {
     #[tokio::test]
     async fn it_pairs_a_compose_input_with_a_recipient_search_when_a_runtime_is_present() {
       let mut app = test_app();
-      app.mail = Some(mail::State::new());
+      app.mail = Some(mail::State::new(42));
       app.runtime = Some(test_runtime().await);
 
       let _to = handle_mail(&mut app, mail::Message::ComposeToInput("Vexor".to_owned()));
       let _cc = handle_mail(&mut app, mail::Message::ComposeCcInput("Alli".to_owned()));
-      let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::AllInboxes));
+      let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::Character(7)));
     }
 
     #[tokio::test]
@@ -4104,11 +4130,11 @@ mod tests {
     #[test]
     fn it_routes_a_mail_scope_selection_to_a_no_op_without_a_runtime() {
       let mut app = test_app();
-      app.mail = Some(mail::State::new());
+      app.mail = Some(mail::State::new(42));
 
       let _ = update(
         &mut app,
-        Message::Mail(mail::Message::ScopeSelected(mail::Scope::AllInboxes)),
+        Message::Mail(mail::Message::ScopeSelected(mail::Scope::Character(7))),
       );
     }
 
@@ -5130,7 +5156,7 @@ mod tests {
     app.assets = Some(assets::State::new());
     app.character_detail = Some(character_detail::State::new(1, &[]));
     app.character_manager = Some(character_manager::State::new());
-    app.mail = Some(mail::State::new());
+    app.mail = Some(mail::State::new(42));
     app.skills = Some(skills::State::new(1));
     app.wallet = Some(wallet::State::new());
     app

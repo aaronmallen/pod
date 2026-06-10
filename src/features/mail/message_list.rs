@@ -90,14 +90,16 @@ pub(super) async fn load_messages(db: &Database, scope: Scope, folder: Folder) -
   let now = Utc::now();
   let now_iso = now.to_rfc3339();
 
-  let keys: Vec<MailKey> = match scope {
-    Scope::AllInboxes => unified_keys(db, &now_iso).await,
-    Scope::Character(id) => character_keys(db, id, folder, &now_iso).await,
+  let Scope::Character(id) = scope;
+  let keys: Vec<MailKey> = if matches!(folder, Folder::Unified) {
+    unified_keys(db, &now_iso).await
+  } else {
+    character_keys(db, id, folder, &now_iso).await
   };
 
   let mut rows = Vec::with_capacity(keys.len());
   for key in keys {
-    if matches!(scope, Scope::AllInboxes)
+    if matches!(folder, Folder::Unified)
       && !unified_in_folder(db, key.character_id, key.mail_id, folder, &now_iso).await
     {
       continue;
@@ -109,12 +111,14 @@ pub(super) async fn load_messages(db: &Database, scope: Scope, folder: Folder) -
   rows
 }
 
-pub(super) async fn load_all_messages(db: &Database, scope: Scope) -> Vec<MessageRow> {
+pub(super) async fn load_all_messages(db: &Database, scope: Scope, folder: Folder) -> Vec<MessageRow> {
   let now = Utc::now();
 
-  let keys: Vec<MailKey> = match scope {
-    Scope::AllInboxes => all_unified_keys(db).await,
-    Scope::Character(id) => all_character_keys(db, id).await,
+  let Scope::Character(id) = scope;
+  let keys: Vec<MailKey> = if matches!(folder, Folder::Unified) {
+    all_unified_keys(db).await
+  } else {
+    all_character_keys(db, id).await
   };
 
   let mut rows = Vec::with_capacity(keys.len());
@@ -975,20 +979,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_derives_the_unified_stream_scoped_by_folder() {
+    async fn it_combines_for_the_unified_folder_and_scopes_other_folders_to_the_character() {
       let db = store::open_test().await.unwrap();
       seed_fixtures(&db).await;
 
-      let unified = load_messages(&db, Scope::AllInboxes, Folder::Unified).await;
-      assert_eq!(ids(&unified), vec![1, 2, 3, 5]);
+      let unified = load_messages(&db, Scope::Character(CHAR), Folder::Unified).await;
+      assert_eq!(
+        ids(&unified),
+        vec![1, 2, 3, 5],
+        "the unified folder combines the roster's mail"
+      );
 
-      let labelled = load_messages(&db, Scope::AllInboxes, Folder::Label(LABEL)).await;
-      assert_eq!(ids(&labelled), vec![5]);
-
-      assert!(
-        load_messages(&db, Scope::AllInboxes, Folder::Standard(StandardFolder::Sent))
-          .await
-          .is_empty()
+      let labelled = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
+      assert_eq!(
+        ids(&labelled),
+        vec![5],
+        "a non-unified folder is scoped to the active character"
       );
     }
   }

@@ -36,14 +36,19 @@ const FOLDER_PANE_DEFAULT_WIDTH: f32 = 240.0;
 const MESSAGE_LIST_PANE_DEFAULT_WIDTH: f32 = 380.0;
 const FOLDER_PANE_MIN_WIDTH: f32 = 80.0;
 const MESSAGE_LIST_PANE_MIN_WIDTH: f32 = resizable_pane::MIN_PANE_WIDTH;
+pub const EMPTY_MAIL_SELECTION: i64 = 0;
 
 pub const RECIPIENT_SEARCH_MIN_CHARS: usize = 3;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
-  #[default]
-  AllInboxes,
   Character(i64),
+}
+
+impl Default for Scope {
+  fn default() -> Self {
+    Scope::Character(EMPTY_MAIL_SELECTION)
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -188,9 +193,9 @@ enum SnoozeMenu {
 }
 
 impl State {
-  pub fn new() -> Self {
+  pub fn new(active: i64) -> Self {
     State {
-      active: Scope::default(),
+      active: Scope::Character(active),
       all_messages: Vec::new(),
       compose: None,
       folder: Folder::default(),
@@ -332,10 +337,8 @@ impl State {
     if let Some(row) = self.messages.iter().find(|r| r.mail_id == mail_id) {
       return Some(row.character_id);
     }
-    match self.active {
-      Scope::Character(id) => Some(id),
-      Scope::AllInboxes => None,
-    }
+    let Scope::Character(id) = self.active;
+    Some(id)
   }
 
   fn overlay_for(&self, mail_id: i64) -> Option<&MailOverlayState> {
@@ -343,16 +346,14 @@ impl State {
   }
 
   fn default_from(&self) -> Option<i64> {
-    match self.active {
-      Scope::Character(id) => Some(id),
-      Scope::AllInboxes => self.roster.first().map(|p| p.id),
-    }
+    let Scope::Character(id) = self.active;
+    Some(id)
   }
 }
 
 impl Default for State {
   fn default() -> Self {
-    Self::new()
+    Self::new(EMPTY_MAIL_SELECTION)
   }
 }
 
@@ -360,10 +361,11 @@ fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32) -> PaneDrag {
   PaneDrag::with_min_width(ui.panes.get(key).copied().unwrap_or(default), min)
 }
 
-pub fn load(db: &Database) -> Task<Message> {
-  Task::perform(load_mail(db.clone(), Scope::AllInboxes, Folder::Unified), |loaded| {
-    Message::Loaded(Box::new(loaded))
-  })
+pub fn load(db: &Database, character: i64) -> Task<Message> {
+  Task::perform(
+    load_mail(db.clone(), Scope::Character(character), Folder::Unified),
+    |loaded| Message::Loaded(Box::new(loaded)),
+  )
 }
 
 pub fn reload(db: &Database, scope: Scope) -> Task<Message> {
@@ -851,20 +853,22 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
   let unified = loaders::load_unified(&db).await;
   let unified_unread = loaders::load_unified_unread(&db).await;
 
-  let folder_data = match scope {
-    Scope::AllInboxes => loaders::load_folder_pane_unified(&db, &roster).await,
-    Scope::Character(id) => loaders::load_folder_pane(&db, id).await,
+  let Scope::Character(scope_id) = scope;
+
+  let folder_data = match folder {
+    Folder::Unified => loaders::load_folder_pane_unified(&db, &roster).await,
+    _ => loaders::load_folder_pane(&db, scope_id).await,
   };
 
   let messages = message_list::load_messages(&db, scope, folder).await;
-  let all_messages = message_list::load_all_messages(&db, scope).await;
+  let all_messages = message_list::load_all_messages(&db, scope, folder).await;
   let outbox_indicator = loaders::load_outbox_indicator(&db).await;
 
-  let (headers, overlays) = match scope {
-    Scope::AllInboxes => (Vec::new(), HashMap::new()),
-    Scope::Character(id) => {
-      let headers = loaders::load_headers(&db, id).await;
-      let overlays = loaders::load_overlays(&db, id).await;
+  let (headers, overlays) = match folder {
+    Folder::Unified => (Vec::new(), HashMap::new()),
+    _ => {
+      let headers = loaders::load_headers(&db, scope_id).await;
+      let overlays = loaders::load_overlays(&db, scope_id).await;
       (headers, overlays)
     }
   };
@@ -908,10 +912,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_defaults_to_the_all_inboxes_scope() {
-      let state = State::new();
+    fn it_opens_scoped_to_the_starting_character() {
+      let state = State::new(42);
 
-      assert_eq!(state.active(), Scope::AllInboxes);
+      assert_eq!(state.active(), Scope::Character(42));
       assert_eq!(state.unified_unread(), 0);
     }
 
@@ -921,7 +925,7 @@ mod tests {
       ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 300.0);
       ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 420.0);
 
-      let state = State::new().with_restored_panes(&ui);
+      let state = State::new(42).with_restored_panes(&ui);
 
       assert_eq!(state.folder_pane_width(), 300.0);
       assert_eq!(state.message_list_pane_width(), 420.0);
@@ -929,7 +933,7 @@ mod tests {
 
     #[test]
     fn it_falls_back_to_default_pane_widths_when_unsized() {
-      let state = State::new().with_restored_panes(&UiState::default());
+      let state = State::new(42).with_restored_panes(&UiState::default());
 
       assert_eq!(state.folder_pane_width(), FOLDER_PANE_DEFAULT_WIDTH);
       assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_DEFAULT_WIDTH);
@@ -941,7 +945,7 @@ mod tests {
       ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 40.0);
       ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 60.0);
 
-      let state = State::new().with_restored_panes(&ui);
+      let state = State::new(42).with_restored_panes(&ui);
 
       assert_eq!(state.folder_pane_width(), FOLDER_PANE_MIN_WIDTH);
       assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_MIN_WIDTH);
@@ -980,14 +984,14 @@ mod tests {
 
     #[test]
     fn it_is_empty_for_a_fresh_default_state() {
-      let state = State::new();
+      let state = State::new(42);
 
       assert!(state.stale_images().is_empty());
     }
 
     #[test]
     fn it_collects_stale_keys_from_the_roster_messages_and_open_render() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
         id: 42,
@@ -1017,7 +1021,7 @@ mod tests {
 
     #[test]
     fn it_omits_a_fresh_portrait_and_a_non_positive_sender_id() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
         id: 42,
@@ -1038,7 +1042,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_records_a_scope_selection() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
@@ -1048,7 +1052,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_echoes_a_settled_folder_pane_width_for_the_app_to_persist() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::FolderPaneDragStart, &db);
@@ -1061,7 +1065,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_stores_a_landed_reading_pane_render() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       let render = ReadingRender {
         is_starred: true,
@@ -1079,7 +1083,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_clamps_a_folder_drag_to_the_80px_minimum() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::FolderPaneDragStart, &db);
@@ -1092,7 +1096,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_does_not_adopt_a_stale_scope_loads_scope_specific_picture() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.active = Scope::Character(42);
       state.folder_data = FolderPaneData {
@@ -1104,7 +1108,7 @@ mod tests {
         ..FolderPaneData::default()
       };
       let loaded = Loaded {
-        scope: Scope::AllInboxes,
+        scope: Scope::Character(0),
         folder: Folder::Unified,
         ..Loaded::default()
       };
@@ -1117,7 +1121,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_toggles_the_account_switcher_dropdown() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       assert!(!state.picker_open());
@@ -1129,7 +1133,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_closes_the_dropdown_and_resets_the_folder_on_a_scope_selection() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.picker_open = true;
       state.folder = Folder::Standard(StandardFolder::Starred);
@@ -1145,7 +1149,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_clears_the_open_render_when_the_folder_changes() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.render = Some(ReadingRender {
         is_starred: false,
@@ -1191,7 +1195,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_selects_a_row_and_clears_any_open_snooze_menu() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.messages = vec![list_row(7, 42, true)];
       state.snooze_menu = SnoozeMenu::Presets;
@@ -1204,7 +1208,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_clears_the_render_when_selecting_a_row_no_longer_in_the_list() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.render = Some(ReadingRender {
         is_starred: false,
@@ -1223,7 +1227,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_resolves_the_owning_character_for_an_action() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       state.active = Scope::Character(42);
       state.render = Some(ReadingRender {
         is_starred: false,
@@ -1238,14 +1242,11 @@ mod tests {
       state.messages = vec![list_row(8, 43, true)];
       assert_eq!(state.character_for(8), Some(43));
       assert_eq!(state.character_for(999), Some(42));
-      state.active = Scope::AllInboxes;
-      state.messages.clear();
-      assert_eq!(state.character_for(999), None);
     }
 
     #[tokio::test]
     async fn it_toggles_the_snooze_preset_menu() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::SnoozeMenuToggled, &db);
@@ -1256,7 +1257,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_opens_and_edits_the_snooze_calendar() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::SnoozeCalendarOpened, &db);
@@ -1281,7 +1282,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_opens_and_edits_a_compose_draft() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
@@ -1343,7 +1344,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_keeps_a_blocked_send_open_with_an_unsendable_draft() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.compose = Some(compose::Draft::blank(42));
 
@@ -1354,7 +1355,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_surfaces_a_failed_send_inline_and_closes_on_success() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.compose = Some(compose::Draft::blank(42));
 
@@ -1367,7 +1368,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_folds_a_refreshed_outbox_indicator_into_state() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       let indicator = OutboxIndicator {
         pending: 2,
@@ -1381,7 +1382,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_writes_a_preset_snooze_for_the_open_mail_and_closes_the_menu() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.active = Scope::Character(42);
       state.selected = Some(7);
@@ -1396,7 +1397,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_confirms_a_calendar_snooze_and_unsnoozes() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.active = Scope::Character(42);
       state.selected = Some(7);
@@ -1411,7 +1412,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_dispatches_the_remaining_arms_without_panicking() {
-      let mut state = State::new();
+      let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
       state.active = Scope::Character(42);
       state.messages = vec![list_row(7, 42, true)];
@@ -1487,7 +1488,7 @@ mod tests {
     use crate::features::mail::message_list::{DayBucket, MessageRow, SenderKind};
 
     fn populated_state() -> State {
-      let mut state = State::new();
+      let mut state = State::new(42);
       state.active = Scope::Character(42);
       state.roster = vec![
         RosterPilot {
@@ -1584,7 +1585,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_three_pane_shell() {
-      let state = State::new();
+      let state = State::new(42);
       let _el: Element<'_, Message> = view(&state);
     }
 

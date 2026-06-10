@@ -11,24 +11,18 @@ pub(super) fn trigger(state: &State) -> Element<'_, Message> {
 }
 
 fn trigger_content(state: &State) -> Element<'_, Message> {
-  let (title, subtitle, portrait) = match state.active() {
-    Scope::AllInboxes => (
-      "All Inboxes".to_owned(),
-      format!("{} unread", state.unified_unread()),
-      None,
+  let Scope::Character(id) = state.active();
+  let (title, subtitle, portrait) = match state.roster().iter().find(|pilot| pilot.id == id) {
+    Some(pilot) => (
+      pilot.name.clone(),
+      format!("{} unread", pilot.unread),
+      Some(TriggerPortrait {
+        id: pilot.id,
+        name: pilot.name.clone(),
+        path: pilot.portrait.path(),
+      }),
     ),
-    Scope::Character(id) => match state.roster().iter().find(|pilot| pilot.id == id) {
-      Some(pilot) => (
-        pilot.name.clone(),
-        format!("{} unread", pilot.unread),
-        Some(TriggerPortrait {
-          id: pilot.id,
-          name: pilot.name.clone(),
-          path: pilot.portrait.path(),
-        }),
-      ),
-      None => ("Mail".to_owned(), String::new(), None),
-    },
+    None => ("Mail".to_owned(), String::new(), None),
   };
 
   trigger_identity(title, subtitle, portrait)
@@ -83,15 +77,15 @@ mod tests {
   }
 
   fn state_with(roster: Vec<RosterPilot>, active: Scope) -> State {
-    let mut state = State::new();
+    let mut state = State::new(42);
     state.roster = roster;
     state.active = active;
     state
   }
 
   #[test]
-  fn it_renders_the_trigger_in_all_inboxes_scope() {
-    let state = state_with(vec![pilot(1, 3)], Scope::AllInboxes);
+  fn it_renders_a_fallback_trigger_when_the_active_character_is_absent() {
+    let state = state_with(vec![pilot(1, 3)], Scope::Character(999));
 
     let _el: Element<'_, Message> = trigger(&state);
   }
@@ -105,14 +99,14 @@ mod tests {
 
   #[test]
   fn it_builds_a_character_group_when_the_roster_is_non_empty() {
-    let state = state_with(vec![pilot(1, 3), pilot(2, 0)], Scope::AllInboxes);
+    let state = state_with(vec![pilot(1, 3), pilot(2, 0)], Scope::Character(1));
 
     let _el: Element<'_, Message> = dropdown(&state);
   }
 
   #[test]
   fn it_builds_an_empty_dropdown_when_the_roster_is_empty() {
-    let state = state_with(Vec::new(), Scope::AllInboxes);
+    let state = state_with(Vec::new(), Scope::Character(0));
 
     let _el: Element<'_, Message> = dropdown(&state);
   }

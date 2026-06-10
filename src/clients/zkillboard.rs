@@ -49,6 +49,12 @@ impl Client {
     self.feed(&format!("characterID/{character_id}/losses/")).await
   }
 
+  #[allow(dead_code)]
+  pub async fn value_for_kill(&self, killmail_id: i64) -> Result<Option<f64>, clients::Error> {
+    let killmails = self.feed(&format!("killID/{killmail_id}/")).await?;
+    Ok(killmails.first().map(|killmail| killmail.zkb.total_value))
+  }
+
   async fn feed(&self, path: &str) -> Result<Vec<Killmail>, clients::Error> {
     let mut last_err = None;
     for attempt in 0..=MAX_RETRIES {
@@ -232,6 +238,43 @@ mod tests {
         start.elapsed() >= THROTTLE,
         "the second request waits out the throttle window"
       );
+    }
+  }
+
+  mod value_for_kill {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_total_value_when_the_kill_is_present() {
+      let server = MockServer::start().await;
+      let body = r#"[{"killmail_id": 500, "zkb": {"hash": "abc123", "totalValue": 4242.5}}]"#;
+      Mock::given(method("GET"))
+        .and(path("/killID/500/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.value_for_kill(500).await.unwrap();
+
+      assert_eq!(value, Some(4242.5));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_kill_is_absent() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/killID/500/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+        .mount(&server)
+        .await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.value_for_kill(500).await.unwrap();
+
+      assert_eq!(value, None);
     }
   }
 }

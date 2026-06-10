@@ -2,9 +2,12 @@ use crate::clients::{
   self,
   esi::{
     Client as EsiClient,
-    models::corporation::{
-      CorporationAsset, CorporationDivisions, CorporationInfo, CorporationWalletBalance, CorporationWalletJournalEntry,
-      CorporationWalletTransaction, MemberRole,
+    models::{
+      character::RecentKillmail,
+      corporation::{
+        CorporationAsset, CorporationDivisions, CorporationInfo, CorporationWalletBalance,
+        CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
+      },
     },
   },
   eve_sso::Grant,
@@ -36,6 +39,14 @@ impl<'a> AuthenticatedClient<'a> {
   pub async fn member_roles(&self, corporation_id: i64) -> Result<Vec<MemberRole>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/roles/"));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn recent_killmails(&self, corporation_id: i64) -> Result<Vec<RecentKillmail>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("corporations/{corporation_id}/killmails/recent/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn wallet_journal(
@@ -186,6 +197,70 @@ mod tests {
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0].character_id, 123);
         assert_eq!(roles[0].roles, vec!["Director", "Accountant"]);
+      }
+    }
+
+    mod recent_killmails {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"killmail_id":100,"killmail_hash":"abc123"}]"#;
+        let page_two = r#"[{"killmail_id":200,"killmail_hash":"def456"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/killmails/recent/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/killmails/recent/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let killmails = esi
+          .corporation_authenticated(&grant)
+          .recent_killmails(2000)
+          .await
+          .unwrap();
+
+        assert_eq!(killmails.len(), 2);
+        assert_eq!(killmails[0].killmail_id, 100);
+        assert_eq!(killmails[0].killmail_hash, "abc123");
+        assert_eq!(killmails[1].killmail_id, 200);
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_when_the_token_lacks_director_role() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/killmails/recent/"))
+          .respond_with(ResponseTemplate::new(403))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).recent_killmails(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
       }
     }
 

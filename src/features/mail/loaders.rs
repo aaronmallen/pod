@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
 
@@ -76,6 +76,14 @@ async fn cache_recipient_portraits(eve_image: &eve_image::Client, ids: impl Iter
   }
 }
 
+pub(super) fn resolve_sender_portrait(sender_id: i64) -> images::ImageState {
+  images::resolve(
+    &images::default_store(),
+    images::ImageKind::CharacterPortrait,
+    sender_id,
+  )
+}
+
 pub(super) fn strip_html_snippet(html: &str) -> String {
   let mut out = String::with_capacity(html.len());
   let mut in_tag = false;
@@ -95,7 +103,7 @@ pub struct RosterPilot {
   pub corp: String,
   pub id: i64,
   pub name: String,
-  pub portrait: Option<PathBuf>,
+  pub portrait: images::ImageState,
   pub unread: i64,
 }
 
@@ -110,12 +118,16 @@ pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {
       .map(|c| c.ticker().to_owned())
       .unwrap_or_default();
     let unread = mail::unread_count(db, character.id()).await.unwrap_or(0);
-    let portrait_path = images::default_store().character_portrait_path(character.id());
+    let portrait = images::resolve(
+      &images::default_store(),
+      images::ImageKind::CharacterPortrait,
+      character.id(),
+    );
     roster.push(RosterPilot {
       corp,
       id: character.id(),
       name: character.name().to_owned(),
-      portrait: portrait_path.exists().then_some(portrait_path),
+      portrait,
       unread,
     });
   }

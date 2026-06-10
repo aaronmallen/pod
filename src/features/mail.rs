@@ -86,6 +86,7 @@ pub struct Loaded {
 pub struct ReadingRender {
   is_starred: bool,
   mail: MailRender,
+  sender_portrait: images::ImageState,
 }
 
 #[derive(Clone, Debug)]
@@ -228,7 +229,18 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    Vec::new()
+    let roster = self.roster.iter().map(|pilot| &pilot.portrait);
+    let messages = self.messages.iter().map(|row| &row.sender_portrait);
+    let all_messages = self.all_messages.iter().map(|row| &row.sender_portrait);
+    let render = self.render.iter().map(|render| &render.sender_portrait);
+
+    roster
+      .chain(messages)
+      .chain(all_messages)
+      .chain(render)
+      .filter_map(images::ImageState::stale_key)
+      .filter(|(_, id)| *id > 0)
+      .collect()
   }
 
   pub fn roster(&self) -> &[RosterPilot] {
@@ -366,9 +378,11 @@ async fn load_render(db: Database, character_id: i64, mail_id: i64) -> Option<Re
     .await
     .map(|overlay| overlay.is_starred)
     .unwrap_or(false);
+  let sender_portrait = loaders::resolve_sender_portrait(mail.header.from_id());
   Some(ReadingRender {
     is_starred,
     mail,
+    sender_portrait,
   })
 }
 
@@ -934,6 +948,89 @@ mod tests {
     }
   }
 
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::mail::message_list::{DayBucket, MessageRow, SenderKind};
+
+    fn message_row(mail_id: i64, sender_id: i64) -> MessageRow {
+      MessageRow {
+        bucket: DayBucket::Today,
+        character_id: 42,
+        is_pinned: false,
+        is_read: true,
+        is_starred: false,
+        has_attachment: false,
+        important: false,
+        sender_kind: SenderKind::Character,
+        labels: Vec::new(),
+        mail_id,
+        sender: "Vex".to_owned(),
+        sender_id,
+        sender_portrait: images::ImageState::Stale {
+          id: sender_id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+        snippet: String::new(),
+        subject: "S".to_owned(),
+        time: "10:00".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_is_empty_for_a_fresh_default_state() {
+      let state = State::new();
+
+      assert!(state.stale_images().is_empty());
+    }
+
+    #[test]
+    fn it_collects_stale_keys_from_the_roster_messages_and_open_render() {
+      let mut state = State::new();
+      state.roster = vec![RosterPilot {
+        corp: "VEX".to_owned(),
+        id: 42,
+        name: "Vex".to_owned(),
+        portrait: images::ImageState::Stale {
+          id: 42,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+        unread: 0,
+      }];
+      state.messages = vec![message_row(7, 95_000_001)];
+      state.render = Some(ReadingRender {
+        is_starred: false,
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_002,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      });
+
+      let stale = state.stale_images();
+
+      assert!(stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
+      assert!(stale.contains(&(images::ImageKind::CharacterPortrait, 95_000_001)));
+      assert!(stale.contains(&(images::ImageKind::CharacterPortrait, 95_000_002)));
+    }
+
+    #[test]
+    fn it_omits_a_fresh_portrait_and_a_non_positive_sender_id() {
+      let mut state = State::new();
+      state.roster = vec![RosterPilot {
+        corp: "VEX".to_owned(),
+        id: 42,
+        name: "Vex".to_owned(),
+        portrait: images::ImageState::Fresh("/cache/42.jpg".into()),
+        unread: 0,
+      }];
+      state.messages = vec![message_row(7, 0)];
+
+      assert_eq!(state.stale_images(), Vec::new());
+    }
+  }
+
   mod update {
     use pretty_assertions::assert_eq;
 
@@ -969,6 +1066,10 @@ mod tests {
       let render = ReadingRender {
         is_starred: true,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       };
 
       let _ = update(&mut state, Message::RenderLoaded(Box::new(Some(render.clone()))), &db);
@@ -1049,6 +1150,10 @@ mod tests {
       state.render = Some(ReadingRender {
         is_starred: false,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       });
 
       let _ = update(
@@ -1074,7 +1179,10 @@ mod tests {
         mail_id,
         sender: "Vex".to_owned(),
         sender_id: 95_000_001,
-        sender_portrait: None,
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
         snippet: String::new(),
         subject: "S".to_owned(),
         time: "10:00".to_owned(),
@@ -1101,6 +1209,10 @@ mod tests {
       state.render = Some(ReadingRender {
         is_starred: false,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       });
 
       let _ = update(&mut state, Message::Selected(999), &db);
@@ -1116,6 +1228,10 @@ mod tests {
       state.render = Some(ReadingRender {
         is_starred: false,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       });
       assert_eq!(state.character_for(7), Some(42));
       state.render = None;
@@ -1171,7 +1287,10 @@ mod tests {
         corp: "VEX".to_owned(),
         id: 42,
         name: "Vex".to_owned(),
-        portrait: None,
+        portrait: images::ImageState::Stale {
+          id: 42,
+          kind: images::ImageKind::CharacterPortrait,
+        },
         unread: 0,
       }];
 
@@ -1300,6 +1419,10 @@ mod tests {
       state.render = Some(ReadingRender {
         is_starred: false,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       });
 
       for message in [
@@ -1371,14 +1494,20 @@ mod tests {
           corp: "VEX".to_owned(),
           id: 42,
           name: "Vex Voronova".to_owned(),
-          portrait: None,
+          portrait: images::ImageState::Stale {
+            id: 42,
+            kind: images::ImageKind::CharacterPortrait,
+          },
           unread: 3,
         },
         RosterPilot {
           corp: "ALT".to_owned(),
           id: 43,
           name: "Alt Pilot".to_owned(),
-          portrait: None,
+          portrait: images::ImageState::Stale {
+            id: 43,
+            kind: images::ImageKind::CharacterPortrait,
+          },
           unread: 0,
         },
       ];
@@ -1412,6 +1541,10 @@ mod tests {
       state.render = Some(ReadingRender {
         is_starred: true,
         mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       });
       state.selected = Some(7);
       state
@@ -1439,7 +1572,10 @@ mod tests {
         mail_id,
         sender: "Vex Voronova".to_owned(),
         sender_id: 95_000_001,
-        sender_portrait: None,
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
         snippet: "Form up at Jita.".to_owned(),
         subject: "CTA tonight".to_owned(),
         time: "10:00".to_owned(),

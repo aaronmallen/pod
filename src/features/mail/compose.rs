@@ -440,10 +440,9 @@ fn suggestion_status<'a>(label: &str) -> Element<'a, Message> {
 
 fn suggestion_row<'a>(id: i64, name: &str, make_msg: &impl Fn(i64, String) -> Message) -> Element<'a, Message> {
   let name = name.to_owned();
-  let portrait_path = images::default_store().character_portrait_path(id);
-  let portrait = portrait_path.exists().then_some(portrait_path);
+  let portrait = images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id);
 
-  let swatch = Avatar::new(id, name.clone(), Length::Fixed(24.0), 24.0, portrait)
+  let swatch = Avatar::new(id, name.clone(), Length::Fixed(24.0), 24.0, portrait.path())
     .radius(radius::SUBTLE)
     .view::<Message>();
 
@@ -545,7 +544,7 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
     let portrait = TriggerPortrait {
       id: pilot.id,
       name: pilot.name.clone(),
-      path: pilot.portrait.clone(),
+      path: pilot.portrait.path(),
     };
     trigger_cells.push(from_portrait(portrait));
   }

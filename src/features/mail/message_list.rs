@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use chrono::{DateTime, Duration, Timelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -33,7 +31,7 @@ pub struct MessageRow {
   pub sender: String,
   pub sender_id: i64,
   pub sender_kind: SenderKind,
-  pub sender_portrait: Option<PathBuf>,
+  pub sender_portrait: images::ImageState,
   pub snippet: String,
   pub subject: String,
   pub time: String,
@@ -159,7 +157,7 @@ async fn key_to_row(db: &Database, key: MailKey, now: DateTime<Utc>) -> MessageR
       .unwrap_or_default(),
   ));
 
-  let sender_portrait = sender_portrait_path(key.sender_id);
+  let sender_portrait = super::loaders::resolve_sender_portrait(key.sender_id);
 
   MessageRow {
     bucket: day_bucket(&key.timestamp, now),
@@ -575,21 +573,13 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
 
 const AVATAR_SIZE: f32 = 36.0;
 
-fn sender_portrait_path(sender_id: i64) -> Option<PathBuf> {
-  if sender_id <= 0 {
-    return None;
-  }
-  let path = images::default_store().character_portrait_path(sender_id);
-  path.exists().then_some(path)
-}
-
 fn unread_avatar(row: &MessageRow) -> Element<'_, Message> {
   let avatar = Avatar::new(
     row.sender_id,
     row.sender.clone(),
     Length::Fixed(AVATAR_SIZE),
     AVATAR_SIZE,
-    row.sender_portrait.clone(),
+    row.sender_portrait.path(),
   )
   .border(color::with_alpha(color::text::PRIMARY, 0.1), 1.0)
   .radius(radius::CONTROL)
@@ -688,7 +678,10 @@ mod tests {
       mail_id,
       sender: sender.to_owned(),
       sender_id: 95_000_001,
-      sender_portrait: None,
+      sender_portrait: images::ImageState::Stale {
+        id: 95_000_001,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       snippet: snippet.to_owned(),
       subject: subject.to_owned(),
       time: "10:00".to_owned(),
@@ -760,9 +753,9 @@ mod tests {
   }
 
   #[test]
-  fn it_omits_a_portrait_for_a_zero_or_negative_sender_id() {
-    assert!(sender_portrait_path(0).is_none());
-    assert!(sender_portrait_path(-1).is_none());
+  fn it_resolves_an_unfetched_sender_portrait_to_a_path_less_stale_state() {
+    assert!(super::super::loaders::resolve_sender_portrait(0).path().is_none());
+    assert!(super::super::loaders::resolve_sender_portrait(-1).path().is_none());
   }
 
   mod load {

@@ -6,7 +6,7 @@ use iced::{
 
 use super::{Message, ReadingRender};
 use crate::{
-  store::{images, model::character_mail_view::MailRender},
+  store::model::character_mail_view::MailRender,
   ui::{
     components::{avatar::Avatar, chip::chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule},
     style::{color, radius, spacing, typography},
@@ -37,7 +37,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
 }
 
 fn opened(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
-  Column::with_children(vec![toolbar(render, is_snoozed), scroll_body(&render.mail)])
+  Column::with_children(vec![toolbar(render, is_snoozed), scroll_body(render)])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -198,14 +198,15 @@ fn timestamp_stamp<'a>(timestamp: String) -> Element<'a, Message> {
     .into()
 }
 
-fn scroll_body(mail: &MailRender) -> Element<'_, Message> {
+fn scroll_body(render: &ReadingRender) -> Element<'_, Message> {
+  let mail = &render.mail;
   let mut column = Column::new().width(Length::Fill).max_width(BODY_MAX_WIDTH);
 
   if let Some(chips) = label_chips(&mail.label_ids) {
     column = column.push(chips);
   }
   column = column.push(subject(mail));
-  column = column.push(sender_block(mail));
+  column = column.push(sender_block(render));
   column = column.push(body_paragraphs(mail));
 
   let inner = container(column).width(Length::Fill).padding(Padding {
@@ -271,11 +272,12 @@ fn subject(mail: &MailRender) -> Element<'_, Message> {
   .into()
 }
 
-fn sender_block(mail: &MailRender) -> Element<'_, Message> {
+fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
+  let mail = &render.mail;
   let sender = mail.header.from_name();
   let is_system = mail.recipients.iter().any(|r| r.recipient_type() == "mailing_list") || mail.header.from_id() == 0;
 
-  let avatar = sender_avatar(mail.header.from_id(), sender);
+  let avatar = sender_avatar(mail.header.from_id(), sender, render.sender_portrait.path());
 
   let to_line = {
     let mut row = Row::new().spacing(spacing::UNIT).align_y(Vertical::Center);
@@ -361,8 +363,7 @@ fn recipients_label(mail: &MailRender) -> String {
 
 const SENDER_AVATAR_SIZE: f32 = 44.0;
 
-fn sender_avatar(sender_id: i64, name: &str) -> Element<'_, Message> {
-  let portrait = sender_portrait_path(sender_id);
+fn sender_avatar(sender_id: i64, name: &str, portrait: Option<std::path::PathBuf>) -> Element<'_, Message> {
   Avatar::new(
     sender_id,
     name.to_owned(),
@@ -373,14 +374,6 @@ fn sender_avatar(sender_id: i64, name: &str) -> Element<'_, Message> {
   .border(color::with_alpha(color::text::PRIMARY, 0.1), 1.0)
   .radius(radius::CONTROL)
   .view::<Message>()
-}
-
-fn sender_portrait_path(sender_id: i64) -> Option<std::path::PathBuf> {
-  if sender_id <= 0 {
-    return None;
-  }
-  let path = images::default_store().character_portrait_path(sender_id);
-  path.exists().then_some(path)
 }
 
 fn body_paragraphs(mail: &MailRender) -> Element<'_, Message> {

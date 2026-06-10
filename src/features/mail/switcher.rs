@@ -24,7 +24,7 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
         Some(TriggerPortrait {
           id: pilot.id,
           name: pilot.name.clone(),
-          path: pilot.portrait.clone(),
+          path: pilot.portrait.path(),
         }),
       ),
       None => ("Mail".to_owned(), String::new(), None),
@@ -57,7 +57,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.id,
     pilot.name.clone(),
     sub,
-    pilot.portrait.clone(),
+    pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
     Message::ScopeSelected(Scope::Character(pilot.id)),
@@ -67,13 +67,17 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::store::images;
 
   fn pilot(id: i64, unread: i64) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
       id,
       name: format!("Pilot {id}"),
-      portrait: None,
+      portrait: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      },
       unread,
     }
   }

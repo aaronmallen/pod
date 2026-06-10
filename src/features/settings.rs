@@ -1,8 +1,10 @@
 pub mod about_tab;
 pub mod features_tab;
+pub mod log_export;
 pub mod storage_tab;
 pub mod tags_tab;
 
+use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, Element, Length, Padding, Task,
   alignment::Vertical,
@@ -58,6 +60,7 @@ pub enum Message {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Outcome {
+  ExportLogs { end: DateTime<Utc>, start: DateTime<Utc> },
   None,
   Persist,
   ReleaseLock,

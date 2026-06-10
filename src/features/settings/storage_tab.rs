@@ -4,14 +4,17 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, Stack, button, container, scrollable, text, text_input},
 };
 
-use super::Outcome;
+use super::{
+  Outcome,
+  log_export::{self, RangePreset},
+};
 use crate::{
   config::{Settings, StorageConfig, StorageMode},
   ui::{
@@ -31,6 +34,8 @@ pub enum Message {
   CancelMove,
   ConfirmMove,
   DismissError,
+  ExportFinished(Result<Option<PathBuf>, String>),
+  ExportLogs(RangePreset),
   PathEdited(PathKind, String),
   PathSubmitted(PathKind),
   ReleaseLock,
@@ -142,6 +147,7 @@ pub struct SyncStatus {
 pub struct State {
   drafts: HashMap<PathKind, String>,
   error: Option<String>,
+  export_pending: bool,
   migration: Option<MigrationRequest>,
   pending: Option<PendingMove>,
   sync: SyncStatus,
@@ -348,6 +354,22 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
     Message::DismissError => {
       state.error = None;
       Outcome::None
+    }
+    Message::ExportFinished(result) => {
+      state.export_pending = false;
+      if let Err(error) = result {
+        state.error = Some(error);
+      }
+      Outcome::None
+    }
+    Message::ExportLogs(preset) => {
+      state.error = None;
+      state.export_pending = true;
+      let (start, end) = log_export::range_for_preset(preset, Local::now());
+      Outcome::ExportLogs {
+        end,
+        start,
+      }
     }
     Message::PathEdited(kind, value) => {
       state.drafts.insert(kind, value);
@@ -657,6 +679,8 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2);
 
+  let export_row: Option<Element<'_, Message>> = (kind == PathKind::Log).then(|| log_export_row(state));
+
   let footnote = Row::with_children(vec![
     text("default")
       .font(typography::mono::REGULAR)
@@ -676,15 +700,16 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
 
+  let mut cell_children: Vec<Element<'_, Message>> = vec![header.into(), description.into(), controls.into()];
+  if let Some(export_row) = export_row {
+    cell_children.push(export_row);
+  }
+  cell_children.push(footnote.into());
+
   let cell = container(
-    Column::with_children(vec![
-      header.into(),
-      description.into(),
-      controls.into(),
-      footnote.into(),
-    ])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill),
+    Column::with_children(cell_children)
+      .spacing(spacing::SPACE_3)
+      .width(Length::Fill),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -696,6 +721,56 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
 
   Column::with_children(vec![cell.into(), rule::horizontal()])
     .width(Length::Fill)
+    .into()
+}
+
+fn log_export_row(state: &State) -> Element<'_, Message> {
+  const PRESETS: [RangePreset; 4] = [
+    RangePreset::LastHour,
+    RangePreset::Last24Hours,
+    RangePreset::Today,
+    RangePreset::Last7Days,
+  ];
+
+  let mut children: Vec<Element<'_, Message>> = vec![
+    text("Export logs")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::SECONDARY),
+      })
+      .into(),
+  ];
+
+  for preset in PRESETS {
+    let mut control = button(
+      text(preset.label())
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD),
+    )
+    .padding(control::padding())
+    .style(control::ghost_button);
+    if !state.export_pending {
+      control = control.on_press(Message::ExportLogs(preset));
+    }
+    children.push(control.into());
+  }
+
+  if state.export_pending {
+    children.push(
+      text("Exporting\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(|_| text::Style {
+          color: Some(color::text::TERTIARY),
+        })
+        .into(),
+    );
+  }
+
+  Row::with_children(children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2)
     .into()
 }
 

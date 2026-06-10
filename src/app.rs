@@ -2208,6 +2208,20 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   match outcome {
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
     settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
+    settings::Outcome::ExportLogs {
+      start,
+      end,
+    } => {
+      let storage = state.settings().storage();
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: storage.resolved_cache_dir(),
+        database_path: storage.resolved_database_path(),
+        db_dir: storage.resolved_db_dir(),
+        log_dir: storage.resolved_log_dir(),
+      };
+      let log_dir = storage.resolved_log_dir();
+      return Task::batch(vec![task, export_logs(log_dir, start, end, diagnostics)]);
+    }
     _ => {}
   }
 
@@ -2235,6 +2249,56 @@ fn sync_now(app: &App) -> Task<Message> {
   match app.sync_session.clone() {
     Some(session) => push_task(session),
     None => Task::none(),
+  }
+}
+
+/// Routes the storage tab's "Export logs" action, building the diagnostics zip on a blocking thread
+/// so the UI stays responsive. Log files (including the live current-day file) are read read-only,
+/// never truncated.
+fn export_logs(
+  log_dir: std::path::PathBuf,
+  start: DateTime<Utc>,
+  end: DateTime<Utc>,
+  diagnostics: settings::log_export::Diagnostics,
+) -> Task<Message> {
+  Task::perform(
+    async move {
+      let default_name = settings::log_export::default_file_name(start, end);
+      let bytes =
+        tokio::task::spawn_blocking(move || settings::log_export::build_zip(&log_dir, start, end, &diagnostics))
+          .await
+          .map_err(|err| err.to_string())??;
+      save_log_bundle(default_name, bytes).await
+    },
+    |result| {
+      Message::Settings(settings::Message::Storage(
+        settings::storage_tab::Message::ExportFinished(result),
+      ))
+    },
+  )
+}
+
+/// Prompts for a save location via the native dialog and writes the zip there. Stubbed to a no-op
+/// under `cfg(test)` so tests never open a real file dialog.
+async fn save_log_bundle(default_name: String, bytes: Vec<u8>) -> Result<Option<std::path::PathBuf>, String> {
+  #[cfg(not(test))]
+  {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+      .set_title("Export logs")
+      .set_file_name(default_name)
+      .add_filter("Zip archive", &["zip"])
+      .save_file()
+      .await
+    else {
+      return Ok(None);
+    };
+    std::fs::write(handle.path(), bytes).map_err(|err| err.to_string())?;
+    Ok(Some(handle.path().to_path_buf()))
+  }
+  #[cfg(test)]
+  {
+    let _ = (default_name, bytes);
+    Ok(None)
   }
 }
 

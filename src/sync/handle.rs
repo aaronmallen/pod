@@ -4,38 +4,38 @@ use super::{command::Command, subject::Subject};
 
 #[derive(Clone, Debug)]
 pub struct Handle {
-  commands: mpsc::Sender<Command>,
+  commands: mpsc::UnboundedSender<Command>,
 }
 
 impl Handle {
-  pub fn new(commands: mpsc::Sender<Command>) -> Self {
+  pub fn new(commands: mpsc::UnboundedSender<Command>) -> Self {
     Self {
       commands,
     }
   }
 
   pub fn discover(&self) {
-    let _ = self.commands.try_send(Command::Discover);
+    let _ = self.commands.send(Command::Discover);
   }
 
   pub fn drain(&self) {
-    let _ = self.commands.try_send(Command::Drain);
+    let _ = self.commands.send(Command::Drain);
   }
 
   pub fn enroll(&self, subject: Subject) {
-    let _ = self.commands.try_send(Command::Enroll(subject));
+    let _ = self.commands.send(Command::Enroll(subject));
   }
 
   pub fn run_now(&self, subject: Subject) {
-    let _ = self.commands.try_send(Command::RunNow(subject));
+    let _ = self.commands.send(Command::RunNow(subject));
   }
 
   pub fn shutdown(&self) {
-    let _ = self.commands.try_send(Command::Shutdown);
+    let _ = self.commands.send(Command::Shutdown);
   }
 
   pub fn withdraw(&self, subject: Subject) {
-    let _ = self.commands.try_send(Command::Withdraw(subject));
+    let _ = self.commands.send(Command::Withdraw(subject));
   }
 }
 
@@ -47,7 +47,7 @@ mod tests {
 
   #[tokio::test]
   async fn it_sends_a_data_free_drain_command() {
-    let (tx, mut rx) = mpsc::channel(4);
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let handle = Handle::new(tx);
 
     handle.drain();
@@ -61,7 +61,7 @@ mod tests {
 
   #[tokio::test]
   async fn it_sends_a_shutdown_command() {
-    let (tx, mut rx) = mpsc::channel(4);
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let handle = Handle::new(tx);
 
     handle.shutdown();
@@ -74,11 +74,30 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_does_not_block_or_panic_when_the_channel_is_full() {
-    let (tx, _rx) = mpsc::channel(1);
+  async fn it_reliably_delivers_enroll_without_blocking_when_commands_are_backed_up() {
+    // The consumer is not yet draining; a bounded channel of the old size would have dropped these.
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let handle = Handle::new(tx);
-    handle.drain();
 
-    handle.drain();
+    for _ in 0..128 {
+      handle.enroll(Subject::Character(7));
+    }
+    handle.run_now(Subject::Character(7));
+
+    let mut enrolls = 0;
+    let mut saw_run_now = false;
+    while let Ok(command) = rx.try_recv() {
+      match command {
+        Command::Enroll(Subject::Character(7)) => enrolls += 1,
+        Command::RunNow(Subject::Character(7)) => saw_run_now = true,
+        other => panic!("unexpected command: {other:?}"),
+      }
+    }
+
+    assert_eq!(
+      enrolls, 128,
+      "every enroll survives a backed-up channel, none silently dropped"
+    );
+    assert!(saw_run_now, "the trailing run-now is delivered too");
   }
 }

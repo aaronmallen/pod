@@ -747,7 +747,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
 /// the engine: the only autonomous writer to the working copy never runs, so the local copy cannot
 /// diverge and nothing is ever pushed to the canonical share.
 fn inert_sync() -> (sync::Handle, tokio::sync::mpsc::Receiver<sync::Event>) {
-  let (commands, _commands_rx) = tokio::sync::mpsc::channel(1);
+  let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
   let (_events_tx, events) = tokio::sync::mpsc::channel(1);
   (sync::Handle::new(commands), events)
 }
@@ -3148,7 +3148,7 @@ mod tests {
     let esi = Arc::new(esi::Client::builder(http.clone()).user_agent("test").build().unwrap());
     let eve_image = Arc::new(eve_image::Client::new(http.clone()));
     let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     Runtime {
       db,
       esi,

@@ -33,7 +33,6 @@ use crate::{
   },
 };
 
-const COMMAND_BUFFER: usize = 32;
 const DONE_RETENTION: Duration = Duration::from_secs(60 * 60);
 const DRAIN_INTERVAL: Duration = Duration::from_secs(5);
 const EVENT_BUFFER: usize = 64;
@@ -71,7 +70,7 @@ fn spawn_with_registry(
   features: FeatureFlags,
   outbox: Registry,
 ) -> (Handle, mpsc::Receiver<Event>) {
-  let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
+  let (command_tx, command_rx) = mpsc::unbounded_channel();
   let (event_tx, event_rx) = mpsc::channel(EVENT_BUFFER);
   let engine = Engine {
     db,
@@ -345,7 +344,7 @@ impl Engine {
     }
   }
 
-  async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
+  async fn run(mut self, mut commands: mpsc::UnboundedReceiver<Command>) {
     self.enroll_global().await;
     self.discover().await;
     let mut in_flight: JoinSet<(JobKey, Result<Outcome, Error>)> = JoinSet::new();

@@ -1,0 +1,32 @@
+name: Tip of the Day
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  post-tip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Post tip to Discord
+        if: env.DISCORD_TIP_WEBHOOK_URL != ''
+        env:
+          DISCORD_TIP_WEBHOOK_URL: ${{ secrets.DISCORD_TIP_WEBHOOK_URL }}
+        run: |-
+          count=$(jq 'length' .github/tips.json)
+          idx=$(( (10#$(date -u +%j) - 1) % count ))
+          body=$(jq -r ".[$idx].body" .github/tips.json)
+
+          payload=$(jq -n \
+            --arg title "💡 Tip of the Day" \
+            --arg description "$body" \
+            '{embeds: [{title: $title, description: $description, color: 4176091}]}')
+
+          curl -fsSL -X POST -H "Content-Type: application/json" \
+            -d "$payload" "$DISCORD_TIP_WEBHOOK_URL"

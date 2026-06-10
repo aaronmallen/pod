@@ -73,15 +73,12 @@ impl SyncCopy {
 
     let share_generation = read_generation(&self.sidecar);
     let local_generation = read_generation(&self.marker);
-    if share_generation > local_generation {
-      back_up(&self.canonical)?;
-    }
 
     // The bytes must land before the generation bumps: a crash between the copy and the sidecar
     // write leaves a generation that understates the bytes (re-pushed next time), never one that
     // overstates them (which would skip a needed pull and silently lose data).
     let next = share_generation.max(local_generation) + 1;
-    copy_file(&self.working_copy, &self.canonical)?;
+    publish_database(&self.working_copy, &self.canonical)?;
     write_generation(&self.sidecar, next)?;
     write_generation(&self.marker, next)?;
 
@@ -100,14 +97,27 @@ impl SyncCopy {
   }
 }
 
-fn back_up(canonical: &Path) -> io::Result<()> {
-  if !canonical.exists() {
+/// The guarded DB-replace primitive every replace site must route through: never overwrites a
+/// non-empty destination without first writing a timestamped `.backup` of it.
+pub fn publish_database(source: &Path, destination: &Path) -> io::Result<()> {
+  if is_non_empty(destination) {
+    back_up(destination)?;
+  }
+  copy_file(source, destination)
+}
+
+fn back_up(database: &Path) -> io::Result<()> {
+  if !database.exists() {
     return Ok(());
   }
 
-  let mut name = canonical.as_os_str().to_owned();
+  let mut name = database.as_os_str().to_owned();
   name.push(format!(".{}.backup", Utc::now().format("%Y%m%d-%H%M%S")));
-  copy_file(canonical, Path::new(&name))
+  copy_file(database, Path::new(&name))
+}
+
+fn is_non_empty(path: &Path) -> bool {
+  fs::metadata(path).is_ok_and(|meta| meta.len() > 0)
 }
 
 async fn checkpoint(database: &Path) -> Result<(), Error> {
@@ -360,7 +370,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_back_up_when_the_share_generation_is_in_step() {
+    async fn it_backs_up_a_non_empty_canonical_even_when_the_generations_are_in_step() {
       let layout = Layout::new();
       seed_wal_database(&layout.working_copy).await;
       fs::write(&layout.canonical, b"in-step canonical").unwrap();
@@ -372,9 +382,56 @@ mod tests {
       let backup = fs::read_dir(layout.canonical.parent().unwrap())
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"));
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .expect("the prior canonical is backed up before the in-step push overwrites it");
 
-      assert!(backup.is_none());
+      assert_eq!(
+        fs::read(backup.path()).unwrap(),
+        b"in-step canonical",
+        "the data-loss hole is closed: the real canonical survives as a backup"
+      );
+    }
+  }
+
+  mod publish_database {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_backs_up_a_non_empty_destination_before_overwriting_it() {
+      let layout = Layout::new();
+      // The gen-0-vs-0 data-loss scenario: an empty working copy about to clobber real canonical data.
+      fs::write(&layout.canonical, b"real canonical data").unwrap();
+      fs::write(&layout.working_copy, b"").unwrap();
+
+      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+
+      let backup = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .expect("a timestamped backup of the prior canonical exists");
+      assert_eq!(fs::read(backup.path()).unwrap(), b"real canonical data");
+    }
+
+    #[test]
+    fn it_skips_the_backup_when_the_destination_is_missing_or_empty() {
+      let layout = Layout::new();
+      fs::write(&layout.working_copy, b"new data").unwrap();
+      // Destination absent.
+      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+      // Destination present but empty.
+      fs::write(&layout.canonical, b"").unwrap();
+      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+
+      let backups = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(backups, 0, "nothing of value is overwritten, so no backup is written");
+      assert_eq!(fs::read(&layout.canonical).unwrap(), b"new data");
     }
   }
 }

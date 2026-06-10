@@ -613,6 +613,16 @@ macro_rules! location_join_sql {
   };
 }
 
+macro_rules! geo_extra_join_sql {
+  () => {
+    " LEFT JOIN solar_systems sys \
+        ON sys.id = CASE WHEN a.location_type = 'solar_system' THEN a.location_id \
+                        ELSE COALESCE(s.system_id, st.solar_system_id) END \
+      LEFT JOIN constellations con ON con.id = sys.constellation_id \
+      LEFT JOIN regions reg ON reg.id = con.region_id "
+  };
+}
+
 const RENDER_CHARACTER_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
     it.name AS type_name, ig.name AS group_name, ",
@@ -673,6 +683,7 @@ macro_rules! query_join_sql {
       JOIN item_categories ic ON ic.id = ig.category_id \
       LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
       location_join_sql!($owner, $owner_type),
+      geo_extra_join_sql!(),
       "WHERE a.",
       $owner,
       " "
@@ -718,13 +729,13 @@ fn render_column_schema(owner_column: &'static str) -> ColumnSchema {
   ColumnSchema {
     category: CATEGORY_KEY_EXPR,
     character_id: owner_column,
-    constellation_name: "NULL",
+    constellation_name: "con.name",
     group_name: GROUP_NAME_EXPR,
     is_blueprint_copy: "a.is_blueprint_copy",
     is_singleton: "a.is_singleton",
-    location_name: "NULL",
-    region_name: "NULL",
-    system_name: "NULL",
+    location_name: location_label_expr!(),
+    region_name: "reg.name",
+    system_name: "sys.name",
     type_name: TYPE_NAME_EXPR,
   }
 }
@@ -1290,13 +1301,13 @@ fn combined_column_schema() -> ColumnSchema {
   ColumnSchema {
     category: "category",
     character_id: "owner_id",
-    constellation_name: "NULL",
+    constellation_name: "constellation_name",
     group_name: "group_name",
     is_blueprint_copy: "is_blueprint_copy",
     is_singleton: "is_singleton",
-    location_name: "NULL",
-    region_name: "NULL",
-    system_name: "NULL",
+    location_name: "location_label",
+    region_name: "region_name",
+    system_name: "system_name",
     type_name: "type_name",
   }
 }
@@ -1592,7 +1603,7 @@ macro_rules! combined_arm_sql {
       value_expr!(),
       " AS value, ",
       location_label_expr!(),
-      " AS location_label ",
+      " AS location_label, sys.name AS system_name, con.name AS constellation_name, reg.name AS region_name ",
       query_join_sql!($table, $owner, $owner_type)
     )
   };
@@ -1619,14 +1630,7 @@ macro_rules! geo_label_expr {
 
 macro_rules! geo_join_sql {
   ($owner:literal, $owner_type:literal) => {
-    concat!(
-      location_join_sql!($owner, $owner_type),
-      " LEFT JOIN solar_systems sys \
-          ON sys.id = CASE WHEN a.location_type = 'solar_system' THEN a.location_id \
-                          ELSE COALESCE(s.system_id, st.solar_system_id) END \
-        LEFT JOIN constellations con ON con.id = sys.constellation_id \
-        LEFT JOIN regions reg ON reg.id = con.region_id "
-    )
+    concat!(location_join_sql!($owner, $owner_type), geo_extra_join_sql!())
   };
 }
 
@@ -4665,6 +4669,269 @@ mod asset_tests {
         InventoryTotals::default()
       );
       assert!(geo_locations_for_combined(&db, &[], &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod geo_facets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const DODIXIE_STATION: i64 = 60_011_866;
+    const DODIXIE_SYSTEM: i64 = 30_002_659;
+    const JITA_STATION: i64 = 60_003_760;
+
+    async fn seed_dodixie(db: &Database) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: 10_000_032,
+          name: "Sinq Laison".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: 20_000_369,
+          name: "Coriault".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: 10_000_032,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: 20_000_369,
+          id: DODIXIE_SYSTEM,
+          name: "Dodixie".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_station(
+        db,
+        &Station {
+          id: DODIXIE_STATION,
+          max_dockable_ship_volume: 0.0,
+          name: "Dodixie IX - Moon 20 - Federation Navy Assembly Plant".to_owned(),
+          office_rental_cost: 0.0,
+          owner: None,
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          race_id: None,
+          reprocessing_efficiency: 0.0,
+          reprocessing_stations_take: 0.0,
+          services: "[]".to_owned(),
+          system_id: DODIXIE_SYSTEM,
+          type_id: 587,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    // Character 42 holds item 100 in Jita (The Forge) and item 101 in Dodixie (Sinq Laison).
+    async fn seed_single_scope(db: &Database) {
+      seed_character(db, 42).await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_named_station(db, JITA_STATION, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
+      seed_dodixie(db).await;
+
+      let mut at_jita = char_asset(100, 42, None);
+      at_jita.type_id = 587;
+      at_jita.location_id = JITA_STATION;
+      let mut at_dodixie = char_asset(101, 42, None);
+      at_dodixie.type_id = 587;
+      at_dodixie.location_id = DODIXIE_STATION;
+      replace_for_character(db, 42, &[at_jita, at_dodixie]).await.unwrap();
+    }
+
+    async fn page_items(db: &Database, filter: &'static str) -> Vec<i64> {
+      inventory_page_for_character(
+        db,
+        42,
+        &InventoryQuery {
+          filter,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap()
+      .iter()
+      .map(|r| r.item_id)
+      .collect()
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_system_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "system:Jita").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_region_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "region:\"The Forge\"").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_constellation_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "constellation:Kimotoro").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_location_facet_and_its_loc_alias() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "location:Dodixie").await, [101]);
+      assert_eq!(page_items(&db, "loc:Dodixie").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_matches_a_location_name_via_free_text() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "Dodixie").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_negates_a_geo_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "-system:Jita").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_ors_comma_separated_geo_values() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "system:Jita,Dodixie").await, [100, 101]);
+    }
+
+    #[tokio::test]
+    async fn the_totals_reflect_a_geo_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "region:\"The Forge\"", None)
+        .await
+        .unwrap();
+
+      assert_eq!(totals.items, 1, "only the Jita holding survives the region filter");
+      assert_eq!(totals.locations, 1);
+    }
+
+    // Character 42 holds item 100 in Jita; the corp holds item 200 in Dodixie.
+    async fn seed_combined_scope(db: &Database) {
+      seed_character(db, 42).await;
+      authorize_corp(db).await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(db, 587, 100.0).await;
+      seed_named_station(db, JITA_STATION, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
+      seed_dodixie(db).await;
+
+      let mut at_jita = char_asset(100, 42, None);
+      at_jita.type_id = 587;
+      at_jita.location_id = JITA_STATION;
+      let mut at_dodixie = corp_asset(200, CORP_ID, None);
+      at_dodixie.type_id = 587;
+      at_dodixie.location_id = DODIXIE_STATION;
+      replace_for_character(db, 42, &[at_jita]).await.unwrap();
+      replace_for_corporation(db, CORP_ID, &[at_dodixie]).await.unwrap();
+    }
+
+    async fn combined_items(db: &Database, filter: &'static str) -> Vec<i64> {
+      inventory_page_for_combined(
+        db,
+        &[42],
+        &[CORP_ID],
+        &InventoryQuery {
+          filter,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap()
+      .iter()
+      .map(|r| r.item_id)
+      .collect()
+    }
+
+    #[tokio::test]
+    async fn it_filters_the_combined_union_by_region() {
+      let db = store::open_test().await.unwrap();
+      seed_combined_scope(&db).await;
+
+      assert_eq!(combined_items(&db, "region:\"The Forge\"").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_the_combined_union_by_system() {
+      let db = store::open_test().await.unwrap();
+      seed_combined_scope(&db).await;
+
+      assert_eq!(combined_items(&db, "system:Dodixie").await, [200]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_the_combined_union_by_a_location_free_text() {
+      let db = store::open_test().await.unwrap();
+      seed_combined_scope(&db).await;
+
+      assert_eq!(combined_items(&db, "Dodixie").await, [200]);
+    }
+
+    #[tokio::test]
+    async fn the_combined_totals_reflect_a_geo_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_combined_scope(&db).await;
+
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "constellation:Coriault", None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        totals.items, 1,
+        "only the Dodixie corp holding survives the constellation filter"
+      );
+      assert_eq!(totals.locations, 1);
     }
   }
 

@@ -7,6 +7,29 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.5]
+
+### Added
+
+- Your custom container and ship names now appear in the Inventory — the nickname you gave an item shows as the main
+  label with its type name beneath it, for both your characters and your corporation.
+
+### Changed
+
+- Sync now shows your computer's real name instead of "unknown-host", and trying to take over while another machine is
+  still active updates the banner to name that machine and when it was last seen instead of silently doing nothing.
+
+### Fixed
+
+- Adding a character no longer crashes Pod — signing in a new character could throw the roster into an impossible
+  layout and abruptly close the app.
+- Adding several characters at once no longer freezes Pod for tens of seconds, and newly added characters now sync
+  reliably instead of failing quietly in the background.
+- Fitted-ship killmails now show up in your killlog — losses that carried fitted modules had been silently dropped
+  since 0.5.4, so only kills with empty ships appeared.
+- Asset sync no longer fails forever at NPC stations whose owning corporation is run by an agent from a different
+  corporation — your assets and net worth keep updating.
+
 ## [0.5.4]
 
 ### Added
@@ -429,7 +452,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.4...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.5...HEAD
+[0.5.5]: https://github.com/aaronmallen/pod/compare/0.5.4...0.5.5
 [0.5.4]: https://github.com/aaronmallen/pod/compare/0.5.3...0.5.4
 [0.5.3]: https://github.com/aaronmallen/pod/compare/0.5.2...0.5.3
 [0.5.2]: https://github.com/aaronmallen/pod/compare/0.5.1...0.5.2

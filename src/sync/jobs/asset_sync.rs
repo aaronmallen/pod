@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use crate::{
   clients::{
     Error,
-    esi::models::{character::Asset as EsiCharacterAsset, corporation::CorporationAsset as EsiCorporationAsset},
+    esi::models::{
+      assets::AssetName, character::Asset as EsiCharacterAsset, corporation::CorporationAsset as EsiCorporationAsset,
+    },
   },
   store::{
     model::{CharacterAsset, CorporationAsset},
@@ -18,7 +20,6 @@ const LOCATION_TYPE_STRUCTURE: &str = "structure";
 
 struct BoardedShip {
   item_id: i64,
-  name: String,
   type_id: i64,
 }
 
@@ -36,6 +37,8 @@ struct AssetNode {
 }
 
 impl AssetNode {
+  /// `name` is left `None` here on purpose: the boarded ship is a namable singleton, so its custom
+  /// name flows in later through the unified `/assets/names/` POST rather than from `/ship/`.
   fn active_ship(ship: &BoardedShip) -> Self {
     Self {
       is_active_ship: true,
@@ -45,15 +48,14 @@ impl AssetNode {
       location_flag: "ShipHangar".to_owned(),
       location_id: 0,
       location_type: "solar_system".to_owned(),
-      name: Some(ship.name.clone()),
+      name: None,
       quantity: 1,
       type_id: ship.type_id,
     }
   }
 
-  fn mark_active_ship(&mut self, ship: &BoardedShip) {
+  fn mark_active_ship(&mut self) {
     self.is_active_ship = true;
-    self.name = Some(ship.name.clone());
   }
 
   fn parent(&self, present: &HashSet<i64>) -> Option<i64> {
@@ -163,15 +165,18 @@ async fn run_character(ctx: &JobCtx<'_>, character_id: i64) -> Result<Outcome, E
   let boarded_ship = BoardedShip {
     item_id: ship.ship_item_id,
     type_id: i64::from(ship.ship_type_id),
-    name: ship.ship_name,
   };
   match nodes.iter_mut().find(|node| node.item_id == boarded_ship.item_id) {
-    Some(existing) => existing.mark_active_ship(&boarded_ship),
+    Some(existing) => existing.mark_active_ship(),
     None => nodes.push(AssetNode::active_ship(&boarded_ship)),
   }
 
   reclassify_structure_roots(&mut nodes);
   resolve_references(ctx, &nodes).await?;
+
+  let item_ids = namable_item_ids(&nodes);
+  let names = authenticated.assets_names(&item_ids).await?;
+  apply_names(&mut nodes, &names);
 
   let hierarchy = build_hierarchy(&nodes);
   let rows: Vec<CharacterAsset> = nodes
@@ -193,11 +198,16 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
       "corporation asset job for {corporation_id} requires a grant"
     )));
   };
-  let esi_assets = ctx.esi.corporation_authenticated(grant).assets(corporation_id).await?;
+  let authenticated = ctx.esi.corporation_authenticated(grant);
+  let esi_assets = authenticated.assets(corporation_id).await?;
   let mut nodes: Vec<AssetNode> = esi_assets.iter().map(AssetNode::from).collect();
 
   reclassify_structure_roots(&mut nodes);
   resolve_references(ctx, &nodes).await?;
+
+  let item_ids = namable_item_ids(&nodes);
+  let names = authenticated.assets_names(corporation_id, &item_ids).await?;
+  apply_names(&mut nodes, &names);
 
   let hierarchy = build_hierarchy(&nodes);
   let rows: Vec<CorporationAsset> = nodes
@@ -211,6 +221,15 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
 
   assets::replace_for_corporation(ctx.db, corporation_id, &rows).await?;
   Ok(Outcome::from_rows(rows.len()))
+}
+
+fn apply_names(nodes: &mut [AssetNode], names: &[AssetName]) {
+  let by_id: HashMap<i64, &str> = names.iter().map(|name| (name.item_id, name.name.as_str())).collect();
+  for node in nodes.iter_mut() {
+    if let Some(name) = by_id.get(&node.item_id) {
+      node.name = Some((*name).to_owned());
+    }
+  }
 }
 
 fn build_hierarchy(nodes: &[AssetNode]) -> Vec<Option<Resolved>> {
@@ -249,6 +268,16 @@ fn dedup(ids: &mut Vec<i64>) {
   let unique: HashSet<i64> = ids.iter().copied().collect();
   *ids = unique.into_iter().collect();
   ids.sort_unstable();
+}
+
+fn namable_item_ids(nodes: &[AssetNode]) -> Vec<i64> {
+  let mut ids: Vec<i64> = nodes
+    .iter()
+    .filter(|node| node.is_singleton)
+    .map(|node| node.item_id)
+    .collect();
+  dedup(&mut ids);
+  ids
 }
 
 fn reclassify_structure_roots(nodes: &mut [AssetNode]) {
@@ -462,6 +491,14 @@ mod tests {
       .await;
   }
 
+  async fn mount_asset_names(server: &MockServer, route: &str, body: serde_json::Value) {
+    Mock::given(method("POST"))
+      .and(path(route))
+      .respond_with(ResponseTemplate::new(200).set_body_json(body))
+      .mount(server)
+      .await;
+  }
+
   async fn mount_ship(server: &MockServer, character_id: i64, body: serde_json::Value) {
     Mock::given(method("GET"))
       .and(path(format!("/characters/{character_id}/ship/")))
@@ -535,6 +572,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/47/assets/names/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 47).await;
       seed_item_types(&db, &[34, 670]).await;
@@ -631,7 +669,16 @@ mod tests {
       mount_ship(
         &server,
         42,
-        serde_json::json!({ "ship_item_id": 9001, "ship_name": "My Rifter", "ship_type_id": 587 }),
+        serde_json::json!({ "ship_item_id": 9001, "ship_name": "ignored", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(
+        &server,
+        "/characters/42/assets/names/",
+        serde_json::json!([
+          { "item_id": 100, "name": "Loot Vault" },
+          { "item_id": 9001, "name": "My Rifter" },
+        ]),
       )
       .await;
       let db = store::open_test().await.unwrap();
@@ -654,14 +701,24 @@ mod tests {
       assert_eq!(root.container_id(), None);
       assert_eq!(root.depth(), 0);
       assert!(root.is_container(), "100 holds 101");
+      assert_eq!(
+        root.name().as_deref(),
+        Some("Loot Vault"),
+        "a renamed singleton container carries its custom name from /assets/names/"
+      );
 
       let child = rows.iter().find(|row| row.item_id() == 101).unwrap();
       assert_eq!(child.container_id(), Some(100));
       assert_eq!(child.depth(), 1);
+      assert_eq!(child.name().as_deref(), None, "a non-singleton item keeps a null name");
 
       let ship = rows.iter().find(|row| row.item_id() == 9001).unwrap();
       assert!(ship.is_active_ship());
-      assert_eq!(ship.name().as_deref(), Some("My Rifter"));
+      assert_eq!(
+        ship.name().as_deref(),
+        Some("My Rifter"),
+        "the active ship's name flows through the unified /assets/names/ path"
+      );
       assert_eq!(ship.container_id(), None, "the boarded ship is a space root");
     }
 
@@ -682,7 +739,13 @@ mod tests {
       mount_ship(
         &server,
         45,
-        serde_json::json!({ "ship_item_id": 9001, "ship_name": "My Rifter", "ship_type_id": 587 }),
+        serde_json::json!({ "ship_item_id": 9001, "ship_name": "ignored", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(
+        &server,
+        "/characters/45/assets/names/",
+        serde_json::json!([{ "item_id": 9001, "name": "My Rifter" }]),
       )
       .await;
       let db = store::open_test().await.unwrap();
@@ -770,6 +833,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/43/assets/names/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 43).await;
       seed_item_types(&db, &[34, 670]).await;
@@ -815,6 +879,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
       Mock::given(method("GET"))
         .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
@@ -866,6 +931,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9004, "ship_name": "Capsule", "ship_type_id": 587 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/47/assets/names/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 47).await;
       seed_item_types(&db, &[34, 587]).await;
@@ -925,6 +991,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9005, "ship_name": "Capsule", "ship_type_id": 587 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/48/assets/names/", serde_json::json!([])).await;
       Mock::given(method("GET"))
         .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
         .respond_with(ResponseTemplate::new(403))
@@ -990,6 +1057,12 @@ mod tests {
         ]),
       )
       .await;
+      mount_asset_names(
+        &server,
+        "/corporations/90000001/assets/names/",
+        serde_json::json!([{ "item_id": 300, "name": "Corp Reserve" }]),
+      )
+      .await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_item_types(&db, &[34, 587]).await;
@@ -1038,9 +1111,19 @@ mod tests {
       let root = rows.iter().find(|row| row.item_id() == 300).unwrap();
       assert_eq!(root.container_id(), None);
       assert!(root.is_container());
+      assert_eq!(
+        root.name().as_deref(),
+        Some("Corp Reserve"),
+        "a renamed corp singleton carries its custom name from /assets/names/"
+      );
       let child = rows.iter().find(|row| row.item_id() == 301).unwrap();
       assert_eq!(child.container_id(), Some(300));
       assert_eq!(child.depth(), 1);
+      assert_eq!(
+        child.name().as_deref(),
+        None,
+        "a non-singleton corp item keeps a null name"
+      );
     }
 
     #[tokio::test]
@@ -1159,6 +1242,7 @@ mod tests {
         serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
       )
       .await;
+      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
       Mock::given(method("GET"))
         .and(path(format!("/universe/structures/{INACCESSIBLE_ID}/")))
         .respond_with(ResponseTemplate::new(403))

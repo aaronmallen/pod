@@ -25,10 +25,10 @@ pub struct Model {
   pub location_id: i64,
   #[getset(get = "pub")]
   pub location_type: String,
+  #[getset(get = "pub")]
+  pub name: Option<String>,
   #[getset(get_copy = "pub")]
   pub quantity: i64,
-  #[getset(get = "pub")]
-  pub ship_name: Option<String>,
   #[getset(get_copy = "pub")]
   pub type_id: i64,
 }

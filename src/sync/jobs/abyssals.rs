@@ -207,8 +207,8 @@ mod tests {
       location_flag: "Hangar".to_owned(),
       location_id: 60_003_760,
       location_type: "station".to_owned(),
+      name: None,
       quantity: 1,
-      ship_name: None,
       type_id,
     }
   }

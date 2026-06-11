@@ -30,8 +30,8 @@ struct AssetNode {
   location_flag: String,
   location_id: i64,
   location_type: String,
+  name: Option<String>,
   quantity: i64,
-  ship_name: Option<String>,
   type_id: i64,
 }
 
@@ -45,15 +45,15 @@ impl AssetNode {
       location_flag: "ShipHangar".to_owned(),
       location_id: 0,
       location_type: "solar_system".to_owned(),
+      name: Some(ship.name.clone()),
       quantity: 1,
-      ship_name: Some(ship.name.clone()),
       type_id: ship.type_id,
     }
   }
 
   fn mark_active_ship(&mut self, ship: &BoardedShip) {
     self.is_active_ship = true;
-    self.ship_name = Some(ship.name.clone());
+    self.name = Some(ship.name.clone());
   }
 
   fn parent(&self, present: &HashSet<i64>) -> Option<i64> {
@@ -73,8 +73,8 @@ impl AssetNode {
       location_flag: self.location_flag.clone(),
       location_id: self.location_id,
       location_type: self.location_type.clone(),
+      name: self.name.clone(),
       quantity: self.quantity,
-      ship_name: self.ship_name.clone(),
       type_id: self.type_id,
     }
   }
@@ -91,6 +91,7 @@ impl AssetNode {
       location_flag: self.location_flag.clone(),
       location_id: self.location_id,
       location_type: self.location_type.clone(),
+      name: self.name.clone(),
       quantity: self.quantity,
       type_id: self.type_id,
     }
@@ -107,8 +108,8 @@ impl From<&EsiCharacterAsset> for AssetNode {
       location_flag: asset.location_flag.clone(),
       location_id: asset.location_id,
       location_type: asset.location_type.clone(),
+      name: None,
       quantity: i64::from(asset.quantity),
-      ship_name: None,
       type_id: i64::from(asset.type_id),
     }
   }
@@ -124,8 +125,8 @@ impl From<&EsiCorporationAsset> for AssetNode {
       location_flag: asset.location_flag.clone(),
       location_id: asset.location_id,
       location_type: asset.location_type.clone(),
+      name: None,
       quantity: i64::from(asset.quantity),
-      ship_name: None,
       type_id: i64::from(asset.type_id),
     }
   }
@@ -374,8 +375,8 @@ mod tests {
       location_flag: "Hangar".to_owned(),
       location_id,
       location_type: location_type.to_owned(),
+      name: None,
       quantity: 1,
-      ship_name: None,
       type_id: 587,
     }
   }
@@ -660,7 +661,7 @@ mod tests {
 
       let ship = rows.iter().find(|row| row.item_id() == 9001).unwrap();
       assert!(ship.is_active_ship());
-      assert_eq!(ship.ship_name().as_deref(), Some("My Rifter"));
+      assert_eq!(ship.name().as_deref(), Some("My Rifter"));
       assert_eq!(ship.container_id(), None, "the boarded ship is a space root");
     }
 
@@ -708,7 +709,7 @@ mod tests {
         ship_rows[0].is_active_ship(),
         "the real assets row carrying the ship's item_id is flagged as the active ship"
       );
-      assert_eq!(ship_rows[0].ship_name().as_deref(), Some("My Rifter"));
+      assert_eq!(ship_rows[0].name().as_deref(), Some("My Rifter"));
       assert!(
         rows.iter().any(|row| row.item_id() == 9002),
         "an item nested inside the boarded ship still lands once the ship is a single node"

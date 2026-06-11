@@ -487,7 +487,7 @@ pub async fn upsert_corporation_asset(db: &Database, asset: &CorporationAsset) -
 pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<CharacterAsset>, Error> {
   let rows = sqlx::query_as::<_, CharacterAsset>(
     "SELECT character_id, container_id, depth, is_active_ship, is_blueprint_copy, is_container, is_singleton, \
-    item_id, location_flag, location_id, location_type, quantity, ship_name, type_id FROM character_assets \
+    item_id, location_flag, location_id, location_type, name, quantity, type_id FROM character_assets \
     WHERE character_id = ? ORDER BY item_id",
   )
   .bind(character_id)
@@ -502,7 +502,7 @@ pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<C
   }
   let rows = sqlx::query_as::<_, CorporationAsset>(
     "SELECT container_id, corporation_id, depth, is_blueprint_copy, is_container, is_singleton, item_id, \
-    location_flag, location_id, location_type, quantity, type_id FROM corporation_assets \
+    location_flag, location_id, location_type, name, quantity, type_id FROM corporation_assets \
     WHERE corporation_id = ? ORDER BY item_id",
   )
   .bind(corporation_id)
@@ -518,7 +518,7 @@ pub async fn children_for_character(
 ) -> Result<Vec<CharacterAsset>, Error> {
   let rows = sqlx::query_as::<_, CharacterAsset>(
     "SELECT character_id, container_id, depth, is_active_ship, is_blueprint_copy, is_container, is_singleton, \
-    item_id, location_flag, location_id, location_type, quantity, ship_name, type_id FROM character_assets \
+    item_id, location_flag, location_id, location_type, name, quantity, type_id FROM character_assets \
     WHERE character_id = ? AND container_id = ? ORDER BY item_id",
   )
   .bind(character_id)
@@ -538,7 +538,7 @@ pub async fn children_for_corporation(
   }
   let rows = sqlx::query_as::<_, CorporationAsset>(
     "SELECT container_id, corporation_id, depth, is_blueprint_copy, is_container, is_singleton, item_id, \
-    location_flag, location_id, location_type, quantity, type_id FROM corporation_assets \
+    location_flag, location_id, location_type, name, quantity, type_id FROM corporation_assets \
     WHERE corporation_id = ? AND container_id = ? ORDER BY item_id",
   )
   .bind(corporation_id)
@@ -551,7 +551,7 @@ pub async fn children_for_corporation(
 pub async fn roots_for_character(db: &Database, character_id: i64) -> Result<Vec<CharacterAsset>, Error> {
   let rows = sqlx::query_as::<_, CharacterAsset>(
     "SELECT character_id, container_id, depth, is_active_ship, is_blueprint_copy, is_container, is_singleton, \
-    item_id, location_flag, location_id, location_type, quantity, ship_name, type_id FROM character_assets \
+    item_id, location_flag, location_id, location_type, name, quantity, type_id FROM character_assets \
     WHERE character_id = ? AND container_id IS NULL ORDER BY item_id",
   )
   .bind(character_id)
@@ -566,7 +566,7 @@ pub async fn roots_for_characters(db: &Database, character_ids: &[i64]) -> Resul
   }
   let mut builder = QueryBuilder::<Sqlite>::new(
     "SELECT character_id, container_id, depth, is_active_ship, is_blueprint_copy, is_container, is_singleton, \
-    item_id, location_flag, location_id, location_type, quantity, ship_name, type_id FROM character_assets \
+    item_id, location_flag, location_id, location_type, name, quantity, type_id FROM character_assets \
     WHERE character_id ",
   );
   push_owner_predicate(&mut builder, character_ids);
@@ -581,7 +581,7 @@ pub async fn roots_for_corporation(db: &Database, corporation_id: i64) -> Result
   }
   let rows = sqlx::query_as::<_, CorporationAsset>(
     "SELECT container_id, corporation_id, depth, is_blueprint_copy, is_container, is_singleton, item_id, \
-    location_flag, location_id, location_type, quantity, type_id FROM corporation_assets \
+    location_flag, location_id, location_type, name, quantity, type_id FROM corporation_assets \
     WHERE corporation_id = ? AND container_id IS NULL ORDER BY item_id",
   )
   .bind(corporation_id)
@@ -1912,7 +1912,7 @@ async fn insert_character_asset(
   sqlx::query(
     "INSERT OR REPLACE INTO character_assets \
       (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_singleton, \
-      is_blueprint_copy, is_active_ship, ship_name, container_id, depth, is_container) \
+      is_blueprint_copy, is_active_ship, name, container_id, depth, is_container) \
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
   .bind(asset.item_id())
@@ -1925,7 +1925,7 @@ async fn insert_character_asset(
   .bind(asset.is_singleton())
   .bind(asset.is_blueprint_copy())
   .bind(asset.is_active_ship())
-  .bind(asset.ship_name())
+  .bind(asset.name())
   .bind(asset.container_id())
   .bind(asset.depth())
   .bind(asset.is_container())
@@ -1943,8 +1943,8 @@ async fn insert_corporation_asset(
   sqlx::query(
     "INSERT OR REPLACE INTO corporation_assets \
       (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity, is_singleton, \
-      is_blueprint_copy, container_id, depth, is_container) \
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      is_blueprint_copy, name, container_id, depth, is_container) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
   .bind(asset.item_id())
   .bind(asset.corporation_id())
@@ -1955,6 +1955,7 @@ async fn insert_corporation_asset(
   .bind(asset.quantity())
   .bind(asset.is_singleton())
   .bind(asset.is_blueprint_copy())
+  .bind(asset.name())
   .bind(asset.container_id())
   .bind(asset.depth())
   .bind(asset.is_container())
@@ -3200,8 +3201,8 @@ mod asset_tests {
       location_flag: "Hangar".to_owned(),
       location_id: 60_003_760,
       location_type: "station".to_owned(),
+      name: None,
       quantity: 1,
-      ship_name: None,
       type_id: 587,
     }
   }
@@ -3218,6 +3219,7 @@ mod asset_tests {
       location_flag: "CorpDeliveries".to_owned(),
       location_id: 60_003_760,
       location_type: "station".to_owned(),
+      name: None,
       quantity: 1,
       type_id: 587,
     }

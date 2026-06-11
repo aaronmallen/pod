@@ -1108,8 +1108,8 @@ mod tests {
         location_flag: "Hangar".to_owned(),
         location_id: container_id.unwrap_or(STATION_ID),
         location_type: container_id.map_or("station", |_| "item").to_owned(),
+        name: None,
         quantity: 1,
-        ship_name: None,
         type_id: 587,
       }
     }

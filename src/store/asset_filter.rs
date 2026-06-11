@@ -477,7 +477,7 @@ mod tests {
       assert_eq!(
         clause.sql,
         "(name LIKE ? ESCAPE '\\' OR type_name LIKE ? ESCAPE '\\' OR group_name LIKE ? ESCAPE '\\' \
-         OR location_name LIKE ? ESCAPE '\\')"
+        OR location_name LIKE ? ESCAPE '\\')"
       );
       assert_eq!(
         clause.params,

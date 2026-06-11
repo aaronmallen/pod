@@ -546,18 +546,37 @@ fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   icon_tile(content, ICON_BOX)
 }
 
+fn custom_name(inventory_row: &InventoryRow) -> Option<&str> {
+  inventory_row.name.as_deref().filter(|name| !name.is_empty())
+}
+
 fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
-  let label = container(
-    text(inventory_row.type_name.clone())
+  let custom_name = custom_name(inventory_row);
+
+  let mut lines: Vec<Element<'a, Message>> = vec![
+    text(custom_name.unwrap_or(&inventory_row.type_name).to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .wrapping(text::Wrapping::None)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
-      }),
-  )
-  .width(Length::Fill)
-  .clip(true);
+      })
+      .into(),
+  ];
+  if custom_name.is_some() {
+    lines.push(
+      text(inventory_row.type_name.clone())
+        .font(typography::body::REGULAR)
+        .size(typography::size::XS)
+        .wrapping(text::Wrapping::None)
+        .style(|_| text::Style {
+          color: Some(color::text::SECONDARY),
+        })
+        .into(),
+    );
+  }
+
+  let label = container(Column::with_children(lines)).width(Length::Fill).clip(true);
 
   let mut children: Vec<Element<'a, Message>> = vec![label.into()];
   if inventory_row.is_active_ship {
@@ -1099,6 +1118,49 @@ mod tests {
     fn it_renders_the_empty_states() {
       let state = State::new();
       let _el: Element<'_, Message> = body(&state);
+    }
+  }
+
+  mod custom_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn named_row(name: Option<&str>) -> InventoryRow {
+      InventoryRow {
+        name: name.map(str::to_owned),
+        ..sample_row(1, "Giant Secure Container", "ship", 7, 1_000.0)
+      }
+    }
+
+    #[test]
+    fn it_returns_the_custom_name_when_present() {
+      assert_eq!(
+        super::super::custom_name(&named_row(Some("Loot Run"))),
+        Some("Loot Run")
+      );
+    }
+
+    #[test]
+    fn it_returns_none_when_the_name_is_absent() {
+      assert_eq!(super::super::custom_name(&named_row(None)), None);
+    }
+
+    #[test]
+    fn it_treats_an_empty_name_as_absent() {
+      assert_eq!(super::super::custom_name(&named_row(Some(""))), None);
+    }
+
+    #[test]
+    fn it_renders_a_renamed_item_with_its_type_subtitle() {
+      let row = named_row(Some("Loot Run"));
+      let _el: Element<'_, Message> = name_cell(&row);
+    }
+
+    #[test]
+    fn it_renders_an_unnamed_item_as_the_type_name_alone() {
+      let row = named_row(None);
+      let _el: Element<'_, Message> = name_cell(&row);
     }
   }
 }

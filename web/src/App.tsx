@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { T } from './tokens';
 import { PLATFORMS } from './data';
 import { RELEASE, PLATFORM_BUILDS } from './generated/release';
@@ -18,6 +18,17 @@ const ACCENT = T.plasma;
 export function App() {
   const [archChoice, setArchChoice] = useState('mac-arm');
   const os = detectOS();
+
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (!id) return;
+
+    // Re-apply the hash after mount: the browser's initial anchor scroll runs
+    // before React injects the sections, so defer one frame until they exist.
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    });
+  }, []);
 
   const platforms = PLATFORM_BUILDS.length > 0 ? PLATFORM_BUILDS : PLATFORMS;
 

@@ -352,13 +352,7 @@ mod tests {
         [9899]
       );
       assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
-      assert!(
-        result.active.implants[0]
-          .icon()
-          .as_deref()
-          .unwrap()
-          .ends_with("types/9899.png")
-      );
+      assert!(std::path::Path::new(result.active.implants[0].icon().as_deref().unwrap()).ends_with("types/9899.png"));
       assert_eq!(result.jump_clones.len(), 1);
       assert_eq!(
         result.jump_clones[0].clone.location_name().as_deref(),

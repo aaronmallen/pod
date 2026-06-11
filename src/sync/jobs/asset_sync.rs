@@ -17,6 +17,7 @@ use crate::{
 const LOCATION_TYPE_ITEM: &str = "item";
 const LOCATION_TYPE_STATION: &str = "station";
 const LOCATION_TYPE_STRUCTURE: &str = "structure";
+const SYNC_TARGET: &str = "pod::sync";
 
 struct BoardedShip {
   item_id: i64,
@@ -175,7 +176,10 @@ async fn run_character(ctx: &JobCtx<'_>, character_id: i64) -> Result<Outcome, E
   resolve_references(ctx, &nodes).await?;
 
   let item_ids = namable_item_ids(&nodes);
-  let names = authenticated.assets_names(&item_ids).await?;
+  let names = names_or_empty(
+    authenticated.assets_names(&item_ids).await,
+    &format!("character {character_id}"),
+  );
   apply_names(&mut nodes, &names);
 
   let hierarchy = build_hierarchy(&nodes);
@@ -206,7 +210,10 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
   resolve_references(ctx, &nodes).await?;
 
   let item_ids = namable_item_ids(&nodes);
-  let names = authenticated.assets_names(corporation_id, &item_ids).await?;
+  let names = names_or_empty(
+    authenticated.assets_names(corporation_id, &item_ids).await,
+    &format!("corporation {corporation_id}"),
+  );
   apply_names(&mut nodes, &names);
 
   let hierarchy = build_hierarchy(&nodes);
@@ -224,7 +231,10 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
 }
 
 fn apply_names(nodes: &mut [AssetNode], names: &[AssetName]) {
-  let by_id: HashMap<i64, &str> = names.iter().map(|name| (name.item_id, name.name.as_str())).collect();
+  let by_id: HashMap<i64, &str> = names
+    .iter()
+    .filter_map(|name| normalize_name(&name.name).map(|normalized| (name.item_id, normalized)))
+    .collect();
   for node in nodes.iter_mut() {
     if let Some(name) = by_id.get(&node.item_id) {
       node.name = Some((*name).to_owned());
@@ -278,6 +288,35 @@ fn namable_item_ids(nodes: &[AssetNode]) -> Vec<i64> {
     .collect();
   dedup(&mut ids);
   ids
+}
+
+/// Unwraps a names fetch result, warning and returning empty on failure so a names error never
+/// gates asset persistence — assets are always written; custom names are best-effort only.
+fn names_or_empty(result: Result<Vec<AssetName>, Error>, owner: &str) -> Vec<AssetName> {
+  match result {
+    Ok(names) => names,
+    Err(error) => {
+      tracing::warn!(
+        target: SYNC_TARGET,
+        owner,
+        %error,
+        "assets/names fetch failed; persisting assets without custom names"
+      );
+      Vec::new()
+    }
+  }
+}
+
+/// Returns `None` for empty, whitespace-only, or the literal string `"None"`.
+///
+/// ESI serialises Python's `str(None)` as the JSON string `"None"` (not `null`) when a namable
+/// singleton has no custom name; filtering it here lets the UI fall back to the type name.
+fn normalize_name(name: &str) -> Option<&str> {
+  let trimmed = name.trim();
+  if trimmed.is_empty() || trimmed == "None" {
+    return None;
+  }
+  Some(trimmed)
 }
 
 fn reclassify_structure_roots(nodes: &mut [AssetNode]) {
@@ -407,6 +446,28 @@ mod tests {
       name: None,
       quantity: 1,
       type_id: 587,
+    }
+  }
+
+  mod normalize_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_treats_the_literal_none_as_no_custom_name() {
+      assert_eq!(normalize_name("None"), None);
+    }
+
+    #[test]
+    fn it_treats_empty_and_whitespace_as_no_custom_name() {
+      assert_eq!(normalize_name(""), None);
+      assert_eq!(normalize_name("   "), None);
+    }
+
+    #[test]
+    fn it_keeps_a_real_custom_name_trimmed() {
+      assert_eq!(normalize_name(" Loot Vault "), Some("Loot Vault"));
     }
   }
 
@@ -1036,6 +1097,59 @@ mod tests {
         "the 403 citadel is durably marked inaccessible for the owner"
       );
     }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_type_name_when_esi_returns_a_literal_none_name() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/49/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 100, "location_flag": "Hangar", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        49,
+        serde_json::json!({ "ship_item_id": 9009, "ship_name": "Pod", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(
+        &server,
+        "/characters/49/assets/names/",
+        serde_json::json!([{ "item_id": 100, "name": "None" }]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 49).await;
+      seed_item_types(&db, &[587]).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 49);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(49));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 49).await.unwrap();
+      let item = rows.iter().find(|row| row.item_id() == 100).unwrap();
+      assert_eq!(
+        item.name().as_deref(),
+        None,
+        "a literal \"None\" name is normalized to no custom name"
+      );
+
+      let rendered = assets::render_for_character(&db, 49).await.unwrap();
+      let rendered_item = rendered.iter().find(|row| row.item_id == 100).unwrap();
+      assert_eq!(
+        rendered_item.type_name, "Test Item",
+        "the UI shows the type name rather than \"None\""
+      );
+    }
   }
 
   mod run_corporation {
@@ -1123,6 +1237,84 @@ mod tests {
         child.name().as_deref(),
         None,
         "a non-singleton corp item keeps a null name"
+      );
+    }
+
+    async fn seed_corporation(db: &store::Database) {
+      seed_character(db, 42).await;
+      seed_item_types(db, &[34, 587]).await;
+      crate::store::repo::infra::upsert(
+        db,
+        90_000_001,
+        crate::store::model::OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(42),
+        None,
+      )
+      .await
+      .unwrap();
+      crate::store::repo::org::replace_for_corporation(
+        db,
+        90_000_001,
+        &[crate::store::model::CorporationMemberRole::from((
+          90_000_001_i64,
+          42_i64,
+          "Director".to_string(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_persists_corp_assets_when_the_names_endpoint_returns_invalid_ids() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/corporations/90000001/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 300, "location_flag": "CorpDeliveries", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+          { "is_singleton": false, "item_id": 301, "location_flag": "Cargo", "location_id": 300,
+            "location_type": "item", "quantity": 9, "type_id": 34 },
+        ]),
+      )
+      .await;
+      Mock::given(method("POST"))
+        .and(path("/corporations/90000001/assets/names/"))
+        .respond_with(
+          ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "Invalid IDs in the request" })),
+        )
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_corporation(&db, 90_000_001).await.unwrap();
+      assert_eq!(rows.len(), 2, "corp assets persist even though the names endpoint 404s");
+      let root = rows.iter().find(|row| row.item_id() == 300).unwrap();
+      assert_eq!(
+        root.name().as_deref(),
+        None,
+        "an unsalvageable singleton keeps a null name rather than aborting the job"
       );
     }
 

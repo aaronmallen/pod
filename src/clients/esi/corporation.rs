@@ -3,6 +3,7 @@ use crate::clients::{
   esi::{
     Client as EsiClient,
     models::{
+      assets::AssetName,
       character::RecentKillmail,
       corporation::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationWalletBalance,
@@ -12,6 +13,9 @@ use crate::clients::{
   },
   eve_sso::Grant,
 };
+
+#[allow(dead_code)]
+const ASSET_NAMES_BATCH_SIZE: usize = 1000;
 
 pub struct AuthenticatedClient<'a> {
   esi: &'a EsiClient,
@@ -29,6 +33,17 @@ impl<'a> AuthenticatedClient<'a> {
   pub async fn assets(&self, corporation_id: i64) -> Result<Vec<CorporationAsset>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/assets/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn assets_names(&self, corporation_id: i64, item_ids: &[i64]) -> Result<Vec<AssetName>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/assets/names/"));
+    let mut names = Vec::new();
+    for batch in item_ids.chunks(ASSET_NAMES_BATCH_SIZE) {
+      let page: Vec<AssetName> = self.esi.post_json(&url, &batch, self.grant.access_token()).await?;
+      names.extend(page);
+    }
+    Ok(names)
   }
 
   pub async fn divisions(&self, corporation_id: i64) -> Result<CorporationDivisions, clients::Error> {
@@ -139,6 +154,83 @@ mod tests {
 
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].quantity, 3);
+      }
+    }
+
+    mod assets_names {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_posts_item_ids_with_the_bearer_token_and_parses_names() {
+        let server = MockServer::start().await;
+        let body = r#"[{"item_id":1000000016835,"name":"Corp Hauler"},{"item_id":1000000016836,"name":"Spare Parts"}]"#;
+        Mock::given(method("POST"))
+          .and(path("/corporations/2000/assets/names/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let names = esi
+          .corporation_authenticated(&grant)
+          .assets_names(2000, &[1000000016835, 1000000016836])
+          .await
+          .unwrap();
+
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].item_id, 1000000016835);
+        assert_eq!(names[0].name, "Corp Hauler");
+        assert_eq!(names[1].name, "Spare Parts");
+      }
+
+      #[tokio::test]
+      async fn it_batches_ids_into_chunks_of_at_most_a_thousand() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/corporations/2000/assets/names/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"[{"item_id":1,"name":"Named"}]"#, "application/json"),
+          )
+          .expect(2)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+        let ids: Vec<i64> = (1..=1500).collect();
+
+        let names = esi
+          .corporation_authenticated(&grant)
+          .assets_names(2000, &ids)
+          .await
+          .unwrap();
+
+        assert_eq!(names.len(), 2);
+      }
+
+      #[tokio::test]
+      async fn it_skips_the_request_for_an_empty_id_list() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/corporations/2000/assets/names/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+          .expect(0)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let names = esi
+          .corporation_authenticated(&grant)
+          .assets_names(2000, &[])
+          .await
+          .unwrap();
+
+        assert!(names.is_empty());
       }
     }
 

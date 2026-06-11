@@ -2,14 +2,20 @@ use crate::clients::{
   self,
   esi::{
     Client as EsiClient,
-    models::character::{
-      Asset, Attributes, CharacterInfo, CharacterSkills, Clones, Contact, ContactLabel, Contract, Location, MailBody,
-      MailHeader, MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, SendMailRequest, Ship,
-      SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
+    models::{
+      assets::AssetName,
+      character::{
+        Asset, Attributes, CharacterInfo, CharacterSkills, Clones, Contact, ContactLabel, Contract, Location, MailBody,
+        MailHeader, MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, SendMailRequest, Ship,
+        SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
+      },
     },
   },
   eve_sso::Grant,
 };
+
+#[allow(dead_code)]
+const ASSET_NAMES_BATCH_SIZE: usize = 1000;
 
 pub struct AuthenticatedClient<'a> {
   esi: &'a EsiClient,
@@ -29,6 +35,19 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("characters/{}/assets/", self.grant.character_id()));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn assets_names(&self, item_ids: &[i64]) -> Result<Vec<AssetName>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/assets/names/", self.grant.character_id()));
+    let mut names = Vec::new();
+    for batch in item_ids.chunks(ASSET_NAMES_BATCH_SIZE) {
+      let page: Vec<AssetName> = self.esi.post_json(&url, &batch, self.grant.access_token()).await?;
+      names.extend(page);
+    }
+    Ok(names)
   }
 
   pub async fn attributes(&self) -> Result<Attributes, clients::Error> {
@@ -269,6 +288,75 @@ mod tests {
         let assets = esi.character_authenticated(&grant).assets().await.unwrap();
 
         assert_eq!(assets.len(), 0);
+      }
+    }
+
+    mod assets_names {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_posts_item_ids_with_the_bearer_token_and_parses_names() {
+        let server = MockServer::start().await;
+        let body = r#"[{"item_id":1000000016835,"name":"Pod Saver II"},{"item_id":1000000016836,"name":"Loot Can"}]"#;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/assets/names/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let names = esi
+          .character_authenticated(&grant)
+          .assets_names(&[1000000016835, 1000000016836])
+          .await
+          .unwrap();
+
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].item_id, 1000000016835);
+        assert_eq!(names[0].name, "Pod Saver II");
+        assert_eq!(names[1].name, "Loot Can");
+      }
+
+      #[tokio::test]
+      async fn it_batches_ids_into_chunks_of_at_most_a_thousand() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/assets/names/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"[{"item_id":1,"name":"Named"}]"#, "application/json"),
+          )
+          .expect(2)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+        let ids: Vec<i64> = (1..=1500).collect();
+
+        let names = esi.character_authenticated(&grant).assets_names(&ids).await.unwrap();
+
+        assert_eq!(names.len(), 2);
+      }
+
+      #[tokio::test]
+      async fn it_skips_the_request_for_an_empty_id_list() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/assets/names/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+          .expect(0)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let names = esi.character_authenticated(&grant).assets_names(&[]).await.unwrap();
+
+        assert!(names.is_empty());
       }
     }
 

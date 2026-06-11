@@ -1,4 +1,5 @@
 pub mod alliance;
+pub mod assets;
 pub mod bloodlines;
 pub mod character;
 pub mod corporation;

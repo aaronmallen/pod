@@ -1037,6 +1037,14 @@ mod tests {
       let state = State::new();
       let _el: Element<'_, Message> = body(&state);
     }
+
+    #[test]
+    fn it_renders_the_column_header_in_both_sort_directions() {
+      let _ascending: Element<'_, Message> = column_header(SortColumn::Name, SortDirection::Ascending);
+      let _descending: Element<'_, Message> = column_header(SortColumn::Value, SortDirection::Descending);
+      let _unsortable: Element<'_, Message> =
+        header_cell("Location", None, false, SortColumn::Name, SortDirection::Ascending);
+    }
   }
 
   mod custom_name {

@@ -17,7 +17,11 @@ pub const STALE_THRESHOLD: Duration = DEFAULT_STALE_THRESHOLD;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outcome {
   Acquired,
-  HeldBy { hostname: String, machine_id: String },
+  HeldBy {
+    hostname: String,
+    last_seen: DateTime<Utc>,
+    machine_id: String,
+  },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,6 +55,7 @@ impl LeaseManager {
     {
       return Ok(Outcome::HeldBy {
         hostname: existing.hostname,
+        last_seen: existing.heartbeat,
         machine_id: existing.machine_id,
       });
     }
@@ -152,12 +157,10 @@ mod tests {
     #[test]
     fn it_reports_held_by_a_fresh_foreign_lease() {
       let dir = tempfile::tempdir().unwrap();
-      let now = Utc::now();
+      let heartbeat = at(1_700_000_005_000);
+      let now = at(1_700_000_010_000);
       manager("machine-b")
-        .write(
-          &LeaseManager::lease_path(dir.path()),
-          now - chrono::Duration::seconds(5),
-        )
+        .write(&LeaseManager::lease_path(dir.path()), heartbeat)
         .unwrap();
 
       let outcome = manager("machine-a").acquire(dir.path(), now).unwrap();
@@ -166,6 +169,7 @@ mod tests {
         outcome,
         Outcome::HeldBy {
           hostname: "host-machine-b".to_owned(),
+          last_seen: heartbeat,
           machine_id: "machine-b".to_owned(),
         }
       );

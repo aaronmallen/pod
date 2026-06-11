@@ -41,7 +41,8 @@ impl SyncSession {
     let share = canonical.parent().map(Path::to_path_buf).unwrap_or_default();
 
     let engine = SyncCopy::new(canonical, sidecar.clone(), working_copy.clone(), marker.clone());
-    let lease = LeaseManager::new(machine_id, hostname(), std::process::id(), read_generation(&sidecar));
+    let host = hostname(&machine_id);
+    let lease = LeaseManager::new(machine_id, host, std::process::id(), read_generation(&sidecar));
 
     Some(Self {
       engine,
@@ -113,12 +114,21 @@ impl SyncSession {
   }
 }
 
-fn hostname() -> String {
-  std::env::var("HOSTNAME")
-    .or_else(|_| std::env::var("COMPUTERNAME"))
-    .ok()
-    .filter(|name| !name.trim().is_empty())
-    .unwrap_or_else(|| "unknown-host".to_owned())
+fn host_label(os_hostname: &str, machine_id: &str) -> String {
+  let trimmed = os_hostname.trim();
+  if !trimmed.is_empty() {
+    return trimmed.to_owned();
+  }
+
+  let short: String = machine_id.chars().take(8).collect();
+  format!("machine-{short}")
+}
+
+/// Reads the OS hostname via the `gethostname` syscall rather than `HOSTNAME`/`COMPUTERNAME` env
+/// vars, which are not exported into GUI-launched processes on macOS and Windows. Falls back to
+/// `machine-{first 8 chars of machine_id}` when the syscall returns an empty string.
+fn hostname(machine_id: &str) -> String {
+  host_label(&gethostname::gethostname().to_string_lossy(), machine_id)
 }
 
 fn modified_at(path: &Path) -> Option<SystemTime> {
@@ -234,10 +244,14 @@ mod tests {
 
       let outcome = fixture.session.acquire(now).unwrap();
 
+      let last_seen = crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+        .unwrap()
+        .heartbeat;
       assert_eq!(
         outcome,
         Outcome::HeldBy {
           hostname: "host-b".to_owned(),
+          last_seen,
           machine_id: "machine-b".to_owned(),
         }
       );
@@ -403,10 +417,14 @@ mod tests {
 
       let outcome = fixture.session.take_over(now).unwrap();
 
+      let last_seen = crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+        .unwrap()
+        .heartbeat;
       assert_eq!(
         outcome,
         Outcome::HeldBy {
           hostname: "host-b".to_owned(),
+          last_seen,
           machine_id: "machine-b".to_owned(),
         }
       );
@@ -469,6 +487,32 @@ mod tests {
         crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share)),
         None
       );
+    }
+  }
+
+  mod hostname {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_a_non_empty_name() {
+      assert!(!super::super::hostname("abcd1234efgh").is_empty());
+    }
+
+    #[test]
+    fn it_keeps_the_real_os_hostname_when_present() {
+      assert_eq!(host_label("studio-mac", "abcd1234efgh"), "studio-mac");
+    }
+
+    #[test]
+    fn it_trims_surrounding_whitespace_from_the_os_hostname() {
+      assert_eq!(host_label("  studio-mac \n", "abcd1234efgh"), "studio-mac");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_machine_id_label_when_the_os_name_is_blank() {
+      assert_eq!(host_label("   ", "abcd1234efgh"), "machine-abcd1234");
     }
   }
 }

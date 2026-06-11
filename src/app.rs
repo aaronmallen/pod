@@ -34,7 +34,7 @@ use crate::{
       esi_status::esi_status,
       eve_time::eve_time,
       rail::{self, rail},
-      sync_chip,
+      status, sync_chip,
       sync_popover::{self, Header, JobRow, Model, RowState},
       updater_banner,
     },
@@ -125,6 +125,9 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
+  /// Frozen "X ago" string set at take-over attempt time; `None` until a take-over is refused.
+  /// Not a live ticker — recomputed only on each new retry.
+  take_over_refused: Option<String>,
   ui_state: UiState,
   updater: Option<updater::Handle>,
   updater_state: updater::State,
@@ -133,11 +136,10 @@ struct App {
   windows: Windows,
 }
 
-/// Identifies the machine that currently holds the storage lease, surfaced when this instance opens
-/// the share read-only. The read-only banner that consumes it lands in a follow-up task.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HolderInfo {
   hostname: String,
+  last_active: DateTime<Utc>,
   machine_id: String,
 }
 
@@ -160,9 +162,11 @@ impl From<store::lease::Outcome> for Option<HolderInfo> {
       store::lease::Outcome::Acquired => None,
       store::lease::Outcome::HeldBy {
         hostname,
+        last_seen,
         machine_id,
       } => Some(HolderInfo {
         hostname,
+        last_active: last_seen,
         machine_id,
       }),
     }
@@ -568,6 +572,7 @@ fn boot() -> (App, Task<Message>) {
     sync_popover_open: false,
     sync_session: None,
     sync_tick: false,
+    take_over_refused: None,
     ui_state: window_state::load(),
     updater: updater.clone(),
     updater_state: updater::State::default(),
@@ -1274,7 +1279,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     column_children.push(banner);
   }
   if let Some(holder) = &app.read_only {
-    column_children.push(read_only_banner(holder));
+    column_children.push(read_only_banner(holder, app.take_over_refused.as_deref()));
   }
   if app.sde_stale {
     column_children.push(sde_stale_banner());
@@ -1347,16 +1352,13 @@ fn sde_stale_banner<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn read_only_banner(holder: &HolderInfo) -> Element<'_, Message> {
-  let label = text(format!(
-    "Open on {} \u{2014} close it there, or take over.",
-    holder.hostname
-  ))
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(|_| text::Style {
-    color: Some(color::status::WARNING),
-  });
+fn read_only_banner(holder: &HolderInfo, refused_since: Option<&str>) -> Element<'static, Message> {
+  let label = text(read_only_banner_label(&holder.hostname, refused_since))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::status::WARNING),
+    });
 
   let action = button(
     text("Take over")
@@ -1386,6 +1388,13 @@ fn read_only_banner(holder: &HolderInfo) -> Element<'_, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn read_only_banner_label(hostname: &str, refused_since: Option<&str>) -> String {
+  match refused_since {
+    Some(since) => format!("Still open on {hostname} (last active {since}) \u{2014} close it there first."),
+    None => format!("Open on {hostname} \u{2014} close it there, or take over."),
+  }
 }
 
 fn route_view(app: &App) -> Element<'_, Message> {
@@ -2466,6 +2475,7 @@ fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
 fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {
   app.sync_session = ready.sync_session.clone();
   app.read_only = ready.lease.clone();
+  app.take_over_refused = None;
   app.last_push = app
     .sync_session
     .as_ref()
@@ -2634,11 +2644,13 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
       }
       Ok(store::lease::Outcome::HeldBy {
         hostname,
+        last_seen,
         machine_id,
       }) => {
         tracing::info!(target: "pod::lifecycle", %hostname, "take over declined; the share is still held");
         TakeOverOutcome::StillHeld(HolderInfo {
           hostname,
+          last_active: last_seen,
           machine_id,
         })
       }
@@ -2658,6 +2670,7 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
   match outcome {
     TakeOverOutcome::Claimed => {
       app.read_only = None;
+      app.take_over_refused = None;
       app.last_push = app
         .sync_session
         .as_ref()
@@ -2670,6 +2683,8 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
       build_runtime(ready)
     }
     TakeOverOutcome::StillHeld(holder) => {
+      let elapsed = (Utc::now() - holder.last_active).num_seconds().max(0) as u64;
+      app.take_over_refused = Some(status::format_since(elapsed));
       app.read_only = Some(holder);
       refresh_storage_status(app);
       Task::none()
@@ -3304,6 +3319,7 @@ mod tests {
       sync_popover_open: false,
       sync_session: None,
       sync_tick: false,
+      take_over_refused: None,
       ui_state: UiState::default(),
       updater: None,
       updater_state: updater::State::default(),
@@ -4452,8 +4468,10 @@ mod tests {
 
     #[test]
     fn a_held_foreign_lease_maps_to_read_only_holder_info() {
+      let last_seen = Utc::now();
       let holder: Option<HolderInfo> = store::lease::Outcome::HeldBy {
         hostname: "studio-mac".to_owned(),
+        last_seen,
         machine_id: "machine-b".to_owned(),
       }
       .into();
@@ -4462,6 +4480,7 @@ mod tests {
         holder,
         Some(HolderInfo {
           hostname: "studio-mac".to_owned(),
+          last_active: last_seen,
           machine_id: "machine-b".to_owned(),
         })
       );
@@ -4489,6 +4508,7 @@ mod tests {
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 
@@ -4662,6 +4682,7 @@ mod tests {
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 
@@ -4682,6 +4703,7 @@ mod tests {
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 
@@ -4698,6 +4720,7 @@ mod tests {
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 
@@ -4709,8 +4732,10 @@ mod tests {
     #[test]
     fn a_still_held_take_over_keeps_the_named_banner() {
       let mut app = test_app();
+      let last_active = Utc::now() - chrono::Duration::seconds(4);
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 
@@ -4718,6 +4743,7 @@ mod tests {
         &mut app,
         TakeOverOutcome::StillHeld(HolderInfo {
           hostname: "studio-linux".to_owned(),
+          last_active,
           machine_id: "machine-c".to_owned(),
         }),
       );
@@ -4726,9 +4752,32 @@ mod tests {
         app.read_only,
         Some(HolderInfo {
           hostname: "studio-linux".to_owned(),
+          last_active,
           machine_id: "machine-c".to_owned(),
         }),
         "a still-fresh holder is refused and the banner updates to the current holder"
+      );
+      assert_eq!(
+        app.take_over_refused,
+        Some("4s ago".to_owned()),
+        "the refusal freezes how long ago the holder was last active"
+      );
+    }
+
+    #[test]
+    fn the_initial_read_only_banner_invites_a_take_over() {
+      let label = read_only_banner_label("studio-mac", None);
+
+      assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
+    }
+
+    #[test]
+    fn a_refused_take_over_banner_names_the_holder_and_how_long_ago_it_was_active() {
+      let label = read_only_banner_label("studio-mac", Some("4s ago"));
+
+      assert_eq!(
+        label,
+        "Still open on studio-mac (last active 4s ago) \u{2014} close it there first."
       );
     }
 
@@ -4737,6 +4786,7 @@ mod tests {
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
         machine_id: "machine-b".to_owned(),
       });
 

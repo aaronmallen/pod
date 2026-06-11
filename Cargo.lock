@@ -4176,6 +4176,7 @@ dependencies = [
  "chrono",
  "dir_spec",
  "figment",
+ "gethostname",
  "getset",
  "iced",
  "interprocess",

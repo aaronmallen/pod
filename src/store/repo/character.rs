@@ -23,6 +23,8 @@ use crate::store::{
 /// Sentinel squad name reserving the bucket for characters that belong to no user squad.
 pub const RESERVED_UNASSIGNED_NAME: &str = "__unassigned__";
 
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
 const SEARCH_SELECT: &str = "\
   SELECT \
     oc.id AS character_id, \
@@ -726,13 +728,16 @@ pub async fn replace_implants(db: &Database, character_id: i64, implants: &[Char
     .execute(&mut *tx)
     .await?;
 
-  for implant in implants {
-    sqlx::query("INSERT INTO character_implants (attribute_id, bonus, character_id) VALUES (?, ?, ?)")
-      .bind(implant.attribute_id())
-      .bind(implant.bonus())
-      .bind(implant.character_id())
-      .execute(&mut *tx)
-      .await?;
+  for chunk in implants.chunks(SQLITE_MAX_BIND_PARAMS / 3) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("INSERT INTO character_implants (attribute_id, bonus, character_id) ");
+    builder.push_values(chunk, |mut row, implant| {
+      row
+        .push_bind(implant.attribute_id())
+        .push_bind(implant.bonus())
+        .push_bind(implant.character_id());
+    });
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -758,19 +763,20 @@ pub async fn replace_skills(db: &Database, character_id: i64, skills: &[Characte
     .execute(&mut *tx)
     .await?;
 
-  for skill in skills {
-    sqlx::query(
+  for chunk in skills.chunks(SQLITE_MAX_BIND_PARAMS / 5) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_skills \
-        (active_skill_level, character_id, skill_id, skillpoints_in_skill, trained_skill_level) \
-      VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(skill.active_skill_level())
-    .bind(skill.character_id())
-    .bind(skill.skill_id())
-    .bind(skill.skillpoints_in_skill())
-    .bind(skill.trained_skill_level())
-    .execute(&mut *tx)
-    .await?;
+        (active_skill_level, character_id, skill_id, skillpoints_in_skill, trained_skill_level) ",
+    );
+    builder.push_values(chunk, |mut row, skill| {
+      row
+        .push_bind(skill.active_skill_level())
+        .push_bind(skill.character_id())
+        .push_bind(skill.skill_id())
+        .push_bind(skill.skillpoints_in_skill())
+        .push_bind(skill.trained_skill_level());
+    });
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -821,24 +827,25 @@ pub async fn replace_skillqueue(
     .execute(&mut *tx)
     .await?;
 
-  for entry in entries {
-    sqlx::query(
+  for chunk in entries.chunks(SQLITE_MAX_BIND_PARAMS / 9) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_skillqueue \
         (character_id, finish_date, finished_level, level_end_sp, level_start_sp, \
-        queue_position, skill_id, start_date, training_start_sp) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(entry.character_id())
-    .bind(entry.finish_date())
-    .bind(entry.finished_level())
-    .bind(entry.level_end_sp())
-    .bind(entry.level_start_sp())
-    .bind(entry.queue_position())
-    .bind(entry.skill_id())
-    .bind(entry.start_date())
-    .bind(entry.training_start_sp())
-    .execute(&mut *tx)
-    .await?;
+        queue_position, skill_id, start_date, training_start_sp) ",
+    );
+    builder.push_values(chunk, |mut row, entry| {
+      row
+        .push_bind(entry.character_id())
+        .push_bind(entry.finish_date())
+        .push_bind(entry.finished_level())
+        .push_bind(entry.level_end_sp())
+        .push_bind(entry.level_start_sp())
+        .push_bind(entry.queue_position())
+        .push_bind(entry.skill_id())
+        .push_bind(entry.start_date())
+        .push_bind(entry.training_start_sp());
+    });
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;

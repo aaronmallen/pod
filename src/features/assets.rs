@@ -2125,6 +2125,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_covers_the_remaining_inventory_message_branches() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::AssetChartHovered(Some(0.5)), &db);
+      assert_eq!(state.chart_hover, Some(0.5));
+
+      let _ = update(&mut state, Message::InventoryHelpToggled, &db);
+      assert!(state.inventory_help_open);
+
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+      assert_eq!(state.category, Category::Ship);
+
+      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
+      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
+      assert_eq!(state.sort_dir, SortDirection::Ascending);
+
+      let active = state.active;
+      let _ = update(&mut state, Message::ScopeSelected(active), &db);
+      assert_eq!(state.active, active);
+
+      let _ = update(&mut state, Message::SearchSubmitted, &db);
+      let _ = update(&mut state, Message::FilterExamplePicked("ship"), &db);
+      assert!(!state.inventory_help_open);
+    }
+
+    #[tokio::test]
     async fn it_applies_search_results_for_the_current_generation() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();

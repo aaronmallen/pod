@@ -1343,6 +1343,43 @@ mod tests {
       assert_eq!(state.sync.holder.as_deref(), Some("nas-mac"));
       assert_eq!(state.sync.last_synced, Some(at));
     }
+
+    #[test]
+    fn it_covers_the_simple_storage_message_branches() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      state.error = Some("stale".to_owned());
+      assert_eq!(update(&mut state, Message::DismissError, &mut settings), Outcome::None);
+      assert!(state.error.is_none());
+
+      state.export_pending = true;
+      assert_eq!(
+        update(&mut state, Message::ExportFinished(Ok(None)), &mut settings),
+        Outcome::None
+      );
+      assert!(!state.export_pending);
+
+      assert_eq!(
+        update(
+          &mut state,
+          Message::ExportFinished(Err("disk full".to_owned())),
+          &mut settings
+        ),
+        Outcome::None
+      );
+      assert_eq!(state.error.as_deref(), Some("disk full"));
+
+      assert!(matches!(
+        update(&mut state, Message::ExportLogs(RangePreset::LastHour), &mut settings),
+        Outcome::ExportLogs { .. }
+      ));
+      assert!(state.export_pending);
+
+      assert_eq!(update(&mut state, Message::CancelMove, &mut settings), Outcome::None);
+      assert_eq!(update(&mut state, Message::ConfirmMove, &mut settings), Outcome::None);
+      assert_eq!(update(&mut state, Message::SkipMove, &mut settings), Outcome::None);
+    }
   }
 
   mod labels {

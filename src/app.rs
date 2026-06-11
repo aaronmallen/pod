@@ -2105,8 +2105,6 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
 fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::ClockTick => handle_clock_tick(app),
-    Message::CloseSyncPopover => set_sync_popover_open(app, false),
-    Message::FocusMainWindow => handle_focus_main_window(app),
     Message::ImageReady {
       id,
       kind,
@@ -2115,7 +2113,6 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::InitFailed(error) => handle_init_failed(app, error),
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
     Message::LockReleased => handle_lock_released(app),
-    Message::OpenAbout => open_about_window(app),
     Message::PeriodicPull => handle_periodic_pull(app),
     Message::PeriodicPush => handle_periodic_push(app),
     Message::SyncNowResolved(outcome) => handle_sync_now_resolved(app, outcome),
@@ -2131,6 +2128,15 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::SyncPulse => handle_sync_pulse(app),
     Message::TakeOver => handle_take_over(app),
     Message::TakeOverResolved(outcome) => handle_take_over_resolved(app, outcome),
+    other => dispatch_window_lifecycle(app, other),
+  }
+}
+
+fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
+  match message {
+    Message::CloseSyncPopover => set_sync_popover_open(app, false),
+    Message::FocusMainWindow => handle_focus_main_window(app),
+    Message::OpenAbout => open_about_window(app),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
     Message::UpdaterDismissToast => handle_updater_dismiss_toast(app),
@@ -2355,21 +2361,24 @@ fn export_logs(
   end: DateTime<Utc>,
   diagnostics: settings::log_export::Diagnostics,
 ) -> Task<Message> {
-  Task::perform(
-    async move {
-      let default_name = settings::log_export::default_file_name(start, end);
-      let bytes =
-        tokio::task::spawn_blocking(move || settings::log_export::build_zip(&log_dir, start, end, &diagnostics))
-          .await
-          .map_err(|err| err.to_string())??;
-      save_log_bundle(default_name, bytes).await
-    },
-    |result| {
-      Message::Settings(settings::Message::Storage(
-        settings::storage_tab::Message::ExportFinished(result),
-      ))
-    },
-  )
+  Task::perform(export_log_bundle(log_dir, start, end, diagnostics), |result| {
+    Message::Settings(settings::Message::Storage(
+      settings::storage_tab::Message::ExportFinished(result),
+    ))
+  })
+}
+
+async fn export_log_bundle(
+  log_dir: std::path::PathBuf,
+  start: DateTime<Utc>,
+  end: DateTime<Utc>,
+  diagnostics: settings::log_export::Diagnostics,
+) -> Result<Option<std::path::PathBuf>, String> {
+  let default_name = settings::log_export::default_file_name(start, end);
+  let bytes = tokio::task::spawn_blocking(move || settings::log_export::build_zip(&log_dir, start, end, &diagnostics))
+    .await
+    .map_err(|err| err.to_string())??;
+  save_log_bundle(default_name, bytes).await
 }
 
 /// Prompts for a save location via the native dialog and writes the zip there. Stubbed to a no-op
@@ -2556,24 +2565,26 @@ fn handle_pulled(app: &mut App, pulled: bool) -> Task<Message> {
 }
 
 fn pull_task(session: store::sync_session::SyncSession) -> Task<Message> {
-  Task::future(async move {
-    match tokio::task::spawn_blocking(move || session.pull()).await {
-      Ok(Ok(pulled)) => {
-        if pulled {
-          tracing::info!(target: "pod::lifecycle", "pulled newer changes from the share");
-        }
-        Message::Pulled(pulled)
+  Task::future(pull_bundle(session))
+}
+
+async fn pull_bundle(session: store::sync_session::SyncSession) -> Message {
+  match tokio::task::spawn_blocking(move || session.pull()).await {
+    Ok(Ok(pulled)) => {
+      if pulled {
+        tracing::info!(target: "pod::lifecycle", "pulled newer changes from the share");
       }
-      Ok(Err(error)) => {
-        tracing::warn!(target: "pod::lifecycle", %error, "pull from the share failed");
-        Message::Pulled(false)
-      }
-      Err(error) => {
-        tracing::warn!(target: "pod::lifecycle", %error, "pull task panicked");
-        Message::Pulled(false)
-      }
+      Message::Pulled(pulled)
     }
-  })
+    Ok(Err(error)) => {
+      tracing::warn!(target: "pod::lifecycle", %error, "pull from the share failed");
+      Message::Pulled(false)
+    }
+    Err(error) => {
+      tracing::warn!(target: "pod::lifecycle", %error, "pull task panicked");
+      Message::Pulled(false)
+    }
+  }
 }
 
 fn handle_lock_released(app: &mut App) -> Task<Message> {
@@ -3319,6 +3330,24 @@ mod tests {
     }
   }
 
+  fn temp_sync_session() -> (tempfile::TempDir, store::sync_session::SyncSession) {
+    let dir = tempfile::tempdir().unwrap();
+    let share = dir.path().join("share");
+    let cache = dir.path().join("cache");
+    std::fs::create_dir_all(&share).unwrap();
+    std::fs::create_dir_all(&cache).unwrap();
+
+    let mut storage = config::StorageConfig::default();
+    storage.set_db_dir(Some(share));
+    storage.set_cache_dir(Some(cache));
+    storage.set_working_copy_dir(Some(dir.path().join("working-copy")));
+    storage.set_network(true);
+
+    let session = store::sync_session::SyncSession::from_config(&storage, "machine-test".to_owned())
+      .expect("sync mode yields a session");
+    (dir, session)
+  }
+
   mod destination {
     use pretty_assertions::assert_eq;
 
@@ -3372,6 +3401,39 @@ mod tests {
     fn it_yields_none_for_an_empty_roster() {
       assert_eq!(resolve_skills_target(&[], None), None);
       assert_eq!(resolve_skills_target(&[], Some(7)), None);
+    }
+  }
+
+  mod resolve_mail_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, None), Some(7));
+    }
+
+    #[test]
+    fn it_keeps_the_sticky_selection_when_still_owned() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(3)), Some(3));
+    }
+
+    #[test]
+    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(99)), Some(7));
+    }
+
+    #[test]
+    fn it_yields_none_for_an_empty_roster() {
+      assert_eq!(resolve_mail_target(&[], None), None);
+      assert_eq!(resolve_mail_target(&[], Some(7)), None);
     }
   }
 
@@ -4459,6 +4521,110 @@ mod tests {
     }
 
     #[test]
+    fn sync_now_with_a_clean_session_stamps_the_synced_time() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.last_synced = None;
+
+      let _ = sync_now(&mut app);
+
+      assert!(
+        app.last_synced.is_some(),
+        "a clean session with nothing to push or pull still refreshes the synced timestamp"
+      );
+    }
+
+    #[tokio::test]
+    async fn pull_bundle_reports_no_change_for_a_fresh_share() {
+      let (_dir, session) = temp_sync_session();
+
+      let message = pull_bundle(session).await;
+
+      assert!(
+        matches!(message, Message::Pulled(false)),
+        "a fresh share has nothing newer to pull"
+      );
+    }
+
+    #[tokio::test]
+    async fn export_log_bundle_writes_nowhere_when_the_save_dialog_is_stubbed() {
+      let dir = tempfile::tempdir().unwrap();
+      let log_dir = dir.path().join("logs");
+      std::fs::create_dir_all(&log_dir).unwrap();
+      std::fs::write(log_dir.join("pod.log"), b"{\"ts\":\"now\"}\n").unwrap();
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: dir.path().join("cache"),
+        database_path: dir.path().join("pod.db"),
+        db_dir: dir.path().to_path_buf(),
+        log_dir: log_dir.clone(),
+      };
+
+      let result = export_log_bundle(
+        log_dir,
+        Utc::now() - chrono::Duration::hours(1),
+        Utc::now(),
+        diagnostics,
+      )
+      .await;
+
+      assert_eq!(result, Ok(None), "the cfg(test) save dialog is a no-op");
+    }
+
+    #[tokio::test]
+    async fn handle_settings_routes_a_tab_switch_through_the_settings_state() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::CategorySelected(settings::Category::Storage),
+      );
+
+      assert!(app.settings.is_some(), "switching tabs leaves the settings screen open");
+    }
+
+    #[tokio::test]
+    async fn handle_settings_without_a_settings_screen_is_a_no_op() {
+      let mut app = test_app();
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::CategorySelected(settings::Category::Storage),
+      );
+
+      assert!(app.settings.is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_auth_cancel_with_a_runtime_is_handled_not_deferred() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.runtime = Some(runtime);
+
+      let _ = handle_auth(&mut app, auth::Message::Cancel);
+
+      assert!(
+        app.pending_auth.is_none(),
+        "with a runtime present the auth message is handled inline, not queued"
+      );
+    }
+
+    #[test]
+    fn handle_auth_without_a_runtime_defers_the_message() {
+      let mut app = test_app();
+
+      let _ = handle_auth(&mut app, auth::Message::Cancel);
+
+      assert!(
+        app.pending_auth.is_some(),
+        "auth before the runtime is ready is queued until boot completes"
+      );
+    }
+
+    #[test]
     fn a_completed_reconcile_stamps_the_synced_time_and_refreshes_after_a_pull() {
       let mut app = test_app();
       app.last_synced = None;
@@ -5111,8 +5277,19 @@ mod tests {
       assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
       assert_eq!(Message::LeaseHeartbeat.variant_name(), "LeaseHeartbeat");
       assert_eq!(Message::OpenAbout.variant_name(), "OpenAbout");
+      assert_eq!(Message::PeriodicPull.variant_name(), "PeriodicPull");
       assert_eq!(Message::PeriodicPush.variant_name(), "PeriodicPush");
+      assert_eq!(Message::Pulled(false).variant_name(), "Pulled");
       assert_eq!(Message::Pushed(None).variant_name(), "Pushed");
+      assert_eq!(
+        Message::SeedProgress(splash::seed::Progress::Complete).variant_name(),
+        "SeedProgress"
+      );
+      assert_eq!(Message::Splash(splash::Message::Tick).variant_name(), "Splash");
+      assert_eq!(
+        Message::SyncNowResolved(SyncNowOutcome::Failed).variant_name(),
+        "SyncNowResolved"
+      );
       assert_eq!(Message::ReauthCharacter(1).variant_name(), "ReauthCharacter");
       assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
       assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");

@@ -16,6 +16,16 @@ pub struct UiState {
   pub windows: BTreeMap<String, WindowGeometry>,
 }
 
+impl UiState {
+  pub fn host_width(&self, window_key: &str, default: f32) -> f32 {
+    self
+      .windows
+      .get(window_key)
+      .map(|geometry| geometry.width)
+      .unwrap_or(default)
+  }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WindowGeometry {
   pub height: f32,

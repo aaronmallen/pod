@@ -200,9 +200,17 @@ impl State {
       compose: None,
       folder: Folder::default(),
       folder_data: FolderPaneData::default(),
-      folder_pane: PaneDrag::with_min_width(FOLDER_PANE_DEFAULT_WIDTH, FOLDER_PANE_MIN_WIDTH),
+      folder_pane: PaneDrag::with_min_width(
+        FOLDER_PANE_DEFAULT_WIDTH,
+        FOLDER_PANE_MIN_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      ),
       headers: Vec::new(),
-      message_list_pane: PaneDrag::with_min_width(MESSAGE_LIST_PANE_DEFAULT_WIDTH, MESSAGE_LIST_PANE_MIN_WIDTH),
+      message_list_pane: PaneDrag::with_min_width(
+        MESSAGE_LIST_PANE_DEFAULT_WIDTH,
+        MESSAGE_LIST_PANE_MIN_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      ),
       messages: Vec::new(),
       outbox_indicator: OutboxIndicator::default(),
       overlays: HashMap::new(),
@@ -219,14 +227,27 @@ impl State {
   }
 
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
-    self.folder_pane = restore_pane(ui, FOLDER_PANE_KEY, FOLDER_PANE_DEFAULT_WIDTH, FOLDER_PANE_MIN_WIDTH);
+    let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.folder_pane = restore_pane(
+      ui,
+      FOLDER_PANE_KEY,
+      FOLDER_PANE_DEFAULT_WIDTH,
+      FOLDER_PANE_MIN_WIDTH,
+      host_width,
+    );
     self.message_list_pane = restore_pane(
       ui,
       MESSAGE_LIST_PANE_KEY,
       MESSAGE_LIST_PANE_DEFAULT_WIDTH,
       MESSAGE_LIST_PANE_MIN_WIDTH,
+      host_width,
     );
     self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.folder_pane.set_host_width(host_width);
+    self.message_list_pane.set_host_width(host_width);
   }
 
   pub fn active(&self) -> Scope {
@@ -357,8 +378,8 @@ impl Default for State {
   }
 }
 
-fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32) -> PaneDrag {
-  PaneDrag::with_min_width(ui.panes.get(key).copied().unwrap_or(default), min)
+fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32) -> PaneDrag {
+  PaneDrag::from_store_with_min(ui, key, default, min, host_width)
 }
 
 pub fn load(db: &Database, character: i64) -> Task<Message> {
@@ -537,10 +558,10 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
   state.unified = unified;
   state.unified_unread = unified_unread;
   if !state.folder_pane.is_active() {
-    state.folder_pane = PaneDrag::with_min_width(folder_pane_width, FOLDER_PANE_MIN_WIDTH);
+    state.folder_pane.set_ratio_from_store(folder_pane_width);
   }
   if !state.message_list_pane.is_active() {
-    state.message_list_pane = PaneDrag::with_min_width(message_list_pane_width, MESSAGE_LIST_PANE_MIN_WIDTH);
+    state.message_list_pane.set_ratio_from_store(message_list_pane_width);
   }
   if scope == state.active && folder == state.folder {
     state.all_messages = all_messages;
@@ -566,7 +587,7 @@ fn update_pane_drag(state: &mut State, message: Message) -> Task<Message> {
     }
     Message::FolderPaneDragEnd => {
       state.folder_pane.end();
-      Task::done(Message::PaneSettled(FOLDER_PANE_KEY, state.folder_pane.width()))
+      Task::done(Message::PaneSettled(FOLDER_PANE_KEY, state.folder_pane.ratio()))
     }
     Message::ListPaneDragStart => {
       state.message_list_pane.start();
@@ -580,7 +601,7 @@ fn update_pane_drag(state: &mut State, message: Message) -> Task<Message> {
       state.message_list_pane.end();
       Task::done(Message::PaneSettled(
         MESSAGE_LIST_PANE_KEY,
-        state.message_list_pane.width(),
+        state.message_list_pane.ratio(),
       ))
     }
     _ => Task::none(),
@@ -1091,7 +1112,7 @@ mod tests {
       let _ = update(&mut state, Message::FolderPaneDragged(0.0), &db);
       let _ = update(&mut state, Message::FolderPaneDragEnd, &db);
 
-      assert_eq!(state.folder_pane_width(), FOLDER_PANE_MIN_WIDTH);
+      assert!((state.folder_pane_width() - FOLDER_PANE_MIN_WIDTH).abs() < 0.5);
     }
 
     #[tokio::test]

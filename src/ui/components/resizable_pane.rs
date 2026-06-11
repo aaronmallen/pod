@@ -14,43 +14,66 @@ const RULE_WIDTH: f32 = 1.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaneDrag {
   active: bool,
+  host_width: f32,
   last_x: Option<f32>,
   min_width: f32,
+  ratio: f32,
   right_anchored: bool,
-  width: f32,
 }
 
 impl PaneDrag {
-  pub fn from_store(state: &crate::window_state::UiState, key: &str, default: f32) -> Self {
-    Self::new(state.panes.get(key).copied().unwrap_or(default))
+  pub fn from_store(state: &crate::window_state::UiState, key: &str, default_width: f32, host_width: f32) -> Self {
+    Self::from_store_with_min(state, key, default_width, MIN_PANE_WIDTH, host_width)
   }
 
-  pub fn new(width: f32) -> Self {
-    Self::with_min_width(width, MIN_PANE_WIDTH)
+  pub fn from_store_with_min(
+    state: &crate::window_state::UiState,
+    key: &str,
+    default_width: f32,
+    min_width: f32,
+    host_width: f32,
+  ) -> Self {
+    let ratio = match state.panes.get(key).copied() {
+      Some(stored) if stored > 1.0 => stored / host_width.max(1.0),
+      Some(stored) => stored,
+      None => default_width / host_width.max(1.0),
+    };
+    Self::from_ratio(ratio, min_width, host_width)
   }
 
-  pub fn with_min_width(width: f32, min_width: f32) -> Self {
-    let min_width = min_width.max(0.0);
+  pub fn new(default_width: f32, host_width: f32) -> Self {
+    Self::with_min_width(default_width, MIN_PANE_WIDTH, host_width)
+  }
+
+  pub fn with_min_width(default_width: f32, min_width: f32, host_width: f32) -> Self {
+    Self::from_ratio(default_width / host_width.max(1.0), min_width, host_width)
+  }
+
+  fn from_ratio(ratio: f32, min_width: f32, host_width: f32) -> Self {
     Self {
       active: false,
+      host_width,
       last_x: None,
-      min_width,
+      min_width: min_width.max(0.0),
+      ratio,
       right_anchored: false,
-      width: width.max(min_width),
     }
   }
 
   pub fn drag_to(&mut self, x: f32) -> f32 {
     if !self.active {
-      return self.width;
+      return self.width();
     }
     if let Some(last_x) = self.last_x {
       let delta = x - last_x;
       let signed = if self.right_anchored { -delta } else { delta };
-      self.width = (self.width + signed).max(self.min_width);
+      let width = (self.width() + signed).max(self.min_width);
+      if self.host_width > 0.0 {
+        self.ratio = width / self.host_width;
+      }
     }
     self.last_x = Some(x);
-    self.width
+    self.width()
   }
 
   pub fn end(&mut self) {
@@ -62,9 +85,25 @@ impl PaneDrag {
     self.active
   }
 
+  pub fn ratio(&self) -> f32 {
+    self.ratio
+  }
+
   pub fn right_anchored(mut self, right_anchored: bool) -> Self {
     self.right_anchored = right_anchored;
     self
+  }
+
+  pub fn set_host_width(&mut self, host_width: f32) {
+    self.host_width = host_width;
+  }
+
+  pub fn set_ratio_from_store(&mut self, stored: f32) {
+    self.ratio = if stored > 1.0 {
+      stored / self.host_width.max(1.0)
+    } else {
+      stored
+    };
   }
 
   pub fn start(&mut self) {
@@ -73,7 +112,7 @@ impl PaneDrag {
   }
 
   pub fn width(&self) -> f32 {
-    self.width
+    (self.ratio * self.host_width).max(self.min_width)
   }
 }
 
@@ -122,6 +161,12 @@ where
 mod tests {
   use super::*;
 
+  const HOST: f32 = 1000.0;
+
+  fn px(width: f32) -> PaneDrag {
+    PaneDrag::new(width, HOST)
+  }
+
   mod pane_handle {
     use super::*;
 
@@ -147,19 +192,19 @@ mod tests {
 
     #[test]
     fn it_clamps_a_below_minimum_starting_width_up_to_the_minimum() {
-      let drag = PaneDrag::with_min_width(40.0, 100.0);
+      let drag = PaneDrag::with_min_width(40.0, 100.0, HOST);
       assert_eq!(drag.width(), 100.0);
     }
 
     #[test]
     fn it_keeps_an_above_minimum_starting_width() {
-      let drag = PaneDrag::with_min_width(250.0, 100.0);
+      let drag = PaneDrag::with_min_width(250.0, 100.0, HOST);
       assert_eq!(drag.width(), 250.0);
     }
 
     #[test]
     fn it_floors_a_negative_minimum_at_zero() {
-      let drag = PaneDrag::with_min_width(-5.0, -100.0);
+      let drag = PaneDrag::with_min_width(-5.0, -100.0, HOST);
       assert_eq!(drag.width(), 0.0);
     }
   }
@@ -171,11 +216,11 @@ mod tests {
     use crate::window_state::UiState;
 
     #[test]
-    fn it_reads_a_stored_pane_width_by_key() {
+    fn it_reads_a_stored_pane_ratio_by_key() {
       let mut state = UiState::default();
-      state.panes.insert("skills.left".to_owned(), 320.0);
+      state.panes.insert("skills.left".to_owned(), 0.32);
 
-      let drag = PaneDrag::from_store(&state, "skills.left", 240.0);
+      let drag = PaneDrag::from_store(&state, "skills.left", 240.0, HOST);
 
       assert_eq!(drag.width(), 320.0);
     }
@@ -184,7 +229,7 @@ mod tests {
     fn it_falls_back_to_the_default_for_an_unsized_pane() {
       let state = UiState::default();
 
-      let drag = PaneDrag::from_store(&state, "skills.left", 240.0);
+      let drag = PaneDrag::from_store(&state, "skills.left", 240.0, HOST);
 
       assert_eq!(drag.width(), 240.0);
     }
@@ -192,9 +237,9 @@ mod tests {
     #[test]
     fn it_clamps_a_stored_width_below_the_minimum() {
       let mut state = UiState::default();
-      state.panes.insert("skills.left".to_owned(), 10.0);
+      state.panes.insert("skills.left".to_owned(), 0.01);
 
-      let drag = PaneDrag::from_store(&state, "skills.left", 240.0);
+      let drag = PaneDrag::from_store(&state, "skills.left", 240.0, HOST);
 
       assert_eq!(drag.width(), MIN_PANE_WIDTH);
     }
@@ -206,7 +251,7 @@ mod tests {
     use super::*;
 
     fn started(width: f32) -> PaneDrag {
-      let mut drag = PaneDrag::new(width);
+      let mut drag = px(width);
       drag.start();
       drag
     }
@@ -243,7 +288,7 @@ mod tests {
 
     #[test]
     fn it_shrinks_a_right_anchored_pane_on_a_rightward_delta() {
-      let mut drag = PaneDrag::new(200.0).right_anchored(true);
+      let mut drag = px(200.0).right_anchored(true);
       drag.start();
       drag.drag_to(500.0);
 
@@ -254,7 +299,7 @@ mod tests {
 
     #[test]
     fn it_grows_a_right_anchored_pane_on_a_leftward_delta() {
-      let mut drag = PaneDrag::new(200.0).right_anchored(true);
+      let mut drag = px(200.0).right_anchored(true);
       drag.start();
       drag.drag_to(500.0);
 
@@ -296,7 +341,7 @@ mod tests {
 
     #[test]
     fn it_ignores_moves_when_no_drag_is_active() {
-      let mut drag = PaneDrag::new(200.0);
+      let mut drag = px(200.0);
 
       let width = drag.drag_to(500.0);
 
@@ -306,7 +351,7 @@ mod tests {
 
     #[test]
     fn it_respects_a_custom_minimum() {
-      let mut drag = PaneDrag::with_min_width(200.0, 150.0);
+      let mut drag = PaneDrag::with_min_width(200.0, 150.0, HOST);
       drag.start();
       drag.drag_to(500.0);
 
@@ -323,13 +368,13 @@ mod tests {
 
     #[test]
     fn it_is_inactive_until_started() {
-      let drag = PaneDrag::new(200.0);
+      let drag = px(200.0);
       assert!(!drag.is_active());
     }
 
     #[test]
     fn it_is_active_while_dragging_and_inactive_after_end() {
-      let mut drag = PaneDrag::new(200.0);
+      let mut drag = px(200.0);
 
       drag.start();
       assert!(drag.is_active());
@@ -340,7 +385,7 @@ mod tests {
 
     #[test]
     fn it_clears_the_anchor_on_start_so_a_new_drag_does_not_jump() {
-      let mut drag = PaneDrag::new(200.0);
+      let mut drag = px(200.0);
       drag.start();
       drag.drag_to(500.0);
       drag.drag_to(540.0);
@@ -354,7 +399,7 @@ mod tests {
 
     #[test]
     fn it_keeps_the_settled_width_through_end() {
-      let mut drag = PaneDrag::new(200.0);
+      let mut drag = px(200.0);
       drag.start();
       drag.drag_to(500.0);
       drag.drag_to(560.0);
@@ -423,18 +468,85 @@ mod tests {
     #[test]
     fn it_reconstructs_the_settled_width_from_the_keyed_store() {
       let mut store = UiState::default();
-      let mut drag = PaneDrag::from_store(&store, "skills.left", 240.0);
+      let mut drag = PaneDrag::from_store(&store, "skills.left", 240.0, HOST);
 
       drag.start();
       drag.drag_to(500.0);
       drag.drag_to(580.0);
       drag.end();
 
-      store.panes.insert("skills.left".to_owned(), drag.width());
+      store.panes.insert("skills.left".to_owned(), drag.ratio());
 
-      let restored = PaneDrag::from_store(&store, "skills.left", 240.0);
+      let restored = PaneDrag::from_store(&store, "skills.left", 240.0, HOST);
 
       assert_eq!(restored.width(), 320.0);
+    }
+  }
+
+  mod host_scaling {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_rescales_the_pixel_width_proportionally_when_the_host_grows() {
+      let mut drag = px(300.0);
+
+      drag.set_host_width(2000.0);
+
+      assert_eq!(drag.width(), 600.0);
+    }
+
+    #[test]
+    fn it_shrinks_a_pane_proportionally_without_overflowing_a_narrower_host() {
+      let mut drag = px(500.0);
+
+      drag.set_host_width(800.0);
+
+      assert_eq!(drag.width(), 400.0);
+    }
+
+    #[test]
+    fn it_holds_a_pane_at_the_minimum_when_the_host_shrinks_past_it() {
+      let mut drag = PaneDrag::with_min_width(200.0, 150.0, HOST);
+
+      drag.set_host_width(400.0);
+
+      assert_eq!(drag.width(), 150.0);
+    }
+
+    #[test]
+    fn it_preserves_the_ratio_across_a_host_change() {
+      let mut drag = px(250.0);
+
+      drag.set_host_width(1600.0);
+
+      assert_eq!(drag.ratio(), 0.25);
+    }
+  }
+
+  mod set_ratio_from_store {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_migrates_a_legacy_pixel_value_to_a_ratio_against_the_host() {
+      let mut drag = px(300.0);
+
+      drag.set_ratio_from_store(500.0);
+
+      assert_eq!(drag.ratio(), 0.5);
+      assert_eq!(drag.width(), 500.0);
+    }
+
+    #[test]
+    fn it_keeps_a_value_already_expressed_as_a_ratio() {
+      let mut drag = px(300.0);
+
+      drag.set_ratio_from_store(0.4);
+
+      assert_eq!(drag.width(), 400.0);
     }
   }
 }

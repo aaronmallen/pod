@@ -51,6 +51,7 @@ const MONTHS: [&str; 12] = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 const SECONDS_PER_DAY: i64 = 86_400;
+const EDITOR_HOST_WIDTH: f32 = 900.0;
 const PICKER_WIDTH: f32 = 340.0;
 const SUMMARY_WIDTH: f32 = 360.0;
 const PICKER_PANE_KEY: &str = "plan.picker";
@@ -383,8 +384,8 @@ impl State {
       next_remap_id: 1,
       next_entry_id: -1,
       picker: PickerState::default(),
-      picker_pane: PaneDrag::new(PICKER_WIDTH),
-      summary_pane: PaneDrag::new(SUMMARY_WIDTH),
+      picker_pane: PaneDrag::new(PICKER_WIDTH, EDITOR_HOST_WIDTH),
+      summary_pane: PaneDrag::new(SUMMARY_WIDTH, EDITOR_HOST_WIDTH),
       dragging_pane: None,
       attrs: Attributes::default(),
       base_attrs: Attributes::default(),
@@ -403,9 +404,15 @@ impl State {
   }
 
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
-    self.picker_pane = PaneDrag::from_store(ui, PICKER_PANE_KEY, PICKER_WIDTH);
-    self.summary_pane = PaneDrag::from_store(ui, SUMMARY_PANE_KEY, SUMMARY_WIDTH);
+    let host_width = ui.host_width("skill_plan_editor", EDITOR_HOST_WIDTH);
+    self.picker_pane = PaneDrag::from_store(ui, PICKER_PANE_KEY, PICKER_WIDTH, host_width);
+    self.summary_pane = PaneDrag::from_store(ui, SUMMARY_PANE_KEY, SUMMARY_WIDTH, host_width);
     self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.picker_pane.set_host_width(host_width);
+    self.summary_pane.set_host_width(host_width);
   }
 
   fn can_place_remap(&self) -> bool {
@@ -1114,11 +1121,11 @@ fn handle_pane(state: &mut State, message: Message) -> Result<Task<Message>, Mes
       let settled = match state.dragging_pane.take() {
         Some(EditorPane::Picker) => {
           state.picker_pane.end();
-          Some(Message::PaneSettled(PICKER_PANE_KEY, state.picker_pane.width()))
+          Some(Message::PaneSettled(PICKER_PANE_KEY, state.picker_pane.ratio()))
         }
         Some(EditorPane::Summary) => {
           state.summary_pane.end();
-          Some(Message::PaneSettled(SUMMARY_PANE_KEY, state.summary_pane.width()))
+          Some(Message::PaneSettled(SUMMARY_PANE_KEY, state.summary_pane.ratio()))
         }
         None => None,
       };

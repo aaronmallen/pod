@@ -98,7 +98,7 @@ impl State {
       attributes: None,
       browse: right_panel::browser_tab::State::new(),
       computed: queue::ComputedQueue::default(),
-      left_pane: PaneDrag::new(LEFT_PANE_DEFAULT),
+      left_pane: PaneDrag::new(LEFT_PANE_DEFAULT, spacing::layout::WINDOW_DEFAULT_WIDTH),
       plans: right_panel::plans_tab::State::new(),
       queue: Vec::new(),
       picker_open: false,
@@ -108,8 +108,13 @@ impl State {
   }
 
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
-    self.left_pane = PaneDrag::from_store(ui, LEFT_PANE_KEY, LEFT_PANE_DEFAULT);
+    let host_width = ui.host_width("main", spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.left_pane = PaneDrag::from_store(ui, LEFT_PANE_KEY, LEFT_PANE_DEFAULT, host_width);
     self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.left_pane.set_host_width(host_width);
   }
 
   pub fn active(&self) -> i64 {
@@ -175,7 +180,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::PaneDragEnd => {
       state.left_pane.end();
-      Task::done(Message::PaneSettled(LEFT_PANE_KEY, state.left_pane.width()))
+      Task::done(Message::PaneSettled(LEFT_PANE_KEY, state.left_pane.ratio()))
     }
     Message::PaneDragStart => {
       state.left_pane.start();

@@ -252,7 +252,11 @@ impl State {
       net_worth_series: Vec::new(),
       periods: Vec::new(),
       picker_open: false,
-      right_rail: PaneDrag::new(RIGHT_RAIL_DEFAULT_WIDTH).right_anchored(true),
+      right_rail: PaneDrag::new(
+        RIGHT_RAIL_DEFAULT_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      )
+      .right_anchored(true),
       roster: Vec::new(),
       search: String::new(),
       side_filter: Side::default(),
@@ -262,6 +266,17 @@ impl State {
       timeframe: Timeframe::default(),
       visible_rows: PAGE_SIZE,
     }
+  }
+
+  pub fn with_restored_panes(mut self, ui: &window_state::UiState) -> Self {
+    let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.right_rail =
+      PaneDrag::from_store(ui, RIGHT_RAIL_PANE_KEY, RIGHT_RAIL_DEFAULT_WIDTH, host_width).right_anchored(true);
+    self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.right_rail.set_host_width(host_width);
   }
 
   pub fn active(&self) -> Scope {
@@ -479,7 +494,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.net_worth_series = net_worth_series;
       state.periods = periods;
       if !state.right_rail.is_active() {
-        state.right_rail = PaneDrag::new(right_rail_width).right_anchored(true);
+        state.right_rail.set_ratio_from_store(right_rail_width);
       }
       state.roster = roster;
       state.loading_more = false;
@@ -512,7 +527,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::RailDragEnd => {
       state.right_rail.end();
-      Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.width()))
+      Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.ratio()))
     }
     Message::RailDragged(x) => {
       state.right_rail.drag_to(x);

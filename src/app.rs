@@ -890,8 +890,33 @@ fn record_window_geometry(app: &mut App, id: window::Id, geometry: WindowGeometr
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
 
-fn record_pane_width(app: &mut App, key: &str, width: f32) {
-  app.ui_state.panes.insert(key.to_owned(), width);
+fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
+  match app.windows.kind(id) {
+    Some(Window::Main) => {
+      if let Some(state) = app.skills.as_mut() {
+        state.set_pane_host_width(width);
+      }
+      if let Some(state) = app.mail.as_mut() {
+        state.set_pane_host_width(width);
+      }
+      if let Some(state) = app.wallet.as_mut() {
+        state.set_pane_host_width(width);
+      }
+      if let Some(state) = app.assets.as_mut() {
+        state.set_pane_host_width(width);
+      }
+    }
+    Some(Window::SkillPlanEditor) => {
+      if let Some((_, state)) = app.editor.as_mut() {
+        state.set_pane_host_width(width);
+      }
+    }
+    _ => {}
+  }
+}
+
+fn record_pane_ratio(app: &mut App, key: &str, ratio: f32) {
+  app.ui_state.panes.insert(key.to_owned(), ratio);
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
 
@@ -928,7 +953,7 @@ fn navigate_to_skills(app: &mut App, target: Option<i64>, owned: Vec<i64>) -> Ta
 
 fn navigate_to_wallet(app: &mut App) -> Task<Message> {
   navigate(app, Route::Wallet);
-  app.wallet = Some(wallet::State::new());
+  app.wallet = Some(wallet::State::new().with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => wallet::load(&runtime.db).map(Message::Wallet),
     None => Task::none(),
@@ -2117,8 +2142,8 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
 }
 
 fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
-  if let assets::Message::PaneSettled(key, width) = msg {
-    record_pane_width(app, key, width);
+  if let assets::Message::PaneSettled(key, ratio) = msg {
+    record_pane_ratio(app, key, ratio);
     return Task::none();
   }
 
@@ -2671,8 +2696,8 @@ fn handle_updater_state_changed(app: &mut App, state: updater::State) -> Task<Me
 
 fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
   match msg {
-    wallet::Message::PaneSettled(key, width) => {
-      record_pane_width(app, key, width);
+    wallet::Message::PaneSettled(key, ratio) => {
+      record_pane_ratio(app, key, ratio);
       Task::none()
     }
     msg => match (app.wallet.as_mut(), app.runtime.as_ref()) {
@@ -2933,8 +2958,8 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
       Some(id) => open_editor_window(app, id, seed),
       None => Task::none(),
     },
-    skills::Message::PaneSettled(key, width) => {
-      record_pane_width(app, key, width);
+    skills::Message::PaneSettled(key, ratio) => {
+      record_pane_ratio(app, key, ratio);
       Task::none()
     }
     msg => match (app.skills.as_mut(), app.runtime.as_ref()) {
@@ -2945,8 +2970,8 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
-  if let mail::Message::PaneSettled(key, width) = msg {
-    record_pane_width(app, key, width);
+  if let mail::Message::PaneSettled(key, ratio) = msg {
+    record_pane_ratio(app, key, ratio);
     return Task::none();
   }
 
@@ -3017,8 +3042,8 @@ fn handle_skill_plan_editor(app: &mut App, msg: skill_plan_editor::Message) -> T
       Some((id, _)) => close_editor_window(app, *id),
       None => Task::none(),
     },
-    skill_plan_editor::Message::PaneSettled(key, width) => {
-      record_pane_width(app, key, width);
+    skill_plan_editor::Message::PaneSettled(key, ratio) => {
+      record_pane_ratio(app, key, ratio);
       Task::none()
     }
     msg => match (app.editor.as_mut(), app.runtime.as_ref()) {
@@ -3061,6 +3086,7 @@ fn handle_window(app: &mut App, id: window::Id, event: window::Event) -> Task<Me
     window::Event::Resized(size) => {
       let base = window_key(app, id).and_then(|key| app.ui_state.windows.get(key).copied());
       record_window_geometry(app, id, geometry_after_resize(base, size));
+      propagate_host_width(app, id, size.width);
       Task::none()
     }
     window::Event::Moved(position) => {

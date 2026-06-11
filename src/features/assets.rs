@@ -351,7 +351,10 @@ pub struct State {
 impl State {
   pub fn new() -> Self {
     State {
-      abyssals_filter: PaneDrag::new(ABYSSALS_FILTER_DEFAULT_WIDTH),
+      abyssals_filter: PaneDrag::new(
+        ABYSSALS_FILTER_DEFAULT_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      ),
       active: Scope::default(),
       category: Category::default(),
       chart_hover: None,
@@ -375,7 +378,10 @@ impl State {
       search: String::new(),
       search_generation: 0,
       sidebar_cursor: None,
-      sidebar: PaneDrag::new(SIDEBAR_DEFAULT_WIDTH),
+      sidebar: PaneDrag::new(
+        SIDEBAR_DEFAULT_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      ),
       sort: SortColumn::Value,
       sort_dir: SortDirection::Descending,
       tab: Tab::default(),
@@ -404,9 +410,16 @@ impl State {
 
   #[allow(dead_code)]
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
-    self.sidebar = PaneDrag::from_store(ui, SIDEBAR_PANE_KEY, SIDEBAR_DEFAULT_WIDTH);
-    self.abyssals_filter = PaneDrag::from_store(ui, ABYSSALS_FILTER_PANE_KEY, ABYSSALS_FILTER_DEFAULT_WIDTH);
+    let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.sidebar = PaneDrag::from_store(ui, SIDEBAR_PANE_KEY, SIDEBAR_DEFAULT_WIDTH, host_width);
+    self.abyssals_filter =
+      PaneDrag::from_store(ui, ABYSSALS_FILTER_PANE_KEY, ABYSSALS_FILTER_DEFAULT_WIDTH, host_width);
     self
+  }
+
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.sidebar.set_host_width(host_width);
+    self.abyssals_filter.set_host_width(host_width);
   }
 
   pub fn active(&self) -> Scope {
@@ -1564,8 +1577,8 @@ fn update_pane(state: &mut State, message: Message) -> Task<Message> {
       };
       let (drag, key) = state.pane_mut(pane);
       drag.end();
-      let width = drag.width();
-      Task::done(Message::PaneSettled(key, width))
+      let ratio = drag.ratio();
+      Task::done(Message::PaneSettled(key, ratio))
     }
     _ => Task::none(),
   }

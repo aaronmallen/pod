@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use chrono::NaiveDate;
+use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
@@ -15,6 +16,7 @@ use crate::store::{
 };
 
 pub const RETENTION_DAYS: i64 = 365;
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
 const STATE_OPEN: &str = "open";
 
 pub async fn replace_for_character(
@@ -29,33 +31,34 @@ pub async fn replace_for_character(
     .execute(&mut *tx)
     .await?;
 
-  for contract in contracts {
-    sqlx::query(
+  for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 18) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_contracts \
         (character_id, contract_id, type, status, issuer_id, issuer_name, assignee_id, assignee_name, acceptor_id, \
-        acceptor_name, price, reward, collateral, volume, for_corporation, date_issued, date_expired, date_completed) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(contract.character_id())
-    .bind(contract.contract_id())
-    .bind(contract.r#type())
-    .bind(contract.status())
-    .bind(contract.issuer_id())
-    .bind(contract.issuer_name())
-    .bind(contract.assignee_id())
-    .bind(contract.assignee_name())
-    .bind(contract.acceptor_id())
-    .bind(contract.acceptor_name())
-    .bind(contract.price())
-    .bind(contract.reward())
-    .bind(contract.collateral())
-    .bind(contract.volume())
-    .bind(contract.for_corporation())
-    .bind(contract.date_issued())
-    .bind(contract.date_expired())
-    .bind(contract.date_completed())
-    .execute(&mut *tx)
-    .await?;
+        acceptor_name, price, reward, collateral, volume, for_corporation, date_issued, date_expired, date_completed) ",
+    );
+    builder.push_values(chunk, |mut row, contract| {
+      row
+        .push_bind(contract.character_id())
+        .push_bind(contract.contract_id())
+        .push_bind(contract.r#type())
+        .push_bind(contract.status())
+        .push_bind(contract.issuer_id())
+        .push_bind(contract.issuer_name())
+        .push_bind(contract.assignee_id())
+        .push_bind(contract.assignee_name())
+        .push_bind(contract.acceptor_id())
+        .push_bind(contract.acceptor_name())
+        .push_bind(contract.price())
+        .push_bind(contract.reward())
+        .push_bind(contract.collateral())
+        .push_bind(contract.volume())
+        .push_bind(contract.for_corporation())
+        .push_bind(contract.date_issued())
+        .push_bind(contract.date_expired())
+        .push_bind(contract.date_completed());
+    });
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -283,31 +286,32 @@ pub async fn append_corporation_wallet_journal(
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for entry in entries {
-    sqlx::query(
+  for chunk in entries.chunks(SQLITE_MAX_BIND_PARAMS / 15) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO corporation_wallet_journal \
         (amount, balance, context_id, context_id_type, corporation_id, date, description, division, \
-        first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-      ON CONFLICT(id) DO NOTHING",
-    )
-    .bind(entry.amount())
-    .bind(entry.balance())
-    .bind(entry.context_id())
-    .bind(entry.context_id_type())
-    .bind(entry.corporation_id())
-    .bind(entry.date())
-    .bind(entry.description())
-    .bind(entry.division())
-    .bind(entry.first_party_id())
-    .bind(entry.id())
-    .bind(entry.reason())
-    .bind(entry.ref_type())
-    .bind(entry.second_party_id())
-    .bind(entry.tax())
-    .bind(entry.tax_receiver_id())
-    .execute(&mut *tx)
-    .await?;
+        first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id) ",
+    );
+    builder.push_values(chunk, |mut row, entry| {
+      row
+        .push_bind(entry.amount())
+        .push_bind(entry.balance())
+        .push_bind(entry.context_id())
+        .push_bind(entry.context_id_type())
+        .push_bind(entry.corporation_id())
+        .push_bind(entry.date())
+        .push_bind(entry.description())
+        .push_bind(entry.division())
+        .push_bind(entry.first_party_id())
+        .push_bind(entry.id())
+        .push_bind(entry.reason())
+        .push_bind(entry.ref_type())
+        .push_bind(entry.second_party_id())
+        .push_bind(entry.tax())
+        .push_bind(entry.tax_receiver_id());
+    });
+    builder.push(" ON CONFLICT(id) DO NOTHING");
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -337,27 +341,28 @@ pub async fn append_corporation_wallet_transaction(
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for transaction in transactions {
-    sqlx::query(
+  for chunk in transactions.chunks(SQLITE_MAX_BIND_PARAMS / 11) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO corporation_wallet_transaction \
         (client_id, corporation_id, date, division, is_buy, journal_ref_id, location_id, \
-        quantity, transaction_id, type_id, unit_price) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-      ON CONFLICT(transaction_id) DO NOTHING",
-    )
-    .bind(transaction.client_id())
-    .bind(transaction.corporation_id())
-    .bind(transaction.date())
-    .bind(transaction.division())
-    .bind(transaction.is_buy())
-    .bind(transaction.journal_ref_id())
-    .bind(transaction.location_id())
-    .bind(transaction.quantity())
-    .bind(transaction.transaction_id())
-    .bind(transaction.type_id())
-    .bind(transaction.unit_price())
-    .execute(&mut *tx)
-    .await?;
+        quantity, transaction_id, type_id, unit_price) ",
+    );
+    builder.push_values(chunk, |mut row, transaction| {
+      row
+        .push_bind(transaction.client_id())
+        .push_bind(transaction.corporation_id())
+        .push_bind(transaction.date())
+        .push_bind(transaction.division())
+        .push_bind(transaction.is_buy())
+        .push_bind(transaction.journal_ref_id())
+        .push_bind(transaction.location_id())
+        .push_bind(transaction.quantity())
+        .push_bind(transaction.transaction_id())
+        .push_bind(transaction.type_id())
+        .push_bind(transaction.unit_price());
+    });
+    builder.push(" ON CONFLICT(transaction_id) DO NOTHING");
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -432,29 +437,30 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
     .execute(&mut *tx)
     .await?;
 
-  for order in orders {
-    sqlx::query(
+  for chunk in orders.chunks(SQLITE_MAX_BIND_PARAMS / 14) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO market_orders \
         (character_id, duration, escrow, is_buy_order, issued, location_id, order_id, price, \
-        range, region_id, state, type_id, volume_remain, volume_total) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(order.character_id())
-    .bind(order.duration())
-    .bind(order.escrow())
-    .bind(order.is_buy_order())
-    .bind(order.issued())
-    .bind(order.location_id())
-    .bind(order.order_id())
-    .bind(order.price())
-    .bind(order.range())
-    .bind(order.region_id())
-    .bind(order.state())
-    .bind(order.type_id())
-    .bind(order.volume_remain())
-    .bind(order.volume_total())
-    .execute(&mut *tx)
-    .await?;
+        range, region_id, state, type_id, volume_remain, volume_total) ",
+    );
+    builder.push_values(chunk, |mut row, order| {
+      row
+        .push_bind(order.character_id())
+        .push_bind(order.duration())
+        .push_bind(order.escrow())
+        .push_bind(order.is_buy_order())
+        .push_bind(order.issued())
+        .push_bind(order.location_id())
+        .push_bind(order.order_id())
+        .push_bind(order.price())
+        .push_bind(order.range())
+        .push_bind(order.region_id())
+        .push_bind(order.state())
+        .push_bind(order.type_id())
+        .push_bind(order.volume_remain())
+        .push_bind(order.volume_total());
+    });
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -473,18 +479,21 @@ pub async fn market_prices_all(db: &Database) -> Result<Vec<MarketPrice>, Error>
 pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for price in prices {
-    sqlx::query(
-      "INSERT INTO market_prices (adjusted_price, average_price, type_id) VALUES (?, ?, ?) \
-      ON CONFLICT(type_id) DO UPDATE SET \
+  for chunk in prices.chunks(SQLITE_MAX_BIND_PARAMS / 3) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("INSERT INTO market_prices (adjusted_price, average_price, type_id) ");
+    builder.push_values(chunk, |mut row, price| {
+      row
+        .push_bind(price.adjusted_price())
+        .push_bind(price.average_price())
+        .push_bind(price.type_id());
+    });
+    builder.push(
+      " ON CONFLICT(type_id) DO UPDATE SET \
         adjusted_price = excluded.adjusted_price, \
         average_price = excluded.average_price",
-    )
-    .bind(price.adjusted_price())
-    .bind(price.average_price())
-    .bind(price.type_id())
-    .execute(&mut *tx)
-    .await?;
+    );
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -656,22 +665,25 @@ pub async fn close_as_of(db: &Database, type_id: i64, date: &str) -> Result<Opti
 pub async fn price_history_upsert_many(db: &Database, histories: &[TypePriceHistory]) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for history in histories {
-    sqlx::query(
-      "INSERT INTO type_price_histories (close, date, high, low, open, type_id) VALUES (?, ?, ?, ?, ?, ?) \
-      ON CONFLICT(type_id, date) DO UPDATE SET \
+  for chunk in histories.chunks(SQLITE_MAX_BIND_PARAMS / 6) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("INSERT INTO type_price_histories (close, date, high, low, open, type_id) ");
+    builder.push_values(chunk, |mut row, history| {
+      row
+        .push_bind(history.close())
+        .push_bind(history.date())
+        .push_bind(history.high())
+        .push_bind(history.low())
+        .push_bind(history.open())
+        .push_bind(history.type_id());
+    });
+    builder.push(
+      " ON CONFLICT(type_id, date) DO UPDATE SET \
         close = excluded.close, \
         high = MAX(type_price_histories.high, excluded.high), \
         low = MIN(type_price_histories.low, excluded.low)",
-    )
-    .bind(history.close())
-    .bind(history.date())
-    .bind(history.high())
-    .bind(history.low())
-    .bind(history.open())
-    .bind(history.type_id())
-    .execute(&mut *tx)
-    .await?;
+    );
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -689,30 +701,31 @@ pub async fn prune_before(db: &Database, cutoff: &str) -> Result<u64, Error> {
 pub async fn append_wallet_journal(db: &Database, entries: &[CharacterWalletJournal]) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for entry in entries {
-    sqlx::query(
+  for chunk in entries.chunks(SQLITE_MAX_BIND_PARAMS / 14) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_wallet_journal \
         (amount, balance, character_id, context_id, context_id_type, date, description, \
-        first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-      ON CONFLICT(id) DO NOTHING",
-    )
-    .bind(entry.amount())
-    .bind(entry.balance())
-    .bind(entry.character_id())
-    .bind(entry.context_id())
-    .bind(entry.context_id_type())
-    .bind(entry.date())
-    .bind(entry.description())
-    .bind(entry.first_party_id())
-    .bind(entry.id())
-    .bind(entry.reason())
-    .bind(entry.ref_type())
-    .bind(entry.second_party_id())
-    .bind(entry.tax())
-    .bind(entry.tax_receiver_id())
-    .execute(&mut *tx)
-    .await?;
+        first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id) ",
+    );
+    builder.push_values(chunk, |mut row, entry| {
+      row
+        .push_bind(entry.amount())
+        .push_bind(entry.balance())
+        .push_bind(entry.character_id())
+        .push_bind(entry.context_id())
+        .push_bind(entry.context_id_type())
+        .push_bind(entry.date())
+        .push_bind(entry.description())
+        .push_bind(entry.first_party_id())
+        .push_bind(entry.id())
+        .push_bind(entry.reason())
+        .push_bind(entry.ref_type())
+        .push_bind(entry.second_party_id())
+        .push_bind(entry.tax())
+        .push_bind(entry.tax_receiver_id());
+    });
+    builder.push(" ON CONFLICT(id) DO NOTHING");
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
@@ -759,27 +772,28 @@ pub async fn append_wallet_transaction(
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for transaction in transactions {
-    sqlx::query(
+  for chunk in transactions.chunks(SQLITE_MAX_BIND_PARAMS / 11) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_wallet_transaction \
         (character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
-        quantity, transaction_id, type_id, unit_price) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-      ON CONFLICT(transaction_id) DO NOTHING",
-    )
-    .bind(transaction.character_id())
-    .bind(transaction.client_id())
-    .bind(transaction.date())
-    .bind(transaction.is_buy())
-    .bind(transaction.is_personal())
-    .bind(transaction.journal_ref_id())
-    .bind(transaction.location_id())
-    .bind(transaction.quantity())
-    .bind(transaction.transaction_id())
-    .bind(transaction.type_id())
-    .bind(transaction.unit_price())
-    .execute(&mut *tx)
-    .await?;
+        quantity, transaction_id, type_id, unit_price) ",
+    );
+    builder.push_values(chunk, |mut row, transaction| {
+      row
+        .push_bind(transaction.character_id())
+        .push_bind(transaction.client_id())
+        .push_bind(transaction.date())
+        .push_bind(transaction.is_buy())
+        .push_bind(transaction.is_personal())
+        .push_bind(transaction.journal_ref_id())
+        .push_bind(transaction.location_id())
+        .push_bind(transaction.quantity())
+        .push_bind(transaction.transaction_id())
+        .push_bind(transaction.type_id())
+        .push_bind(transaction.unit_price());
+    });
+    builder.push(" ON CONFLICT(transaction_id) DO NOTHING");
+    builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;

@@ -242,6 +242,13 @@ pub(crate) async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -
   if let Some(id) = ceo.faction_id() {
     ensure_faction(ctx, id).await?;
   }
+  // The reference CEO's own corporation can differ from the corp being resolved — NPC megacorp
+  // CEO-agents commonly belong to other NPC corps. upsert_with_org inserts only this owner corp, so
+  // ensure the CEO's corp row exists too or the deferred characters.corporation_id FK fails at
+  // commit and AssetSync never completes for any toon holding assets in such a station/structure.
+  if ceo.corporation_id() != owner_id {
+    ensure_corporation_present(ctx, ceo.corporation_id()).await?;
+  }
   let race = resolve_race_model(ctx, i64::from(race_id)).await?;
   let bloodline = resolve_bloodline(ctx, i64::from(bloodline_id)).await?;
 
@@ -264,6 +271,22 @@ async fn ensure_alliance(ctx: &JobCtx<'_>, alliance_id: i64) -> Result<(), Error
   }
   let alliance = Alliance::from((alliance_id, ctx.esi.alliance().info(alliance_id).await?));
   org::upsert_alliance(ctx.db, &alliance).await?;
+  Ok(())
+}
+
+// Persist a corporation as a bare row (plus its alliance, the only org FK on the corporations
+// table) without recursing into its own CEO. corporations.ceo_id/creator_id/home_station_id are
+// plain integers with no FK, so a corp row alone satisfies a referencing characters.corporation_id,
+// which bounds the work to one extra (cache-friendly) ESI corp fetch and avoids CEO-of-CEO cycles.
+async fn ensure_corporation_present(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<(), Error> {
+  if org::get_corporation(ctx.db, corporation_id).await?.is_some() {
+    return Ok(());
+  }
+  let corporation = Corporation::from((corporation_id, ctx.esi.corporation().info(corporation_id).await?));
+  if let Some(id) = corporation.alliance_id() {
+    ensure_alliance(ctx, id).await?;
+  }
+  org::upsert_corporation(ctx.db, &corporation).await?;
   Ok(())
 }
 
@@ -1147,6 +1170,91 @@ mod tests {
         "the CEO's faction is persisted even though the corp has none"
       );
       assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_ensures_the_ceos_own_corp_when_it_differs_from_the_owner_corp() {
+      const CEO_ID: i64 = 3_004_125;
+      const CEO_OWN_CORP_ID: i64 = 1_000_038;
+      const CEO_OWN_CORP_CEO_ID: i64 = 3_009_999;
+      let server = MockServer::start().await;
+      // The owner corp's CEO is an NPC agent enlisted in a DIFFERENT, un-tracked NPC corp. Without
+      // ensuring that corp's row first, the deferred characters.corporation_id FK 787s at commit.
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": CEO_ID, "creator_id": CEO_ID, "member_count": 10_000, "name": "Ishukone",
+          "tax_rate": 0.0, "ticker": "ISK",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/characters/{CEO_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": CEO_OWN_CORP_ID,
+          "gender": "male", "name": "Mens Reppola", "race_id": 1,
+        })))
+        .mount(&server)
+        .await;
+      // The CEO's own corp is fetched exactly once and persisted as a bare row — its own CEO is
+      // never expanded into a character (no /characters/3009999/ mock is needed).
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CEO_OWN_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": CEO_OWN_CORP_CEO_ID, "creator_id": CEO_OWN_CORP_CEO_ID, "member_count": 5_000,
+          "name": "Ishukone Watch", "tax_rate": 0.0, "ticker": "IWA",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("the CEO's own corp row is ensured first, so resolution commits without a 787");
+
+      assert!(
+        org::get_corporation(&harness.db, CEO_OWN_CORP_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the CEO's own corporation is persisted as a bare row to satisfy the deferred FK"
+      );
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the owner corporation is persisted too"
+      );
+      assert!(
+        character::get(&harness.db, CEO_ID).await.unwrap().is_some(),
+        "the reference CEO is persisted now that its corp FK is satisfied"
+      );
+      assert!(
+        character::get(&harness.db, CEO_OWN_CORP_CEO_ID)
+          .await
+          .unwrap()
+          .is_none(),
+        "the CEO's corp is persisted corp-row-only, not recursively expanded into a CEO character"
+      );
     }
   }
 

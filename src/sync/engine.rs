@@ -289,7 +289,15 @@ impl Engine {
       Err(error) => {
         self.schedule.reschedule_failure(key, now);
         let reason = error.to_string();
-        tracing::warn!(?key, %error, "sync job failed");
+        if error.is_foreign_key_violation() {
+          tracing::warn!(
+            ?key,
+            %error,
+            "sync job failed: foreign-key violation; error names the character/corp whose org row was missing"
+          );
+        } else {
+          tracing::warn!(?key, %error, "sync job failed");
+        }
         self.emit(Event::Failed {
           key,
           reason: reason.clone(),

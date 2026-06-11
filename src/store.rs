@@ -22,14 +22,45 @@ pub mod sync_session;
 #[derive(Clone, Debug)]
 pub struct Database(pub SqlitePool);
 
+/// SQLite extended result code for `SQLITE_CONSTRAINT_FOREIGNKEY` (787), distinct from the primary
+/// `SQLITE_CONSTRAINT` code (19). sqlx surfaces it as a string via `DatabaseError::code`.
+const SQLITE_FOREIGN_KEY_CODE: &str = "787";
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+  #[error(
+    "foreign key violation persisting {context} (a referenced org row was not inserted in the same transaction): {source}"
+  )]
+  ForeignKey {
+    context: String,
+    #[source]
+    source: sqlx::Error,
+  },
   #[error("migration error: {0}")]
   Migration(#[from] sqlx::migrate::MigrateError),
   #[error("the reserved Unassigned squad cannot be created, renamed, or deleted")]
   ReservedSquad,
   #[error("database error: {0}")]
   Sqlx(#[from] sqlx::Error),
+}
+
+impl Error {
+  pub fn is_foreign_key_violation(&self) -> bool {
+    match self {
+      Error::ForeignKey {
+        ..
+      } => true,
+      Error::Sqlx(source) => is_foreign_key_constraint(source),
+      _ => false,
+    }
+  }
+}
+
+pub(crate) fn is_foreign_key_constraint(error: &sqlx::Error) -> bool {
+  error
+    .as_database_error()
+    .and_then(|db| db.code())
+    .is_some_and(|code| code == SQLITE_FOREIGN_KEY_CODE)
 }
 
 const HOUSEKEEPING_MAX_CONNECTIONS: u32 = 1;

@@ -105,6 +105,14 @@ pub async fn get_corporation(db: &Database, id: i64) -> Result<Option<Corporatio
   Ok(row)
 }
 
+// Like the character `*_with_org` writers, this inserts the CEO and creator characters under
+// `defer_foreign_keys = ON` and relies on the deferred characters.corporation_id FK being satisfied
+// at commit. It only inserts `corp`, so it is safe ONLY when `ceo_char.corporation_id()` and
+// `creator_char.corporation_id()` both equal `corp.id()` (i.e. the CEO/creator are members of the
+// corp being inserted). It is currently test-only (no production caller); any future production use
+// that persists a CEO/creator belonging to a different corp must first ensure that corp's row
+// exists, exactly as sync::structure_resolution::resolve_owner_corporation does for the reference
+// CEO. See the deferred FK on migrations/0003_create_orgs.sql.
 #[allow(dead_code)]
 pub async fn insert_corporation_with_org(
   db: &Database,

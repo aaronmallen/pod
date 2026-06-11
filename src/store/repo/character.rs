@@ -303,6 +303,33 @@ pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
+// Every `*_with_org` writer persists a character together with that character's OWN corporation
+// (char.corporation_id() == corporation.id()) under `defer_foreign_keys = ON`, so the deferred
+// characters.corporation_id FK is satisfied by the corporation row inserted in the same
+// transaction. The lone exception is owner-corporation resolution, which persists a reference CEO
+// whose corp can differ and ensures that corp's row up front (see sync::structure_resolution). This
+// helper names the character/corporation on the surviving 787 so a future gap is localizable from
+// the log alone, without raising baseline log volume (it only runs on a failing commit).
+async fn commit_with_org_context(
+  tx: sqlx::Transaction<'_, Sqlite>,
+  char: &Character,
+  corporation: &Corporation,
+) -> Result<(), Error> {
+  match tx.commit().await {
+    Ok(()) => Ok(()),
+    Err(error) if crate::store::is_foreign_key_constraint(&error) => Err(Error::ForeignKey {
+      context: format!(
+        "character {} (corporation_id {}) alongside corporation {}",
+        char.id(),
+        char.corporation_id(),
+        corporation.id()
+      ),
+      source: error,
+    }),
+    Err(error) => Err(Error::Sqlx(error)),
+  }
+}
+
 pub async fn insert_with_org(
   db: &Database,
   char: &Character,
@@ -433,8 +460,7 @@ pub async fn insert_with_org(
   .execute(&mut *tx)
   .await?;
 
-  tx.commit().await?;
-  Ok(())
+  commit_with_org_context(tx, char, corporation).await
 }
 
 pub async fn upsert(db: &Database, char: &Character) -> Result<(), Error> {
@@ -634,8 +660,7 @@ pub async fn upsert_with_org(
   .execute(&mut *tx)
   .await?;
 
-  tx.commit().await?;
-  Ok(())
+  commit_with_org_context(tx, char, corporation).await
 }
 
 pub async fn attributes(db: &Database, character_id: i64) -> Result<Option<CharacterAttributes>, Error> {
@@ -2175,6 +2200,46 @@ mod tests {
       assert_eq!(char_row.title().as_deref(), Some("CEO"));
       assert_eq!(char_row.security_status(), Some(0.5));
       assert_eq!(corp_row.member_count(), Some(250));
+    }
+
+    #[tokio::test]
+    async fn it_names_the_entities_when_a_corporation_fk_violates_at_commit() {
+      let db = store::open_test().await.unwrap();
+      let character = make_character();
+      // Persist a DIFFERENT corp than the character's own (90_000_001), leaving the deferred
+      // characters.corporation_id FK dangling so the commit 787s — the shape of the NPC-CEO bug.
+      let mut other_corp = Corporation::new(90_000_002, "Other Corporation", "OTHR");
+      other_corp.set_ceo_id(12_345_678);
+      other_corp.set_creator_id(12_345_678);
+      other_corp.set_member_count(1);
+      other_corp.set_tax_rate(0.0);
+
+      let error = upsert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &other_corp,
+        None,
+        None,
+      )
+      .await
+      .expect_err("a dangling corporation_id FK fails at commit");
+
+      assert!(
+        error.is_foreign_key_violation(),
+        "the 787 is classified as a foreign-key violation"
+      );
+      let message = error.to_string();
+      assert!(message.contains("12345678"), "names the character: {message}");
+      assert!(
+        message.contains("90000001"),
+        "names the dangling corporation_id: {message}"
+      );
+      assert!(
+        message.contains("90000002"),
+        "names the corporation that was inserted: {message}"
+      );
     }
   }
 }

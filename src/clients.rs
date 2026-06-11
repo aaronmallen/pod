@@ -42,6 +42,12 @@ pub enum Error {
   RateLimit { retry_after_secs: u64 },
 }
 
+impl Error {
+  pub fn is_foreign_key_violation(&self) -> bool {
+    matches!(self, Error::Db(error) if error.is_foreign_key_violation())
+  }
+}
+
 pub fn user_agent() -> &'static str {
   &USER_AGENT
 }

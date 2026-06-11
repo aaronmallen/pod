@@ -14,7 +14,7 @@ use crate::{
   ui::{
     components::{
       avatar::avatar, badge::badge, empty_state::empty_state as shared_empty_state, eyebrow::eyebrow, icon::Icon,
-      icon_tile::icon_tile, rule, text_input::TextInput,
+      icon_tile::icon_tile, rule, table_cell::TableCell, text_input::TextInput,
     },
     style::{color, radius, spacing, typography},
   },
@@ -117,9 +117,7 @@ fn category_pill<'a>(category: Category, selected: bool) -> Element<'a, Message>
     text(category.label())
       .font(typography::body::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(text_color),
-      }),
+      .style(typography::colored(text_color)),
   )
   .padding(Padding {
     top: spacing::UNIT + 1.0,
@@ -164,9 +162,7 @@ fn search_field(state: &State) -> Element<'_, Message> {
       text(format!("{} {suffix}", fmt_count(count)))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        })
+        .style(typography::colored(color::text::TERTIARY))
         .into(),
     );
   }
@@ -199,16 +195,12 @@ fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
     text("\u{2605}")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(glyph_color),
-      })
+      .style(typography::colored(glyph_color))
       .into(),
     text("Save")
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
-      .style(move |_| text::Style {
-        color: Some(label_color),
-      })
+      .style(typography::colored(label_color))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -322,9 +314,7 @@ fn summary_stat<'a>(label: &'a str, value: String) -> Element<'a, Message> {
     text(value)
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ])
   .spacing(1.0)
@@ -418,9 +408,7 @@ fn plain_header<'a>(label: &'a str) -> Element<'a, Message> {
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .width(Length::Fill)
   .align_y(Vertical::Center)
@@ -445,9 +433,7 @@ fn header_cell<'a>(
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(move |_| text::Style {
-        color: Some(label_color),
-      })
+      .style(typography::colored(label_color))
       .into(),
   ];
   if active {
@@ -459,9 +445,7 @@ fn header_cell<'a>(
       text(caret)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
-        .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
-        })
+        .style(typography::colored(color::accent::PLASMA))
         .into(),
     );
   }
@@ -558,9 +542,7 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .wrapping(text::Wrapping::None)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ];
   if custom_name.is_some() {
@@ -569,9 +551,7 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
         .font(typography::body::REGULAR)
         .size(typography::size::XS)
         .wrapping(text::Wrapping::None)
-        .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
-        })
+        .style(typography::colored(color::text::SECONDARY))
         .into(),
     );
   }
@@ -598,18 +578,7 @@ fn active_ship_badge<'a>() -> Element<'a, Message> {
 }
 
 fn category_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
-  container(
-    text(category_label(&inventory_row.category))
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .wrapping(text::Wrapping::None)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fill)
-  .clip(true)
-  .into()
+  TableCell::new(category_label(&inventory_row.category)).view()
 }
 
 fn category_label(category: &str) -> String {
@@ -638,9 +607,7 @@ fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
     text(if expanded { "\u{25bc}" } else { "\u{25b6}" })
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .padding(0)
   .width(Length::Fixed(TOGGLE_WIDTH))
@@ -650,47 +617,21 @@ fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
 }
 
 fn group_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
-  container(
-    text(inventory_row.group_name.clone())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .wrapping(text::Wrapping::None)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fill)
-  .clip(true)
-  .into()
+  TableCell::new(inventory_row.group_name.clone()).view()
 }
 
 fn numeric_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Message> {
-  container(
-    text(value)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(text_color),
-      }),
-  )
-  .width(Length::Fill)
-  .align_x(Horizontal::Right)
-  .into()
+  TableCell::new(value)
+    .font(typography::mono::REGULAR)
+    .align(Horizontal::Right)
+    .clip(false)
+    .wrapping(text::Wrapping::Word)
+    .color(text_color)
+    .view()
 }
 
 fn text_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Message> {
-  container(
-    text(value)
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .wrapping(text::Wrapping::None)
-      .style(move |_| text::Style {
-        color: Some(text_color),
-      }),
-  )
-  .width(Length::Fill)
-  .clip(true)
-  .into()
+  TableCell::new(value).color(text_color).view()
 }
 
 fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> String {
@@ -735,20 +676,10 @@ fn owner_cell<'a>(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterC
     ..container::Style::default()
   });
 
-  let label = container(
-    text(name)
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .wrapping(text::Wrapping::None)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
-  )
-  .width(Length::Fill)
-  .clip(true);
+  let label = TableCell::new(name).view();
 
   container(
-    Row::with_children(vec![swatch.into(), label.into()])
+    Row::with_children(vec![swatch.into(), label])
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center),
   )
@@ -874,9 +805,7 @@ fn code_chip<'a>(label: &'static str, accent: bool) -> Element<'a, Message> {
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(text_color),
-      }),
+      .style(typography::colored(text_color)),
   )
   .padding(Padding {
     top: 2.0,
@@ -905,9 +834,7 @@ fn note_text<'a>(note: &'static str) -> Element<'a, Message> {
     text(note)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .width(Length::Fill)
   .into()

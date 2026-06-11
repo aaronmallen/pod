@@ -7,6 +7,28 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.6]
+
+### Changed
+
+- The column headers in the Inventory and in the Wallet's Market and Contracts tabs now stay pinned at the top while
+  you scroll through the rows beneath them.
+- Long item, character, and party names now wrap onto multiple lines across tables instead of being cut off — rows
+  grow taller to fit so nothing is hidden.
+
+### Fixed
+
+- Corporation-owned assets on the Assets "Values" tab now show the owning corporation's name instead of a raw
+  "Owner <id>" placeholder.
+- Unnamed items no longer show "None" as their label — they fall back to the item's type name.
+- Corporation assets no longer vanish from the Assets view when some items can't be looked up by a custom name.
+
+### Performance
+
+- Character info, skills, implants, and financial data save noticeably faster during sync — many small writes are now
+  batched into single operations.
+- The wallet composition view renders faster, especially with many characters.
+
 ## [0.5.5]
 
 ### Added
@@ -452,7 +474,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.5...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.6...HEAD
+[0.5.6]: https://github.com/aaronmallen/pod/compare/0.5.5...0.5.6
 [0.5.5]: https://github.com/aaronmallen/pod/compare/0.5.4...0.5.5
 [0.5.4]: https://github.com/aaronmallen/pod/compare/0.5.3...0.5.4
 [0.5.3]: https://github.com/aaronmallen/pod/compare/0.5.2...0.5.3

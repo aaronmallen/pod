@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+  collections::{HashMap, HashSet},
+  time::Duration,
+};
 
 use tokio::time::Instant;
 
@@ -47,12 +50,13 @@ impl Schedule {
     self.enroll_kinds_seeded(subject, kinds, now, &HashMap::new());
   }
 
-  pub fn enroll_kinds_seeded(
+  pub fn enroll_kinds_deferred(
     &mut self,
     subject: Subject,
     kinds: impl IntoIterator<Item = JobKind>,
     now: Instant,
     seeds: &HashMap<JobKind, Instant>,
+    deferred: &HashSet<JobKind>,
   ) {
     for kind in kinds {
       if !kind.is_feature_enabled(&self.features) {
@@ -60,10 +64,24 @@ impl Schedule {
       }
       let key = JobKey::new(kind, subject);
       if !self.entries.iter().any(|entry| entry.key == key) {
-        let next_run_at = seeds.get(&kind).copied().unwrap_or(now);
+        let next_run_at = if deferred.contains(&kind) {
+          now + PARK_DELAY
+        } else {
+          seeds.get(&kind).copied().unwrap_or(now)
+        };
         self.entries.push(Entry::new(key, next_run_at));
       }
     }
+  }
+
+  pub fn enroll_kinds_seeded(
+    &mut self,
+    subject: Subject,
+    kinds: impl IntoIterator<Item = JobKind>,
+    now: Instant,
+    seeds: &HashMap<JobKind, Instant>,
+  ) {
+    self.enroll_kinds_deferred(subject, kinds, now, seeds, &HashSet::new());
   }
 
   pub fn make_due_now(&mut self, kind: JobKind, now: Instant) {
@@ -407,6 +425,57 @@ mod tests {
       assert!(
         !due.contains(&JobKey::new(JobKind::AssetSync, other)),
         "a profile landing for one subject must not re-fire another subject's gather"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_parks_a_deferred_kind_until_a_trigger_pulls_it_due() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      let deferred = HashSet::from([JobKind::AssetSync, JobKind::CharacterWallet]);
+
+      schedule.enroll_kinds_deferred(
+        CHARACTER,
+        JobKind::for_subject(CHARACTER),
+        now,
+        &HashMap::new(),
+        &deferred,
+      );
+
+      let due = schedule.due(now);
+      assert!(
+        due.contains(&KEY),
+        "the non-deferred profile job is due now, got {due:?}"
+      );
+      assert!(
+        !due.contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
+        "a deferred gather must be parked, not due now, got {due:?}"
+      );
+
+      schedule.make_due_now_for_subject(JobKind::AssetSync, CHARACTER, now);
+
+      assert!(
+        schedule.due(now).contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
+        "the profile-success trigger must pull a parked gather due"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_enrolls_an_undeferred_kind_due_now() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+
+      schedule.enroll_kinds_deferred(
+        CHARACTER,
+        JobKind::for_subject(CHARACTER),
+        now,
+        &HashMap::new(),
+        &HashSet::new(),
+      );
+
+      assert!(
+        schedule.due(now).contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
+        "with nothing deferred, every enrolled kind is due now"
       );
     }
 

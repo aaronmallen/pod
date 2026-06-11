@@ -29,7 +29,7 @@ use crate::{
   store::{
     Database, images,
     model::{OwnerType, SyncLedger},
-    repo::{character, infra, sync_ledger},
+    repo::{character, infra, org, sync_ledger},
   },
 };
 
@@ -102,6 +102,18 @@ struct Engine {
 }
 
 impl Engine {
+  async fn deferred_gathers(&self, subject: Subject) -> HashSet<JobKind> {
+    if self.parent_row_exists(subject).await {
+      return HashSet::new();
+    }
+    profile_kind(subject)
+      .on_success_triggers()
+      .iter()
+      .copied()
+      .filter(|kind| kind.applies_to(subject))
+      .collect()
+  }
+
   async fn discover(&mut self) {
     let now = Instant::now();
     let mut owned_characters = HashSet::new();
@@ -118,9 +130,14 @@ impl Engine {
           .split_whitespace()
           .collect();
         let seeds = self.seeds_for(subject, now).await;
-        self
-          .schedule
-          .enroll_kinds_seeded(subject, JobKind::granted_for_subject(subject, &granted), now, &seeds);
+        let deferred = self.deferred_gathers(subject).await;
+        self.schedule.enroll_kinds_deferred(
+          subject,
+          JobKind::granted_for_subject(subject, &granted),
+          now,
+          &seeds,
+          &deferred,
+        );
       }
     }
     if let Ok(characters) = character::all(&self.db).await {
@@ -158,9 +175,12 @@ impl Engine {
           .unwrap_or_default()
           .split_whitespace()
           .collect();
+        let kinds = JobKind::granted_for_subject(subject, &granted);
+        let seeds = self.seeds_for(subject, now).await;
+        let deferred = self.deferred_gathers(subject).await;
         self
           .schedule
-          .enroll_kinds(subject, JobKind::granted_for_subject(subject, &granted), now);
+          .enroll_kinds_deferred(subject, kinds, now, &seeds, &deferred);
       }
       _ => self.schedule.enroll(subject, now),
     }
@@ -313,6 +333,13 @@ impl Engine {
       Some(job_deadline.map_or(maintenance_at, |job| job.min(maintenance_at)))
     };
     dispatch_at.map_or(now + HEARTBEAT_INTERVAL, |at| at.min(now + HEARTBEAT_INTERVAL))
+  }
+
+  async fn parent_row_exists(&self, subject: Subject) -> bool {
+    match subject {
+      Subject::Character(id) => matches!(character::get(&self.db, id).await, Ok(Some(_))),
+      Subject::Corporation(id) => matches!(org::get_corporation(&self.db, id).await, Ok(Some(_))),
+    }
   }
 
   async fn prune_done_rows(&self) {
@@ -498,6 +525,13 @@ fn owner_of(subject: Subject) -> (i64, OwnerType) {
   }
 }
 
+fn profile_kind(subject: Subject) -> JobKind {
+  match subject {
+    Subject::Character(_) => JobKind::CharacterProfile,
+    Subject::Corporation(_) => JobKind::CorporationProfile,
+  }
+}
+
 fn subject_from(owner_id: i64, owner_type: OwnerType) -> Subject {
   match owner_type {
     OwnerType::Character => Subject::Character(owner_id),
@@ -551,6 +585,57 @@ mod tests {
     Mock::given(method("GET"))
       .and(path(route))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
+      .mount(server)
+      .await;
+  }
+
+  async fn mount_character_profile(server: &MockServer, character_id: i64) {
+    mount_json(
+      server,
+      &format!("/characters/{character_id}/"),
+      serde_json::json!({
+        "alliance_id": 300, "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5,
+        "corporation_id": 200, "gender": "male", "name": "Test Pilot", "race_id": 1,
+      }),
+    )
+    .await;
+    mount_json(
+      server,
+      "/corporations/200/",
+      serde_json::json!({
+        "alliance_id": 300, "ceo_id": character_id, "creator_id": character_id, "member_count": 42,
+        "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
+      }),
+    )
+    .await;
+    mount_json(
+      server,
+      "/alliances/300/",
+      serde_json::json!({
+        "creator_corporation_id": 200, "creator_id": character_id,
+        "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
+      }),
+    )
+    .await;
+    mount_json(
+      server,
+      "/universe/races/",
+      serde_json::json!([{ "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 }]),
+    )
+    .await;
+    mount_json(
+      server,
+      "/universe/bloodlines/",
+      serde_json::json!([
+        { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
+          "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+          "ship_type_id": 601, "willpower": 5 },
+      ]),
+    )
+    .await;
+    Mock::given(method("GET"))
+      .and(path(format!("/characters/{character_id}/portrait")))
+      .respond_with(ResponseTemplate::new(200).set_body_raw(vec![1u8, 2, 3], "image/jpeg"))
       .mount(server)
       .await;
   }
@@ -1330,6 +1415,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_runs_a_new_subjects_gather_only_after_the_profile_commits_its_parent_row() {
+      let server = MockServer::start().await;
+      mount_character_profile(&server, 101).await;
+      mount_json(&server, "/characters/101/wallet/journal/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/101/wallet/transactions/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(
+        &db,
+        101,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        4_102_444_800,
+        None,
+        Some(esi::scopes::CHARACTER_WALLET),
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = Arc::new(esi::Client::with_base_url(http.clone(), server.uri()));
+      let image = Arc::new(eve_image::Client::with_base_url(http.clone(), server.uri()));
+      let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+      let images_dir = tempfile::tempdir().unwrap();
+      let (handle, mut events) = spawn(
+        db.clone(),
+        esi,
+        sso,
+        image,
+        images::Store::new(images_dir.path().to_path_buf()),
+        FeatureFlags::default(),
+      );
+      seed_ship_type(&db).await;
+
+      handle.enroll(Subject::Character(101));
+
+      let wallet = JobKey::new(JobKind::CharacterWallet, Subject::Character(101));
+      let profile = JobKey::new(JobKind::CharacterProfile, Subject::Character(101));
+      let mut profile_committed = false;
+      let ordered = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+          match events.recv().await {
+            Some(Event::Started {
+              key,
+            }) if key == wallet => return profile_committed,
+            Some(Event::Finished {
+              key, ..
+            }) if key == profile => profile_committed = true,
+            Some(_) => continue,
+            None => return false,
+          }
+        }
+      })
+      .await
+      .expect("timed out waiting for the wallet gather to start");
+
+      assert!(
+        ordered,
+        "the wallet gather for a brand-new subject must not start until CharacterProfile has committed the parent row"
+      );
+    }
+
+    #[tokio::test]
     async fn it_discovers_credentialed_subjects_without_an_enroll_command() {
       let server = MockServer::start().await;
       let db = store::open_test().await.unwrap();
@@ -1506,12 +1654,87 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_short_retries_a_gather_job_whose_parent_row_is_absent_without_escalating() {
+    async fn it_runs_a_gather_for_an_existing_subject_without_waiting_for_a_fresh_profile() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/4478/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      mount_json(&server, "/characters/4478/wallet/journal/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/4478/wallet/transactions/", serde_json::json!([])).await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 4478).await;
+      infra::upsert(
+        &db,
+        4478,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        4_102_444_800,
+        None,
+        Some(esi::scopes::CHARACTER_WALLET),
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = Arc::new(esi::Client::with_base_url(http.clone(), server.uri()));
+      let image = Arc::new(eve_image::Client::with_base_url(http.clone(), server.uri()));
+      let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+      let images_dir = tempfile::tempdir().unwrap();
+      let (_handle, mut events) = spawn(
+        db,
+        esi,
+        sso,
+        image,
+        images::Store::new(images_dir.path().to_path_buf()),
+        FeatureFlags::default(),
+      );
+
+      let wallet = JobKey::new(JobKind::CharacterWallet, Subject::Character(4478));
+      let mut profile_succeeded = false;
+      let ran = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+          match events.recv().await {
+            Some(Event::Started {
+              key,
+            }) if key == wallet => return true,
+            Some(Event::Finished {
+              key, ..
+            }) if key.kind == JobKind::CharacterProfile && key.subject == Subject::Character(4478) => {
+              profile_succeeded = true;
+            }
+            Some(_) => continue,
+            None => return false,
+          }
+        }
+      })
+      .await
+      .expect("timed out waiting for the wallet gather to run");
+
+      assert!(
+        ran,
+        "an existing subject's wallet gather must run on its own schedule, not wait for a profile trigger"
+      );
+      assert!(
+        !profile_succeeded,
+        "the profile job fails for this subject, so the gather ran without any fresh profile success"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_defers_a_gather_job_whose_parent_row_is_absent_until_the_profile_commits() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
         .and(path("/characters/5000/wallet/journal/"))
         .respond_with(ResponseTemplate::new(500))
         .expect(0)
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/5000/"))
+        .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
       let db = store::open_test().await.unwrap();
@@ -1542,25 +1765,9 @@ mod tests {
       );
 
       let wallet = JobKey::new(JobKind::CharacterWallet, Subject::Character(5000));
-      let scheduled = wait_for(
-        &mut events,
-        |event| matches!(event, Event::Scheduled { key, .. } if *key == wallet),
-      )
-      .await;
-      let Event::Scheduled {
-        next_in_secs, ..
-      } = scheduled
-      else {
-        unreachable!("the predicate only matches a Scheduled event");
-      };
-      assert!(
-        next_in_secs <= NOT_READY_RETRY.as_secs(),
-        "a missing-parent retry reschedules within a few seconds, not the hourly interval (was {next_in_secs}s)"
-      );
-
-      let escalated = tokio::time::timeout(Duration::from_millis(200), async {
+      let started = tokio::time::timeout(Duration::from_millis(300), async {
         while let Some(event) = events.recv().await {
-          if matches!(event, Event::Failed { key, .. } | Event::BackingOff { key, .. } if key == wallet) {
+          if matches!(event, Event::Started { key } if key == wallet) {
             return true;
           }
         }
@@ -1568,8 +1775,8 @@ mod tests {
       })
       .await;
       assert!(
-        escalated.is_err() || !escalated.unwrap(),
-        "the missing-parent retry must not surface as a failure or backoff escalation"
+        started.is_err() || !started.unwrap(),
+        "a parentless subject's wallet gather must stay deferred — it must not dispatch before the profile commits"
       );
     }
 

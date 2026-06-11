@@ -705,7 +705,7 @@ macro_rules! geo_extra_join_sql {
 
 const RENDER_CHARACTER_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
-    it.name AS type_name, ig.name AS group_name, ",
+    a.name AS name, it.name AS type_name, ig.name AS group_name, ",
   category_key_case!(),
   " AS category, it.icon_id AS icon_id, COALESCE(it.packaged_volume, it.volume) AS volume, ",
   location_label_expr!(),
@@ -720,7 +720,7 @@ const RENDER_CHARACTER_SQL: &str = concat!(
 
 const RENDER_CORPORATION_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
-    it.name AS type_name, ig.name AS group_name, ",
+    a.name AS name, it.name AS type_name, ig.name AS group_name, ",
   category_key_case!(),
   " AS category, it.icon_id AS icon_id, COALESCE(it.packaged_volume, it.volume) AS volume, ",
   location_label_expr!(),
@@ -771,6 +771,11 @@ macro_rules! query_join_sql {
   };
 }
 
+macro_rules! display_name_expr {
+  () => {
+    "COALESCE(a.name, it.name)"
+  };
+}
 macro_rules! type_name_expr {
   () => {
     "it.name"
@@ -798,6 +803,7 @@ macro_rules! value_expr {
   };
 }
 
+const DISPLAY_NAME_EXPR: &str = display_name_expr!();
 const TYPE_NAME_EXPR: &str = type_name_expr!();
 const GROUP_NAME_EXPR: &str = group_name_expr!();
 const ROW_VOLUME_EXPR: &str = row_volume_expr!();
@@ -814,6 +820,7 @@ fn render_column_schema(owner_column: &'static str) -> ColumnSchema {
     is_blueprint_copy: "a.is_blueprint_copy",
     is_singleton: "a.is_singleton",
     location_name: location_label_expr!(),
+    name: "a.name",
     region_name: "reg.name",
     system_name: "sys.name",
     type_name: TYPE_NAME_EXPR,
@@ -824,7 +831,7 @@ fn sort_column_expr(sort: SortColumn, owner_column: &'static str) -> &'static st
   match sort {
     SortColumn::Category => CATEGORY_KEY_EXPR,
     SortColumn::Group => GROUP_NAME_EXPR,
-    SortColumn::Name => TYPE_NAME_EXPR,
+    SortColumn::Name => DISPLAY_NAME_EXPR,
     SortColumn::Owner => owner_column,
     SortColumn::Quantity => "a.quantity",
     SortColumn::UnitPrice => UNIT_PRICE_EXPR,
@@ -1386,6 +1393,7 @@ fn combined_column_schema() -> ColumnSchema {
     is_blueprint_copy: "is_blueprint_copy",
     is_singleton: "is_singleton",
     location_name: "location_label",
+    name: "name",
     region_name: "region_name",
     system_name: "system_name",
     type_name: "type_name",
@@ -1396,7 +1404,7 @@ fn combined_sort_column_expr(sort: SortColumn) -> &'static str {
   match sort {
     SortColumn::Category => "category",
     SortColumn::Group => "group_name",
-    SortColumn::Name => "type_name",
+    SortColumn::Name => "COALESCE(name, type_name)",
     SortColumn::Owner => "owner_id",
     SortColumn::Quantity => "quantity",
     SortColumn::UnitPrice => "unit_price",
@@ -1642,7 +1650,7 @@ macro_rules! inventory_select_sql {
       $active_ship,
       " AS is_active_ship, a.is_blueprint_copy AS is_blueprint_copy, a.",
       $owner,
-      " AS owner_id, ",
+      " AS owner_id, a.name AS name, ",
       type_name_expr!(),
       " AS type_name, ",
       group_name_expr!(),
@@ -1669,7 +1677,7 @@ macro_rules! combined_arm_sql {
       $active_ship,
       " AS is_active_ship, a.is_blueprint_copy AS is_blueprint_copy, a.is_singleton AS is_singleton, a.",
       $owner,
-      " AS owner_id, ",
+      " AS owner_id, a.name AS name, ",
       type_name_expr!(),
       " AS type_name, ",
       group_name_expr!(),
@@ -3841,6 +3849,31 @@ mod asset_tests {
     }
 
     #[tokio::test]
+    async fn it_carries_the_custom_name_alongside_the_type_name_on_render_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut named = char_asset(100, 42, None);
+      named.name = Some("My Scout".to_owned());
+      let plain = char_asset(101, 42, None);
+      replace_for_character(&db, 42, &[named, plain]).await.unwrap();
+      let mut corp_named = corp_asset(200, CORP_ID, None);
+      corp_named.name = Some("Corp Stash".to_owned());
+      replace_for_corporation(&db, CORP_ID, &[corp_named]).await.unwrap();
+
+      let char_rows = render_for_character(&db, 42).await.unwrap();
+      let corp_rows = render_for_corporation(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(char_rows[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(char_rows[0].type_name, "Rifter");
+      assert_eq!(char_rows[1].name, None, "an unnamed item keeps a null custom name");
+
+      assert_eq!(corp_rows[0].name.as_deref(), Some("Corp Stash"));
+      assert_eq!(corp_rows[0].type_name, "Rifter");
+    }
+
+    #[tokio::test]
     async fn it_falls_back_to_assembled_volume_when_packaged_is_null() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -4507,6 +4540,159 @@ mod asset_tests {
       .await
       .unwrap();
       assert_eq!(multi.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100, 101]);
+    }
+  }
+
+  mod custom_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_sorts_a_renamed_character_item_by_its_coalesced_display_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
+      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
+      let mut renamed = char_asset(100, 42, None);
+      renamed.type_id = 1;
+      renamed.name = Some("Aaa".to_owned());
+      let mut plain = char_asset(101, 42, None);
+      plain.type_id = 2;
+      replace_for_character(&db, 42, &[renamed, plain]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "the item renamed Aaa sorts ahead of the unnamed Mmm even though its type name is Zilch"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_finds_a_renamed_character_item_by_either_its_custom_or_type_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut renamed = char_asset(100, 42, None);
+      renamed.name = Some("My Scout".to_owned());
+      replace_for_character(&db, 42, &[renamed]).await.unwrap();
+
+      let by_custom = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Scout",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_type = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Rifter",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_miss = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Velator",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert!(by_miss.is_empty());
+
+      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(by_custom[0].type_name, "Rifter");
+    }
+
+    #[tokio::test]
+    async fn it_sorts_a_renamed_corporation_item_by_its_coalesced_display_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
+      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
+      let mut renamed = corp_asset(100, CORP_ID, None);
+      renamed.type_id = 1;
+      renamed.name = Some("Aaa".to_owned());
+      let mut plain = corp_asset(101, CORP_ID, None);
+      plain.type_id = 2;
+      replace_for_corporation(&db, CORP_ID, &[renamed, plain]).await.unwrap();
+
+      let rows = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "the corp item renamed Aaa sorts ahead of the unnamed Mmm despite its Zilch type name"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_finds_a_renamed_corporation_item_by_either_its_custom_or_type_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut renamed = corp_asset(100, CORP_ID, None);
+      renamed.name = Some("My Scout".to_owned());
+      replace_for_corporation(&db, CORP_ID, &[renamed]).await.unwrap();
+
+      let by_custom = inventory_page_for_corporation(
+        &db,
+        CORP_ID,
+        &InventoryQuery {
+          filter: "Scout",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_type = inventory_page_for_corporation(
+        &db,
+        CORP_ID,
+        &InventoryQuery {
+          filter: "Rifter",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+
+      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(by_custom[0].type_name, "Rifter");
     }
   }
 

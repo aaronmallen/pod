@@ -552,6 +552,7 @@ mod tests {
       item_id: value as i64,
       location_id,
       location_label: location_label.map(str::to_owned),
+      name: None,
       owner_id,
       quantity,
       row_volume: 10.0,

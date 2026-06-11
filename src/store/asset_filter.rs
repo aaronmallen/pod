@@ -48,6 +48,7 @@ pub struct ColumnSchema {
   pub is_blueprint_copy: &'static str,
   pub is_singleton: &'static str,
   pub location_name: &'static str,
+  pub name: &'static str,
   pub region_name: &'static str,
   pub system_name: &'static str,
   pub type_name: &'static str,
@@ -63,6 +64,7 @@ impl Default for ColumnSchema {
       is_blueprint_copy: "is_blueprint_copy",
       is_singleton: "is_singleton",
       location_name: "location_name",
+      name: "name",
       region_name: "region_name",
       system_name: "system_name",
       type_name: "type_name",
@@ -103,6 +105,8 @@ impl Compiler<'_> {
   fn push_free_text(&mut self, text: &str) {
     let pattern = like_pattern(text);
     self.sql.push('(');
+    self.push_like(self.schema.name, pattern.clone());
+    self.sql.push_str(" OR ");
     self.push_like(self.schema.type_name, pattern.clone());
     self.sql.push_str(" OR ");
     self.push_like(self.schema.group_name, pattern.clone());
@@ -467,16 +471,17 @@ mod tests {
     }
 
     #[test]
-    fn it_compiles_free_text_to_a_three_column_partial_match() {
+    fn it_compiles_free_text_to_a_four_column_partial_match() {
       let clause = compile_default("rifter").unwrap();
 
       assert_eq!(
         clause.sql,
-        "(type_name LIKE ? ESCAPE '\\' OR group_name LIKE ? ESCAPE '\\' OR location_name LIKE ? ESCAPE '\\')"
+        "(name LIKE ? ESCAPE '\\' OR type_name LIKE ? ESCAPE '\\' OR group_name LIKE ? ESCAPE '\\' \
+         OR location_name LIKE ? ESCAPE '\\')"
       );
       assert_eq!(
         clause.params,
-        vec![text("%rifter%"), text("%rifter%"), text("%rifter%")]
+        vec![text("%rifter%"), text("%rifter%"), text("%rifter%"), text("%rifter%")]
       );
     }
 

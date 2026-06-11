@@ -911,6 +911,7 @@ mod tests {
       item_id,
       location_id: 60_003_760,
       location_label: Some("Jita IV - Moon 4".to_owned()),
+      name: None,
       owner_id,
       quantity: 10,
       row_volume: 100.0,

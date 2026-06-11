@@ -74,6 +74,25 @@ pub async fn open(path: &Path) -> Result<Database, Error> {
   Ok(Database(pool))
 }
 
+/// The trio of pools the app runs against a single database file: the interactive pool that serves
+/// auth/roster reads, the sync worker pool, and the single-connection housekeeping pool. See the
+/// individual `open*` functions for why each exists.
+pub struct Pools {
+  pub interactive: Database,
+  pub sync: Database,
+  pub housekeeping: Database,
+}
+
+/// Opens all three app pools over one database file. `open` runs migrations once; the sync and
+/// housekeeping pools assume the schema is already current and rerun none.
+pub async fn open_pools(path: &Path) -> Result<Pools, Error> {
+  Ok(Pools {
+    interactive: open(path).await?,
+    sync: open_sync_pool(path).await?,
+    housekeeping: open_housekeeping_pool(path).await?,
+  })
+}
+
 /// Opens a second pool over the same database, dedicated to sync workers so interactive connections
 /// never queue behind them. Assumes `open` already ran migrations, and deliberately reruns none.
 pub async fn open_sync_pool(path: &Path) -> Result<Database, Error> {
@@ -188,6 +207,29 @@ mod tests {
       );
       assert_eq!(synchronous, 1, "NORMAL synchronous (1) trims fsync round-trips");
       assert_eq!(temp_store, 2, "MEMORY temp store (2) keeps temp b-trees off the drive");
+    }
+  }
+
+  mod open_pools {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_opens_all_three_pools_over_one_migrated_database() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+
+      let pools = super::super::open_pools(&path).await.unwrap();
+
+      for pool in [&pools.interactive, &pools.sync, &pools.housekeeping] {
+        let migrations: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+          .fetch_one(&pool.0)
+          .await
+          .unwrap();
+        assert!(
+          migrations > 0,
+          "every pool sees the schema open_pools migrated, applied exactly once"
+        );
+      }
     }
   }
 

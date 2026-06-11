@@ -681,26 +681,18 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   // network) share in Sync mode plus lease file IO. Run it on a blocking thread so a stalled or slow
   // mount can't wedge the async boot worker — the first window renders independent of this finishing.
   let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
-  let db = store::open(&prepared.database_path).await.map_err(store_err)?;
-  // Separate pool reserved for the sync engine so interactive auth/roster reads never queue behind
-  // sync workers for a connection.
-  let sync_db = store::open_sync_pool(&prepared.database_path)
-    .await
-    .map_err(store_err)?;
-  // A dedicated single-connection pool the engine uses only for housekeeping (the post-job ledger
-  // upsert plus outbox drain/prune), so a free connection is always available for finish() even when
-  // every sync worker holds one of sync_db's connections.
-  let sync_housekeeping_db = store::open_housekeeping_pool(&prepared.database_path)
-    .await
-    .map_err(store_err)?;
-  let http = http::Client::builder(http::Cache::new(db.clone())).build();
+  // The interactive, sync-worker, and housekeeping pools each open against the same database file;
+  // see store::open_pools for why the engine gets its own pools rather than sharing the interactive
+  // one.
+  let pools = store::open_pools(&prepared.database_path).await.map_err(store_err)?;
+  let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
-    db,
+    db: pools.interactive,
     http,
     lease: prepared.lease,
     settings: prepared.settings,
-    sync_db,
-    sync_housekeeping_db,
+    sync_db: pools.sync,
+    sync_housekeeping_db: pools.housekeeping,
     sync_session: prepared.sync_session,
   })
 }

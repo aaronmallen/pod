@@ -260,11 +260,8 @@ jobs:
       - name: Install WiX Toolset v3
         run: choco upgrade wixtoolset -y
 
-      - name: Build and package (nsis)
-        run: mise run package --format nsis
-
-      - name: Build and package (wix)
-        run: mise run package --format wix
+      - name: Build and package (nsis + wix)
+        run: mise run package --format nsis,wix
 
       - name: Sign Windows installers
         if: env.WINDOWS_CERTIFICATE != ''
@@ -339,11 +336,8 @@ jobs:
       - name: Add Rust target
         run: rustup target add x86_64-unknown-linux-gnu
 
-      - name: Build and package (deb)
-        run: mise run package --format deb
-
-      - name: Build and package (appimage)
-        run: mise run package --format appimage
+      - name: Build and package (deb + appimage + pacman)
+        run: mise run package --format deb,appimage,pacman
 
       - name: Sign package for updater
         if: env.PACKAGER_SIGN_PRIVATE_KEY != ''
@@ -353,9 +347,6 @@ jobs:
         run: |
           APPIMAGE=$(find . -name "*.AppImage" | head -1)
           cargo-packager signer sign "$APPIMAGE"
-
-      - name: Build and package (pacman)
-        run: mise run package --format pacman
 
       - name: Build pacman package
         run: |

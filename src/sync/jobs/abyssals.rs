@@ -24,7 +24,7 @@ async fn run_with_muta(ctx: &JobCtx<'_>, muta: &muta_market::Client) -> Result<O
     return Ok(Outcome::synced());
   };
   if character::get(ctx.db, character_id).await?.is_none() {
-    return Ok(Outcome::NotReady);
+    return Err(Error::NotReady);
   }
 
   let assets = assets::for_character(ctx.db, character_id).await?;
@@ -316,9 +316,12 @@ mod tests {
       let harness = Harness::new(&server, 42).await;
       let ctx = harness.ctx(999);
 
-      let outcome = run_with_muta(&ctx, &muta(&server)).await.unwrap();
+      let result = run_with_muta(&ctx, &muta(&server)).await;
 
-      assert_eq!(outcome, Outcome::NotReady);
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
     }
 
     #[tokio::test]

@@ -17,7 +17,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     )));
   };
   if character::get(ctx.db, character_id).await?.is_none() {
-    return Ok(Outcome::NotReady);
+    return Err(Error::NotReady);
   }
 
   let orders: Vec<MarketOrder> = ctx
@@ -226,8 +226,12 @@ mod tests {
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant), 42);
 
-      run(&ctx).await.unwrap();
+      let result = run(&ctx).await;
 
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
       assert!(finance::for_character(&db, 42).await.unwrap().is_empty());
     }
   }

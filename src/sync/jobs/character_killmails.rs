@@ -34,7 +34,7 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
     )));
   };
   let Some(character) = character::get(ctx.db, character_id).await? else {
-    return Ok(Outcome::NotReady);
+    return Err(Error::NotReady);
   };
 
   let mut refs = discover_character(ctx, zkill, grant, character_id).await?;
@@ -700,8 +700,12 @@ mod tests {
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
       let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
 
-      run_with_zkill(&ctx, &zkill).await.unwrap();
+      let result = run_with_zkill(&ctx, &zkill).await;
 
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
       assert!(character::killmails(&db, 42).await.unwrap().is_empty());
     }
   }

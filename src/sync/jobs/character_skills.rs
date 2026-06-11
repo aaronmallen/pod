@@ -23,7 +23,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     )));
   };
   if character::get(ctx.db, character_id).await?.is_none() {
-    return Ok(Outcome::NotReady);
+    return Err(Error::NotReady);
   }
   let authenticated = ctx.esi.character_authenticated(grant);
 
@@ -441,8 +441,12 @@ mod tests {
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
 
-      run(&ctx).await.unwrap();
+      let result = run(&ctx).await;
 
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
       assert!(character::skills(&db, 42).await.unwrap().is_empty());
     }
   }

@@ -29,7 +29,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     )));
   };
   if character::get(ctx.db, character_id).await?.is_none() {
-    return Ok(Outcome::NotReady);
+    return Err(Error::NotReady);
   }
   let authenticated = ctx.esi.character_authenticated(grant);
 
@@ -528,8 +528,12 @@ mod tests {
       let fx = fixture(server, 42).await;
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
 
-      run(&ctx).await.unwrap();
+      let result = run(&ctx).await;
 
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
       assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
     }
 

@@ -5,6 +5,18 @@ use iced::{
 
 use crate::ui::style::{color, radius, spacing};
 
+#[allow(dead_code)]
+pub fn bordered_pane(_theme: &iced::Theme) -> container::Style {
+  container::Style {
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  }
+}
+
 pub fn card(_theme: &iced::Theme) -> container::Style {
   container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
@@ -86,4 +98,17 @@ pub fn scrollbar(theme: &iced::Theme, status: scrollable::Status) -> scrollable:
     base.horizontal_rail.scroller.background = Background::Color(color::accent::PLASMA);
   }
   base
+}
+
+#[allow(dead_code)]
+pub fn sunken_pane(_theme: &iced::Theme) -> container::Style {
+  container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  }
 }

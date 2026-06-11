@@ -1,6 +1,32 @@
-use iced::{Background, widget::button};
+use iced::{
+  Background, Element, Padding,
+  widget::{button, text},
+};
 
-use crate::ui::style::color;
+use crate::ui::style::{color, typography};
+
+#[allow(dead_code)]
+pub fn segment_button<'a, M>(label: impl Into<String>, active: bool, padding: Padding, on_press: M) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let fill = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::SECONDARY
+  };
+
+  button(
+    text(label.into())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(fill)),
+  )
+  .padding(padding)
+  .on_press(on_press)
+  .style(move |_, status| segment_button_style(active, status))
+  .into()
+}
 
 pub fn segment_button_style(active: bool, status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -26,6 +52,20 @@ pub fn segment_button_style(active: bool, status: button::Status) -> button::Sty
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod segment_button {
+    use super::*;
+
+    #[test]
+    fn it_renders_an_active_segment() {
+      let _el: Element<'_, ()> = segment_button("All", true, Padding::ZERO, ());
+    }
+
+    #[test]
+    fn it_renders_an_inactive_segment() {
+      let _el: Element<'_, ()> = segment_button("Out", false, Padding::ZERO, ());
+    }
+  }
 
   mod segment_button_style {
     use super::*;

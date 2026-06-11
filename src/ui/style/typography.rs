@@ -37,3 +37,10 @@ pub mod size {
   pub const XS: f32 = 9.0;
   pub const XS_PLUS: f32 = 10.0;
 }
+
+#[allow(dead_code)]
+pub fn colored(color: iced::Color) -> impl Fn(&iced::Theme) -> iced::widget::text::Style {
+  move |_| iced::widget::text::Style {
+    color: Some(color),
+  }
+}

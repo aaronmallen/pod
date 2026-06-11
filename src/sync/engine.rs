@@ -44,6 +44,7 @@ const PENDING_RETRY: Duration = Duration::from_secs(120);
 
 pub fn spawn(
   db: Database,
+  housekeeping: Database,
   esi: Arc<esi::Client>,
   sso: Arc<eve_sso::Client>,
   image: Arc<eve_image::Client>,
@@ -52,6 +53,7 @@ pub fn spawn(
 ) -> (Handle, mpsc::Receiver<Event>) {
   spawn_with_registry(
     db,
+    housekeeping,
     esi,
     sso,
     image,
@@ -61,8 +63,10 @@ pub fn spawn(
   )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_with_registry(
   db: Database,
+  housekeeping: Database,
   esi: Arc<esi::Client>,
   sso: Arc<eve_sso::Client>,
   image: Arc<eve_image::Client>,
@@ -77,6 +81,7 @@ fn spawn_with_registry(
     drain_at: Instant::now(),
     esi,
     events: event_tx,
+    housekeeping,
     image,
     image_store,
     outbox,
@@ -93,6 +98,11 @@ struct Engine {
   drain_at: Instant,
   esi: Arc<esi::Client>,
   events: mpsc::Sender<Event>,
+  // A connection pool reserved exclusively for housekeeping (the post-job ledger upsert plus the
+  // outbox drain/prune maintenance), kept separate from `db` so the worker pool can never starve
+  // housekeeping of a connection. Workers hold up to MAX_CONCURRENT_JOBS of `db`'s connections; this
+  // pool guarantees finish() always has a free connection and never queues behind `busy_timeout`.
+  housekeeping: Database,
   image: Arc<eve_image::Client>,
   image_store: images::Store,
   outbox: Registry,
@@ -311,7 +321,7 @@ impl Engine {
     let emit = move |event: Event| {
       let _ = events.try_send(event);
     };
-    match drain::drain(&self.db, &self.esi, &self.sso, &self.outbox, &emit).await {
+    match drain::drain(&self.housekeeping, &self.esi, &self.sso, &self.outbox, &emit).await {
       Ok(outcome) => {
         if let Some(reset_secs) = outcome.error_limit_reset_secs {
           let until = now + Duration::from_secs(reset_secs.max(1));
@@ -344,7 +354,7 @@ impl Engine {
 
   async fn prune_done_rows(&self) {
     let before = (Utc::now() - ChronoDuration::from_std(DONE_RETENTION).unwrap_or(ChronoDuration::zero())).to_rfc3339();
-    match infra::prune_done(&self.db, &before).await {
+    match infra::prune_done(&self.housekeeping, &before).await {
       Ok(pruned) if pruned > 0 => tracing::debug!(pruned, "pruned done outbox rows past retention"),
       Ok(_) => {}
       Err(error) => tracing::warn!(%error, "pruning done outbox rows failed"),
@@ -355,7 +365,7 @@ impl Engine {
     let (subject_id, subject_type) = owner_of(key.subject);
     let success_at = matches!(outcome, Outcome::Synced { .. } | Outcome::Empty).then_some(attempt_at);
     if let Err(error) = sync_ledger::upsert(
-      &self.db,
+      &self.housekeeping,
       subject_type,
       subject_id,
       &format!("{:?}", key.kind),
@@ -565,7 +575,7 @@ mod tests {
     let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
     let images_dir = tempfile::tempdir().unwrap();
     let store = images::Store::new(images_dir.path().to_path_buf());
-    let (handle, events) = spawn(db, esi, sso, image, store, FeatureFlags::default());
+    let (handle, events) = spawn(db.clone(), db, esi, sso, image, store, FeatureFlags::default());
     (handle, events, images_dir)
   }
 
@@ -1031,6 +1041,7 @@ mod tests {
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
         db.clone(),
+        db.clone(),
         esi,
         sso,
         image,
@@ -1074,6 +1085,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db.clone(),
         esi,
         sso,
@@ -1132,6 +1144,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db.clone(),
         esi,
         sso,
@@ -1441,6 +1454,7 @@ mod tests {
       let images_dir = tempfile::tempdir().unwrap();
       let (handle, mut events) = spawn(
         db.clone(),
+        db.clone(),
         esi,
         sso,
         image,
@@ -1490,6 +1504,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db,
         esi,
         sso,
@@ -1521,6 +1536,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (handle, mut events) = spawn(
+        db.clone(),
         db.clone(),
         esi,
         sso,
@@ -1561,6 +1577,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db,
         esi,
         sso,
@@ -1620,6 +1637,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db,
         esi,
         sso,
@@ -1684,6 +1702,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db,
         esi,
         sso,
@@ -1756,6 +1775,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db,
         esi,
         sso,
@@ -1805,6 +1825,7 @@ mod tests {
       let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
       let images_dir = tempfile::tempdir().unwrap();
       let (_handle, mut events) = spawn(
+        db.clone(),
         db.clone(),
         esi,
         sso,
@@ -1957,6 +1978,7 @@ mod tests {
       let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
       let (_handle, _events) = spawn_with_registry(
         db.clone(),
+        db.clone(),
         esi,
         sso,
         image,
@@ -1980,6 +2002,7 @@ mod tests {
       let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
       let (handle, events) = spawn_with_registry(
         db.clone(),
+        db.clone(),
         esi,
         sso,
         image,
@@ -2002,6 +2025,7 @@ mod tests {
       let calls = StubCalls::default();
       let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
       let (handle, events) = spawn_with_registry(
+        db.clone(),
         db.clone(),
         esi,
         sso,

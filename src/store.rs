@@ -32,6 +32,7 @@ pub enum Error {
   Sqlx(#[from] sqlx::Error),
 }
 
+const HOUSEKEEPING_MAX_CONNECTIONS: u32 = 1;
 const INTERACTIVE_MAX_CONNECTIONS: u32 = 4;
 const SYNC_MAX_CONNECTIONS: u32 = 4;
 
@@ -46,6 +47,17 @@ pub async fn open(path: &Path) -> Result<Database, Error> {
 /// never queue behind them. Assumes `open` already ran migrations, and deliberately reruns none.
 pub async fn open_sync_pool(path: &Path) -> Result<Database, Error> {
   Ok(Database(connect_pool(path, SYNC_MAX_CONNECTIONS).await?))
+}
+
+/// Opens a tiny single-connection pool over the same database, reserved exclusively for the sync
+/// engine's housekeeping writes (the ledger upsert after every job plus the outbox drain/prune
+/// maintenance). Keeping it off the worker pool means a connection is always free for housekeeping
+/// even when every worker holds one, so the engine's finish loop never queues behind the
+/// `busy_timeout` for a connection slot. SQLite is still single-writer, so this never raises the
+/// number of concurrent writers — it only stops the workers from starving housekeeping of a slot.
+/// Assumes `open` already ran migrations, and deliberately reruns none.
+pub async fn open_housekeeping_pool(path: &Path) -> Result<Database, Error> {
+  Ok(Database(connect_pool(path, HOUSEKEEPING_MAX_CONNECTIONS).await?))
 }
 
 async fn connect_pool(path: &Path, max_connections: u32) -> Result<SqlitePool, sqlx::Error> {
@@ -174,6 +186,34 @@ mod tests {
       assert!(
         migrations > 0,
         "the sync pool sees the migrations open() applied, and reruns none"
+      );
+    }
+  }
+
+  mod open_housekeeping_pool {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_serves_a_connection_while_every_sync_worker_connection_is_held() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+      open(&path).await.unwrap();
+      let sync = open_sync_pool(&path).await.unwrap();
+      let housekeeping = open_housekeeping_pool(&path).await.unwrap();
+
+      // Saturate the worker pool: hold every one of its connections, mirroring MAX_CONCURRENT_JOBS
+      // workers each mid-write. The housekeeping pool is a separate set of connections, so it must
+      // still hand one out immediately rather than queue behind the busy worker pool.
+      let mut held = Vec::new();
+      for _ in 0..SYNC_MAX_CONNECTIONS {
+        held.push(sync.0.acquire().await.unwrap());
+      }
+
+      let connection = tokio::time::timeout(Duration::from_secs(1), housekeeping.0.acquire()).await;
+
+      assert!(
+        connection.is_ok(),
+        "housekeeping must get a connection even when all {SYNC_MAX_CONNECTIONS} worker connections are held"
       );
     }
   }

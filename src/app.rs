@@ -387,6 +387,7 @@ struct StoreReady {
   lease: Option<HolderInfo>,
   settings: config::Settings,
   sync_db: store::Database,
+  sync_housekeeping_db: store::Database,
   sync_session: Option<store::sync_session::SyncSession>,
 }
 
@@ -641,6 +642,12 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   let sync_db = store::open_sync_pool(&prepared.database_path)
     .await
     .map_err(store_err)?;
+  // A dedicated single-connection pool the engine uses only for housekeeping (the post-job ledger
+  // upsert plus outbox drain/prune), so a free connection is always available for finish() even when
+  // every sync worker holds one of sync_db's connections.
+  let sync_housekeeping_db = store::open_housekeeping_pool(&prepared.database_path)
+    .await
+    .map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(db.clone())).build();
   Ok(StoreReady {
     db,
@@ -648,6 +655,7 @@ async fn open_store_inner() -> Result<StoreReady, String> {
     lease: prepared.lease,
     settings: prepared.settings,
     sync_db,
+    sync_housekeeping_db,
     sync_session: prepared.sync_session,
   })
 }
@@ -716,6 +724,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     lease,
     settings,
     sync_db,
+    sync_housekeeping_db,
     ..
   } = ready;
   let read_only = lease.is_some();
@@ -735,6 +744,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
   } else {
     let started = sync::spawn(
       sync_db,
+      sync_housekeeping_db,
       Arc::clone(&esi),
       sso.clone(),
       Arc::clone(&eve_image),
@@ -3819,6 +3829,7 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -3843,6 +3854,7 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -3872,6 +3884,7 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),
@@ -4318,6 +4331,7 @@ mod tests {
       app.store_ready = Some(StoreReady {
         db: db.clone(),
         sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
         http: http::Client::builder(http::Cache::new(db)).build(),
         lease: None,
         settings: config::Settings::default(),

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, Stack, container, image, scrollable, text},
 };
 
 use super::{
@@ -15,9 +15,14 @@ use crate::{
   ui::{
     components::{
       avatar::Avatar, backdrop, eyebrow::eyebrow_text, glyph_badge::GlyphBadge, icon::Icon,
-      resizable_pane::pane_handle, rule, segmented::segment_button_style, tab_select, text_input::TextInput,
+      positioned_dropdown::positioned_dropdown, resizable_pane::pane_handle, rule, segmented::segment_button,
+      tab_select, text_input::TextInput,
     },
-    style::{color, radius, spacing, typography},
+    style::{
+      color,
+      control::{bordered_pane, sunken_pane},
+      radius, spacing, typography,
+    },
   },
 };
 
@@ -47,16 +52,12 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     });
 
   if state.picker_open {
-    let dropdown = container(header::picker_dropdown(state)).padding(Padding {
-      top: PICKER_OVERLAY_TOP,
-      left: PICKER_OVERLAY_LEFT,
-      ..Padding::ZERO
-    });
+    let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
+      dropdown,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -130,14 +131,7 @@ fn division_strip(state: &State) -> Element<'_, Message> {
       bottom: 0.0,
       left: HEADER_SIDE_PADDING,
     })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    })
+    .style(bordered_pane)
     .into()
 }
 
@@ -145,27 +139,17 @@ fn division_button<'a>(division: &'a CorpDivision, active_division: i64) -> Elem
   let active = division.division == active_division;
   let label = format!("{}  \u{00b7}  {}", division.label(), fmt_isk(division.balance));
 
-  button(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(if active {
-          color::accent::PLASMA
-        } else {
-          color::text::SECONDARY
-        }),
-      }),
+  segment_button(
+    label,
+    active,
+    Padding {
+      top: spacing::SPACE_2_5,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3_5,
+    },
+    Message::DivisionSelected(division.division),
   )
-  .padding(Padding {
-    top: spacing::SPACE_2_5,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_2_5,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press(Message::DivisionSelected(division.division))
-  .style(move |_, status| segment_button_style(active, status))
-  .into()
 }
 
 fn division_caption<'a>(text_value: &str) -> Element<'a, Message> {
@@ -173,9 +157,7 @@ fn division_caption<'a>(text_value: &str) -> Element<'a, Message> {
     text(text_value.to_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      }),
+      .style(typography::colored(color::text::TERTIARY)),
   )
   .padding(Padding {
     top: spacing::SPACE_2,
@@ -218,14 +200,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
       bottom: 0.0,
       left: HEADER_SIDE_PADDING,
     })
-    .style(|_| container::Style {
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    })
+    .style(bordered_pane)
     .into()
 }
 
@@ -259,14 +234,7 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     bottom: spacing::SPACE_3,
     left: HEADER_SIDE_PADDING,
   })
-  .style(|_| container::Style {
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
+  .style(bordered_pane)
   .into()
 }
 
@@ -282,27 +250,17 @@ fn sign_control(state: &State) -> Element<'_, Message> {
       .into_iter()
       .map(|(filter, label)| {
         let active = state.sign_filter == filter;
-        button(
-          text(label.to_owned())
-            .font(typography::mono::REGULAR)
-            .size(typography::size::XS_PLUS)
-            .style(move |_| text::Style {
-              color: Some(if active {
-                color::accent::PLASMA
-              } else {
-                color::text::SECONDARY
-              }),
-            }),
+        segment_button(
+          label,
+          active,
+          Padding {
+            top: spacing::SPACE_2,
+            right: spacing::SPACE_3,
+            bottom: spacing::SPACE_2,
+            left: spacing::SPACE_3,
+          },
+          Message::SignFilterChanged(filter),
         )
-        .padding(Padding {
-          top: spacing::SPACE_2,
-          right: spacing::SPACE_3,
-          bottom: spacing::SPACE_2,
-          left: spacing::SPACE_3,
-        })
-        .on_press(Message::SignFilterChanged(filter))
-        .style(move |_, status| segment_button_style(active, status))
-        .into()
       })
       .collect::<Vec<Element<'_, Message>>>(),
   );
@@ -391,16 +349,12 @@ fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .width(Length::Fill)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text(super::humanize_ref_type(&entry.ref_type))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .width(Length::Fill)
@@ -422,9 +376,7 @@ fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> E
       text(delta.to_owned())
         .font(typography::mono::MEDIUM)
         .size(typography::size::MD)
-        .style(move |_| text::Style {
-          color: Some(delta_color),
-        }),
+        .style(typography::colored(delta_color)),
     )
     .width(Length::Fill)
     .align_x(Horizontal::Right)
@@ -433,9 +385,7 @@ fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> E
       text(when.to_owned())
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        }),
+        .style(typography::colored(color::text::TERTIARY)),
     )
     .width(Length::Fill)
     .align_x(Horizontal::Right)
@@ -528,9 +478,7 @@ fn item_cell<'a>(item: &str, type_id: i64, width: Length) -> Element<'a, Message
     text(item.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2_5)
@@ -571,9 +519,7 @@ fn character_cell(state: &State, character_id: i64, width: Length) -> Element<'_
     text(name)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2_5)
@@ -724,9 +670,7 @@ fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element
     text(label)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   );
 
@@ -767,15 +711,7 @@ fn table_header<'a>(columns: &[(&str, Length, Horizontal)]) -> Element<'a, Messa
     left: HEADER_SIDE_PADDING,
   }))
   .width(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
+  .style(sunken_pane)
   .into()
 }
 
@@ -808,9 +744,7 @@ fn body_cell<'a>(value: impl Into<String>, width: Length, value_color: iced::Col
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .width(width)
-    .style(move |_| text::Style {
-      color: Some(value_color),
-    })
+    .style(typography::colored(value_color))
     .into()
 }
 
@@ -820,9 +754,7 @@ fn mono_cell<'a>(value: &str, width: Length, align: Horizontal, value_color: ice
     .size(typography::size::SM)
     .width(width)
     .align_x(align)
-    .style(move |_| text::Style {
-      color: Some(value_color),
-    })
+    .style(typography::colored(value_color))
     .into()
 }
 
@@ -832,9 +764,7 @@ fn amount_cell<'a>(value: &str, width: Length, value_color: iced::Color) -> Elem
     .size(typography::size::MD)
     .width(width)
     .align_x(Horizontal::Right)
-    .style(move |_| text::Style {
-      color: Some(value_color),
-    })
+    .style(typography::colored(value_color))
     .into()
 }
 
@@ -878,9 +808,7 @@ fn empty_ledger(message: &str) -> Element<'_, Message> {
     text(message.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .width(Length::Fill)
   .height(Length::Fill)
@@ -895,16 +823,12 @@ fn no_source_state<'a>(title: &str, detail: &str) -> Element<'a, Message> {
     text(title.to_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text(detail.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -961,15 +885,7 @@ fn right_rail(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   )
   .width(Length::Fixed(state.right_rail.width()))
   .height(Length::Fill)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
+  .style(sunken_pane)
   .into()
 }
 
@@ -984,9 +900,7 @@ fn recent_activity<'a>(entries: &[&'a JournalEntry], now: DateTime<Utc>) -> Elem
       text("No recent activity.")
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        })
+        .style(typography::colored(color::text::TERTIARY))
         .into(),
     );
   } else {
@@ -1013,16 +927,12 @@ fn recent_activity_row<'a>(entry: &'a JournalEntry, now: DateTime<Utc>) -> Eleme
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .width(Length::Fill)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text(format!("{sign}{}", fmt_isk(entry.amount.map(f64::abs))))
       .font(typography::mono::MEDIUM)
       .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(amount_color),
-      })
+      .style(typography::colored(amount_color))
       .into(),
   ])
   .align_y(Vertical::Center);
@@ -1032,16 +942,12 @@ fn recent_activity_row<'a>(entry: &'a JournalEntry, now: DateTime<Utc>) -> Eleme
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .width(Length::Fill)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
     text(fmt_relative(&entry.date, now))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
   ])
   .align_y(Vertical::Center);
@@ -1084,16 +990,12 @@ fn category_bar<'a>(category: &super::CategoryFlow, max_total: f64) -> Element<'
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .width(Length::Fill)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text(fmt_isk(Some(total)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .align_y(Vertical::Center);
@@ -1149,9 +1051,7 @@ fn summary_row<'a>(label: &str, value: Option<f64>, value_color: iced::Color, si
     text(format!("{sign}{}", fmt_isk(value.map(f64::abs))))
       .font(typography::mono::MEDIUM)
       .size(typography::size::MD)
-      .style(move |_| text::Style {
-        color: Some(value_color),
-      })
+      .style(typography::colored(value_color))
       .into(),
   ])
   .align_y(Vertical::Center)

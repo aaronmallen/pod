@@ -19,7 +19,7 @@ and this project adheres to [Semver versioning](https://semver.org/).
 ### Fixed
 
 - Corporation-owned assets on the Assets "Values" tab now show the owning corporation's name instead of a raw
-  "Owner <id>" placeholder.
+  "Owner ID" placeholder.
 - Unnamed items no longer show "None" as their label — they fall back to the item's type name.
 - Corporation assets no longer vanish from the Assets view when some items can't be looked up by a custom name.
 

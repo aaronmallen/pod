@@ -21,23 +21,65 @@ jobs:
       - name: Lint
         run: mise run lint
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup
+      - if: runner.os != 'Linux'
+        uses: ./.github/actions/setup-slim
       - name: Check
+        if: runner.os == 'Linux'
         run: mise run check
+      - name: Check
+        if: runner.os != 'Linux'
+        run: cargo check --all-targets --all-features
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup
-      - name: Test
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup
+      - if: runner.os != 'Linux'
+        uses: ./.github/actions/setup-slim
+      - name: Test (with coverage)
+        if: runner.os == 'Linux'
         run: mise run test
+      - name: Test
+        if: runner.os != 'Linux'
+        run: cargo nextest run --all-features
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup
+      - if: runner.os != 'Linux'
+        uses: ./.github/actions/setup-slim
       - name: Build
+        if: runner.os == 'Linux'
         run: mise run build
+      - name: Build
+        if: runner.os != 'Linux'
+        run: cargo build --all-features

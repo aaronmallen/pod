@@ -1,0 +1,12 @@
+name: Slim Setup
+description: Install the mise-managed Rust toolchain plus a prebuilt nextest, without the full mise tool suite
+runs:
+  using: "composite"
+  steps:
+    - uses: jdx/mise-action@v4
+      with:
+        install_args: rust
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
+    - uses: Swatinem/rust-cache@v2

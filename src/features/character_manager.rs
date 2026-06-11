@@ -1023,19 +1023,24 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
     .height(Length::Fill)
     .into();
 
+  match active_overlay(state) {
+    Some((backdrop_msg, content)) => modal_overlay(base, Some(backdrop_msg), content),
+    None => base,
+  }
+}
+
+fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
   if let Some(modal) = state.add_tag_modal.as_ref() {
     let (name, assigned, assignable) = resolve_add_tag_modal(state, modal.entity_type, modal.entity_id);
-    return modal_overlay(
-      base,
-      Some(Message::CloseAddTagModal),
+    return Some((
+      Message::CloseAddTagModal,
       tag_ui::modal_view(modal, name, assigned, assignable),
-    );
+    ));
   }
 
   if let Some(confirm) = state.remove_confirm.as_ref() {
-    return modal_overlay(
-      base,
-      Some(Message::CloseRemoveConfirm),
+    return Some((
+      Message::CloseRemoveConfirm,
       confirm_modal::confirm_modal(
         "Remove character",
         format!("Remove {} from Pod?", confirm.name),
@@ -1045,13 +1050,12 @@ are unaffected. You can re-add them later via Add character.",
         Message::RemoveCharacterConfirmed(confirm.character_id),
         Message::CloseRemoveConfirm,
       ),
-    );
+    ));
   }
 
   if let Some(confirm) = state.corp_remove_confirm.as_ref() {
-    return modal_overlay(
-      base,
-      Some(Message::CloseCorpRemoveConfirm),
+    return Some((
+      Message::CloseCorpRemoveConfirm,
       confirm_modal::confirm_modal(
         "Remove corporation",
         format!("Remove {} from Pod?", confirm.name),
@@ -1061,33 +1065,29 @@ servers are unaffected. You can re-add it later via Add corporation.",
         Message::RemoveCorporationConfirmed(confirm.corporation_id),
         Message::CloseCorpRemoveConfirm,
       ),
-    );
+    ));
   }
 
   if let Some(menu) = state.corp_context_menu.as_ref() {
-    return modal_overlay(base, Some(Message::CloseCorpContextMenu), corp_context_menu_view(menu));
+    return Some((Message::CloseCorpContextMenu, corp_context_menu_view(menu)));
   }
 
   if let Some(menu) = state.context_menu.as_ref() {
-    return modal_overlay(base, Some(Message::CloseContextMenu), context_menu_view(menu));
+    return Some((Message::CloseContextMenu, context_menu_view(menu)));
   }
 
   if let Some(menu) = state.squad_menu.as_ref() {
-    return modal_overlay(base, Some(Message::CloseSquadMenu), squad_menu_view(menu));
+    return Some((Message::CloseSquadMenu, squad_menu_view(menu)));
   }
 
   if state.search_help_open() {
-    return modal_overlay(
-      base,
-      Some(Message::ToggleSearchHelp),
-      search_help::popover(all_tags(state)),
-    );
+    return Some((Message::ToggleSearchHelp, search_help::popover(all_tags(state))));
   }
 
-  match state.squad_creator.as_ref() {
-    Some(creator) => modal_overlay(base, Some(Message::CloseSquadCreator), squad_ui::modal_view(creator)),
-    None => base,
-  }
+  state
+    .squad_creator
+    .as_ref()
+    .map(|creator| (Message::CloseSquadCreator, squad_ui::modal_view(creator)))
 }
 
 fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {

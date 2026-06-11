@@ -19,7 +19,7 @@ use corp_card::CorpCardModel;
 use iced::{
   Color, Element, Length, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, operation, svg, text},
+  widget::{Column, Row, Space, button, container, operation, svg, text},
 };
 
 use crate::{
@@ -37,9 +37,10 @@ use crate::{
   sync::{JobKey, JobKind, Phase, Subject, SyncStatus},
   ui::{
     components::{
-      backdrop, color_picker, confirm_modal,
+      color_picker, confirm_modal,
       context_menu::{self, Item},
       header,
+      modal_overlay::modal_overlay,
     },
     style::{color, control, spacing, typography},
   },
@@ -1024,20 +1025,17 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
 
   if let Some(modal) = state.add_tag_modal.as_ref() {
     let (name, assigned, assignable) = resolve_add_tag_modal(state, modal.entity_type, modal.entity_id);
-    return Stack::with_children(vec![
+    return modal_overlay(
       base,
-      backdrop::backdrop(Message::CloseAddTagModal),
+      Some(Message::CloseAddTagModal),
       tag_ui::modal_view(modal, name, assigned, assignable),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   if let Some(confirm) = state.remove_confirm.as_ref() {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base,
-      backdrop::backdrop(Message::CloseRemoveConfirm),
+      Some(Message::CloseRemoveConfirm),
       confirm_modal::confirm_modal(
         "Remove character",
         format!("Remove {} from Pod?", confirm.name),
@@ -1047,16 +1045,13 @@ are unaffected. You can re-add them later via Add character.",
         Message::RemoveCharacterConfirmed(confirm.character_id),
         Message::CloseRemoveConfirm,
       ),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   if let Some(confirm) = state.corp_remove_confirm.as_ref() {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base,
-      backdrop::backdrop(Message::CloseCorpRemoveConfirm),
+      Some(Message::CloseCorpRemoveConfirm),
       confirm_modal::confirm_modal(
         "Remove corporation",
         format!("Remove {} from Pod?", confirm.name),
@@ -1066,65 +1061,31 @@ servers are unaffected. You can re-add it later via Add corporation.",
         Message::RemoveCorporationConfirmed(confirm.corporation_id),
         Message::CloseCorpRemoveConfirm,
       ),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   if let Some(menu) = state.corp_context_menu.as_ref() {
-    return Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::CloseCorpContextMenu),
-      corp_context_menu_view(menu),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return modal_overlay(base, Some(Message::CloseCorpContextMenu), corp_context_menu_view(menu));
   }
 
   if let Some(menu) = state.context_menu.as_ref() {
-    return Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::CloseContextMenu),
-      context_menu_view(menu),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return modal_overlay(base, Some(Message::CloseContextMenu), context_menu_view(menu));
   }
 
   if let Some(menu) = state.squad_menu.as_ref() {
-    return Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::CloseSquadMenu),
-      squad_menu_view(menu),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return modal_overlay(base, Some(Message::CloseSquadMenu), squad_menu_view(menu));
   }
 
   if state.search_help_open() {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base,
-      backdrop::backdrop(Message::ToggleSearchHelp),
+      Some(Message::ToggleSearchHelp),
       search_help::popover(all_tags(state)),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   match state.squad_creator.as_ref() {
-    Some(creator) => Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::CloseSquadCreator),
-      squad_ui::modal_view(creator),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into(),
+    Some(creator) => modal_overlay(base, Some(Message::CloseSquadCreator), squad_ui::modal_view(creator)),
     None => base,
   }
 }
@@ -1293,16 +1254,12 @@ fn corporations_empty_state<'a>() -> Element<'a, Message> {
   let content = Column::with_children(vec![
     text("No corporations yet")
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text("Add a corporation to start tracking it.")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .spacing(spacing::SPACE_3)
@@ -1320,9 +1277,7 @@ fn corp_message<'a>(message: String, color: Color) -> Element<'a, Message> {
   let line = text(message)
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
-    .style(move |_| text::Style {
-      color: Some(color),
-    });
+    .style(typography::colored(color));
 
   container(line)
     .width(Length::Fill)
@@ -1343,16 +1298,12 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
       .into(),
     text("No corporations match")
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text("Try a different search or clear filters")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
     button(
       text("Clear filters")

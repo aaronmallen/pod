@@ -2,7 +2,7 @@ mod header;
 mod tabs;
 
 use iced::{
-  Element, Length, Padding, Task,
+  Element, Length, Task,
   alignment::{Horizontal, Vertical},
   widget::{Column, Stack, container, text},
 };
@@ -24,7 +24,7 @@ use crate::{
   },
   sync::JobKind,
   ui::{
-    components::backdrop,
+    components::{backdrop, positioned_dropdown::positioned_dropdown},
     style::{color, spacing, typography},
   },
 };
@@ -295,16 +295,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
     });
 
   if state.picker_open {
-    let dropdown = container(header::picker_dropdown(state)).padding(Padding {
-      top: PICKER_OVERLAY_TOP,
-      left: PICKER_OVERLAY_LEFT,
-      ..Padding::ZERO
-    });
+    let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
+      dropdown,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -518,9 +514,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     text("Select a character to view details")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .width(Length::Fill)
   .height(Length::Fill)

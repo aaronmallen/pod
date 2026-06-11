@@ -9,7 +9,15 @@ use super::{
   switcher,
 };
 use crate::ui::{
-  components::{backdrop, eyebrow::eyebrow_text, icon::Icon, resizable_pane::pane_handle, rule},
+  components::{
+    backdrop,
+    eyebrow::eyebrow_text,
+    icon::Icon,
+    modal_overlay::modal_overlay,
+    positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
+    resizable_pane::pane_handle,
+    rule,
+  },
   style::{color, radius, spacing, typography},
 };
 
@@ -33,16 +41,12 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
     });
 
   if state.picker_open() {
-    let dropdown = container(switcher::dropdown(state)).padding(Padding {
-      top: PICKER_OVERLAY_TOP,
-      left: PICKER_OVERLAY_LEFT,
-      ..Padding::ZERO
-    });
+    let dropdown = positioned_dropdown(switcher::dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
+      dropdown,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -55,19 +59,11 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
     state.snooze_calendar().map(snooze::calendar_menu)
   };
   if let Some(menu) = snooze_overlay {
-    let positioned = container(menu)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .align_x(iced::alignment::Horizontal::Right)
-      .padding(Padding {
-        top: SNOOZE_OVERLAY_TOP,
-        right: SNOOZE_OVERLAY_RIGHT,
-        ..Padding::ZERO
-      });
+    let positioned = positioned_dropdown_right(menu, SNOOZE_OVERLAY_TOP, SNOOZE_OVERLAY_RIGHT);
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::SnoozeMenuToggled),
-      positioned.into(),
+      positioned,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -75,10 +71,7 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
   }
 
   if let Some(draft) = state.compose() {
-    return Stack::with_children(vec![base.into(), compose::panel(draft, state.roster())])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into();
+    return modal_overlay(base.into(), None, compose::panel(draft, state.roster()));
   }
 
   base.into()
@@ -128,16 +121,12 @@ fn count_column(state: &State) -> Element<'_, Message> {
     text(format!("{total} messages · "))
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     text(format!("{unread} unread"))
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      })
+      .style(typography::colored(color::accent::PLASMA))
       .into(),
   ]);
 
@@ -175,9 +164,7 @@ fn compose_button<'a>() -> Element<'a, Message> {
     text("Compose")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2)

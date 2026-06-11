@@ -7,6 +7,73 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.4]
+
+### Added
+
+- You can now save, name, and reuse asset filters — set up a search and category in the Inventory screen, save it with
+  a star, and it appears in a "Saved filters" list you can apply or delete anytime.
+- The Inventory search now filters live as you type instead of only when you press Enter, and its location filters
+  (loc:, region:, system:, constellation:) finally return results — they previously matched nothing.
+- New "Export logs…" button in Settings › Storage bundles recent logs into a zip — pick Last hour, Last 24h, Today, or
+  Last 7 days — making it easy to attach diagnostics to a bug report.
+- A character you've just signed in now appears in your roster right away, with its real name, instead of taking
+  seconds (or a restart) to show up.
+- The Assets Tracker graph now matches the wallet chart — hover to see a crosshair and a tooltip with the snapshot
+  date, net asset value, and change.
+- Killmails now load directly from EVE first and fill in their value from zKillboard when the kill is public; values
+  keep improving in the background as kills become available there.
+
+### Changed
+
+- Resizable panes now scale to your window size — a pane you sized on a large window no longer overflows a smaller one
+  on restore, and panes track the window as you resize it live.
+- "Sync now" now does a real two-way sync and always tells you what happened — it pushes your local changes, pulls
+  newer changes from the shared copy, and reports the result even when there was nothing to transfer or another machine
+  holds the lock.
+- A second machine's changes now arrive on their own while Pod is open, instead of only at startup or when you take
+  over the lock.
+- The "Sync this location across machines" toggle in Settings is now always usable; when Pod detects a network drive it
+  shows a dismissible suggestion to turn sync on rather than forcing it.
+- Killlog efficiency and ISK-lost stats are now based on the value actually destroyed rather than destroyed-plus-
+  dropped, so they reflect your real losses.
+
+### Fixed
+
+- Pod no longer reopens as a broken, tiny, or off-screen window after a corrupted or stale saved size — the window size
+  is validated and held to a sensible minimum on startup.
+- Pod no longer hangs on startup when your data is on a slow or unreachable network drive — the slow disk work now
+  happens off the main path so the window still opens.
+- The wallet Market, Contracts, and Journal tab badges now show the true total for the current scope instead of
+  starting at 50 and climbing as you scroll.
+- The Skills screen no longer shows an already-finished skill stuck at 100% "Currently training" — it now shows the
+  skill that's genuinely in progress, agreeing with the Character Manager.
+- The Values tab now labels locations with their real station or structure names and uses distinct colors per category
+  in the by-category chart, instead of "Loc 12345" headers and near-identical blue shades.
+- Asset sync no longer aborts at NPC stations — it survives a station-owner corporation whose CEO can't be looked up,
+  so your assets and net worth still load.
+- Switching your data location or toggling sync no longer risks landing on an empty, duplicated, or overwritten
+  database — Pod safely seeds, reconciles, and backs up before replacing any data, and never opens an empty database
+  over real data.
+- Closing Pod's last window now fully quits the app on every platform, with no hidden background process left running.
+- On Linux, second-launch handoff and browser sign-in now work under Flatpak and other sandboxes, and a leftover lock
+  file from a crash no longer blocks Pod from starting.
+- The mail header picker is now a character selector you can always change — previously, once you picked a character you
+  could never switch back to another from the dropdown.
+
+### Removed
+
+- The "Clear Cache" menu item is gone — Pod no longer deletes your images, database, or settings from disk; it only
+  replaces them in place. This fixes item icons disappearing for good after an update.
+
+### Performance
+
+- Adding a character and other interactive actions stay responsive during background sync — roster refreshes are
+  coalesced, the sync engine has its own database connection, asset updates are written in smaller batches that release
+  the database lock, and freshly added characters sync promptly instead of waiting for the next cycle.
+- Pod writes far less to its log files (it no longer records every database query), so logs take up dramatically less
+  disk space.
+
 ## [0.5.3]
 
 ### Added
@@ -362,7 +429,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.3...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.5.4...HEAD
+[0.5.4]: https://github.com/aaronmallen/pod/compare/0.5.3...0.5.4
 [0.5.3]: https://github.com/aaronmallen/pod/compare/0.5.2...0.5.3
 [0.5.2]: https://github.com/aaronmallen/pod/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/aaronmallen/pod/compare/0.5.0...0.5.1

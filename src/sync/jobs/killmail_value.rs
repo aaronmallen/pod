@@ -106,6 +106,7 @@ mod tests {
   fn item(type_id: i64, quantity_destroyed: Option<i64>, quantity_dropped: Option<i64>) -> Item {
     Item {
       flag: 0,
+      items: Vec::new(),
       quantity_destroyed,
       quantity_dropped,
       type_id,

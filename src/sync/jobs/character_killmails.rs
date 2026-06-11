@@ -45,6 +45,7 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
   let synced_at = Utc::now().to_rfc3339();
   let token = grant.access_token();
   let mut synced = 0usize;
+  let mut skipped = 0usize;
 
   for reference in dedupe(refs) {
     if known.contains(&reference.killmail_id) {
@@ -55,15 +56,40 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
         character::upsert_killmail(ctx.db, &entry).await?;
         synced += 1;
       }
-      Err(error) => tracing::warn!(
-        character_id,
-        killmail_id = reference.killmail_id,
-        "character killmails: skipping killmail whose ESI detail failed: {error}"
-      ),
+      Err(error) => {
+        skipped += 1;
+        tracing::warn!(
+          character_id,
+          killmail_id = reference.killmail_id,
+          "character killmails: skipping killmail whose ESI detail failed: {error}"
+        );
+      }
     }
   }
 
-  Ok(Outcome::from_rows(synced))
+  Ok(outcome(character_id, synced, skipped))
+}
+
+/// Returns `Synced` when at least one killmail was stored, even if others were skipped; the skip
+/// count is warned rather than downgrading the outcome so the ledger reflects real progress.
+fn outcome(character_id: i64, synced: usize, skipped: usize) -> Outcome {
+  if synced > 0 {
+    if skipped > 0 {
+      tracing::warn!(
+        character_id,
+        synced,
+        skipped,
+        "character killmails: some killmails failed to assemble and were skipped"
+      );
+    }
+    return Outcome::from_rows(synced);
+  }
+  if skipped > 0 {
+    return Outcome::Skipped {
+      reason: format!("{skipped} killmail(s) failed to assemble"),
+    };
+  }
+  Outcome::Empty
 }
 
 async fn discover_character(
@@ -355,7 +381,7 @@ mod tests {
           "killmail_time": "2024-01-01T00:00:00Z",
           "solar_system_id": 30000142,
           "victim": {"character_id": 2002, "corporation_id": 3003, "ship_type_id": 587,
-            "items": [{"flag": 5, "type_id": 34, "quantity_destroyed": 2}]},
+            "items": [{"flag": 5, "item_type_id": 34, "quantity_destroyed": 2}]},
           "attackers": [{"character_id": 42, "final_blow": true}, {"final_blow": false}]
         }),
       )
@@ -513,6 +539,51 @@ mod tests {
       assert!(rows[0].is_kill());
       assert_eq!(rows[0].value_source(), "zkill");
       assert_eq!(rows[0].value_isk(), 4242.0);
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_skipped_outcome_when_every_discovered_killmail_fails_to_assemble() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/killmails/100/killhash/",
+        serde_json::json!({
+          "killmail_id": 100,
+          "solar_system_id": 30000142,
+          "victim": {"ship_type_id": 587},
+          "attackers": []
+        }),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      let outcome = run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Skipped {
+          reason: "1 killmail(s) failed to assemble".to_owned()
+        }
+      );
+      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]

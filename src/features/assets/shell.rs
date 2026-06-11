@@ -232,8 +232,11 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn inventory_body(state: &State) -> Element<'_, Message> {
-  let inventory = Column::with_children(vec![
-    inventory::filter_bar(state),
+  let mut table: Vec<Element<'_, Message>> = Vec::new();
+  if inventory::has_rows(state) {
+    table.push(inventory::header(state));
+  }
+  table.push(
     container(
       scrollable(inventory::body(state))
         .style(crate::ui::style::control::scrollbar)
@@ -244,6 +247,14 @@ fn inventory_body(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into(),
+  );
+
+  let inventory = Column::with_children(vec![
+    inventory::filter_bar(state),
+    Column::with_children(table)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
   ])
   .width(Length::Fill)
   .height(Length::Fill);

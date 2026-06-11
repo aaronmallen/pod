@@ -26,7 +26,6 @@ const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 26.0;
 const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
-const ROW_HEIGHT: f32 = 40.0;
 const TOGGLE_WIDTH: f32 = 16.0;
 
 const FILTER_HELP_EXAMPLES: [(&str, &str); 6] = [
@@ -323,6 +322,11 @@ fn summary_stat<'a>(label: &'a str, value: String) -> Element<'a, Message> {
   .into()
 }
 
+pub(super) fn header(state: &State) -> Element<'_, Message> {
+  let (sort, dir) = state.inventory_sort();
+  column_header(sort, dir)
+}
+
 pub(super) fn body(state: &State) -> Element<'_, Message> {
   let rows = state.inventory();
   if rows.is_empty() {
@@ -333,13 +337,16 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     });
   }
 
-  let (sort, dir) = state.inventory_sort();
-  let mut children: Vec<Element<'_, Message>> = vec![column_header(sort, dir)];
+  let mut children: Vec<Element<'_, Message>> = Vec::new();
   for inventory_row in rows {
     push_row(state, &mut children, inventory_row);
   }
 
   Column::with_children(children).width(Length::Fill).into()
+}
+
+pub(super) fn has_rows(state: &State) -> bool {
+  !state.inventory().is_empty()
 }
 
 fn push_row<'a>(state: &'a State, out: &mut Vec<Element<'a, Message>>, inventory_row: &'a InventoryRow) {
@@ -500,11 +507,10 @@ fn table_row<'a>(
       .align_y(Vertical::Center),
   )
   .width(Length::Fill)
-  .height(Length::Fixed(ROW_HEIGHT))
   .padding(Padding {
-    top: 0.0,
+    top: spacing::SPACE_2,
     right: HEADER_SIDE_PADDING,
-    bottom: 0.0,
+    bottom: spacing::SPACE_2,
     left: HEADER_SIDE_PADDING,
   })
   .style(|_| container::Style {
@@ -543,7 +549,6 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
     text(custom_name.unwrap_or(&inventory_row.type_name).to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .wrapping(text::Wrapping::None)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
   ];
@@ -552,13 +557,12 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       text(inventory_row.type_name.clone())
         .font(typography::body::REGULAR)
         .size(typography::size::XS)
-        .wrapping(text::Wrapping::None)
         .style(typography::colored(color::text::SECONDARY))
         .into(),
     );
   }
 
-  let label = container(Column::with_children(lines)).width(Length::Fill).clip(true);
+  let label = container(Column::with_children(lines)).width(Length::Fill);
 
   let mut children: Vec<Element<'a, Message>> = vec![label.into()];
   if inventory_row.is_active_ship {
@@ -571,7 +575,6 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       .align_y(Vertical::Center),
   )
   .width(Length::Fill)
-  .clip(true)
   .into()
 }
 

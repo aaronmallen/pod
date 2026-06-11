@@ -1606,7 +1606,7 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
     None => (InventoryTotals::default(), Vec::new()),
   };
   let geo_tree = tree::load_geo_tree(&db, scope, &roster, &corporations).await;
-  let values = values::summarize(&inventory, &roster);
+  let values = values::summarize(&inventory, &roster, &corporations);
   let nav = tracker::load_series(&db, scope).await;
   let stockpiles = stockpiles::load_cards(&db).await;
   let abyssals = abyssals::load_cards(&db, scope, &roster).await;
@@ -1826,6 +1826,20 @@ pub fn fmt_count(count: i64) -> String {
     grouped.push(ch);
   }
   if count < 0 { format!("-{grouped}") } else { grouped }
+}
+
+pub(super) fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> String {
+  roster
+    .iter()
+    .find(|pilot| pilot.id == owner_id)
+    .map(|pilot| pilot.name.clone())
+    .or_else(|| {
+      corporations
+        .iter()
+        .find(|corp| corp.id == owner_id)
+        .map(|corp| corp.name.clone())
+    })
+    .unwrap_or_else(|| format!("Owner {}", fmt_count(owner_id)))
 }
 
 #[cfg(test)]

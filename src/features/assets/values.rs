@@ -6,7 +6,7 @@ use iced::{
   widget::{Column, Row, Space, container, image, text},
 };
 
-use super::{HEADER_SIDE_PADDING, Message, RosterPilot, fmt_isk};
+use super::{HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, fmt_isk, owner_label};
 use crate::{
   clients::eve_image::Size,
   store::{
@@ -70,14 +70,14 @@ pub(super) struct TopItem {
   pub value: f64,
 }
 
-pub(super) fn summarize(rows: &[InventoryRow], roster: &[RosterPilot]) -> ValueSummary {
+pub(super) fn summarize(rows: &[InventoryRow], roster: &[RosterPilot], corporations: &[RosterCorp]) -> ValueSummary {
   let total_value: f64 = rows.iter().map(|r| r.value).sum();
 
   ValueSummary {
     by_category: by_category(rows),
     by_location: by_location(rows),
     matrix_locations: matrix_locations(rows),
-    matrix_rows: matrix_rows(rows, roster),
+    matrix_rows: matrix_rows(rows, roster, corporations),
     top_items: top_items(rows),
     total_value,
   }
@@ -130,7 +130,7 @@ fn matrix_locations(rows: &[InventoryRow]) -> Vec<MatrixLocation> {
     .collect()
 }
 
-fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot]) -> Vec<MatrixRow> {
+fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot], corporations: &[RosterCorp]) -> Vec<MatrixRow> {
   let mut owners: HashMap<i64, HashMap<i64, f64>> = HashMap::new();
   for row in rows {
     *owners
@@ -146,7 +146,7 @@ fn matrix_rows(rows: &[InventoryRow], roster: &[RosterPilot]) -> Vec<MatrixRow> 
       let total = cells.values().sum();
       MatrixRow {
         cells,
-        owner_label: owner_label(owner_id, roster),
+        owner_label: owner_label(owner_id, roster, corporations),
         total,
       }
     })
@@ -179,14 +179,6 @@ fn category_label(category: &str) -> String {
   }
 }
 
-fn owner_label(owner_id: i64, roster: &[RosterPilot]) -> String {
-  roster
-    .iter()
-    .find(|pilot| pilot.id == owner_id)
-    .map(|pilot| pilot.name.clone())
-    .unwrap_or_else(|| format!("Owner {owner_id}"))
-}
-
 pub(super) fn body(summary: &ValueSummary) -> Element<'_, Message> {
   if summary.total_value <= 0.0 && summary.matrix_rows.is_empty() {
     return empty_state();
@@ -216,7 +208,7 @@ pub(super) fn body(summary: &ValueSummary) -> Element<'_, Message> {
 }
 
 fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
-  let mut header_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Character", Horizontal::Left)];
+  let mut header_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Owner", Horizontal::Left)];
   for location in &summary.matrix_locations {
     let label = location
       .label
@@ -308,7 +300,7 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
   );
 
   card(
-    "Value \u{b7} character \u{d7} location",
+    "Value \u{b7} owner \u{d7} location",
     Column::with_children(rows).width(Length::Fill).into(),
   )
 }
@@ -563,6 +555,18 @@ mod tests {
     }
   }
 
+  fn corp(id: i64, name: &str) -> RosterCorp {
+    RosterCorp {
+      id,
+      logo: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      },
+      name: name.to_owned(),
+      ticker: "TST".to_owned(),
+    }
+  }
+
   fn pilot(id: i64, name: &str) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
@@ -589,7 +593,7 @@ mod tests {
       ];
       let roster = vec![pilot(7, "Vex"), pilot(8, "Korren")];
 
-      let summary = summarize(&rows, &roster);
+      let summary = summarize(&rows, &roster, &[]);
 
       assert_eq!(summary.total_value, 3_500.0);
       assert_eq!(summary.by_category[0].label, "Ship");
@@ -604,8 +608,18 @@ mod tests {
     }
 
     #[test]
+    fn it_resolves_a_corporation_owner_to_its_name() {
+      let rows = vec![row("Rupture", "ship", 98_832_116, 60_003_760, 1, 2_000.0)];
+      let corporations = vec![corp(98_832_116, "Hyoryu")];
+
+      let summary = summarize(&rows, &[], &corporations);
+
+      assert_eq!(summary.matrix_rows[0].owner_label, "Hyoryu");
+    }
+
+    #[test]
     fn it_yields_an_empty_summary_for_no_rows() {
-      let summary = summarize(&[], &[]);
+      let summary = summarize(&[], &[], &[]);
       assert_eq!(summary, ValueSummary::default());
     }
   }
@@ -675,6 +689,7 @@ mod tests {
           row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
         ],
         &[pilot(7, "Vex"), pilot(8, "Korren")],
+        &[],
       );
       let _el: Element<'_, Message> = body(&summary);
     }

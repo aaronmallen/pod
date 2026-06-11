@@ -4,7 +4,9 @@ use iced::{
   widget::{Column, Row, Space, button, container, image, text},
 };
 
-use super::{Category, HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, State, fmt_count, fmt_isk, fmt_volume};
+use super::{
+  Category, HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, State, fmt_count, fmt_isk, fmt_volume, owner_label,
+};
 use crate::{
   clients::eve_image::Size,
   store::{
@@ -632,20 +634,6 @@ fn numeric_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Messa
 
 fn text_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Message> {
   TableCell::new(value).color(text_color).view()
-}
-
-fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> String {
-  roster
-    .iter()
-    .find(|pilot| pilot.id == owner_id)
-    .map(|pilot| pilot.name.clone())
-    .or_else(|| {
-      corporations
-        .iter()
-        .find(|corp| corp.id == owner_id)
-        .map(|corp| corp.name.clone())
-    })
-    .unwrap_or_else(|| format!("Owner {}", fmt_count(owner_id)))
 }
 
 fn owner_cell<'a>(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> Element<'a, Message> {

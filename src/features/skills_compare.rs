@@ -19,7 +19,7 @@ use crate::{
     repo::{character, skills},
   },
   ui::{
-    components::backdrop,
+    components::{backdrop, modal_overlay::modal_overlay},
     style::{color, spacing},
   },
 };
@@ -254,14 +254,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         left: spacing::SPACE_6,
       });
 
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    let overlay = Stack::with_children(vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into();
+    return modal_overlay(base.into(), None, overlay);
   }
 
   base.into()

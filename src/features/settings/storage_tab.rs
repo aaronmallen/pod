@@ -8,7 +8,7 @@ use chrono::{DateTime, Local, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, scrollable, text, text_input},
+  widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
 
 use super::{
@@ -18,7 +18,7 @@ use super::{
 use crate::{
   config::{Settings, StorageConfig, StorageMode},
   ui::{
-    components::{backdrop, rule, status},
+    components::{modal_overlay::modal_overlay, rule, status},
     style::{color, control, radius, shadow, spacing, typography},
   },
 };
@@ -480,14 +480,7 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
     .into();
 
   match state.pending.as_ref() {
-    Some(pending) => Stack::with_children(vec![
-      base,
-      backdrop::backdrop(Message::CancelMove),
-      confirm_move_modal(pending),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into(),
+    Some(pending) => modal_overlay(base, Some(Message::CancelMove), confirm_move_modal(pending)),
     None => base,
   }
 }
@@ -496,9 +489,7 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
   let title = text("Storage")
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let blurb = text(
     "Where Pod keeps its files on disk. Paths follow platform conventions by default — change them \
       to put Pod's data on a different volume or share it between installs. The daemon picks up \
@@ -506,9 +497,7 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
   )
   .font(typography::body::REGULAR)
   .size(typography::size::MD)
-  .style(|_| text::Style {
-    color: Some(color::text::SECONDARY),
-  });
+  .style(typography::colored(color::text::SECONDARY));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -548,9 +537,7 @@ fn customized_badge(settings: &Settings) -> Element<'_, Message> {
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .align_y(Vertical::Center)
@@ -602,9 +589,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text(kind.label())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ];
   if overridden {
@@ -615,9 +600,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text(kind.xdg_label())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
   );
   let header = Row::with_children(header_row)
@@ -628,9 +611,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text(kind.description())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .max_width(DESCRIPTION_MAX_WIDTH);
 
@@ -693,16 +674,12 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text("default")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
     text(default.display().to_string())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -744,9 +721,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
     text("Export logs")
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ];
 
@@ -769,9 +744,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
       text("Exporting\u{2026}")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        })
+        .style(typography::colored(color::text::TERTIARY))
         .into(),
     );
   }
@@ -787,9 +760,7 @@ fn custom_badge<'a>() -> Element<'a, Message> {
     text("custom")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
+      .style(typography::colored(color::accent::PLASMA)),
   )
   .padding(Padding {
     top: 1.0,
@@ -824,9 +795,7 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
     text("\u{2713}")
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::surface::NAVIGATION),
-      })
+      .style(typography::colored(color::surface::NAVIGATION))
       .into()
   } else {
     Space::new().into()
@@ -847,9 +816,7 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
   let label = text("Sync this location across machines")
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
 
   let explanation = container(
     text(
@@ -858,9 +825,7 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
     )
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    }),
+    .style(typography::colored(color::text::SECONDARY)),
   )
   .max_width(580.0);
 
@@ -900,22 +865,16 @@ fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
   let label = text("Local working copy")
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let explanation =
     text("Read-only — the live database runs here on local disk; the share never drives the DB over the wire.")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      });
+      .style(typography::colored(color::text::SECONDARY));
   let path = text(working_copy.display().to_string())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    });
+    .style(typography::colored(color::text::SECONDARY));
 
   let cell = container(
     Column::with_children(vec![label.into(), explanation.into(), path.into()])
@@ -955,9 +914,7 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
     text(summary)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      })
+      .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
   .align_y(Vertical::Center)
@@ -1002,9 +959,7 @@ fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
   let copy = text("This looks like a network share \u{2014} enable syncing across machines.")
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::accent::PLASMA),
-    })
+    .style(typography::colored(color::accent::PLASMA))
     .width(Length::Fill);
 
   let dismiss = button(
@@ -1044,9 +999,7 @@ fn error_banner(message: &str) -> Element<'_, Message> {
   let copy = text(message.to_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::status::DANGER),
-    })
+    .style(typography::colored(color::status::DANGER))
     .width(Length::Fill);
 
   let dismiss = button(
@@ -1086,24 +1039,18 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
   let eyebrow = text("Relocate store")
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(|_| text::Style {
-      color: Some(color::accent::PLASMA),
-    });
+    .style(typography::colored(color::accent::PLASMA));
   let title = text(format!("Move {} to the new folder?", pending.kind.label()))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let body = text(
     "Pod can move the existing files to the new location, or just repoint here and leave the old \
       files where they are. The change applies on the next launch.",
   )
   .font(typography::body::REGULAR)
   .size(typography::size::MD)
-  .style(|_| text::Style {
-    color: Some(color::text::SECONDARY),
-  });
+  .style(typography::colored(color::text::SECONDARY));
 
   let from_to =
     Column::with_children(vec![path_line("from", &pending.from), path_line("to", &pending.to)]).spacing(spacing::UNIT);
@@ -1189,18 +1136,14 @@ fn path_line<'a>(label: &'a str, dir: &Path) -> Element<'a, Message> {
       text(label)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
-        }),
+        .style(typography::colored(color::text::TERTIARY)),
     )
     .width(Length::Fixed(40.0))
     .into(),
     text(dir.display().to_string())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ])
   .spacing(spacing::SPACE_2)

@@ -37,6 +37,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
+      modal_overlay::modal_overlay,
       resizable_pane::{self, PaneDrag, pane_handle},
     },
     style::{color, spacing, typography},
@@ -257,14 +258,11 @@ pub fn view<'a>(
       ..Padding::ZERO
     });
 
-    return Stack::with_children(vec![
-      base,
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    let overlay = Stack::with_children(vec![backdrop::click_catcher(Message::PickerToggled), dropdown.into()])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into();
+    return modal_overlay(base, None, overlay);
   }
 
   base
@@ -388,9 +386,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     text("Add a character to view skills")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .width(Length::Fill)
   .height(Length::Fill)

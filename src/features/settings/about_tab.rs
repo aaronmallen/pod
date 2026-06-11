@@ -55,15 +55,11 @@ fn panel_header<'a>() -> Element<'a, Message> {
   let title = text("About")
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let blurb = text("Pod's identity and the EVE Online Developer License trademark notice.")
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    });
+    .style(typography::colored(color::text::SECONDARY));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -84,15 +80,11 @@ fn body<'a>() -> Element<'a, Message> {
   let name = text("Pod")
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let version = text(format!("v{VERSION}"))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    });
+    .style(typography::colored(color::text::SECONDARY));
   let identity_row = Row::with_children(vec![name.into(), version.into()])
     .align_y(Vertical::Bottom)
     .spacing(spacing::SPACE_2);
@@ -100,16 +92,12 @@ fn body<'a>() -> Element<'a, Message> {
   let build_info = text(format!("Build {GIT_SHA} \u{00b7} {BUILD_DATE}"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
-    });
+    .style(typography::colored(color::text::TERTIARY));
 
   let license = text("MIT License")
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
-    });
+    .style(typography::colored(color::text::TERTIARY));
 
   let identity = Column::with_children(vec![
     identity_row.into(),
@@ -124,18 +112,14 @@ fn body<'a>() -> Element<'a, Message> {
     text(TRADEMARK_NOTICE)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .max_width(NOTICE_MAX_WIDTH);
 
   let copyright = text(TRADEMARK_COPYRIGHT)
     .font(typography::body::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
-    });
+    .style(typography::colored(color::text::TERTIARY));
 
   let inner = container(
     Column::with_children(vec![
@@ -167,9 +151,7 @@ fn github_link<'a>() -> Element<'a, Message> {
     text("github.com/aaronmallen/pod")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
+      .style(typography::colored(color::accent::PLASMA)),
   )
   .padding(0)
   .on_press(Message::OpenGithub)

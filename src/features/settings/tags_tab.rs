@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding, Point,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, mouse_area, scrollable, text, text_input},
+  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text, text_input},
 };
 
 use super::Outcome;
@@ -9,7 +9,9 @@ use crate::{
   config::Settings,
   store::{Database, model::Tag, repo::infra},
   ui::{
-    components::{backdrop, chip, color_picker, icon::Icon, rule, status, text_input::TextInput},
+    components::{
+      backdrop, chip, color_picker, icon::Icon, modal_overlay::modal_overlay, rule, status, text_input::TextInput,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -453,10 +455,7 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
   let base: Element<'a, Message> = mouse_area(body).on_move(Message::CursorMoved).into();
 
   match open_picker(state) {
-    Some(popover) => Stack::with_children(vec![base, popover])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into(),
+    Some(popover) => modal_overlay(base, None, popover),
     None => base,
   }
 }
@@ -465,9 +464,7 @@ fn header(state: &State) -> Element<'_, Message> {
   let title = text("Tags")
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    });
+    .style(typography::colored(color::text::PRIMARY));
   let blurb = container(
     text(
       "Assign a color to any tag and it'll render that way everywhere it appears on a character card. \
@@ -475,9 +472,7 @@ fn header(state: &State) -> Element<'_, Message> {
     )
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    }),
+    .style(typography::colored(color::text::SECONDARY)),
   )
   .max_width(BLURB_MAX_WIDTH);
 
@@ -505,9 +500,7 @@ fn create_row(state: &State) -> Element<'_, Message> {
       text("+")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
-        })
+        .style(typography::colored(color::accent::PLASMA))
         .into(),
       text_input("Create a tag\u{2026}", &state.new_tag)
         .font(typography::body::REGULAR)
@@ -535,13 +528,11 @@ fn create_row(state: &State) -> Element<'_, Message> {
     text("Add")
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
-      .style(move |_| text::Style {
-        color: Some(if can_add {
-          color::surface::BASE
-        } else {
-          color::text::TERTIARY
-        }),
-      }),
+      .style(typography::colored(if can_add {
+        color::surface::BASE
+      } else {
+        color::text::TERTIARY
+      })),
   )
   .padding(Padding {
     top: 7.0,
@@ -573,13 +564,11 @@ fn sort_selector(state: &State) -> Element<'_, Message> {
         text(mode.label())
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
-          .style(move |_| text::Style {
-            color: Some(if active {
-              color::accent::PLASMA
-            } else {
-              color::text::SECONDARY
-            }),
-          }),
+          .style(typography::colored(if active {
+            color::accent::PLASMA
+          } else {
+            color::text::SECONDARY
+          })),
       )
       .padding(Padding {
         top: 5.0,
@@ -634,9 +623,7 @@ fn meta_strip(state: &State) -> Element<'_, Message> {
       text(hint)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(|_| text::Style {
-          color: Some(color::status::WARNING),
-        })
+        .style(typography::colored(color::status::WARNING))
         .into(),
     );
   }
@@ -652,16 +639,12 @@ fn meta_count<'a>(count: usize, label: &'a str, count_color: Color) -> Element<'
     text(count.to_string())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(count_color),
-      })
+      .style(typography::colored(count_color))
       .into(),
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
   ])
   .spacing(spacing::UNIT)
@@ -685,9 +668,7 @@ fn list(state: &State) -> Element<'_, Message> {
       text(copy)
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
-        }),
+        .style(typography::colored(color::text::SECONDARY)),
     )
     .width(Length::Fill)
     .padding(80.0)
@@ -773,13 +754,11 @@ fn drag_handle<'a>(tag_id: i64, draggable: bool) -> Element<'a, Message> {
   let glyph = text("\u{22ee}")
     .font(typography::body::REGULAR)
     .size(typography::size::LG)
-    .style(move |_| text::Style {
-      color: Some(if draggable {
-        color::text::TERTIARY
-      } else {
-        color::with_alpha(color::text::PRIMARY, 0.1)
-      }),
-    });
+    .style(typography::colored(if draggable {
+      color::text::TERTIARY
+    } else {
+      color::with_alpha(color::text::PRIMARY, 0.1)
+    }));
   let cell = container(glyph)
     .width(Length::Fixed(DRAG_HANDLE_WIDTH))
     .align_x(Horizontal::Center)
@@ -816,12 +795,11 @@ fn open_picker<'a>(state: &'a State) -> Option<Element<'a, Message>> {
   );
 
   let floating = color_picker::floating(popover, picker.anchor);
-  Some(
-    Stack::with_children(vec![backdrop::click_catcher(Message::ClosePicker), floating])
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into(),
-  )
+  Some(modal_overlay(
+    backdrop::click_catcher(Message::ClosePicker),
+    None,
+    floating,
+  ))
 }
 
 fn swatch_button<'a>(color: Option<&str>, on_toggle: Message) -> Element<'a, Message> {
@@ -870,9 +848,7 @@ fn name_cell<'a>(state: &'a State, tag: &'a Tag) -> Element<'a, Message> {
       text(tag.name().clone())
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        }),
+        .style(typography::colored(color::text::PRIMARY)),
     )
     .padding(Padding::ZERO)
     .on_press(Message::StartEditing(tag.id()))
@@ -894,9 +870,7 @@ fn delete_button<'a>(tag_id: i64) -> Element<'a, Message> {
     text("\u{00d7}")
       .font(typography::mono::REGULAR)
       .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .center_x(Length::Fill)
   .center_y(Length::Fill);

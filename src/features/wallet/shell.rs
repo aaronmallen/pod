@@ -95,10 +95,24 @@ fn center(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .height(Length::Fill)
     .on_scroll(|viewport| Message::TabScrolled(viewport.relative_offset().y));
 
-  Column::with_children(vec![head.into(), body.into()])
+  let mut children: Vec<Element<'_, Message>> = vec![head.into()];
+  if let Some(pinned_header) = pinned_header(state) {
+    children.push(pinned_header);
+  }
+  children.push(body.into());
+
+  Column::with_children(children)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+fn pinned_header<'a>(state: &State) -> Option<Element<'a, Message>> {
+  match state.tab {
+    Tab::Market => Some(market_header()),
+    Tab::Contracts => Some(contract_header()),
+    Tab::Journal => None,
+  }
 }
 
 fn division_strip(state: &State) -> Element<'_, Message> {
@@ -385,14 +399,11 @@ fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   }
 
   let visible = state.visible_rows();
-  let mut rows: Vec<Element<'_, Message>> = Vec::with_capacity(visible.min(entries.len()) + 1);
-  rows.push(market_header());
-  rows.extend(
-    entries
-      .into_iter()
-      .take(visible)
-      .map(|entry| market_row(state, entry, now)),
-  );
+  let rows: Vec<Element<'_, Message>> = entries
+    .into_iter()
+    .take(visible)
+    .map(|entry| market_row(state, entry, now))
+    .collect();
 
   container(Column::with_children(rows).width(Length::Fill))
     .width(Length::Fill)
@@ -448,6 +459,8 @@ fn item_cell<'a>(item: &str, type_id: i64, width: Length) -> Element<'a, Message
     text(item.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
+      .width(Length::Fill)
+      .wrapping(text::Wrapping::Word)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
   ])
@@ -489,6 +502,8 @@ fn character_cell(state: &State, character_id: i64, width: Length) -> Element<'_
     text(name)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
+      .width(Length::Fill)
+      .wrapping(text::Wrapping::Word)
       .style(typography::colored(color::text::SECONDARY))
       .into(),
   ])
@@ -531,9 +546,11 @@ fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   }
 
   let visible = state.visible_rows();
-  let mut rows: Vec<Element<'_, Message>> = Vec::with_capacity(visible.min(entries.len()) + 1);
-  rows.push(contract_header());
-  rows.extend(entries.into_iter().take(visible).map(|entry| contract_row(entry, now)));
+  let rows: Vec<Element<'_, Message>> = entries
+    .into_iter()
+    .take(visible)
+    .map(|entry| contract_row(entry, now))
+    .collect();
 
   container(Column::with_children(rows).width(Length::Fill))
     .width(Length::Fill)
@@ -640,6 +657,8 @@ fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element
     text(label)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
+      .width(Length::Fill)
+      .wrapping(text::Wrapping::Word)
       .style(typography::colored(color::text::SECONDARY))
       .into(),
   );
@@ -1058,6 +1077,24 @@ mod tests {
       let mut state = State::new();
       let _ = crate::features::wallet::update(&mut state, Message::PickerToggled, &db);
       let _el: Element<'_, Message> = shell(&state, now());
+    }
+  }
+
+  mod pinned_header {
+    use super::*;
+
+    #[test]
+    fn it_pins_a_header_for_market_and_contracts_but_not_journal() {
+      let mut state = State::new();
+
+      state.tab = Tab::Market;
+      assert!(super::super::pinned_header(&state).is_some());
+
+      state.tab = Tab::Contracts;
+      assert!(super::super::pinned_header(&state).is_some());
+
+      state.tab = Tab::Journal;
+      assert!(super::super::pinned_header(&state).is_none());
     }
   }
 

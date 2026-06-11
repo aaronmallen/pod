@@ -22,12 +22,12 @@ impl TableCell {
   pub fn new(content: impl Into<String>) -> Self {
     Self {
       align: Horizontal::Left,
-      clip: true,
+      clip: false,
       color: color::text::SECONDARY,
       content: content.into(),
       font: typography::body::REGULAR,
       size: typography::size::SM,
-      wrapping: text::Wrapping::None,
+      wrapping: text::Wrapping::Word,
     }
   }
 
@@ -83,7 +83,21 @@ impl TableCell {
 mod tests {
   use super::*;
 
-  mod table_cell {
+  mod new {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_wrapping_and_not_clipping() {
+      let cell = TableCell::new("Tritanium");
+
+      assert!(!cell.clip);
+      assert_eq!(cell.wrapping, text::Wrapping::Word);
+    }
+  }
+
+  mod view {
     use super::*;
 
     #[test]
@@ -92,12 +106,12 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_a_right_aligned_numeric_cell() {
+    fn it_renders_a_right_aligned_numeric_cell_with_explicit_overrides() {
       let _el: Element<'_, ()> = TableCell::new("1,024")
         .font(typography::mono::REGULAR)
         .align(Horizontal::Right)
-        .clip(false)
-        .wrapping(text::Wrapping::Word)
+        .clip(true)
+        .wrapping(text::Wrapping::None)
         .color(color::text::PRIMARY)
         .view();
     }

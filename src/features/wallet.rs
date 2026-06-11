@@ -846,7 +846,7 @@ pub fn scope_liquid(state: &State) -> Option<f64> {
   match state.active {
     Scope::All => combined_liquid(state),
     Scope::Character(_) => {
-      let ids = state.scope_ids();
+      let ids: std::collections::HashSet<i64> = state.scope_ids().into_iter().collect();
       sum_option(
         state
           .financials
@@ -861,7 +861,7 @@ pub fn scope_liquid(state: &State) -> Option<f64> {
 
 /// Liquid ISK across every owned character and corporation, independent of the active scope.
 pub fn combined_liquid(state: &State) -> Option<f64> {
-  let ids: Vec<i64> = state.roster.iter().map(|pilot| pilot.id).collect();
+  let ids: std::collections::HashSet<i64> = state.roster.iter().map(|pilot| pilot.id).collect();
   let character_liquid = sum_option(
     state
       .financials
@@ -874,7 +874,7 @@ pub fn combined_liquid(state: &State) -> Option<f64> {
 
 #[allow(dead_code)]
 pub fn period_totals(state: &State) -> PeriodTotals {
-  let ids = state.scope_ids();
+  let ids: std::collections::HashSet<i64> = state.scope_ids().into_iter().collect();
   let mut totals = PeriodTotals::default();
   for summary in state.periods.iter().filter(|row| ids.contains(&row.character_id)) {
     totals.income += summary.income;
@@ -909,7 +909,7 @@ pub fn series_current(series: &[NetWorthPoint]) -> Option<f64> {
 }
 
 pub fn scope_composition(state: &State) -> Composition {
-  let ids = state.scope_ids();
+  let ids: std::collections::HashSet<i64> = state.scope_ids().into_iter().collect();
   let rows: Vec<&CharacterFinancials> = state
     .financials
     .iter()
@@ -926,15 +926,13 @@ pub fn composition_stack(state: &State) -> Vec<CompositionSlice> {
   if !matches!(state.active, Scope::All) {
     return Vec::new();
   }
+  let financials_by_id: std::collections::HashMap<i64, &_> =
+    state.financials.iter().map(|row| (row.character_id, row)).collect();
   let mut slices: Vec<CompositionSlice> = state
     .roster
     .iter()
     .filter_map(|pilot| {
-      let net_worth = state
-        .financials
-        .iter()
-        .find(|row| row.character_id == pilot.id)
-        .and_then(|row| row.net_worth)?;
+      let net_worth = financials_by_id.get(&pilot.id).and_then(|row| row.net_worth)?;
       Some(CompositionSlice {
         id: pilot.id,
         name: pilot.name.clone(),

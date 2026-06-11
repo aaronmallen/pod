@@ -89,7 +89,21 @@ fn spawn_with_registry(
     schedule: Schedule::with_features(features),
     sso,
   };
-  tokio::spawn(engine.run(command_rx));
+  let run = tokio::spawn(engine.run(command_rx));
+  // Watch the engine's top-level task so its termination is never silent. A clean return means the
+  // command channel closed (shutdown); a JoinError carries a panic that would otherwise vanish,
+  // since the default panic output is swallowed once the console is detached.
+  tokio::spawn(async move {
+    match run.await {
+      Ok(()) => tracing::warn!(target: "pod::lifecycle", "the sync engine task stopped"),
+      Err(join_error) if join_error.is_panic() => {
+        tracing::error!(target: "pod::lifecycle", %join_error, "the sync engine task panicked")
+      }
+      Err(join_error) => {
+        tracing::warn!(target: "pod::lifecycle", %join_error, "the sync engine task was cancelled")
+      }
+    }
+  });
   (Handle::new(command_tx), event_rx)
 }
 

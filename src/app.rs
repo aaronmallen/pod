@@ -434,6 +434,7 @@ pub fn run() -> iced::Result {
     .unwrap_or_else(|_| config::log_dir());
 
   let _log_guard = init_tracing(&log_dir);
+  install_panic_hook();
 
   iced::daemon(boot, update, view)
     .title(title)
@@ -501,6 +502,50 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
   );
 
   guard
+}
+
+/// Installs a process-wide panic hook that records every panic into the tracing JSON file log before
+/// the default hook (and the `windows_subsystem = "windows"` console detachment) swallows the stderr
+/// message. Without this, a panic in any spawned task — notably the sync engine's top-level task —
+/// dies silently and leaves no trace in an exported field log.
+///
+/// Must be called after [`init_tracing`] so the subscriber already exists, and only on the non-test
+/// boot path: tests must not mutate the global panic hook (it would clobber the harness's own hook
+/// and break `#[should_panic]` / unwinding diagnostics).
+#[cfg(not(test))]
+fn install_panic_hook() {
+  let default_hook = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    log_panic(info);
+    default_hook(info);
+  }));
+}
+
+#[cfg(test)]
+fn install_panic_hook() {}
+
+/// Emits a single ERROR event capturing a panic's payload, location, and backtrace under the
+/// `pod::lifecycle` target. Split out from the hook closure so a test can drive it through a
+/// capturing subscriber without touching the global panic hook.
+fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
+  let message = info
+    .payload()
+    .downcast_ref::<&str>()
+    .copied()
+    .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+    .unwrap_or("<non-string panic payload>");
+  let location = info
+    .location()
+    .map(ToString::to_string)
+    .unwrap_or_else(|| "<unknown>".to_owned());
+  let backtrace = std::backtrace::Backtrace::force_capture();
+  tracing::error!(
+    target: "pod::lifecycle",
+    panic_message = message,
+    panic_location = location,
+    panic_backtrace = %backtrace,
+    "the process panicked",
+  );
 }
 
 fn blank<'a>() -> Element<'a, Message> {
@@ -5578,6 +5623,109 @@ mod tests {
     #[test]
     fn it_constructs_an_updater_state_stream() {
       let _stream = updater_state_stream();
+    }
+  }
+
+  mod crash_visibility {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::{Event, Subscriber, field::Visit};
+    use tracing_subscriber::{
+      Layer,
+      filter::EnvFilter,
+      layer::{Context, SubscriberExt as _},
+      registry,
+    };
+
+    use super::*;
+
+    /// Collects the `message` field of every captured event into a shared buffer so a test can
+    /// assert what was logged through tracing.
+    #[derive(Clone, Default)]
+    struct CaptureLayer {
+      messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct MessageVisitor<'a>(&'a mut Option<String>);
+
+    impl Visit for MessageVisitor<'_> {
+      fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+          *self.0 = Some(format!("{value:?}"));
+        }
+      }
+    }
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+      fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut message = None;
+        event.record(&mut MessageVisitor(&mut message));
+        if let Some(message) = message {
+          self.messages.lock().expect("capture buffer").push(message);
+        }
+      }
+    }
+
+    #[test]
+    fn it_routes_a_panic_through_the_hook_into_tracing() {
+      let layer = CaptureLayer::default();
+      let messages = layer.messages.clone();
+
+      // Install a hook that drives the same `log_panic` path the production hook uses, scoped to a
+      // capturing subscriber, then restore the previous hook so the test harness is unaffected.
+      let previous = std::panic::take_hook();
+      std::panic::set_hook(Box::new(log_panic));
+
+      tracing::subscriber::with_default(registry().with(layer), || {
+        // A panic raised from a sync-style closure, caught so it does not abort the test.
+        let _ = std::panic::catch_unwind(|| {
+          fn run_sync_job() {
+            panic!("simulated sync engine crash");
+          }
+          run_sync_job();
+        });
+      });
+
+      std::panic::set_hook(previous);
+
+      let captured = messages.lock().expect("capture buffer");
+      assert!(
+        captured.iter().any(|m| m.contains("the process panicked")),
+        "the panic hook routed an ERROR event into tracing; captured: {captured:?}",
+      );
+    }
+
+    #[test]
+    fn it_pins_sqlx_query_logging_to_warn_or_higher() {
+      // Build the real file filter and route events through it so a regression that loosens
+      // `sqlx::query` to DEBUG/TRACE fails this test instead of silently flooding the field log.
+      let captured = |level: tracing::Level| -> bool {
+        let layer = CaptureLayer::default();
+        let messages = layer.messages.clone();
+        let filtered = layer.with_filter(EnvFilter::new(FILE_FILTER));
+        tracing::subscriber::with_default(registry().with(filtered), || match level {
+          tracing::Level::TRACE => tracing::trace!(target: "sqlx::query", "stmt"),
+          tracing::Level::DEBUG => tracing::debug!(target: "sqlx::query", "stmt"),
+          tracing::Level::INFO => tracing::info!(target: "sqlx::query", "stmt"),
+          tracing::Level::WARN => tracing::warn!(target: "sqlx::query", "stmt"),
+          tracing::Level::ERROR => tracing::error!(target: "sqlx::query", "stmt"),
+        });
+        !messages.lock().expect("capture buffer").is_empty()
+      };
+
+      assert!(
+        !captured(tracing::Level::TRACE),
+        "sqlx::query TRACE must be filtered out"
+      );
+      assert!(
+        !captured(tracing::Level::DEBUG),
+        "sqlx::query DEBUG must be filtered out"
+      );
+      assert!(!captured(tracing::Level::INFO), "sqlx::query INFO must be filtered out");
+      assert!(
+        captured(tracing::Level::WARN),
+        "sqlx::query WARN must pass (filter pins WARN-or-higher)"
+      );
     }
   }
 }

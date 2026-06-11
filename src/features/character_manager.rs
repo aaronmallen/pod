@@ -387,8 +387,13 @@ pub fn insert_signed_in_card(state: &mut State, character_id: i64, name: String)
   let card = synthesize_pending_card(character_id, name, &images::default_store());
   state.pending.insert(character_id, card.clone());
   if !roster_contains(state, character_id) {
-    state.unassigned.push(card);
+    append_unassigned(state, card);
   }
+}
+
+fn append_unassigned(state: &mut State, mut card: CardModel) {
+  card.position = next_append_slot(&state.unassigned);
+  state.unassigned.push(card);
 }
 
 /// Re-appends placeholder cards after each load, retiring one only once its real row appears, so a freshly added card
@@ -402,9 +407,17 @@ fn merge_pending(state: &mut State) {
     .map(|card| card.character_id)
     .collect();
   state.pending.retain(|id, _| !loaded.contains(id));
-  for card in state.pending.values() {
-    state.unassigned.push(card.clone());
+  for card in state.pending.values().cloned().collect::<Vec<_>>() {
+    append_unassigned(state, card);
   }
+}
+
+fn next_append_slot(cards: &[CardModel]) -> i64 {
+  cards
+    .iter()
+    .map(|card| card.position)
+    .max()
+    .map_or(0, |max| max.saturating_add(1))
 }
 
 fn roster_contains(state: &State, character_id: i64) -> bool {
@@ -426,7 +439,7 @@ fn synthesize_pending_card(character_id: i64, name: String, store: &images::Stor
     name,
     needs_reauth: false,
     portrait: images::resolve(store, images::ImageKind::CharacterPortrait, character_id),
-    position: i64::MAX,
+    position: 0,
     tags: Vec::new(),
     total_sp: None,
     training: None,
@@ -1701,13 +1714,17 @@ fn assemble_unassigned(
       card.character_id,
     )
   });
-  let mut next_straggler_slot = unassigned_position.values().copied().max().map_or(0, |max| max + 1);
+  let mut next_straggler_slot = unassigned_position
+    .values()
+    .copied()
+    .max()
+    .map_or(0, |max| max.saturating_add(1));
   for card in &mut unassigned {
     if unassigned_position.contains_key(&card.character_id) {
       card.position = unassigned_position[&card.character_id];
     } else {
       card.position = next_straggler_slot;
-      next_straggler_slot += 1;
+      next_straggler_slot = next_straggler_slot.saturating_add(1);
     }
   }
   unassigned
@@ -2159,7 +2176,7 @@ mod tests {
   use super::*;
 
   mod insert_signed_in_card {
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     use super::*;
 
@@ -2200,6 +2217,41 @@ mod tests {
         state.pending.contains_key(&42),
         "it is tracked as pending until its real row loads"
       );
+    }
+
+    #[test]
+    fn it_gives_the_pending_card_a_finite_append_slot_after_the_real_cards() {
+      let mut state = State::new();
+      let mut anchor = real_card(7);
+      anchor.position = 4;
+      state.unassigned = vec![anchor];
+
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
+
+      let card = state
+        .unassigned
+        .iter()
+        .find(|card| card.character_id == 42)
+        .expect("the synthesized card is visible immediately");
+      assert_eq!(card.position, 5);
+      assert_ne!(state.pending[&42].position, i64::MAX);
+    }
+
+    #[test]
+    fn it_sorts_the_pending_card_last_among_the_unassigned_cards() {
+      let mut state = State::new();
+      let mut anchor = real_card(7);
+      anchor.position = 2;
+      state.unassigned = vec![anchor];
+
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
+
+      let last = state
+        .unassigned
+        .iter()
+        .max_by_key(|card| card.position)
+        .expect("the bucket is non-empty");
+      assert_eq!(last.character_id, 42);
     }
 
     #[test]

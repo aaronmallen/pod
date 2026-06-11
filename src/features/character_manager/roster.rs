@@ -572,7 +572,9 @@ fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: Drag
   let card_at = resolve_slots(cards);
   let max_slot = card_at.keys().copied().max().unwrap_or(0);
   let trailing = if drag.dragging.is_some() { 2 } else { 1 };
-  let row_count = (max_slot / COLUMNS as i64 + trailing) as usize;
+  let computed = (max_slot / COLUMNS as i64).saturating_add(trailing).max(0) as usize;
+  // Cap to the card count: a sentinel position (e.g. a pending card's i64::MAX) would otherwise overflow the alloc.
+  let row_count = computed.min(cards.len().saturating_add(trailing as usize));
 
   let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(row_count);
   for row_idx in 0..row_count {
@@ -976,6 +978,26 @@ mod tests {
       assert_eq!(slots.len(), 2);
       assert_eq!(slots[&0].character_id, 1);
       assert_eq!(slots[&1].character_id, 2);
+    }
+
+    #[test]
+    fn it_renders_a_card_with_an_absurd_position_without_overflowing() {
+      let cards = [card_model_at(1, 0), card_model_at(2, i64::MAX)];
+
+      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
+    }
+
+    #[test]
+    fn it_renders_a_card_with_an_absurd_position_while_dragging() {
+      let cards = [card_model_at(1, i64::MAX)];
+      let drag = DragContext {
+        dragging: Some(1),
+        hovered: None,
+        squad: None,
+        squad_insert: None,
+      };
+
+      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), drag);
     }
 
     #[test]

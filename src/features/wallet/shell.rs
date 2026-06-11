@@ -16,7 +16,7 @@ use crate::{
     components::{
       avatar::Avatar, backdrop, eyebrow::eyebrow_text, glyph_badge::GlyphBadge, icon::Icon,
       positioned_dropdown::positioned_dropdown, resizable_pane::pane_handle, rule, segmented::segment_button,
-      tab_select, text_input::TextInput,
+      tab_select, table_cell::TableCell, text_input::TextInput,
     },
     style::{
       color,
@@ -34,7 +34,6 @@ const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
 
-const JOURNAL_BADGE_GAP: f32 = 12.0;
 const JOURNAL_RIGHT_COL_WIDTH: f32 = 120.0;
 const RECENT_ACTIVITY_LIMIT: usize = 8;
 
@@ -313,49 +312,26 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   let sign = if is_in { "+" } else { "\u{2212}" };
   let delta = format!("{sign}{}", fmt_isk(entry.amount.map(f64::abs)));
 
-  let inner = Row::with_children(vec![
+  row_shell(vec![
     GlyphBadge::new(glyph, is_in).render(),
-    Space::new().width(Length::Fixed(JOURNAL_BADGE_GAP)).into(),
     journal_left_col(entry),
-    Space::new().width(Length::Fixed(spacing::SPACE_3)).into(),
     journal_character_col(state, entry.character_id),
-    Space::new().width(Length::Fixed(spacing::SPACE_3)).into(),
     journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
   ])
-  .align_y(Vertical::Center)
-  .padding(Padding {
-    top: spacing::SPACE_3,
-    right: HEADER_SIDE_PADDING,
-    bottom: spacing::SPACE_3,
-    left: HEADER_SIDE_PADDING,
-  });
-
-  container(inner)
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.06),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    })
-    .into()
 }
 
 fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
   Column::with_children(vec![
-    text(party_label(entry).to_owned())
+    TableCell::new(party_label(entry).to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .width(Length::Fill)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(super::humanize_ref_type(&entry.ref_type))
+      .color(color::text::PRIMARY)
+      .view::<Message>(),
+    TableCell::new(super::humanize_ref_type(&entry.ref_type))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::SECONDARY))
-      .into(),
+      .color(color::text::SECONDARY)
+      .view::<Message>(),
   ])
   .width(Length::Fill)
   .into()
@@ -372,24 +348,18 @@ fn journal_character_col(state: &State, character_id: i64) -> Element<'_, Messag
 
 fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> Element<'a, Message> {
   Column::with_children(vec![
-    container(
-      text(delta.to_owned())
-        .font(typography::mono::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(delta_color)),
-    )
-    .width(Length::Fill)
-    .align_x(Horizontal::Right)
-    .into(),
-    container(
-      text(when.to_owned())
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(typography::colored(color::text::TERTIARY)),
-    )
-    .width(Length::Fill)
-    .align_x(Horizontal::Right)
-    .into(),
+    TableCell::new(delta.to_owned())
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD)
+      .align(Horizontal::Right)
+      .color(delta_color)
+      .view::<Message>(),
+    TableCell::new(when.to_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .align(Horizontal::Right)
+      .color(color::text::TERTIARY)
+      .view::<Message>(),
   ])
   .width(Length::Fixed(JOURNAL_RIGHT_COL_WIDTH))
   .into()
@@ -739,33 +709,39 @@ fn row_shell<'a>(cells: Vec<Element<'a, Message>>) -> Element<'a, Message> {
   .into()
 }
 
+fn sized_cell<'a>(cell: TableCell, width: Length) -> Element<'a, Message> {
+  container(cell.view::<Message>()).width(width).into()
+}
+
 fn body_cell<'a>(value: impl Into<String>, width: Length, value_color: iced::Color) -> Element<'a, Message> {
-  text(value.into())
-    .font(typography::body::REGULAR)
-    .size(typography::size::MD)
-    .width(width)
-    .style(typography::colored(value_color))
-    .into()
+  sized_cell(
+    TableCell::new(value)
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .color(value_color),
+    width,
+  )
 }
 
 fn mono_cell<'a>(value: &str, width: Length, align: Horizontal, value_color: iced::Color) -> Element<'a, Message> {
-  text(value.to_owned())
-    .font(typography::mono::REGULAR)
-    .size(typography::size::SM)
-    .width(width)
-    .align_x(align)
-    .style(typography::colored(value_color))
-    .into()
+  sized_cell(
+    TableCell::new(value)
+      .font(typography::mono::REGULAR)
+      .align(align)
+      .color(value_color),
+    width,
+  )
 }
 
 fn amount_cell<'a>(value: &str, width: Length, value_color: iced::Color) -> Element<'a, Message> {
-  text(value.to_owned())
-    .font(typography::mono::MEDIUM)
-    .size(typography::size::MD)
-    .width(width)
-    .align_x(Horizontal::Right)
-    .style(typography::colored(value_color))
-    .into()
+  sized_cell(
+    TableCell::new(value)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD)
+      .align(Horizontal::Right)
+      .color(value_color),
+    width,
+  )
 }
 
 fn party_label(entry: &JournalEntry) -> &str {

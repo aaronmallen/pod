@@ -98,7 +98,7 @@ pub(super) fn strip_html_snippet(html: &str) -> String {
   out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RosterPilot {
   pub corp: String,
   pub id: i64,
@@ -156,14 +156,14 @@ pub(super) async fn load_unified_unread(db: &Database) -> i64 {
   mail::visible_unified_unread_count(db, &now).await.unwrap_or(0)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FolderLabel {
   pub label_id: i64,
   pub name: String,
   pub unread: i64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StandardFolderCounts {
   pub archive: i64,
   pub drafts: i64,
@@ -189,7 +189,7 @@ impl StandardFolderCounts {
   }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FolderPaneData {
   pub labels: Vec<FolderLabel>,
   pub standard_counts: StandardFolderCounts,
@@ -285,13 +285,13 @@ async fn count_snoozed_unread(db: &Database, character_id: i64, now: &str, unrea
     .count() as i64
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OutboxIndicator {
   pub pending: i64,
   pub failed: Vec<FailedMutation>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FailedMutation {
   pub id: i64,
   pub kind: String,

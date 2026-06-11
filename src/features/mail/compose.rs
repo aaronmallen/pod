@@ -20,7 +20,7 @@ use crate::{
 
 const MAX_SUGGESTIONS: usize = 6;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Kind {
   Forward,
   #[default]
@@ -40,7 +40,7 @@ impl Kind {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Recipient {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub id: Option<i64>,
@@ -168,7 +168,7 @@ fn strip_quote(html: &str) -> String {
   super::loaders::strip_html_snippet(html)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SendPayload {
   pub body: String,
   pub from_character_id: i64,

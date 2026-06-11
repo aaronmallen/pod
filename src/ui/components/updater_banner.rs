@@ -246,7 +246,7 @@ where
 mod tests {
   use super::*;
 
-  #[derive(Clone, Debug, PartialEq, Eq)]
+  #[derive(Clone, Debug, Eq, PartialEq)]
   enum Message {
     Action(Action),
     Dismiss,

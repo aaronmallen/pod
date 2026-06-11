@@ -40,7 +40,7 @@ pub const EMPTY_MAIL_SELECTION: i64 = 0;
 
 pub const RECIPIENT_SEARCH_MIN_CHARS: usize = 3;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scope {
   Character(i64),
 }
@@ -51,7 +51,7 @@ impl Default for Scope {
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Folder {
   Label(i64),
   Standard(StandardFolder),
@@ -59,7 +59,7 @@ pub enum Folder {
   Unified,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StandardFolder {
   Archive,
   Drafts,
@@ -87,7 +87,7 @@ pub struct Loaded {
   unified_unread: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadingRender {
   is_starred: bool,
   mail: MailRender,
@@ -184,7 +184,7 @@ pub struct State {
   unified_unread: i64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum SnoozeMenu {
   Calendar,
   #[default]

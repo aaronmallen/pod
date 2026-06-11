@@ -17,7 +17,7 @@ use crate::{
 #[allow(dead_code)]
 pub(super) const DOWNTIME_HOUR: u32 = 11;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Preset {
   LaterToday,
   Tomorrow,
@@ -109,7 +109,7 @@ pub(super) async fn unsnooze(db: Database, character_id: i64, mail_id: i64) {
   let _ = mail::delete_snoozed_mail(&db, character_id, mail_id).await;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Calendar {
   pub view_year: i32,
   pub view_month0: u32,
@@ -204,7 +204,7 @@ impl Calendar {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct DayCell {
   pub year: i32,
   pub month0: u32,

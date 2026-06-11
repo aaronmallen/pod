@@ -17,7 +17,7 @@ use crate::{
   },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageRow {
   pub bucket: DayBucket,
   pub character_id: i64,

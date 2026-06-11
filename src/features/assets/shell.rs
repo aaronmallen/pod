@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Element, Length, Padding,
   widget::{Column, Row, Stack, container, scrollable},
 };
 
@@ -11,11 +11,13 @@ use super::{
 use crate::ui::{
   components::{
     backdrop,
+    modal_overlay::modal_overlay,
+    positioned_dropdown::positioned_dropdown,
     resizable_pane::pane_handle,
     rule,
     tab_select::{self, TabLayout},
   },
-  style::{color, spacing},
+  style::{color, control, spacing},
 };
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
@@ -36,16 +38,12 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     });
 
   if state.picker_open {
-    let dropdown = container(header::picker_dropdown(state)).padding(Padding {
-      top: PICKER_OVERLAY_TOP,
-      left: PICKER_OVERLAY_LEFT,
-      ..Padding::ZERO
-    });
+    let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
-      dropdown.into(),
+      dropdown,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -78,52 +76,40 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   }
 
   if state.tab() == Tab::Abyssals && state.abyssal_picker_open() {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base.into(),
-      backdrop::backdrop(Message::AbyssalPickerToggled),
+      Some(Message::AbyssalPickerToggled),
       abyssals::picker_modal(state),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   let stockpile_menu = (state.tab() == Tab::Stockpiles)
     .then(|| state.stockpile_context_menu())
     .flatten();
   if let Some(menu) = stockpile_menu {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base.into(),
-      backdrop::backdrop(Message::StockpileContextMenuClosed),
+      Some(Message::StockpileContextMenuClosed),
       stockpiles::context_menu_view(menu),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   if state.tab() == Tab::Inventory && state.saved_filter_modal_open() {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base.into(),
-      backdrop::backdrop(Message::SaveFilterCancelled),
+      Some(Message::SaveFilterCancelled),
       tree::save_filter_modal(state),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   if state.tab() == Tab::Inventory
     && let Some(menu) = state.saved_filter_context_menu()
   {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base.into(),
-      backdrop::backdrop(Message::SavedFilterContextMenuClosed),
+      Some(Message::SavedFilterContextMenuClosed),
       tree::context_menu_view(menu),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   let multibuy_export = (state.tab() == Tab::Stockpiles)
@@ -131,14 +117,11 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .flatten()
     .and_then(|id| state.stockpiles().iter().find(|card| card.id == id));
   if let Some(card) = multibuy_export {
-    return Stack::with_children(vec![
+    return modal_overlay(
       base.into(),
-      backdrop::backdrop(Message::StockpileMultibuyExportClosed),
+      Some(Message::StockpileMultibuyExportClosed),
       stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_mode(), state.stockpile_multibuy_copied()),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    );
   }
 
   base.into()
@@ -155,15 +138,7 @@ fn location_tree(state: &State) -> Element<'_, Message> {
   container(tree::pane(state))
     .width(Length::Fixed(state.pane(Pane::Sidebar).width()))
     .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    })
+    .style(control::sunken_pane)
     .into()
 }
 
@@ -287,15 +262,7 @@ fn abyssals_body(state: &State) -> Element<'_, Message> {
   let rail = container(abyssals::filter_rail(state))
     .width(Length::Fixed(state.pane(Pane::AbyssalsFilter).width()))
     .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
-      ..container::Style::default()
-    });
+    .style(control::sunken_pane);
 
   let cards: Vec<&abyssals::AbyssalCard> = state.abyssals().iter().take(state.abyssal_visible_count()).collect();
   let any_owned = !state.abyssals().is_empty() || !state.abyssal_source_types().is_empty();

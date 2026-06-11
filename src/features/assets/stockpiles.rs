@@ -556,9 +556,7 @@ fn small_button<'a>(label: &'a str, message: Message, text_color: iced::Color) -
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(move |_| text::Style {
-        color: Some(text_color),
-      }),
+      .style(typography::colored(text_color)),
   )
   .padding(Padding {
     top: spacing::UNIT,
@@ -583,9 +581,7 @@ fn modal_close_button<'a>(close: Message) -> Element<'a, Message> {
     text("\u{2715}")
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .padding(Padding {
     top: spacing::UNIT + 1.0,
@@ -632,9 +628,7 @@ fn modal_header<'a>(title: &'a str, subtitle: &'a str, close: Message) -> Elemen
     text(title)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
     eyebrow(subtitle, Some(color::text::SECONDARY)),
   ])
@@ -691,9 +685,7 @@ fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
     text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .padding(Padding {
     top: spacing::UNIT + 3.0,
@@ -752,9 +744,7 @@ fn editor_form(editor: &Editor) -> Element<'_, Message> {
     text(format!("{resolved} type{}", if resolved == 1 { "" } else { "s" }))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
     add_item_button(),
   ])
@@ -789,9 +779,7 @@ fn editor_form(editor: &Editor) -> Element<'_, Message> {
     text(editor.error().to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::status::DANGER),
-      })
+      .style(typography::colored(color::status::DANGER))
       .into()
   });
 
@@ -825,9 +813,7 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
     text(name.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .width(Length::Fill)
       .into(),
     TextInput::new("Qty", &item.target, move |value| {
@@ -974,9 +960,7 @@ fn suggestion_status<'a>(label: &str) -> Element<'a, Message> {
   container(
     text(label.to_owned())
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      }),
+      .style(typography::colored(color::text::TERTIARY)),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -1001,9 +985,11 @@ fn suggestion_row<'a>(
   if with_icon {
     row = row.push(type_icon(id));
   }
-  row = row.push(text(label).size(typography::size::SM).style(|_| text::Style {
-    color: Some(color::text::PRIMARY),
-  }));
+  row = row.push(
+    text(label)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  );
 
   iced::widget::mouse_area(container(row).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_2,
@@ -1049,9 +1035,7 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
     ))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
-    })
+    .style(typography::colored(color::text::TERTIARY))
     .into(),
   ])
   .align_y(Vertical::Center)
@@ -1062,9 +1046,7 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
       text("Nothing remaining \u{2014} this stockpile is fully stocked.")
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
-        .style(|_| text::Style {
-          color: Some(color::status::ONLINE),
-        }),
+        .style(typography::colored(color::status::ONLINE)),
     )
     .width(Length::Fill)
     .height(Length::Fixed(MULTIBUY_EXPORT_BODY_HEIGHT))
@@ -1112,17 +1094,13 @@ fn multibuy_preview<'a>(lines: &[(String, u64)]) -> Element<'a, Message> {
           text(name.clone())
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
-            .style(|_| text::Style {
-              color: Some(color::text::PRIMARY),
-            })
+            .style(typography::colored(color::text::PRIMARY))
             .width(Length::Fill)
             .into(),
           text(format!("\u{d7}{}", fmt_count(*qty as i64)))
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
-            .style(|_| text::Style {
-              color: Some(color::accent::PLASMA),
-            })
+            .style(typography::colored(color::accent::PLASMA))
             .into(),
         ])
         .spacing(spacing::SPACE_3)
@@ -1170,16 +1148,12 @@ fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
     text("est. value (ESI avg)")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
-      })
+      .style(typography::colored(color::text::TERTIARY))
       .into(),
     text(format!("{} ISK", fmt_isk(value)))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
+      .style(typography::colored(color::text::PRIMARY))
       .into(),
   ])
   .spacing(spacing::UNIT)
@@ -1193,13 +1167,11 @@ fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
       text(label)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
-        .style(move |_| text::Style {
-          color: Some(if active {
-            color::accent::PLASMA
-          } else {
-            color::text::SECONDARY
-          }),
-        }),
+        .style(typography::colored(if active {
+          color::accent::PLASMA
+        } else {
+          color::text::SECONDARY
+        })),
     )
     .padding(Padding {
       top: spacing::UNIT + 1.0,
@@ -1243,9 +1215,7 @@ fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Elemen
     text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(tint),
-      })
+      .style(typography::colored(tint))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -1311,17 +1281,13 @@ fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
           text(item.name.clone())
             .font(typography::body::REGULAR)
             .size(typography::size::SM)
-            .style(|_| text::Style {
-              color: Some(color::text::PRIMARY),
-            })
+            .style(typography::colored(color::text::PRIMARY))
             .width(Length::Fill)
             .into(),
           text(fmt_count(item.quantity as i64))
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
-            .style(|_| text::Style {
-              color: Some(color::text::SECONDARY),
-            })
+            .style(typography::colored(color::text::SECONDARY))
             .into(),
         ])
         .spacing(spacing::SPACE_2)
@@ -1366,9 +1332,7 @@ fn section_label<'a>(label: &str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    })
+    .style(typography::colored(color::text::SECONDARY))
     .into()
 }
 
@@ -1376,9 +1340,7 @@ fn muted_text<'a>(value: &str) -> Element<'a, Message> {
   text(value.to_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
-    })
+    .style(typography::colored(color::text::TERTIARY))
     .into()
 }
 
@@ -1400,9 +1362,7 @@ fn import_shell_body<'a>(
       text(hint.to_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
-        .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
-        })
+        .style(typography::colored(color::text::SECONDARY))
         .into(),
       field,
     ])
@@ -1436,9 +1396,7 @@ fn primary_button_owned<'a>(label: String) -> button::Button<'a, Message> {
     text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
+      .style(typography::colored(color::accent::PLASMA)),
   )
   .padding(Padding {
     top: spacing::UNIT + 3.0,
@@ -1476,9 +1434,7 @@ fn add_item_button<'a>() -> Element<'a, Message> {
     text("+ Add item")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
-      }),
+      .style(typography::colored(color::text::SECONDARY)),
   )
   .padding(Padding {
     top: spacing::UNIT + 2.0,
@@ -1503,9 +1459,7 @@ fn primary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> 
     text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
+      .style(typography::colored(color::accent::PLASMA)),
   )
   .padding(Padding {
     top: spacing::UNIT + 3.0,
@@ -1530,9 +1484,7 @@ fn field_label<'a>(label: &'a str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
-    })
+    .style(typography::colored(color::text::SECONDARY))
     .into()
 }
 

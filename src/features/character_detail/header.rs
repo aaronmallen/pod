@@ -99,6 +99,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.portrait.path(),
     Some(trailing),
     selected,
+    false,
     Message::CharacterChanged(pilot.id),
   )
 }
@@ -176,6 +177,7 @@ mod tests {
     fn pilot(id: i64, name: &str) -> PickerPilot {
       PickerPilot {
         corp: "TEST".to_owned(),
+        granted_scopes: None,
         id,
         name: name.to_owned(),
         portrait: images::ImageState::Stale {

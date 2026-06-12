@@ -192,6 +192,7 @@ mod tests {
   fn pilot(id: i64, name: &str) -> PickerPilot {
     PickerPilot {
       corp: "TEST".to_owned(),
+      granted_scopes: None,
       id,
       name: name.to_owned(),
       portrait: images::ImageState::Stale {

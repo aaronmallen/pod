@@ -115,6 +115,8 @@ pub enum Message {
 #[derive(Clone, Debug)]
 pub struct PickerPilot {
   pub corp: String,
+  #[allow(dead_code)]
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,
   pub portrait: images::ImageState,
@@ -311,9 +313,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {
+  let credentials = infra::all(&db).await.unwrap_or_default();
+  let scopes_by_id: std::collections::HashMap<i64, Option<String>> = credentials
+    .into_iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Character)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+
   let mut roster = Vec::with_capacity(owned.len());
   for id in owned {
-    roster.push(picker_pilot(&db, id).await);
+    roster.push(picker_pilot(&db, id, scopes_by_id.get(&id).cloned().flatten()).await);
   }
 
   let head = load_head_stats(&db, character_id).await;
@@ -480,7 +489,7 @@ async fn load_head_stats(db: &Database, character_id: i64) -> HeadStats {
   }
 }
 
-async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
+async fn picker_pilot(db: &Database, id: i64, granted_scopes: Option<String>) -> PickerPilot {
   let character = character::get(db, id).await.ok().flatten();
   let name = character.as_ref().map(|c| c.name().to_owned()).unwrap_or_default();
   let corp = match character.as_ref().map(|c| c.corporation_id()) {
@@ -502,6 +511,7 @@ async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
 
   PickerPilot {
     corp,
+    granted_scopes,
     id,
     name,
     portrait,
@@ -660,6 +670,7 @@ mod tests {
   fn pilot(id: i64, name: &str) -> PickerPilot {
     PickerPilot {
       corp: "TEST".to_owned(),
+      granted_scopes: None,
       id,
       name: name.to_owned(),
       portrait: images::ImageState::Stale {
@@ -1286,7 +1297,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42, "Test Pilot", None).await;
 
-      let pilot = picker_pilot(&db, 42).await;
+      let pilot = picker_pilot(&db, 42, None).await;
 
       assert_eq!(pilot.id, 42);
       assert_eq!(pilot.name, "Test Pilot");
@@ -1298,7 +1309,7 @@ mod tests {
     async fn it_falls_back_to_empty_fields_for_an_unknown_pilot() {
       let db = store::open_test().await.unwrap();
 
-      let pilot = picker_pilot(&db, 999).await;
+      let pilot = picker_pilot(&db, 999, None).await;
 
       assert_eq!(pilot.id, 999);
       assert_eq!(pilot.name, "");

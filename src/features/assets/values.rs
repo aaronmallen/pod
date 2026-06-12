@@ -570,6 +570,7 @@ mod tests {
   fn pilot(id: i64, name: &str) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
+      granted_scopes: None,
       id,
       name: name.to_owned(),
       portrait: images::ImageState::Stale {

@@ -171,6 +171,7 @@ mod tests {
   fn pilot(id: i64) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
+      granted_scopes: None,
       id,
       liquid: Some(1_000.0),
       name: format!("Pilot {id}"),

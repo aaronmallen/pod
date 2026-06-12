@@ -4726,7 +4726,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_owned_corporation(&db, 2_000_001, 8001).await;
 
-      let (.., corps, _features) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
 
       assert_eq!(corps.len(), 1);
       let corp = &corps[0];
@@ -4743,7 +4743,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
 
-      let (.., corps, _features) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
 
       assert!(corps.is_empty());
     }
@@ -4881,7 +4881,7 @@ mod tests {
         .await
         .unwrap();
 
-      let (.., corps, _features) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
 
       let corp = &corps[0];
       assert_eq!(

@@ -2,6 +2,8 @@
 
 pub const CHARACTER_ASSETS: &str = "esi-assets.read_assets.v1";
 pub const CHARACTER_BLUEPRINTS: &str = "esi-characters.read_blueprints.v1";
+pub const CHARACTER_CALENDAR_READ: &str = "esi-calendar.read_calendar_events.v1";
+pub const CHARACTER_CALENDAR_RESPOND: &str = "esi-calendar.respond_calendar_events.v1";
 pub const CHARACTER_CLONES: &str = "esi-clones.read_clones.v1";
 pub const CHARACTER_CONTACTS: &str = "esi-characters.read_contacts.v1";
 pub const CHARACTER_CONTRACTS: &str = "esi-contracts.read_character_contracts.v1";

@@ -5,9 +5,10 @@ use crate::clients::{
     models::{
       assets::AssetName,
       character::{
-        Asset, Attributes, CharacterInfo, CharacterSkills, Clones, Contact, ContactLabel, Contract, Location, MailBody,
-        MailHeader, MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, SendMailRequest, Ship,
-        SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
+        Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
+        Clones, Contact, ContactLabel, Contract, Location, MailBody, MailHeader, MarkReadRequest, MarketOrder,
+        Notification, Online, RecentKillmail, RespondRequest, SendMailRequest, Ship, SkillQueueEntry, Standing,
+        WalletJournalEntry, WalletTransaction,
       },
     },
   },
@@ -16,6 +17,8 @@ use crate::clients::{
 
 #[allow(dead_code)]
 const ASSET_NAMES_BATCH_SIZE: usize = 1000;
+#[allow(dead_code)]
+const CALENDAR_MAX_PAGES: usize = 10;
 
 pub struct AuthenticatedClient<'a> {
   esi: &'a EsiClient,
@@ -55,6 +58,53 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("characters/{}/attributes/", self.grant.character_id()));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn calendar_attendees(&self, event_id: i64) -> Result<Vec<CalendarAttendee>, clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/calendar/{event_id}/attendees/",
+      self.grant.character_id()
+    ));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn calendar_event(&self, event_id: i64) -> Result<CalendarEventDetail, clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/calendar/{event_id}/",
+      self.grant.character_id()
+    ));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  /// Walks the calendar newest-first, using the lowest `event_id` of each page as the exclusive
+  /// `from_event_id` cursor for the next, until a page is empty, the cursor stops advancing, or
+  /// `CALENDAR_MAX_PAGES` is reached.
+  #[allow(dead_code)]
+  pub async fn calendar_events(&self) -> Result<Vec<CalendarEvent>, clients::Error> {
+    let mut events: Vec<CalendarEvent> = Vec::new();
+    let mut from_event_id: Option<i64> = None;
+    for _ in 0..CALENDAR_MAX_PAGES {
+      let url = match from_event_id {
+        Some(id) => self.esi.url(&format!(
+          "characters/{}/calendar/?from_event_id={id}",
+          self.grant.character_id()
+        )),
+        None => self
+          .esi
+          .url(&format!("characters/{}/calendar/", self.grant.character_id())),
+      };
+      let page: Vec<CalendarEvent> = self.esi.get_json(&url, Some(self.grant.access_token())).await?;
+      let next_from = page.iter().map(|event| event.event_id).min();
+      events.extend(page);
+      match next_from {
+        // Stop if the cursor would repeat: guards against a non-advancing page looping forever.
+        Some(id) if from_event_id != Some(id) => from_event_id = Some(id),
+        _ => break,
+      }
+    }
+    Ok(events)
   }
 
   pub async fn clones(&self) -> Result<Clones, clients::Error> {
@@ -145,6 +195,15 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("characters/{}/killmails/recent/", self.grant.character_id()));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn respond_to_event(&self, event_id: i64, request: &RespondRequest) -> Result<(), clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/calendar/{event_id}/",
+      self.grant.character_id()
+    ));
+    self.esi.put_empty(&url, request, self.grant.access_token()).await
   }
 
   pub async fn send_mail(&self, request: &SendMailRequest) -> Result<i64, clients::Error> {
@@ -404,6 +463,147 @@ mod tests {
         assert_eq!(attributes.bonus_remaps, 0);
         assert!(attributes.last_remap_date.is_none());
         assert!(attributes.accrued_remap_cooldown_date.is_none());
+      }
+    }
+
+    mod calendar_attendees {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_attendees() {
+        let server = MockServer::start().await;
+        let body =
+          r#"[{"character_id":2001,"event_response":"accepted"},{"character_id":2002,"event_response":"declined"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/1234/attendees/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let attendees = esi
+          .character_authenticated(&grant)
+          .calendar_attendees(1234)
+          .await
+          .unwrap();
+
+        assert_eq!(attendees.len(), 2);
+        assert_eq!(attendees[0].character_id, Some(2001));
+        assert_eq!(attendees[0].event_response.as_deref(), Some("accepted"));
+        assert_eq!(attendees[1].event_response.as_deref(), Some("declined"));
+      }
+    }
+
+    mod calendar_event {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_the_event_detail() {
+        let server = MockServer::start().await;
+        let body = r#"{"event_id":1234,"date":"2024-01-01T18:00:00Z","duration":60,"importance":1,"owner_id":98000001,"owner_name":"Test Corp","owner_type":"corporation","response":"accepted","title":"CTA","text":"<p>Form up.</p>"}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/1234/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let detail = esi.character_authenticated(&grant).calendar_event(1234).await.unwrap();
+
+        assert_eq!(detail.event_id, 1234);
+        assert_eq!(detail.duration, Some(60));
+        assert_eq!(detail.owner_id, Some(98000001));
+        assert_eq!(detail.owner_name.as_deref(), Some("Test Corp"));
+        assert_eq!(detail.owner_type.as_deref(), Some("corporation"));
+        assert_eq!(detail.response.as_deref(), Some("accepted"));
+        assert_eq!(detail.title.as_deref(), Some("CTA"));
+        assert_eq!(detail.text.as_deref(), Some("<p>Form up.</p>"));
+      }
+
+      #[tokio::test]
+      async fn it_defaults_optional_fields_for_a_sparse_event() {
+        let server = MockServer::start().await;
+        let body = r#"{"event_id":1235}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/1235/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let detail = esi.character_authenticated(&grant).calendar_event(1235).await.unwrap();
+
+        assert_eq!(detail.event_id, 1235);
+        assert!(detail.date.is_none());
+        assert!(detail.owner_type.is_none());
+        assert!(detail.title.is_none());
+      }
+    }
+
+    mod calendar_events {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_pages_older_events_by_from_event_id_until_exhausted() {
+        let server = MockServer::start().await;
+        let page1 = r#"[{"event_id":300,"event_date":"2024-03-01T18:00:00Z","title":"Op A","importance":1,"event_response":"accepted"},{"event_id":200,"event_date":"2024-02-01T18:00:00Z","title":"Op B"}]"#;
+        let page2 = r#"[{"event_id":100,"event_date":"2024-01-01T18:00:00Z","title":"Op C"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/"))
+          .and(wiremock::matchers::query_param("from_event_id", "100"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/"))
+          .and(wiremock::matchers::query_param("from_event_id", "200"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(page2, "application/json"))
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(page1, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let events = esi.character_authenticated(&grant).calendar_events().await.unwrap();
+
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].event_id, 300);
+        assert_eq!(events[0].title.as_deref(), Some("Op A"));
+        assert_eq!(events[0].event_response.as_deref(), Some("accepted"));
+        assert_eq!(events[2].event_id, 100);
+      }
+
+      #[tokio::test]
+      async fn it_returns_an_empty_list_when_the_calendar_is_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let events = esi.character_authenticated(&grant).calendar_events().await.unwrap();
+
+        assert!(events.is_empty());
       }
     }
 
@@ -968,6 +1168,48 @@ mod tests {
         assert_eq!(killmails.len(), 1);
         assert_eq!(killmails[0].killmail_id, 100);
         assert_eq!(killmails[0].killmail_hash, "abc123");
+      }
+    }
+
+    mod respond_to_event {
+      use serde_json::{Value, json};
+      use wiremock::matchers::body_json;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_puts_the_response_with_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/characters/42/calendar/1234/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(body_json(json!({"response": "accepted"})))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+        let request = RespondRequest {
+          response: "accepted".to_string(),
+        };
+
+        let result = esi
+          .character_authenticated(&grant)
+          .respond_to_event(1234, &request)
+          .await;
+
+        assert!(result.is_ok());
+      }
+
+      #[tokio::test]
+      async fn it_shapes_the_body_as_a_single_response_field() {
+        let request = RespondRequest {
+          response: "declined".to_string(),
+        };
+
+        let serialized: Value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(serialized, json!({"response": "declined"}));
       }
     }
 

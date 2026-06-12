@@ -28,6 +28,53 @@ pub struct Attributes {
   pub willpower: i32,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CalendarAttendee {
+  #[serde(default)]
+  pub character_id: Option<i64>,
+  #[serde(default)]
+  pub event_response: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CalendarEvent {
+  #[serde(default)]
+  pub event_date: Option<String>,
+  pub event_id: i64,
+  #[serde(default)]
+  pub event_response: Option<String>,
+  #[serde(default)]
+  pub importance: Option<i32>,
+  #[serde(default)]
+  pub title: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CalendarEventDetail {
+  #[serde(default)]
+  pub date: Option<String>,
+  #[serde(default)]
+  pub duration: Option<i32>,
+  pub event_id: i64,
+  #[serde(default)]
+  pub importance: Option<i32>,
+  #[serde(default)]
+  pub owner_id: Option<i64>,
+  #[serde(default)]
+  pub owner_name: Option<String>,
+  #[serde(default)]
+  pub owner_type: Option<String>,
+  #[serde(default)]
+  pub response: Option<String>,
+  #[serde(default)]
+  pub text: Option<String>,
+  #[serde(default)]
+  pub title: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CharacterInfo {
   #[serde(default)]
@@ -248,6 +295,11 @@ pub struct Online {
 pub struct RecentKillmail {
   pub killmail_hash: String,
   pub killmail_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RespondRequest {
+  pub response: String,
 }
 
 #[derive(Debug, Serialize)]

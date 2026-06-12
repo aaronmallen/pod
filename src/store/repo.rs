@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod calendar;
 pub mod character;
 pub mod finance;
 pub mod infra;

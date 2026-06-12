@@ -10,6 +10,9 @@ mod certificate_skill;
 mod character;
 mod character_asset;
 mod character_attributes;
+mod character_calendar;
+mod character_calendar_attendee;
+pub mod character_calendar_view;
 pub mod character_card;
 mod character_clone;
 mod character_clone_implant;
@@ -104,6 +107,12 @@ pub use character::{Gender, Model as Character};
 #[allow(unused_imports)]
 pub use character_asset::Model as CharacterAsset;
 pub use character_attributes::Model as CharacterAttributes;
+#[allow(unused_imports)]
+pub use character_calendar::Model as CharacterCalendarEvent;
+#[allow(unused_imports)]
+pub use character_calendar_attendee::Model as CharacterCalendarAttendee;
+#[allow(unused_imports)]
+pub use character_calendar_view::AttendeeTally;
 #[allow(unused_imports)]
 pub use character_clone::Model as CharacterClone;
 #[allow(unused_imports)]

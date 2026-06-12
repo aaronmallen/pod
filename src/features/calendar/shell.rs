@@ -1,11 +1,13 @@
 use chrono::{DateTime, Datelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::{Horizontal, Vertical},
+  alignment::Vertical,
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
-use super::{Message, Scope, State, View, agenda, detail, palette, palette::OwnerType, switcher, tweaks};
+use super::{
+  Message, Scope, State, View, agenda, day, detail, month, palette, palette::OwnerType, switcher, tweaks, week, year,
+};
 use crate::{
   config::Feature,
   ui::{
@@ -289,30 +291,6 @@ fn nav_title(state: &State) -> String {
   format!("{} {}", long_month(cursor), cursor.year())
 }
 
-fn placeholder<'a>(view: View) -> Element<'a, Message> {
-  container(
-    Column::with_children(vec![
-      text(format!("{} view", view.label()))
-        .font(typography::body::MEDIUM)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::PRIMARY))
-        .into(),
-      text("Coming soon.")
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::secondary()))
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_x(Horizontal::Center),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .into()
-}
-
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
   button(
     text("Re-authenticate")
@@ -383,7 +361,10 @@ fn type_legend<'a>(state: &'a State) -> Element<'a, Message> {
 fn view_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   match state.view() {
     View::Agenda => agenda::view(state, now),
-    other => placeholder(other),
+    View::Day => day::view(state, now),
+    View::Month => month::view(state, now),
+    View::Week => week::view(state, now),
+    View::Year => year::view(state, now),
   }
 }
 

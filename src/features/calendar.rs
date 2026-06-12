@@ -3,13 +3,18 @@
 #![allow(dead_code)]
 
 mod agenda;
+mod day;
 mod detail;
+mod grid;
 mod loaders;
+mod month;
 mod palette;
 mod respond;
 mod shell;
 mod switcher;
 mod tweaks;
+mod week;
+mod year;
 
 use chrono::{DateTime, Utc};
 use iced::{Element, Task};
@@ -66,6 +71,7 @@ pub enum Message {
   CursorNext,
   CursorPrev,
   CursorToday,
+  DatePicked(DateTime<Utc>, View),
   DetailAttendeesLoaded(Box<Option<AttendeeTally>>),
   DetailClosed,
   EventOpened(i64, i64),
@@ -251,6 +257,11 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     }
     Message::CursorToday => {
       state.cursor = now;
+      Task::none()
+    }
+    Message::DatePicked(date, view) => {
+      state.cursor = date;
+      state.view = view;
       Task::none()
     }
     Message::DetailAttendeesLoaded(tally) => {

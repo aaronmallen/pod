@@ -13,6 +13,7 @@ pub use session::{CorporationAdded, SignedIn};
 use crate::{
   clients::{esi, esi::scopes, eve_sso},
   config::Feature,
+  features::registry,
   store::Database,
   ui::style::{color, control, spacing, typography},
 };
@@ -67,32 +68,7 @@ enum Status {
 }
 
 fn feature_scopes(feature: Feature) -> &'static [&'static str] {
-  match feature {
-    Feature::AssetTracking => &[scopes::CHARACTER_ASSETS],
-    Feature::CloneMonitoring => &[scopes::CHARACTER_CLONES],
-    Feature::CombatLog => &[scopes::CHARACTER_KILLMAILS],
-    Feature::Contacts => &[scopes::CHARACTER_CONTACTS],
-    Feature::EveNotifications => &[scopes::CHARACTER_NOTIFICATIONS],
-    Feature::LocationTracking => &[
-      scopes::CHARACTER_LOCATION,
-      scopes::CHARACTER_ONLINE,
-      scopes::CHARACTER_SHIP,
-      scopes::UNIVERSE_STRUCTURES,
-    ],
-    Feature::Mail => &[
-      scopes::CHARACTER_MAIL,
-      scopes::CHARACTER_MAIL_SEND,
-      scopes::CHARACTER_MAIL_ORGANIZE,
-      scopes::CHARACTER_SEARCH,
-    ],
-    Feature::SkillMonitoring => &[
-      scopes::CHARACTER_SKILLS,
-      scopes::CHARACTER_SKILLQUEUE,
-      scopes::CHARACTER_IMPLANTS,
-    ],
-    Feature::Standings => &[scopes::CHARACTER_STANDINGS],
-    Feature::Wallet => &[scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS],
-  }
+  registry::descriptor(feature).scopes
 }
 
 pub fn scopes_for(features: &[Feature]) -> Vec<&'static str> {

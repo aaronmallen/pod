@@ -62,23 +62,7 @@ impl JobKind {
   }
 
   pub fn feature(self) -> Option<Feature> {
-    match self {
-      Self::CharacterProfile | Self::CorporationProfile => None,
-      Self::AssetSync | Self::CharacterAbyssals => Some(Feature::AssetTracking),
-      Self::CharacterClones => Some(Feature::CloneMonitoring),
-      Self::CharacterContacts => Some(Feature::Contacts),
-      Self::CharacterContracts => Some(Feature::Wallet),
-      Self::CharacterKillmails | Self::KillmailReconcile => Some(Feature::CombatLog),
-      Self::CharacterMail => Some(Feature::Mail),
-      Self::CharacterMarketOrders => Some(Feature::Wallet),
-      Self::CharacterNotifications => Some(Feature::EveNotifications),
-      Self::CharacterSkills => Some(Feature::SkillMonitoring),
-      Self::CharacterStandings => Some(Feature::Standings),
-      Self::CharacterTelemetry => Some(Feature::LocationTracking),
-      Self::CharacterWallet | Self::CorporationWallet | Self::MarketPrices | Self::NetWorthSnapshot => {
-        Some(Feature::Wallet)
-      }
-    }
+    crate::features::registry::feature_for_job(self)
   }
 
   pub fn is_feature_enabled(self, features: &FeatureFlags) -> bool {

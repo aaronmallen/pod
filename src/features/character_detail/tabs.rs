@@ -13,8 +13,8 @@ use iced::{
 
 use super::{LoadState, Message, State};
 use crate::{
-  clients::esi::scopes,
   config::Feature,
+  features::registry,
   store::model::CharacterStanding,
   ui::{
     components::{
@@ -57,13 +57,7 @@ impl Tab {
   ];
 
   fn feature(self) -> Feature {
-    match self {
-      Tab::Clones => Feature::CloneMonitoring,
-      Tab::Contacts => Feature::Contacts,
-      Tab::Killlog => Feature::CombatLog,
-      Tab::Notifications => Feature::EveNotifications,
-      Tab::Standings => Feature::Standings,
-    }
+    registry::feature_for_tab(self).expect("every gated tab maps to a feature")
   }
 
   fn label(self) -> &'static str {
@@ -77,13 +71,7 @@ impl Tab {
   }
 
   fn required_scopes(self) -> &'static [&'static str] {
-    match self {
-      Tab::Clones => &[scopes::CHARACTER_CLONES],
-      Tab::Contacts => &[scopes::CHARACTER_CONTACTS],
-      Tab::Killlog => &[scopes::CHARACTER_KILLMAILS],
-      Tab::Notifications => &[scopes::CHARACTER_NOTIFICATIONS],
-      Tab::Standings => &[scopes::CHARACTER_STANDINGS],
-    }
+    registry::descriptor(self.feature()).scopes
   }
 }
 
@@ -247,6 +235,7 @@ fn standing_row<'a>(row: &CharacterStanding, last: bool) -> Element<'a, Message>
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::clients::esi::scopes;
 
   fn standing(from_id: i64, from_type: &str, value: f64) -> CharacterStanding {
     CharacterStanding {

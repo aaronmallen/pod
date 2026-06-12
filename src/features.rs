@@ -4,6 +4,7 @@ pub mod auth;
 pub mod character_detail;
 pub mod character_manager;
 pub mod mail;
+pub mod registry;
 pub mod settings;
 pub mod skill_plan_editor;
 pub mod skills;

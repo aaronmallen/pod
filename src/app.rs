@@ -2222,6 +2222,9 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
     record_pane_ratio(app, key, ratio);
     return Task::none();
   }
+  if let assets::Message::ReauthRequested(id) = msg {
+    return update(app, Message::ReauthCharacter(id));
+  }
 
   let (Some(state), Some(runtime)) = (app.assets.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
@@ -2804,6 +2807,7 @@ fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
       record_pane_ratio(app, key, ratio);
       Task::none()
     }
+    wallet::Message::ReauthRequested(id) => update(app, Message::ReauthCharacter(id)),
     msg => match (app.wallet.as_mut(), app.runtime.as_ref()) {
       (Some(state), Some(runtime)) => wallet::update(state, msg, &runtime.db).map(Message::Wallet),
       _ => Task::none(),
@@ -3087,6 +3091,9 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
   if let mail::Message::PaneSettled(key, ratio) = msg {
     record_pane_ratio(app, key, ratio);
     return Task::none();
+  }
+  if let mail::Message::ReauthRequested(id) = msg {
+    return update(app, Message::ReauthCharacter(id));
   }
 
   let (Some(state), Some(runtime)) = (app.mail.as_mut(), app.runtime.as_ref()) else {

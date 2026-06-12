@@ -134,6 +134,7 @@ pub enum Message {
   OverlayWritten,
   PaneSettled(&'static str, f32),
   PickerToggled,
+  ReauthRequested(i64),
   RenderLoaded(Box<Option<ReadingRender>>),
   Reply(i64),
   ReplyAll(i64),
@@ -271,6 +272,17 @@ impl State {
 
   pub fn roster(&self) -> &[RosterPilot] {
     &self.roster
+  }
+
+  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+    let Scope::Character(id) = self.active;
+    let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
+    let required = crate::features::registry::descriptor(crate::config::Feature::Mail).scopes;
+    let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
+    if missing.is_empty() {
+      return None;
+    }
+    Some((id, pilot.name.as_str(), missing))
   }
 
   pub fn compose_from_character(&self) -> Option<i64> {
@@ -534,6 +546,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.outbox_indicator = *indicator;
       Task::none()
     }
+    Message::ReauthRequested(_) => Task::none(),
   }
 }
 
@@ -970,6 +983,52 @@ mod tests {
 
       assert_eq!(state.folder_pane_width(), FOLDER_PANE_MIN_WIDTH);
       assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_MIN_WIDTH);
+    }
+  }
+
+  mod scope_gate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn pilot(id: i64, granted: Option<&str>) -> RosterPilot {
+      RosterPilot {
+        corp: "VEX".to_owned(),
+        granted_scopes: granted.map(str::to_owned),
+        id,
+        name: "Vex".to_owned(),
+        portrait: images::ImageState::Fresh("/cache/42.jpg".into()),
+        unread: 0,
+      }
+    }
+
+    #[test]
+    fn it_gates_when_the_active_character_lacks_the_mail_scopes() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, None)];
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 42);
+      assert!(!gate.2.is_empty());
+    }
+
+    #[test]
+    fn it_does_not_gate_when_the_active_character_has_the_mail_scopes() {
+      let granted = crate::features::registry::descriptor(crate::config::Feature::Mail)
+        .scopes
+        .join(" ");
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, Some(&granted))];
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_when_the_active_character_is_absent_from_the_roster() {
+      let state = State::new(42);
+
+      assert!(state.scope_gate().is_none());
     }
   }
 

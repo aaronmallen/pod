@@ -224,6 +224,7 @@ pub enum Message {
   #[allow(dead_code)]
   PaneSettled(&'static str, f32),
   PickerToggled,
+  ReauthRequested(i64),
   SaveFilterCancelled,
   SaveFilterConfirmed,
   SaveFilterNameChanged(String),
@@ -425,6 +426,19 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+    let Scope::Character(id) = self.active else {
+      return None;
+    };
+    let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
+    let required = crate::features::registry::descriptor(crate::config::Feature::AssetTracking).scopes;
+    let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
+    if missing.is_empty() {
+      return None;
+    }
+    Some((id, pilot.name.as_str(), missing))
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -918,6 +932,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::PaneDrag(_) | Message::PaneDragEnd | Message::PaneDragStart(_) | Message::PaneSettled(..) => {
       update_pane(state, message)
     }
+
+    Message::ReauthRequested(_) => Task::none(),
   }
 }
 
@@ -1877,6 +1893,48 @@ mod tests {
       },
       name: format!("Corp {id}"),
       ticker: "CRP".to_owned(),
+    }
+  }
+
+  mod scope_gate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_gates_a_character_scope_missing_the_asset_scopes() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::Character(1), vec![pilot(1)], Vec::new());
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 1);
+      assert!(!gate.2.is_empty());
+    }
+
+    #[test]
+    fn it_does_not_gate_a_character_with_the_asset_scopes() {
+      let granted = crate::features::registry::descriptor(crate::config::Feature::AssetTracking)
+        .scopes
+        .join(" ");
+      let mut granted_pilot = pilot(1);
+      granted_pilot.granted_scopes = Some(granted);
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::Character(1), vec![granted_pilot], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_the_all_or_corporation_scopes() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![pilot(1)], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+
+      state.set_picker_for_test(Scope::Corporation(99), vec![pilot(1)], Vec::new());
+
+      assert!(state.scope_gate().is_none());
     }
   }
 

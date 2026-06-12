@@ -199,6 +199,7 @@ pub enum Message {
   RailDragEnd,
   RailDragged(f32),
   RailDragStart,
+  ReauthRequested(i64),
   ScopeSelected(Scope),
   SearchChanged(String),
   SideFilterChanged(Side),
@@ -285,6 +286,19 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+    let Scope::Character(id) = self.active else {
+      return None;
+    };
+    let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
+    let required = crate::features::registry::descriptor(crate::config::Feature::Wallet).scopes;
+    let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
+    if missing.is_empty() {
+      return None;
+    }
+    Some((id, pilot.name.as_str(), missing))
   }
 
   pub fn active_division(&self) -> i64 {
@@ -541,6 +555,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.right_rail.start();
       Task::none()
     }
+    Message::ReauthRequested(_) => Task::none(),
     Message::ScopeSelected(scope) => {
       state.picker_open = false;
       if scope == state.active {
@@ -1189,6 +1204,51 @@ mod tests {
     images::ImageState::Stale {
       id,
       kind: images::ImageKind::CorporationLogo,
+    }
+  }
+
+  mod scope_gate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_gates_a_character_scope_missing_the_wallet_scopes() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::Character(1);
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 1);
+      assert!(!gate.2.is_empty());
+    }
+
+    #[test]
+    fn it_does_not_gate_a_character_with_the_wallet_scopes() {
+      let granted = crate::features::registry::descriptor(crate::config::Feature::Wallet)
+        .scopes
+        .join(" ");
+      let mut granted_pilot = pilot(1, None);
+      granted_pilot.granted_scopes = Some(granted);
+      let mut state = State::new();
+      state.roster = vec![granted_pilot];
+      state.active = Scope::Character(1);
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_the_all_or_corporation_scopes() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+
+      assert!(state.scope_gate().is_none());
+
+      state.active = Scope::Corporation(99);
+
+      assert!(state.scope_gate().is_none());
     }
   }
 

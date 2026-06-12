@@ -79,6 +79,22 @@ impl Feature {
     Feature::Wallet,
     Feature::AssetTracking,
   ];
+
+  #[allow(dead_code)]
+  pub fn noun(self) -> &'static str {
+    match self {
+      Feature::AssetTracking => "Asset",
+      Feature::CloneMonitoring => "Clone",
+      Feature::CombatLog => "Kill log",
+      Feature::Contacts => "Contact",
+      Feature::EveNotifications => "Notification",
+      Feature::LocationTracking => "Location",
+      Feature::Mail => "Mail",
+      Feature::SkillMonitoring => "Skill",
+      Feature::Standings => "Standing",
+      Feature::Wallet => "Wallet",
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
@@ -470,6 +486,21 @@ mod tests {
 
       assert_eq!(path.file_name().unwrap(), "pod.db");
       assert!(path.starts_with(data_dir()));
+    }
+  }
+
+  mod feature {
+    use super::*;
+
+    mod noun {
+      use super::*;
+
+      #[test]
+      fn it_gives_every_feature_a_nonempty_noun() {
+        for feature in Feature::ALL {
+          assert!(!feature.noun().is_empty(), "{feature:?} must have a noun");
+        }
+      }
     }
   }
 

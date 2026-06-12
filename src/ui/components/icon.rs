@@ -67,6 +67,11 @@ impl Icon {
   }
 
   #[allow(dead_code)]
+  pub fn lock() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/lock.svg"))
+  }
+
+  #[allow(dead_code)]
   pub fn logo_mark() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/identity/pod-mark.svg"))
   }

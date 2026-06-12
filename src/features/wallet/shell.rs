@@ -11,10 +11,11 @@ use super::{
 };
 use crate::{
   clients::eve_image::Size,
+  config::Feature,
   store::images::{self, IconResolution},
   ui::{
     components::{
-      avatar::Avatar, backdrop, eyebrow::eyebrow_text, glyph_badge::GlyphBadge, icon::Icon,
+      avatar::Avatar, backdrop, eyebrow::eyebrow_text, forbidden, glyph_badge::GlyphBadge, icon::Icon,
       positioned_dropdown::positioned_dropdown, resizable_pane::pane_handle, rule, segmented::segment_button,
       tab_select, table_cell::TableCell, text_input::TextInput,
     },
@@ -67,6 +68,10 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  if let Some((id, name, missing)) = state.scope_gate() {
+    return forbidden::forbidden(Feature::Wallet.noun(), name, &missing, Message::ReauthRequested(id));
+  }
+
   let panes = Row::with_children(vec![
     center(state, now),
     pane_handle(Message::RailDragStart),

@@ -2,7 +2,6 @@ pub(super) mod clones;
 pub(super) mod contacts;
 pub(super) mod killlog;
 pub(super) mod notifications;
-pub(super) mod scope_missing;
 mod shared;
 
 use iced::{
@@ -20,7 +19,7 @@ use crate::{
     components::{
       card,
       empty_state::{LoadStateView, empty_state, load_state_view},
-      meter, rule,
+      forbidden, meter, rule,
       section_header::section_header,
       tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
     },
@@ -70,6 +69,10 @@ impl Tab {
     }
   }
 
+  fn noun(self) -> &'static str {
+    self.feature().noun()
+  }
+
   fn required_scopes(self) -> &'static [&'static str] {
     registry::descriptor(self.feature()).scopes
   }
@@ -116,18 +119,23 @@ pub(super) fn tab_strip(enabled: &[Tab], active: Tab) -> Element<'_, Message> {
 }
 
 pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
-  let inner: Element<'_, Message> =
-    if scope_missing::is_scope_missing(state.granted_scopes(), state.active_tab.required_scopes()) {
-      scope_missing::scope_missing(state.active())
-    } else {
-      match state.active_tab {
-        Tab::Clones => clones::body(&state.clones),
-        Tab::Contacts => contacts::body(&state.contacts, state.contact_filter, state.contact_sort),
-        Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
-        Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
-        Tab::Standings => standings_body(&state.standings),
-      }
-    };
+  let missing = forbidden::missing_scopes(state.granted_scopes(), state.active_tab.required_scopes());
+  let inner: Element<'_, Message> = if missing.is_empty() {
+    match state.active_tab {
+      Tab::Clones => clones::body(&state.clones),
+      Tab::Contacts => contacts::body(&state.contacts, state.contact_filter, state.contact_sort),
+      Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
+      Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
+      Tab::Standings => standings_body(&state.standings),
+    }
+  } else {
+    forbidden::forbidden(
+      state.active_tab.noun(),
+      state.active_name(),
+      &missing,
+      Message::ReauthRequested(state.active()),
+    )
+  };
 
   scrollable(container(inner).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_6,
@@ -337,7 +345,7 @@ mod tests {
       state.granted_scopes = None;
       state.active_tab = Tab::Standings;
 
-      assert!(scope_missing::is_scope_missing(
+      assert!(forbidden::is_scope_missing(
         state.granted_scopes(),
         Tab::Standings.required_scopes()
       ));
@@ -350,7 +358,7 @@ mod tests {
       state.granted_scopes = Some(scopes::CHARACTER_STANDINGS.to_owned());
       state.active_tab = Tab::Standings;
 
-      assert!(!scope_missing::is_scope_missing(
+      assert!(!forbidden::is_scope_missing(
         state.granted_scopes(),
         Tab::Standings.required_scopes()
       ));

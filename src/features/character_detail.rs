@@ -180,6 +180,14 @@ impl State {
     self.active
   }
 
+  pub(super) fn active_name(&self) -> &str {
+    self
+      .roster
+      .iter()
+      .find(|pilot| pilot.id == self.active)
+      .map_or("", |pilot| pilot.name.as_str())
+  }
+
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
     self
       .roster

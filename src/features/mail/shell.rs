@@ -8,17 +8,21 @@ use super::{
   Folder, Message, StandardFolder, State, compose, folder_pane, message_list, outbox_indicator, reading_pane, snooze,
   switcher,
 };
-use crate::ui::{
-  components::{
-    backdrop,
-    eyebrow::eyebrow_text,
-    icon::Icon,
-    modal_overlay::modal_overlay,
-    positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
-    resizable_pane::pane_handle,
-    rule,
+use crate::{
+  config::Feature,
+  ui::{
+    components::{
+      backdrop,
+      eyebrow::eyebrow_text,
+      forbidden,
+      icon::Icon,
+      modal_overlay::modal_overlay,
+      positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
+      resizable_pane::pane_handle,
+      rule,
+    },
+    style::{color, radius, spacing, typography},
   },
-  style::{color, radius, spacing, typography},
 };
 
 const HEADER_SIDE_PADDING: f32 = 28.0;
@@ -201,6 +205,10 @@ fn compose_button_style(status: button::Status) -> button::Style {
 }
 
 fn panes(state: &State) -> Element<'_, Message> {
+  if let Some((id, name, missing)) = state.scope_gate() {
+    return forbidden::forbidden(Feature::Mail.noun(), name, &missing, Message::ReauthRequested(id));
+  }
+
   Row::with_children(vec![
     folder_pane(state),
     pane_handle(Message::FolderPaneDragStart),

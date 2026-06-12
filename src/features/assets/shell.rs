@@ -8,16 +8,19 @@ use super::{
   HEADER_SIDE_PADDING, Message, Pane, Scope, State, Tab, abyssals, fmt_count, header, inventory, stockpiles, tracker,
   tree, values,
 };
-use crate::ui::{
-  components::{
-    backdrop,
-    modal_overlay::modal_overlay,
-    positioned_dropdown::positioned_dropdown,
-    resizable_pane::pane_handle,
-    rule,
-    tab_select::{self, TabLayout},
+use crate::{
+  config::Feature,
+  ui::{
+    components::{
+      backdrop, forbidden,
+      modal_overlay::modal_overlay,
+      positioned_dropdown::positioned_dropdown,
+      resizable_pane::pane_handle,
+      rule,
+      tab_select::{self, TabLayout},
+    },
+    style::{color, control, spacing},
   },
-  style::{color, control, spacing},
 };
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
@@ -128,6 +131,15 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  if let Some((id, name, missing)) = state.scope_gate() {
+    return forbidden::forbidden(
+      Feature::AssetTracking.noun(),
+      name,
+      &missing,
+      Message::ReauthRequested(id),
+    );
+  }
+
   Column::with_children(vec![tab_strip(state), tab_body(state, now)])
     .width(Length::Fill)
     .height(Length::Fill)

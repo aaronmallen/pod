@@ -459,4 +459,66 @@ mod tests {
     assert!(parse_stored_body("").is_empty());
     assert!(parse_stored_body("<br><br>").is_empty());
   }
+
+  mod pane {
+    use super::*;
+    use crate::store::{
+      images,
+      model::{CharacterMail, CharacterMailBody, CharacterMailRecipient},
+    };
+
+    fn render(from_id: i64, recipient_type: &str, recipients_display: &str, is_starred: bool) -> ReadingRender {
+      ReadingRender {
+        is_starred,
+        mail: MailRender {
+          body: CharacterMailBody {
+            body: "<p>Form up at Jita.</p><p>Bring tackle.</p>".to_owned(),
+            character_id: 42,
+            mail_id: 7,
+          },
+          header: CharacterMail {
+            character_id: 42,
+            from_id,
+            from_name: "Vex Voronova".to_owned(),
+            is_read: true,
+            mail_id: 7,
+            subject: Some("CTA tonight".to_owned()),
+            timestamp: "2026-06-01T10:00:00Z".to_owned(),
+            ..Default::default()
+          },
+          label_ids: vec![8],
+          recipients: vec![CharacterMailRecipient {
+            character_id: 42,
+            mail_id: 7,
+            recipient_id: 42,
+            recipient_name: "Vex Voronova".to_owned(),
+            recipient_type: recipient_type.to_owned(),
+          }],
+          recipients_display: recipients_display.to_owned(),
+        },
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      }
+    }
+
+    #[test]
+    fn it_renders_an_opened_starred_mail() {
+      let render = render(95_000_001, "character", "Vex Voronova", true);
+      let _el: Element<'_, Message> = super::super::pane(Some(&render), false);
+    }
+
+    #[test]
+    fn it_renders_a_snoozed_system_message_addressed_to_me() {
+      // A zero sender id flags a system message, and a blank recipient display resolves to "me".
+      let render = render(0, "mailing_list", "  ", false);
+      let _el: Element<'_, Message> = super::super::pane(Some(&render), true);
+    }
+
+    #[test]
+    fn it_renders_the_empty_reading_pane() {
+      let _el: Element<'_, Message> = super::super::pane(None, false);
+    }
+  }
 }

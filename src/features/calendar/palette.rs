@@ -139,3 +139,86 @@ impl Response {
 pub fn pilot_color(index: usize) -> Color {
   color::chart::series(index)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  const OWNERS: [OwnerType; 6] = [
+    OwnerType::Alliance,
+    OwnerType::Character,
+    OwnerType::Corporation,
+    OwnerType::EveServer,
+    OwnerType::Faction,
+    OwnerType::Pod,
+  ];
+
+  const RESPONSES: [Response; 4] = [
+    Response::Accepted,
+    Response::Declined,
+    Response::NotResponded,
+    Response::Tentative,
+  ];
+
+  mod owner_type {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_exposes_a_color_icon_and_labels_for_every_owner() {
+      for owner in OWNERS {
+        let _ = owner.color();
+        let _ = owner.icon();
+        assert!(!owner.label().is_empty());
+        assert!(!owner.short_label().is_empty());
+        let _ = owner.respondable();
+      }
+    }
+
+    #[test]
+    fn it_parses_each_esi_owner_type_and_defaults_to_character() {
+      assert_eq!(OwnerType::from_esi("alliance"), OwnerType::Alliance);
+      assert_eq!(OwnerType::from_esi("corporation"), OwnerType::Corporation);
+      assert_eq!(OwnerType::from_esi("faction"), OwnerType::Faction);
+      assert_eq!(OwnerType::from_esi("eve_server"), OwnerType::EveServer);
+      assert_eq!(OwnerType::from_esi("pod"), OwnerType::Pod);
+      assert_eq!(OwnerType::from_esi("character"), OwnerType::Character);
+      assert_eq!(OwnerType::from_esi("anything else"), OwnerType::Character);
+    }
+
+    #[test]
+    fn only_org_owners_are_respondable() {
+      assert!(OwnerType::Alliance.respondable());
+      assert!(OwnerType::Corporation.respondable());
+      assert!(OwnerType::Faction.respondable());
+      assert!(!OwnerType::Character.respondable());
+      assert!(!OwnerType::EveServer.respondable());
+      assert!(!OwnerType::Pod.respondable());
+    }
+  }
+
+  mod response {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_exposes_a_color_and_labels_for_every_response() {
+      for response in RESPONSES {
+        let _ = response.color();
+        assert!(!response.label().is_empty());
+        assert!(!response.pill_label().is_empty());
+        assert!(!response.as_esi().is_empty());
+      }
+    }
+
+    #[test]
+    fn it_round_trips_through_esi_strings() {
+      for response in RESPONSES {
+        assert_eq!(Response::from_esi(response.as_esi()), response);
+      }
+      assert_eq!(Response::from_esi("unknown"), Response::NotResponded);
+    }
+  }
+}

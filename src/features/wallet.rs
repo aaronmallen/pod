@@ -1534,6 +1534,15 @@ mod tests {
     }
   }
 
+  mod load_roster {
+    #[tokio::test]
+    async fn it_yields_an_empty_roster_against_a_bare_store() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert!(super::super::load_roster(&db).await.is_empty());
+    }
+  }
+
   mod update {
     use pretty_assertions::assert_eq;
 

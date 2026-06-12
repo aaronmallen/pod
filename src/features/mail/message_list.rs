@@ -722,6 +722,71 @@ mod tests {
     assert!(sender_kind_icon(SenderKind::System).is_some());
   }
 
+  mod message_row {
+    use super::*;
+
+    #[allow(clippy::too_many_arguments)]
+    fn full_row(
+      mail_id: i64,
+      sender_kind: SenderKind,
+      is_read: bool,
+      is_pinned: bool,
+      is_starred: bool,
+      important: bool,
+      has_attachment: bool,
+      labels: &[&str],
+    ) -> MessageRow {
+      MessageRow {
+        bucket: DayBucket::Today,
+        character_id: 42,
+        has_attachment,
+        important,
+        is_pinned,
+        is_read,
+        is_starred,
+        labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+        mail_id,
+        sender: "Vex Voronova".to_owned(),
+        sender_id: 95_000_001,
+        sender_kind,
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+        snippet: "Form up at Jita.".to_owned(),
+        subject: "CTA tonight".to_owned(),
+        time: "10:00".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_an_unread_pinned_important_selected_row_with_labels() {
+      let row = full_row(
+        1,
+        SenderKind::Character,
+        false,
+        true,
+        false,
+        true,
+        true,
+        &["Fleet", "Ops"],
+      );
+      let _el: Element<'_, Message> = super::super::message_row(&row, true);
+    }
+
+    #[test]
+    fn it_renders_a_read_starred_corp_row_unselected() {
+      let row = full_row(2, SenderKind::Corp, true, false, true, false, false, &[]);
+      let _el: Element<'_, Message> = super::super::message_row(&row, false);
+    }
+
+    #[test]
+    fn it_renders_a_read_system_row() {
+      let row = full_row(3, SenderKind::System, true, false, false, false, false, &[]);
+      let _el: Element<'_, Message> = super::super::message_row(&row, false);
+    }
+  }
+
   #[test]
   fn it_buckets_by_calendar_day() {
     let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();

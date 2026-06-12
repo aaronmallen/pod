@@ -455,6 +455,237 @@ mod tests {
     state
   }
 
+  fn granted_str() -> String {
+    format!(
+      "{} {}",
+      crate::clients::esi::scopes::CHARACTER_CALENDAR_READ,
+      crate::clients::esi::scopes::CHARACTER_CALENDAR_RESPOND
+    )
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  fn ev(
+    character_id: i64,
+    event_id: i64,
+    owner_type: &str,
+    response: &str,
+    timestamp: &str,
+    duration_minutes: i64,
+    importance: i64,
+    source: Option<&str>,
+  ) -> CalendarEvent {
+    CalendarEvent {
+      body: Some("<p>Form up at Jita.</p>".to_owned()),
+      character_id,
+      duration_minutes,
+      event_id,
+      importance,
+      owner_name: "Owner".to_owned(),
+      owner_type: owner_type.to_owned(),
+      response: response.to_owned(),
+      source: source.map(str::to_owned),
+      timestamp: timestamp.to_owned(),
+      title: "Fleet Op".to_owned(),
+    }
+  }
+
+  /// A combined-scope state with an authorized pilot, an unauthorized pilot, and a spread of events
+  /// on the cursor day (timed, overlapping, all-day, instant, and a pod overlay) plus a later event,
+  /// exercising every view's render branches.
+  fn populated() -> State {
+    let granted = granted_str();
+    let roster = vec![pilot(1, Some(&granted)), pilot(2, None)];
+    let events = vec![
+      ev(1, 10, "corporation", "accepted", "2026-06-12T19:00:00Z", 90, 1, None),
+      ev(1, 11, "faction", "tentative", "2026-06-12T19:30:00Z", 60, 0, None),
+      ev(1, 12, "alliance", "declined", "2026-06-12T00:00:00Z", 1440, 0, None),
+      ev(1, 13, "character", "not_responded", "2026-06-12T12:00:00Z", 0, 0, None),
+      ev(
+        1,
+        14,
+        "pod",
+        "not_responded",
+        "2026-06-12T08:00:00Z",
+        30,
+        0,
+        Some("skill"),
+      ),
+      ev(1, 15, "character", "accepted", "2026-06-20T19:00:00Z", 90, 0, None),
+    ];
+    state_with(Scope::All, roster, events)
+  }
+
+  mod rendering {
+    use super::*;
+
+    fn render_every_view(state: &mut State) {
+      for selected in View::ALL {
+        state.view = selected;
+        let _el: Element<'_, Message> = view(state, now());
+      }
+    }
+
+    #[test]
+    fn it_renders_every_view_with_the_default_tweaks() {
+      let mut state = populated();
+      render_every_view(&mut state);
+    }
+
+    #[test]
+    fn it_renders_every_view_with_owner_coloring_dots_and_a_compact_week() {
+      let mut state = populated();
+      state.tweaks.set_color_by_pilot(false);
+      state.tweaks.set_local_time(false);
+      state.tweaks.set_month_chips(false);
+      state.tweaks.set_show_weekends(false);
+      state.tweaks.set_density(crate::config::CalendarDensity::Compact);
+      state.tweaks.set_week_start(crate::config::CalendarWeekStart::Sunday);
+      render_every_view(&mut state);
+    }
+
+    #[test]
+    fn it_renders_the_account_picker_overlay() {
+      let mut state = populated();
+      state.picker_open = true;
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_tweaks_overlay() {
+      let mut state = populated();
+      state.tweaks_open = true;
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_respondable_event_detail_with_attendees() {
+      let mut state = populated();
+      state.detail = Some(Detail {
+        attendees: Some(AttendeeTally {
+          accepted: 3,
+          declined: 1,
+          invited: 6,
+          tentative: 2,
+        }),
+        character_id: 1,
+        event_id: 10,
+      });
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_pod_overlay_event_detail() {
+      let mut state = populated();
+      state.detail = Some(Detail {
+        attendees: None,
+        character_id: 1,
+        event_id: 14,
+      });
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_forbidden_gate_for_an_unauthorized_pilot() {
+      let mut state = populated();
+      state.active = Scope::Mine(2);
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_agenda_state() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.view = View::Agenda;
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+  }
+
+  mod dispatch {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_dispatches_every_message_variant() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+      let n = now();
+
+      let _ = update(&mut state, Message::ViewSelected(View::Week), &db, n);
+      let _ = update(&mut state, Message::CursorNext, &db, n);
+      let _ = update(&mut state, Message::CursorPrev, &db, n);
+      let _ = update(&mut state, Message::CursorToday, &db, n);
+      let _ = update(&mut state, Message::DatePicked(n, View::Day), &db, n);
+      let _ = update(&mut state, Message::EventOpened(1, 10), &db, n);
+      let _ = update(
+        &mut state,
+        Message::DetailAttendeesLoaded(Box::new(Some(AttendeeTally {
+          accepted: 1,
+          declined: 0,
+          invited: 2,
+          tentative: 1,
+        }))),
+        &db,
+        n,
+      );
+      let _ = update(&mut state, Message::DetailClosed, &db, n);
+      let _ = update(&mut state, Message::PickerToggled, &db, n);
+      let _ = update(&mut state, Message::TweaksToggled, &db, n);
+      let _ = update(
+        &mut state,
+        Message::TweakChanged(tweaks::Tweak::ColorByPilot(false)),
+        &db,
+        n,
+      );
+      let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
+      let _ = update(
+        &mut state,
+        Message::Responded(1, 10, palette::Response::Accepted),
+        &db,
+        n,
+      );
+      // A response for an event the state does not know falls back to "not responded".
+      let _ = update(
+        &mut state,
+        Message::Responded(1, 999, palette::Response::Declined),
+        &db,
+        n,
+      );
+      let _ = update(&mut state, Message::RsvpWritten, &db, n);
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Mine(1)), &db, n);
+
+      // A load that matches the active scope is adopted; a stale one is dropped.
+      let fresh = Loaded {
+        events: Vec::new(),
+        roster: Vec::new(),
+        scope: state.active,
+      };
+      let _ = update(&mut state, Message::Loaded(Box::new(fresh)), &db, n);
+      let stale = Loaded {
+        events: Vec::new(),
+        roster: Vec::new(),
+        scope: Scope::Mine(424_242),
+      };
+      let _ = update(&mut state, Message::Loaded(Box::new(stale)), &db, n);
+    }
+  }
+
+  mod loading {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_each_scope_against_an_empty_store() {
+      let db = crate::store::open_test().await.unwrap();
+      let features = FeatureFlags::default();
+
+      let combined = load_calendar(db.clone(), Scope::All, features).await;
+      assert!(combined.events.is_empty());
+
+      let mine = load_calendar(db.clone(), Scope::Mine(1), features).await;
+      assert!(mine.events.is_empty());
+
+      let empty = load_calendar(db.clone(), Scope::Empty, features).await;
+      assert!(empty.events.is_empty());
+    }
+  }
+
   mod state {
     use super::*;
     use crate::clients::esi::scopes;

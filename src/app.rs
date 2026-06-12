@@ -1542,10 +1542,16 @@ fn sync_model(app: &App) -> Model {
     .map(character_manager::owned_roster)
     .unwrap_or_default();
 
+  let enabled = enabled_features(app);
   let mut rows = Vec::with_capacity(pilots.len() * POPOVER_JOBS.len());
   for pilot in &pilots {
     let subject = Subject::Character(pilot.id);
     for (kind, label) in POPOVER_JOBS {
+      // A feature-gated job whose feature is disabled is not syncing, so it must not appear queued;
+      // featureless jobs (e.g. Profile) always run and are always shown.
+      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
+        continue;
+      }
       let key = JobKey::new(kind, subject);
       let (state, error) = row_state(&app.status, &key);
       rows.push(JobRow {
@@ -1619,10 +1625,14 @@ fn expected_job_stats(app: &App) -> JobStats {
     .as_ref()
     .map(character_manager::owned_roster)
     .unwrap_or_default();
+  let enabled = enabled_features(app);
   let mut stats = JobStats::default();
   for pilot in &pilots {
     let subject = Subject::Character(pilot.id);
     for (kind, _label) in POPOVER_JOBS {
+      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
+        continue;
+      }
       let (state, _) = row_state(&app.status, &JobKey::new(kind, subject));
       stats.total += 1;
       match state {
@@ -2314,8 +2324,13 @@ fn handle_mail_unread_counted(app: &mut App, unread: i64) -> Task<Message> {
 }
 
 fn handle_reauth_character(app: &mut App, character_id: i64) -> Task<Message> {
-  tracing::info!(character_id, "re-authorizing character via SSO sign-in");
-  update(app, Message::Auth(auth::Message::Start(enabled_features(app))))
+  let features = enabled_features(app);
+  tracing::info!(
+    character_id,
+    scopes = ?auth::scopes_for(&features),
+    "re-authorizing character via SSO sign-in"
+  );
+  update(app, Message::Auth(auth::Message::Start(features)))
 }
 
 fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
@@ -4926,6 +4941,39 @@ mod tests {
           .iter()
           .all(|scope| scopes.contains(scope)),
         "the re-auth requests the re-enabled Mail scopes"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_card_reauth_after_toggling_requests_every_enabled_scope_through_the_real_dispatch() {
+      // Full repro of the user flow with no runtime, so the auth Start is deferred into
+      // `pending_auth` and we can read the exact feature set it carries.
+      let db = crate::store::open_test().await.unwrap();
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(config::Settings::default(), db));
+
+      // Disable then re-enable Mail and Skills through the real settings handler.
+      for feature in [config::Feature::Mail, config::Feature::SkillMonitoring] {
+        for value in [false, true] {
+          let _ = handle_settings(
+            &mut app,
+            settings::Message::Features(settings::features_tab::Message::Toggled(feature, value)),
+          );
+        }
+      }
+
+      // Drive the card / context-menu re-auth message through the top-level dispatch.
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
+      );
+
+      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+        panic!("the re-auth must defer an auth Start, got {:?}", app.pending_auth);
+      };
+      assert!(
+        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
+        "a re-auth after re-enabling features must request their scopes, got {features:?}"
       );
     }
 

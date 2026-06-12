@@ -74,6 +74,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   }
 
   let drag = DragContext {
+    detail_enabled: state.detail_navigable(),
     dragging: dragging_card(state),
     hovered: drop_target(state),
     squad: dragging_squad(state),
@@ -150,6 +151,7 @@ fn ghost_layer(model: &CardModel, cursor: Point) -> Element<'_, Message> {
 
 #[derive(Clone, Copy)]
 struct DragContext {
+  detail_enabled: bool,
   dragging: Option<i64>,
   hovered: Option<DropTarget>,
   squad: Option<i64>,
@@ -590,6 +592,7 @@ fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: Drag
           model,
           card_failure(sync, model.character_id),
           drag.dragging == Some(model.character_id),
+          drag.detail_enabled,
         ),
         None if drag.dragging.is_some() => empty_cell(drag.hovered == Some(target)),
         None => empty_spacer(),
@@ -637,7 +640,7 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
   match state.filtered() {
     Some(Filtered::Loaded(cards)) if cards.is_empty() => no_matches(),
     Some(Filtered::Loaded(cards)) => {
-      let capped = container(filtered_grid(cards, sync))
+      let capped = container(filtered_grid(cards, sync, state.detail_navigable()))
         .width(Length::Fill)
         .max_width(spacing::layout::GRID_MAX_WIDTH)
         .padding(spacing::SPACE_6);
@@ -653,12 +656,17 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
   }
 }
 
-fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus) -> Element<'a, Message> {
+fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus, detail_enabled: bool) -> Element<'a, Message> {
   let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(cards.len() / COLUMNS + 1);
   for chunk in cards.chunks(COLUMNS) {
     let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(COLUMNS);
     for model in chunk {
-      cells.push(card::card(model, card_failure(sync, model.character_id), false));
+      cells.push(card::card(
+        model,
+        card_failure(sync, model.character_id),
+        false,
+        detail_enabled,
+      ));
     }
     while cells.len() < COLUMNS {
       cells.push(empty_spacer());
@@ -789,6 +797,7 @@ mod tests {
 
   fn no_drag() -> DragContext {
     DragContext {
+      detail_enabled: true,
       dragging: None,
       hovered: None,
       squad: None,
@@ -991,6 +1000,7 @@ mod tests {
     fn it_renders_a_card_with_an_absurd_position_while_dragging() {
       let cards = [card_model_at(1, i64::MAX)];
       let drag = DragContext {
+        detail_enabled: true,
         dragging: Some(1),
         hovered: None,
         squad: None,
@@ -1024,6 +1034,7 @@ mod tests {
         3,
         &SyncStatus::new(),
         DragContext {
+          detail_enabled: true,
           dragging: Some(99),
           hovered: Some(DropTarget {
             position: 2,
@@ -1039,6 +1050,7 @@ mod tests {
         3,
         &SyncStatus::new(),
         DragContext {
+          detail_enabled: true,
           dragging: None,
           hovered: None,
           squad: Some(3),

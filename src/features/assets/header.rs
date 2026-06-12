@@ -115,7 +115,7 @@ fn character_row(pilot: &RosterPilot, active: Scope) -> Element<'_, Message> {
     pilot.portrait.path(),
     None,
     active == Scope::Character(pilot.id),
-    needs_reauth,
+    needs_reauth.then(|| Feature::AssetTracking.noun()),
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }
@@ -128,7 +128,7 @@ fn corporation_row(corp: &RosterCorp, active: Scope) -> Element<'_, Message> {
     corp.logo.path(),
     None,
     active == Scope::Corporation(corp.id),
-    false,
+    None,
     Message::ScopeSelected(Scope::Corporation(corp.id)),
   )
 }

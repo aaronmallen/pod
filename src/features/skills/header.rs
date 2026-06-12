@@ -152,7 +152,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.portrait.path(),
     Some(total_sp),
     selected,
-    needs_reauth,
+    needs_reauth.then(|| Feature::SkillMonitoring.noun()),
     Message::CharacterChanged(pilot.id),
   )
 }

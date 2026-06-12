@@ -4890,6 +4890,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn re_enabling_a_feature_restores_its_scopes_to_the_live_reauth_set() {
+      // Reproduces the disable -> re-enable -> re-auth flow: a toggle must reach the running
+      // runtime so that a later re-auth (which reads the live enabled set) requests the restored
+      // feature's scopes, even with the settings screen closed.
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let toggle = |app: &mut App, value| {
+        let _ = handle_settings(
+          app,
+          settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Mail, value)),
+        );
+      };
+      toggle(&mut app, false);
+      assert!(
+        !enabled_features(&app).contains(&config::Feature::Mail),
+        "disabling Mail removes it from the live enabled set"
+      );
+      toggle(&mut app, true);
+
+      // Close the settings screen so the enabled set resolves from the running runtime, not the panel.
+      app.settings = None;
+      let features = enabled_features(&app);
+
+      assert!(
+        features.contains(&config::Feature::Mail),
+        "re-enabling Mail restores it to the live runtime the re-auth reads from"
+      );
+      let scopes = auth::scopes_for(&features);
+      assert!(
+        auth::scopes_for(&[config::Feature::Mail])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "the re-auth requests the re-enabled Mail scopes"
+      );
+    }
+
+    #[tokio::test]
     async fn handle_auth_cancel_with_a_runtime_is_handled_not_deferred() {
       let runtime = test_runtime().await;
       let mut app = test_app();

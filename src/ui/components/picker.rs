@@ -18,6 +18,7 @@ const DROPDOWN_WIDTH: f32 = 360.0;
 const HEADER_PAD_X: f32 = 14.0;
 const HEADER_PAD_Y: f32 = 10.0;
 const LIST_MAX_HEIGHT: f32 = 420.0;
+const LOCK_SIZE: f32 = 15.0;
 const ROW_PORTRAIT: f32 = 30.0;
 const SCROLLBAR_WIDTH: f32 = 6.0;
 const TRIGGER_PAD: f32 = 6.0;
@@ -42,49 +43,28 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
   portrait: Option<PathBuf>,
   trailing: Option<Element<'a, M>>,
   selected: bool,
-  needs_reauth: bool,
+  reauth: Option<&'a str>,
   on_press: M,
 ) -> Element<'a, M> {
   let name = name.into();
 
-  let swatch = if needs_reauth {
-    container(
-      svg(svg::Handle::from_memory(LOCK_ICON))
-        .width(Length::Fixed(ROW_PORTRAIT - 8.0))
-        .height(Length::Fixed(ROW_PORTRAIT - 8.0))
-        .style(|_, _| svg::Style {
-          color: Some(color::text::secondary()),
-        }),
-    )
+  // The avatar always renders; a missing-scope pilot is flagged by the gold subtitle and the
+  // trailing lock (see the design), never by hiding the portrait.
+  let portrait_cell = container(avatar(id, &name, Length::Fixed(ROW_PORTRAIT), ROW_PORTRAIT, portrait))
     .width(Length::Fixed(ROW_PORTRAIT))
     .height(Length::Fixed(ROW_PORTRAIT))
-    .align_x(iced::alignment::Horizontal::Center)
-    .align_y(Vertical::Center)
+    .clip(true)
     .style(|_| container::Style {
       border: Border {
         radius: radius::SUBTLE.into(),
         ..Border::default()
       },
       ..container::Style::default()
-    })
-  } else {
-    container(avatar(id, &name, Length::Fixed(ROW_PORTRAIT), ROW_PORTRAIT, portrait))
-      .width(Length::Fixed(ROW_PORTRAIT))
-      .height(Length::Fixed(ROW_PORTRAIT))
-      .clip(true)
-      .style(|_| container::Style {
-        border: Border {
-          radius: radius::SUBTLE.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-  };
+    });
 
-  let subtitle = if needs_reauth {
-    format!("{} · not authorized", sub.into())
-  } else {
-    sub.into()
+  let (subtitle, subtitle_color) = match reauth {
+    Some(noun) => (format!("{noun} not authorized"), color::status::WARNING),
+    None => (sub.into(), color::text::secondary()),
   };
 
   let identity = Column::with_children(vec![
@@ -98,17 +78,33 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
     text(subtitle)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
+      .style(move |_| text::Style {
+        color: Some(subtitle_color),
       })
       .into(),
   ])
   .spacing(2.0)
   .width(Length::Fill);
 
-  let mut cells: Vec<Element<'a, M>> = vec![swatch.into(), identity.into()];
-  if let Some(trailing) = trailing {
-    cells.push(trailing);
+  let mut cells: Vec<Element<'a, M>> = vec![portrait_cell.into(), identity.into()];
+  match reauth {
+    Some(_) => cells.push(
+      container(
+        svg(svg::Handle::from_memory(LOCK_ICON))
+          .width(Length::Fixed(LOCK_SIZE))
+          .height(Length::Fixed(LOCK_SIZE))
+          .style(|_, _| svg::Style {
+            color: Some(color::status::WARNING),
+          }),
+      )
+      .align_y(Vertical::Center)
+      .into(),
+    ),
+    None => {
+      if let Some(trailing) = trailing {
+        cells.push(trailing);
+      }
+    }
   }
 
   let inner = Row::with_children(cells)
@@ -400,13 +396,27 @@ mod tests {
       let portrait = Some(PathBuf::from("/tmp/p.png"));
 
       let _el: Element<'_, Msg> =
-        picker_character_row(1, "Cinder Vex", "PALE", portrait, None, true, false, Msg::Selected(1));
+        picker_character_row(1, "Cinder Vex", "PALE", portrait, None, true, None, Msg::Selected(1));
     }
 
     #[test]
     fn it_builds_a_row_without_a_portrait() {
       let _el: Element<'_, Msg> =
-        picker_character_row(2, "Mara Quill", "BRAVE", None, None, false, false, Msg::Selected(2));
+        picker_character_row(2, "Mara Quill", "BRAVE", None, None, false, None, Msg::Selected(2));
+    }
+
+    #[test]
+    fn it_flags_a_missing_scope_pilot_with_the_reauth_label() {
+      let _el: Element<'_, Msg> = picker_character_row(
+        4,
+        "Sable Renn",
+        "PALE",
+        None,
+        None,
+        false,
+        Some("Mail"),
+        Msg::Selected(4),
+      );
     }
 
     #[test]
@@ -420,7 +430,7 @@ mod tests {
         None,
         Some(trailing),
         false,
-        false,
+        None,
         Msg::Selected(3),
       );
     }

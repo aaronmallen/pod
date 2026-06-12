@@ -17,9 +17,9 @@ const TITLE_PAD_X: f32 = 10.0;
 
 pub enum Item<MSG> {
   Row {
-    danger: bool,
     label: String,
     on_press: Option<MSG>,
+    tone: Tone,
   },
   Separator,
 }
@@ -27,30 +27,55 @@ pub enum Item<MSG> {
 impl<MSG> Item<MSG> {
   pub fn action(label: impl Into<String>, on_press: MSG) -> Self {
     Self::Row {
-      danger: false,
       label: label.into(),
       on_press: Some(on_press),
+      tone: Tone::Default,
     }
   }
 
   pub fn danger(label: impl Into<String>, on_press: MSG) -> Self {
     Self::Row {
-      danger: true,
       label: label.into(),
       on_press: Some(on_press),
+      tone: Tone::Danger,
     }
   }
 
   pub fn disabled(label: impl Into<String>) -> Self {
     Self::Row {
-      danger: false,
       label: label.into(),
       on_press: None,
+      tone: Tone::Default,
     }
   }
 
   pub fn separator() -> Self {
     Self::Separator
+  }
+
+  pub fn warning(label: impl Into<String>, on_press: MSG) -> Self {
+    Self::Row {
+      label: label.into(),
+      on_press: Some(on_press),
+      tone: Tone::Warning,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum Tone {
+  Danger,
+  Default,
+  Warning,
+}
+
+impl Tone {
+  fn accent(self) -> iced::Color {
+    match self {
+      Tone::Danger => color::status::DANGER,
+      Tone::Default => color::text::PRIMARY,
+      Tone::Warning => color::status::WARNING,
+    }
   }
 }
 
@@ -63,10 +88,10 @@ where
     rows.push(match item {
       Item::Separator => divider(),
       Item::Row {
-        danger,
         label,
         on_press,
-      } => menu_row(danger, label, on_press),
+        tone,
+      } => menu_row(tone, label, on_press),
     });
   }
 
@@ -119,16 +144,14 @@ where
     .into()
 }
 
-fn menu_row<'a, MSG>(danger: bool, label: String, on_press: Option<MSG>) -> Element<'a, MSG>
+fn menu_row<'a, MSG>(tone: Tone, label: String, on_press: Option<MSG>) -> Element<'a, MSG>
 where
   MSG: Clone + 'a,
 {
-  let label_color = if danger {
-    color::status::DANGER
-  } else if on_press.is_none() {
+  let label_color = if on_press.is_none() {
     color::text::tertiary()
   } else {
-    color::text::PRIMARY
+    tone.accent()
   };
 
   let label = text(label)
@@ -147,7 +170,7 @@ where
   if let Some(message) = on_press {
     row = row.on_press(message);
   }
-  row.style(move |_, status| row_style(danger, status)).into()
+  row.style(move |_, status| row_style(tone, status)).into()
 }
 
 fn menu_title<'a, MSG>(title: &str) -> Element<'a, MSG>
@@ -171,25 +194,16 @@ where
   .into()
 }
 
-fn row_style(danger: bool, status: button::Status) -> button::Style {
+fn row_style(tone: Tone, status: button::Status) -> button::Style {
   let background = match status {
     button::Status::Hovered | button::Status::Pressed => {
-      let wash = if danger {
-        color::status::DANGER
-      } else {
-        color::text::PRIMARY
-      };
-      Some(Background::Color(color::with_alpha(wash, 0.12)))
+      Some(Background::Color(color::with_alpha(tone.accent(), 0.12)))
     }
     _ => None,
   };
   button::Style {
     background,
-    text_color: if danger {
-      color::status::DANGER
-    } else {
-      color::text::PRIMARY
-    },
+    text_color: tone.accent(),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()
@@ -255,9 +269,9 @@ mod tests {
 
     #[test]
     fn a_hovered_row_washes_its_background_and_an_idle_row_has_none() {
-      let hovered = row_style(false, button::Status::Hovered);
-      let pressed = row_style(false, button::Status::Pressed);
-      let idle = row_style(false, button::Status::Active);
+      let hovered = row_style(Tone::Default, button::Status::Hovered);
+      let pressed = row_style(Tone::Default, button::Status::Pressed);
+      let idle = row_style(Tone::Default, button::Status::Active);
 
       assert!(hovered.background.is_some());
       assert!(pressed.background.is_some());
@@ -266,11 +280,18 @@ mod tests {
 
     #[test]
     fn a_danger_row_uses_the_danger_text_color() {
-      let danger = row_style(true, button::Status::Active);
-      let normal = row_style(false, button::Status::Active);
+      let danger = row_style(Tone::Danger, button::Status::Active);
+      let normal = row_style(Tone::Default, button::Status::Active);
 
       assert_eq!(danger.text_color, color::status::DANGER);
       assert_eq!(normal.text_color, color::text::PRIMARY);
+    }
+
+    #[test]
+    fn a_warning_row_uses_the_warning_text_color() {
+      let warning = row_style(Tone::Warning, button::Status::Active);
+
+      assert_eq!(warning.text_color, color::status::WARNING);
     }
   }
 }

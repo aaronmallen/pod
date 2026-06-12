@@ -24,7 +24,7 @@ use iced::{
 
 use crate::{
   config::Feature,
-  features::auth as auth_feature,
+  features::{auth as auth_feature, registry},
   store::{
     Database, images,
     model::{
@@ -96,6 +96,7 @@ pub struct ContextMenu {
   pub anchor: iced::Point,
   pub character_id: i64,
   pub name: String,
+  pub needs_fix: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -333,6 +334,15 @@ impl State {
 
   pub fn corp_filtered(&self) -> Option<&CorpFiltered> {
     self.corp_filtered.as_ref()
+  }
+
+  // The character-detail view is only worth opening when at least one of its tab-backed features is
+  // enabled; with all of them off it would render nothing, so the card name is left non-clickable.
+  pub(super) fn detail_navigable(&self) -> bool {
+    self
+      .enabled_features
+      .iter()
+      .any(|&feature| registry::descriptor(feature).tab.is_some())
   }
 
   pub fn filtered(&self) -> Option<&Filtered> {
@@ -795,10 +805,12 @@ fn update_menus(state: &mut State, message: Message) -> ControlFlow<Task<Message
   let task = match message {
     Message::CardRightPressed(character_id) => {
       if let (Some(anchor), Some(card)) = (state.cursor, card_for(state, character_id)) {
+        let name = card.name.clone();
         state.context_menu = Some(ContextMenu {
           anchor,
           character_id,
-          name: card.name.clone(),
+          name,
+          needs_fix: state.reauth_by_id.get(&character_id).copied().unwrap_or(false),
         });
       }
       Task::none()
@@ -1103,18 +1115,27 @@ servers are unaffected. You can re-add it later via Add corporation.",
 }
 
 fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
-  let items = vec![
-    Item::action("Copy name", Message::CopyCharacterName(menu.name.clone())),
-    Item::action(
-      "Edit tags",
-      Message::OpenAddTagModal {
-        entity_id: menu.character_id,
-        entity_type: ENTITY_TYPE_CHARACTER,
-      },
-    ),
-    Item::separator(),
-    Item::danger("Remove from app", Message::OpenRemoveConfirm(menu.character_id)),
-  ];
+  let mut items = Vec::new();
+  if menu.needs_fix {
+    items.push(Item::warning(
+      "Fix Permissions",
+      Message::ReauthCharacterRequested(menu.character_id),
+    ));
+    items.push(Item::separator());
+  }
+  items.push(Item::action("Copy name", Message::CopyCharacterName(menu.name.clone())));
+  items.push(Item::action(
+    "Edit tags",
+    Message::OpenAddTagModal {
+      entity_id: menu.character_id,
+      entity_type: ENTITY_TYPE_CHARACTER,
+    },
+  ));
+  items.push(Item::separator());
+  items.push(Item::danger(
+    "Remove from app",
+    Message::OpenRemoveConfirm(menu.character_id),
+  ));
   context_menu::context_menu(&menu.name, items, menu.anchor)
 }
 

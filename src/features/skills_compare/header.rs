@@ -272,7 +272,7 @@ fn pilot_row(state: &State, pilot_id: i64) -> Element<'_, Message> {
     state.portrait(pilot_id).path(),
     trailing,
     false,
-    needs_reauth,
+    needs_reauth.then(|| Feature::SkillMonitoring.noun()),
     Message::PilotAdded(pilot_id),
   )
 }

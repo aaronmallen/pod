@@ -145,7 +145,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
-    needs_reauth,
+    needs_reauth.then(|| Feature::Wallet.noun()),
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }
@@ -158,7 +158,7 @@ fn corp_row<'a>(state: &'a State, corp: &'a RosterCorp) -> Element<'a, Message> 
     corp.logo.path(),
     None,
     matches!(state.active(), Scope::Corporation(id) if id == corp.id),
-    false,
+    None,
     Message::ScopeSelected(Scope::Corporation(corp.id)),
   )
 }

@@ -63,10 +63,15 @@ pub struct Training {
   pub skill: String,
 }
 
-pub(super) fn card<'a>(model: &'a CardModel, failure: Option<Phase>, dragging: bool) -> Element<'a, Message> {
+pub(super) fn card<'a>(
+  model: &'a CardModel,
+  failure: Option<Phase>,
+  dragging: bool,
+  detail_enabled: bool,
+) -> Element<'a, Message> {
   let mut sections: Vec<Element<'a, Message>> = vec![
     portrait(model),
-    identity(model),
+    identity(model, detail_enabled),
     tag_row(model),
     rule::horizontal(),
     training_section(model),
@@ -251,15 +256,26 @@ fn portrait(model: &CardModel) -> Element<'_, Message> {
     .into()
 }
 
-fn identity(model: &CardModel) -> Element<'_, Message> {
-  let name = button(
-    text(model.name.clone())
-      .font(typography::body::REGULAR)
-      .size(typography::size::LG),
-  )
-  .padding(0)
-  .on_press(Message::CharacterSelected(model.character_id))
-  .style(name_button);
+fn identity(model: &CardModel, detail_enabled: bool) -> Element<'_, Message> {
+  let label = text(model.name.clone())
+    .font(typography::body::REGULAR)
+    .size(typography::size::LG);
+
+  // With no character-detail feature enabled there is nothing to open, so the name renders as plain
+  // text rather than a button — no click affordance, no navigation.
+  let name: Element<'_, Message> = if detail_enabled {
+    button(label)
+      .padding(0)
+      .on_press(Message::CharacterSelected(model.character_id))
+      .style(name_button)
+      .into()
+  } else {
+    label
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into()
+  };
 
   let ticker = text(model.corp_ticker.clone())
     .font(typography::mono::REGULAR)
@@ -268,7 +284,7 @@ fn identity(model: &CardModel) -> Element<'_, Message> {
       color: Some(color::text::secondary()),
     });
 
-  container(Column::with_children(vec![name.into(), ticker.into()]).spacing(spacing::UNIT))
+  container(Column::with_children(vec![name, ticker.into()]).spacing(spacing::UNIT))
     .padding(Padding {
       top: spacing::SPACE_3_5,
       right: spacing::SPACE_3_5,
@@ -681,7 +697,7 @@ mod tests {
     fn it_renders_a_training_card() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, false);
+      let _el: Element<'_, Message> = card(&model, None, false, true);
     }
 
     #[test]
@@ -689,7 +705,7 @@ mod tests {
       let mut model = base_model();
       model.training = None;
 
-      let _el: Element<'_, Message> = card(&model, None, false);
+      let _el: Element<'_, Message> = card(&model, None, false, true);
     }
 
     #[test]
@@ -698,8 +714,8 @@ mod tests {
       let mut absent = base_model();
       absent.wallet_balance = None;
 
-      let _present: Element<'_, Message> = card(&present, None, false);
-      let _absent: Element<'_, Message> = card(&absent, None, false);
+      let _present: Element<'_, Message> = card(&present, None, false, true);
+      let _absent: Element<'_, Message> = card(&absent, None, false, true);
     }
 
     #[test]
@@ -708,7 +724,7 @@ mod tests {
         let mut model = base_model();
         model.docked = docked;
 
-        let _el: Element<'_, Message> = card(&model, None, false);
+        let _el: Element<'_, Message> = card(&model, None, false, true);
       }
     }
 
@@ -717,7 +733,7 @@ mod tests {
       let mut model = base_model();
       model.accent = Some(color::accent::PLASMA);
 
-      let _el: Element<'_, Message> = card(&model, None, false);
+      let _el: Element<'_, Message> = card(&model, None, false, true);
     }
 
     #[test]
@@ -725,7 +741,7 @@ mod tests {
       let model = base_model();
 
       for failure in [Phase::Failed, Phase::BackingOff] {
-        let _el: Element<'_, Message> = card(&model, Some(failure), false);
+        let _el: Element<'_, Message> = card(&model, Some(failure), false, true);
       }
     }
 
@@ -733,14 +749,14 @@ mod tests {
     fn it_renders_the_tag_row_with_the_add_affordance_and_no_inline_picker() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, false);
+      let _el: Element<'_, Message> = card(&model, None, false, true);
     }
 
     #[test]
     fn it_renders_a_card_being_dragged() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, true);
+      let _el: Element<'_, Message> = card(&model, None, true, true);
     }
 
     #[test]
@@ -748,7 +764,7 @@ mod tests {
       let mut model = base_model();
       model.needs_reauth = true;
 
-      let _el: Element<'_, Message> = card(&model, Some(Phase::Failed), false);
+      let _el: Element<'_, Message> = card(&model, Some(Phase::Failed), false, true);
     }
 
     #[test]
@@ -773,7 +789,7 @@ mod tests {
     use super::*;
 
     fn declared_height(model: &CardModel) -> Length {
-      let element = card(model, None, false);
+      let element = card(model, None, false, true);
       Widget::<Message, _, _>::size(element.as_widget()).height
     }
 

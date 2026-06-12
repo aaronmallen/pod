@@ -60,7 +60,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
-    needs_reauth,
+    needs_reauth.then(|| Feature::Mail.noun()),
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }

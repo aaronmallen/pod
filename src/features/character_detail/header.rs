@@ -99,7 +99,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.portrait.path(),
     Some(trailing),
     selected,
-    false,
+    None,
     Message::CharacterChanged(pilot.id),
   )
 }

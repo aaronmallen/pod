@@ -26,6 +26,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0014] | Persisted Sync Ledger and Honest Job Outcomes   | ![Active][badge-active] | 2026-06-06 |
 | [0015] | ESI Request-Layer Policy                        | ![Active][badge-active] | 2026-06-08 |
 | [0016] | Networked-Drive Storage-Sync Model              | ![Active][badge-active] | 2026-06-10 |
+| [0017] | Interface Scale and Accessibility Config        | ![Active][badge-active] | 2026-06-11 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -46,5 +47,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0014]: 0014-persisted-sync-ledger-and-honest-outcomes.md
 [0015]: 0015-esi-request-layer-policy.md
 [0016]: 0016-networked-drive-storage-sync.md
+[0017]: 0017-interface-scale-and-accessibility-config.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

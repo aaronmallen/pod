@@ -14,6 +14,32 @@ const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
 const WORKING_COPY_SUBDIR: &str = "db";
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct AccessibilityConfig {
+  #[getset(get = "pub")]
+  #[serde(default, skip_serializing_if = "is_not_high_contrast")]
+  high_contrast: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_scale_100", skip_serializing_if = "is_default_scale")]
+  scale: u8,
+}
+
+impl AccessibilityConfig {
+  fn is_default(&self) -> bool {
+    *self == AccessibilityConfig::default()
+  }
+}
+
+impl Default for AccessibilityConfig {
+  fn default() -> Self {
+    Self {
+      high_contrast: false,
+      scale: default_scale_100(),
+    }
+  }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
   #[error("failed to determine the user's config directory")]
@@ -149,6 +175,9 @@ impl Default for FeatureFlags {
 
 #[derive(Clone, Debug, Deserialize, Getters, MutGetters, Serialize)]
 pub struct Settings {
+  #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default, skip_serializing_if = "AccessibilityConfig::is_default")]
+  accessibility: AccessibilityConfig,
   #[getset(get = "pub")]
   #[serde(default = "default_eve_client_id")]
   eve_client_id: String,
@@ -163,6 +192,7 @@ pub struct Settings {
 impl Default for Settings {
   fn default() -> Self {
     Self {
+      accessibility: AccessibilityConfig::default(),
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
       storage: StorageConfig::default(),
@@ -319,6 +349,10 @@ fn default_eve_client_id() -> String {
   EVE_CLIENT_ID.to_owned()
 }
 
+fn default_scale_100() -> u8 {
+  100
+}
+
 fn default_true() -> bool {
   true
 }
@@ -337,6 +371,14 @@ fn generate_machine_id() -> String {
     &hex[16..20],
     &hex[20..32]
   )
+}
+
+fn is_default_scale(scale: &u8) -> bool {
+  *scale == default_scale_100()
+}
+
+fn is_not_high_contrast(high_contrast: &bool) -> bool {
+  !*high_contrast
 }
 
 pub fn load() -> Result<Settings, Error> {
@@ -898,10 +940,73 @@ mod tests {
       assert_eq!(*storage.log_dir(), Some(PathBuf::from("/var/pod/log")));
       assert_eq!(*storage.cache_dir(), Some(PathBuf::from("/var/pod/cache")));
     }
+
+    #[test]
+    fn it_defaults_the_accessibility_table_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
+
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
+      let accessibility = settings.accessibility();
+
+      assert_eq!(*accessibility.scale(), 100);
+      assert!(!accessibility.high_contrast());
+    }
+
+    #[test]
+    fn it_reads_a_partial_accessibility_table_and_defaults_the_rest() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[accessibility]\nscale = 125\n").unwrap();
+
+      let accessibility = load_from(&path).unwrap().accessibility().to_owned();
+
+      assert_eq!(*accessibility.scale(), 125);
+      assert!(!accessibility.high_contrast());
+    }
   }
 
   mod serialization {
     use super::*;
+
+    #[test]
+    fn a_default_accessibility_config_serializes_without_any_keys() {
+      let toml = toml::to_string_pretty(&AccessibilityConfig::default()).unwrap();
+
+      assert!(!toml.contains("scale"), "a default scale must not leak to disk: {toml}");
+      assert!(
+        !toml.contains("high_contrast"),
+        "a default high_contrast must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn a_default_settings_serializes_without_an_accessibility_table() {
+      let toml = toml::to_string_pretty(&Settings::default()).unwrap();
+
+      assert!(
+        !toml.contains("[accessibility]"),
+        "a default accessibility table must not leak to disk: {toml}"
+      );
+      assert!(!toml.contains("scale"), "a default scale must not leak to disk: {toml}");
+      assert!(
+        !toml.contains("high_contrast"),
+        "a default high_contrast must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn a_partially_customized_accessibility_config_only_writes_the_changed_keys() {
+      let mut accessibility = AccessibilityConfig::default();
+      accessibility.set_scale(125);
+
+      let toml = toml::to_string_pretty(&accessibility).unwrap();
+
+      assert!(toml.contains("scale = 125"), "scale override must persist: {toml}");
+      assert!(
+        !toml.contains("high_contrast"),
+        "a default high_contrast must not leak to disk: {toml}"
+      );
+    }
 
     #[test]
     fn a_default_storage_config_serializes_without_any_dir_keys() {
@@ -963,6 +1068,22 @@ mod tests {
       assert!(!loaded.features().wallet());
       assert!(loaded.storage().network());
       assert_eq!(*loaded.storage().log_dir(), Some(PathBuf::from("/tmp/pod-logs")));
+    }
+
+    #[test]
+    fn it_roundtrips_a_non_default_accessibility_table() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      let mut settings = Settings::default();
+      settings.accessibility_mut().set_scale(125);
+      settings.accessibility_mut().set_high_contrast(true);
+
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
+
+      assert_eq!(loaded.accessibility(), settings.accessibility());
+      assert_eq!(*loaded.accessibility().scale(), 125);
+      assert!(loaded.accessibility().high_contrast());
     }
   }
 }

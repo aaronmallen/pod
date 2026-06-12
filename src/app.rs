@@ -79,6 +79,8 @@ const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
+const SCALE_MAX: u8 = 150;
+const SCALE_MIN: u8 = 85;
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   height: 0.0,
   width: 0.0,
@@ -93,6 +95,7 @@ static UPDATER_RECEIVER: std::sync::Mutex<Option<tokio::sync::watch::Receiver<up
 
 struct App {
   about: Option<window::Id>,
+  accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
   auth: auth::State,
   character_detail: Option<character_detail::State>,
@@ -439,6 +442,7 @@ pub fn run() -> iced::Result {
   iced::daemon(boot, update, view)
     .title(title)
     .theme(theme)
+    .scale_factor(scale_factor)
     .subscription(subscription)
     .font(typography::bytes::BODY_REGULAR)
     .font(typography::bytes::BODY_MEDIUM)
@@ -446,6 +450,14 @@ pub fn run() -> iced::Result {
     .font(typography::bytes::MONO_REGULAR)
     .font(typography::bytes::MONO_ITALIC)
     .run()
+}
+
+fn scale_factor(app: &App, _id: window::Id) -> f32 {
+  scale_to_factor(*app.accessibility.scale())
+}
+
+fn scale_to_factor(scale: u8) -> f32 {
+  f32::from(scale.clamp(SCALE_MIN, SCALE_MAX)) / 100.0
 }
 
 fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_blocking::WorkerGuard> {
@@ -556,10 +568,9 @@ fn blank<'a>() -> Element<'a, Message> {
 }
 
 fn boot() -> (App, Task<Message>) {
-  let image_root = config::load()
-    .map(|settings| settings.storage().resolved_cache_dir())
-    .unwrap_or_else(|_| config::cache_dir())
-    .join("images");
+  let settings = config::load().unwrap_or_default();
+  let accessibility = *settings.accessibility();
+  let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);
 
   auth::install();
@@ -586,6 +597,7 @@ fn boot() -> (App, Task<Message>) {
 
   let app = App {
     about: None,
+    accessibility,
     assets: None,
     auth: auth::State::default(),
     character_detail: None,
@@ -2319,6 +2331,14 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   }
 
   match outcome {
+    settings::Outcome::AccessibilityChanged => {
+      let accessibility = *state.settings().accessibility();
+      app.accessibility = accessibility;
+      if let Some(runtime) = app.runtime.as_mut() {
+        *runtime.settings.accessibility_mut() = accessibility;
+      }
+      return task;
+    }
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
     settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
     settings::Outcome::ExportLogs {
@@ -3334,6 +3354,7 @@ mod tests {
   fn test_app() -> App {
     App {
       about: None,
+      accessibility: config::AccessibilityConfig::default(),
       assets: None,
       auth: auth::State::default(),
       character_detail: None,
@@ -3512,6 +3533,27 @@ mod tests {
         assert!(target < 1.0, "stage {step} must reserve the full bar for readiness");
         last = target;
       }
+    }
+  }
+
+  mod scale_to_factor {
+    use super::*;
+
+    #[test]
+    fn it_maps_a_default_scale_to_a_unit_factor() {
+      assert_eq!(scale_to_factor(100), 1.0);
+    }
+
+    #[test]
+    fn it_maps_the_extremes_of_the_range() {
+      assert_eq!(scale_to_factor(85), 0.85);
+      assert_eq!(scale_to_factor(150), 1.5);
+    }
+
+    #[test]
+    fn it_clamps_values_outside_the_supported_range() {
+      assert_eq!(scale_to_factor(0), 0.85);
+      assert_eq!(scale_to_factor(255), 1.5);
     }
   }
 

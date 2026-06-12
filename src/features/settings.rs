@@ -60,7 +60,12 @@ pub enum Message {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Outcome {
-  ExportLogs { end: DateTime<Utc>, start: DateTime<Utc> },
+  #[allow(dead_code)]
+  AccessibilityChanged,
+  ExportLogs {
+    end: DateTime<Utc>,
+    start: DateTime<Utc>,
+  },
   None,
   Persist,
   ReleaseLock,
@@ -137,7 +142,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       (Outcome::Persist, Task::none())
     }
   };
-  if outcome == Outcome::Persist {
+  if matches!(outcome, Outcome::AccessibilityChanged | Outcome::Persist) {
     config::save(&state.settings);
   }
   (outcome, task)

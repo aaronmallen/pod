@@ -159,12 +159,41 @@ pub mod text {
     if high_contrast() { DIM_HC } else { DIM_OFF }
   }
 
+  /// Raw high-contrast value for the settings preview's static before/after columns.
+  ///
+  /// Unlike [`dim`], this ignores the live high-contrast flag so the preview can show both states
+  /// side by side regardless of which one is active.
+  pub fn dim_hc() -> Color {
+    DIM_HC
+  }
+
+  /// Raw overlay value for the settings preview's static before/after columns; see [`dim_hc`].
+  pub fn dim_off() -> Color {
+    DIM_OFF
+  }
+
   pub fn secondary() -> Color {
     if high_contrast() { SECONDARY_HC } else { SECONDARY_OFF }
   }
 
+  pub fn secondary_hc() -> Color {
+    SECONDARY_HC
+  }
+
+  pub fn secondary_off() -> Color {
+    SECONDARY_OFF
+  }
+
   pub fn tertiary() -> Color {
     if high_contrast() { TERTIARY_HC } else { TERTIARY_OFF }
+  }
+
+  pub fn tertiary_hc() -> Color {
+    TERTIARY_HC
+  }
+
+  pub fn tertiary_off() -> Color {
+    TERTIARY_OFF
   }
 }
 
@@ -186,6 +215,14 @@ pub fn rule() -> iced::Color {
   )
 }
 
+pub fn rule_hc_alpha() -> f32 {
+  RULE_HC_ALPHA
+}
+
+pub fn rule_off_alpha() -> f32 {
+  RULE_OFF_ALPHA
+}
+
 pub fn rule_strong() -> iced::Color {
   with_alpha(
     text::PRIMARY,
@@ -195,6 +232,14 @@ pub fn rule_strong() -> iced::Color {
       RULE_STRONG_OFF_ALPHA
     },
   )
+}
+
+pub fn rule_strong_hc_alpha() -> f32 {
+  RULE_STRONG_HC_ALPHA
+}
+
+pub fn rule_strong_off_alpha() -> f32 {
+  RULE_STRONG_OFF_ALPHA
 }
 
 pub fn set_high_contrast(enabled: bool) {
@@ -304,6 +349,23 @@ mod tests {
       set_high_contrast(false);
 
       assert_ne!(on, off);
+    }
+
+    #[test]
+    fn the_preview_accessors_return_fixed_values_regardless_of_the_live_flag() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      set_high_contrast(true);
+      assert_eq!(text::secondary_off(), SECONDARY_OFF);
+      assert_eq!(text::secondary_hc(), SECONDARY_HC);
+      assert_eq!(text::tertiary_off(), TERTIARY_OFF);
+      assert_eq!(text::tertiary_hc(), TERTIARY_HC);
+      assert_eq!(text::dim_off(), DIM_OFF);
+      assert_eq!(text::dim_hc(), DIM_HC);
+
+      set_high_contrast(false);
+      assert_eq!(text::secondary_off(), SECONDARY_OFF);
+      assert_eq!(text::secondary_hc(), SECONDARY_HC);
     }
   }
 

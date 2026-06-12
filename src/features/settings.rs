@@ -464,6 +464,18 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn reset_on_accessibility_clears_high_contrast() {
+    let mut state = state().await;
+    state.active = Category::Accessibility;
+    state.settings.accessibility_mut().set_high_contrast(true);
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::AccessibilityChanged);
+    assert!(!*state.settings.accessibility().high_contrast());
+  }
+
+  #[tokio::test]
   async fn reset_on_features_does_not_touch_storage() {
     let mut state = state().await;
     state.settings.storage_mut().set_network(true);

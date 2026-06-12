@@ -180,12 +180,9 @@ impl State {
     self.active
   }
 
-  pub(super) fn active_name(&self) -> &str {
-    self
-      .roster
-      .iter()
-      .find(|pilot| pilot.id == self.active)
-      .map_or("", |pilot| pilot.name.as_str())
+  #[cfg(test)]
+  pub fn enabled_tabs(&self) -> &[Tab] {
+    &self.enabled_tabs
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -194,6 +191,21 @@ impl State {
       .iter()
       .filter_map(|pilot| pilot.portrait.stale_key())
       .collect()
+  }
+
+  pub fn sync_features(&mut self, features: &[Feature]) {
+    self.enabled_tabs = tabs::enabled_tabs(features);
+    if !self.enabled_tabs.contains(&self.active_tab) {
+      self.active_tab = tabs::resolve_first_tab(&self.enabled_tabs);
+    }
+  }
+
+  pub(super) fn active_name(&self) -> &str {
+    self
+      .roster
+      .iter()
+      .find(|pilot| pilot.id == self.active)
+      .map_or("", |pilot| pilot.name.as_str())
   }
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
@@ -785,6 +797,39 @@ mod tests {
       let state = State::new(42, &[]);
 
       assert_eq!(state.active_tab, Tab::Clones);
+    }
+
+    #[test]
+    fn sync_features_rebuilds_the_enabled_tab_strip() {
+      let mut state = State::new(42, &Feature::ALL);
+
+      state.sync_features(&[Feature::Standings]);
+
+      assert_eq!(state.enabled_tabs, vec![Tab::Standings]);
+    }
+
+    #[test]
+    fn sync_features_reselects_the_active_tab_when_it_is_disabled() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.active_tab = Tab::Standings;
+
+      state.sync_features(&[Feature::CombatLog]);
+
+      assert_eq!(
+        state.active_tab,
+        Tab::Killlog,
+        "disabling the active tab's feature re-resolves to the first remaining tab"
+      );
+    }
+
+    #[test]
+    fn sync_features_keeps_a_still_enabled_active_tab() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.active_tab = Tab::Standings;
+
+      state.sync_features(&[Feature::CloneMonitoring, Feature::Standings]);
+
+      assert_eq!(state.active_tab, Tab::Standings);
     }
 
     #[test]

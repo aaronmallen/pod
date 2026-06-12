@@ -2373,8 +2373,13 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     return task;
   };
   runtime.settings = updated;
-  let reload =
-    character_manager::load(&runtime.db, runtime.settings.features().enabled()).map(Message::CharacterManager);
+  let enabled = runtime.settings.features().enabled();
+  runtime.sync.set_features(*runtime.settings.features());
+  let reload = character_manager::load(&runtime.db, enabled.clone()).map(Message::CharacterManager);
+
+  if let Some(detail) = app.character_detail.as_mut() {
+    detail.sync_features(&enabled);
+  }
 
   Task::batch(vec![task, reload])
 }
@@ -3427,20 +3432,26 @@ mod tests {
   }
 
   async fn test_runtime() -> Runtime {
+    let (runtime, _rx) = test_runtime_with_commands().await;
+    runtime
+  }
+
+  async fn test_runtime_with_commands() -> (Runtime, tokio::sync::mpsc::UnboundedReceiver<sync::Command>) {
     let db = store::open_test().await.unwrap();
     let http = http::Client::builder(http::Cache::new(db.clone())).build();
     let esi = Arc::new(esi::Client::builder(http.clone()).user_agent("test").build().unwrap());
     let eve_image = Arc::new(eve_image::Client::new(http.clone()));
     let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    Runtime {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let runtime = Runtime {
       db,
       esi,
       eve_image,
       settings: config::Settings::default(),
       sso,
       sync: sync::Handle::new(tx),
-    }
+    };
+    (runtime, rx)
   }
 
   fn temp_sync_session() -> (tempfile::TempDir, store::sync_session::SyncSession) {
@@ -4784,6 +4795,98 @@ mod tests {
 
       // The engine flag is process-global; leave it as it was found for any sibling tests.
       color::set_high_contrast(false);
+    }
+
+    #[tokio::test]
+    async fn handle_settings_sends_a_feature_toggle_to_the_running_sync_engine() {
+      let (runtime, mut commands) = test_runtime_with_commands().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Wallet, false)),
+      );
+
+      let command = commands.try_recv().expect("a feature toggle reaches the engine");
+      let sync::Command::SetFeatures(flags) = command else {
+        panic!("expected SetFeatures, got {command:?}");
+      };
+      assert!(
+        !flags.is_enabled(config::Feature::Wallet),
+        "the engine receives the post-toggle feature flags"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_sends_set_features_to_the_engine_on_reset_to_defaults() {
+      let (runtime, mut commands) = test_runtime_with_commands().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(&mut app, settings::Message::ResetToDefaults);
+
+      let command = commands.try_recv().expect("resetting to defaults reaches the engine");
+      assert!(
+        matches!(command, sync::Command::SetFeatures(_)),
+        "reset-to-defaults reconciles the running engine, got {command:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_rebuilds_the_char_detail_tab_strip_on_a_toggle() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.character_detail = Some(character_detail::State::new(7, &config::Feature::ALL));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Standings,
+          false,
+        )),
+      );
+
+      let detail = app.character_detail.as_ref().expect("the detail screen stays open");
+      assert!(
+        !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
+        "disabling Standings drops its detail tab live, not only on next navigation"
+      );
+    }
+
+    #[test]
+    fn a_reauth_from_a_403_state_requests_the_full_enabled_feature_scope_set() {
+      // No runtime, so the auth Start is deferred and we can inspect its feature set without
+      // opening a browser. With Mail and Skills both enabled, a single re-auth must request both.
+      let mut app = test_app();
+
+      let _ = handle_reauth_character(&mut app, 7);
+
+      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+        panic!("a re-auth defers an auth Start, got {:?}", app.pending_auth);
+      };
+      assert!(
+        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
+        "the single re-auth carries the full enabled-feature set, not a per-feature subset"
+      );
+
+      let scopes = auth::scopes_for(&features);
+      assert!(
+        auth::scopes_for(&[config::Feature::Mail])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "re-auth requests Mail scopes"
+      );
+      assert!(
+        auth::scopes_for(&[config::Feature::SkillMonitoring])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "the same single re-auth also requests Skills scopes"
+      );
     }
 
     #[tokio::test]

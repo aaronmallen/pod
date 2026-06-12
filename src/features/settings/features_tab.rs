@@ -14,6 +14,8 @@ use crate::{
 };
 
 const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
+const PANEL_BLURB: &str = "Toggle individual Pod capabilities on or off. Changes apply live across every window and your \
+  linked characters \u{2014} no restart.";
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
@@ -161,13 +163,10 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Toggle individual Pod capabilities on or off. Changes apply on the next restart and across \
-      your linked characters.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(PANEL_BLURB)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -352,6 +351,18 @@ mod tests {
     assert_eq!(
       badge(&settings),
       format!("{}/{}", Feature::ALL.len(), Feature::ALL.len())
+    );
+  }
+
+  #[test]
+  fn the_panel_blurb_describes_live_behavior_not_a_restart() {
+    assert!(
+      PANEL_BLURB.contains("live") && PANEL_BLURB.contains("no restart"),
+      "the features blurb must reflect the live toggle behavior"
+    );
+    assert!(
+      !PANEL_BLURB.contains("next restart"),
+      "the stale 'applies on next restart' copy must be gone"
     );
   }
 

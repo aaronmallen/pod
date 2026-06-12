@@ -14,6 +14,8 @@ mod structure_resolution;
 mod subject;
 pub mod token;
 
+#[cfg(test)]
+pub use command::Command;
 pub use engine::spawn;
 pub use event::Event;
 pub use handle::Handle;

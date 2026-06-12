@@ -49,12 +49,12 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
   let star_tone = if render.is_starred {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   let snooze_tone = if is_snoozed {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let mut row = Row::new().align_y(Vertical::Center);
@@ -136,7 +136,7 @@ fn toolbar_button<'a>(icon: Icon, label: &str, message: Message, active: bool, d
   } else if danger {
     color::status::DANGER
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let content = Row::with_children(vec![
@@ -193,7 +193,7 @@ fn timestamp_stamp<'a>(timestamp: String) -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into()
 }
@@ -286,7 +286,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     );
     row = row.push(
@@ -294,7 +294,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     );
     if is_system {
@@ -303,7 +303,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           }),
       );
     }
@@ -333,7 +333,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let block = Row::with_children(vec![avatar, names.into(), time.into()])
@@ -383,7 +383,7 @@ fn body_paragraphs(mail: &MailRender) -> Element<'_, Message> {
     return text("(no content)")
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into();
   }

@@ -48,7 +48,7 @@ pub(super) fn view<'a>(cards: &'a [StockpileCard], expanded: &HashSet<i64>) -> E
 fn empty_state<'a>() -> Element<'a, Message> {
   let copy = Column::with_children(vec![
     Icon::assets()
-      .color(color::text::TERTIARY)
+      .color(color::text::tertiary())
       .size(EMPTY_ICON_SIZE)
       .render(),
     text("No stockpile targets yet")
@@ -64,7 +64,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     .width(Length::Fixed(EMPTY_COPY_WIDTH))
     .align_x(Horizontal::Center)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into(),
     Row::with_children(vec![new_button(), import_button()])
@@ -111,7 +111,7 @@ fn header<'a>(ready: usize, short: usize) -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into(),
     Space::new().width(Length::Fill).into(),
@@ -129,7 +129,7 @@ fn import_button<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -157,7 +157,7 @@ fn new_button<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {

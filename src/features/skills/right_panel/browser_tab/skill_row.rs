@@ -29,7 +29,7 @@ pub fn skill_row(leaf: &SkillLeaf) -> Element<'_, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
     ])
@@ -62,7 +62,7 @@ pub fn skill_row(leaf: &SkillLeaf) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .width(Length::Fixed(ETA_COLUMN_WIDTH))

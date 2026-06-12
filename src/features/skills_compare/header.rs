@@ -27,7 +27,7 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     text(format!("{} pilots", state.pilot_count()))
@@ -90,14 +90,14 @@ fn add_pilot(state: &State) -> Element<'_, Message> {
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
       text("ADD PILOT")
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     ])
@@ -123,7 +123,7 @@ fn add_pilot(state: &State) -> Element<'_, Message> {
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       ..button::Style::default()
     }
   });
@@ -149,7 +149,7 @@ fn chip(state: &State, pilot_id: i64) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -229,7 +229,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fill)
@@ -251,7 +251,7 @@ fn pilot_row(state: &State, pilot_id: i64) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into()
   });
@@ -275,9 +275,9 @@ fn remove_button(state: &State, pilot_id: i64) -> Element<'_, Message> {
     .size(typography::size::LG)
     .style(move |_| text::Style {
       color: Some(if enabled {
-        color::text::SECONDARY
+        color::text::secondary()
       } else {
-        color::with_alpha(color::text::TERTIARY, 0.4)
+        color::with_alpha(color::text::tertiary(), 0.4)
       }),
     });
 

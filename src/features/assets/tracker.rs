@@ -168,19 +168,19 @@ fn stat_tiles(series: &NavSeries) -> Element<'_, Message> {
       "High",
       fmt_isk(series.high().unwrap_or(0.0)),
       None,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
     stat_tile(
       "Low",
       fmt_isk(series.low().unwrap_or(0.0)),
       None,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
     stat_tile(
       "30d avg",
       fmt_isk(series.thirty_day_avg().unwrap_or(0.0)),
       None,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
   ])
   .spacing(spacing::SPACE_3_5)
@@ -194,7 +194,7 @@ fn stat_tile<'a>(label: &'a str, value: String, sub: Option<String>, value_color
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     text(value)
@@ -245,7 +245,7 @@ fn chart_card(series: &NavSeries, hover: Option<f32>, now: DateTime<Utc>) -> Ele
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -298,7 +298,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fill)

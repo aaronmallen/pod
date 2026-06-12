@@ -57,7 +57,7 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
           color: Some(if active {
             color::text::PRIMARY
           } else {
-            color::text::SECONDARY
+            color::text::secondary()
           }),
         })
         .into(),
@@ -72,7 +72,7 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
 
   let section = container(
@@ -165,7 +165,7 @@ fn folder_row(folder: Folder, icon: Icon, name: &str, unread: i64, active: bool)
         color: Some(if active {
           color::text::PRIMARY
         } else {
-          color::text::SECONDARY
+          color::text::secondary()
         }),
       })
       .into(),
@@ -193,7 +193,7 @@ fn folder_icon<'a>(icon: Icon, active: bool) -> Element<'a, Message> {
   let tone = if active {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   icon.size(16.0).color(tone).render::<Message>()
 }
@@ -208,7 +208,7 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
         text("No custom labels")
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           }),
       )
       .padding(Padding {
@@ -225,7 +225,7 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
         text(label.name.clone())
           .size(typography::size::MD)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .width(Length::Fill)

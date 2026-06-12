@@ -23,7 +23,7 @@ pub fn group_header(group: &GroupRow, open: bool) -> Element<'_, Message> {
     .size(typography::size::XS_PLUS)
     .width(Length::Fixed(12.0))
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let name = text(group.name.clone())
@@ -42,7 +42,7 @@ pub fn group_header(group: &GroupRow, open: bool) -> Element<'_, Message> {
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
   .style(|_| text::Style {
-    color: Some(color::text::SECONDARY),
+    color: Some(color::text::secondary()),
   });
 
   let inner = Row::with_children(vec![

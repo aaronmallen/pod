@@ -82,7 +82,7 @@ where
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -93,7 +93,7 @@ where
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Row::with_children(value_row)

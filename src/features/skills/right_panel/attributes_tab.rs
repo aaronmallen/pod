@@ -81,7 +81,7 @@ fn awaiting_state<'a, Message: 'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .width(Length::Fill)

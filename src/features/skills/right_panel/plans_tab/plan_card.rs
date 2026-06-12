@@ -58,7 +58,7 @@ fn info_col<'a>(name: &'a str, entry_count: usize, updated: &'a str) -> Element<
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -87,7 +87,7 @@ fn confirm_row<'a>(plan_id: i64) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
@@ -145,7 +145,7 @@ fn delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(Padding {
@@ -171,7 +171,7 @@ fn delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
       text_color: if active {
         color::status::DANGER
       } else {
-        color::text::TERTIARY
+        color::text::tertiary()
       },
       ..button::Style::default()
     }
@@ -217,7 +217,7 @@ fn cancel_delete_btn<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -239,7 +239,7 @@ fn cancel_delete_btn<'a>() -> Element<'a, Message> {
       text_color: if active {
         color::text::PRIMARY
       } else {
-        color::text::SECONDARY
+        color::text::secondary()
       },
       ..button::Style::default()
     }

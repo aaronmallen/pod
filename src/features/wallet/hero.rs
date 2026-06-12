@@ -112,7 +112,7 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     ])
@@ -148,7 +148,7 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
         .font(typography::body::REGULAR)
         .size(typography::size::LG)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     ])
@@ -164,7 +164,7 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
 fn composition_chips<'a>(composition: Composition) -> Element<'a, Message> {
   Row::with_children(vec![
     composition_chip("Liquid", composition.liquid, color::accent::PLASMA),
-    composition_chip("Assets", composition.asset_value, color::text::SECONDARY),
+    composition_chip("Assets", composition.asset_value, color::text::secondary()),
     composition_chip("Escrow", composition.escrow, color::status::DANGER),
   ])
   .spacing(spacing::SPACE_3)
@@ -220,7 +220,7 @@ fn timeframe_selector(state: &State) -> Element<'_, Message> {
             color: Some(if active {
               color::accent::PLASMA
             } else {
-              color::text::SECONDARY
+              color::text::secondary()
             }),
           }),
       )
@@ -255,7 +255,7 @@ fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint], window: (NaiveDate, 
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     )
     .width(Length::Fill)
@@ -353,7 +353,7 @@ fn composition_stack(state: &State) -> Option<Element<'_, Message>> {
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           })
           .into(),
       ])

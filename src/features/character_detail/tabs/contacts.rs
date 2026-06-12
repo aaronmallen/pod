@@ -186,7 +186,7 @@ pub(in crate::features::character_detail) fn body(
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .width(Length::Fill)
@@ -214,7 +214,7 @@ fn segmented<'a>(active: ContactFilter) -> Element<'a, Message> {
     let label_color = if selected {
       color::accent::PLASMA
     } else {
-      color::text::SECONDARY
+      color::text::secondary()
     };
     buttons.push(
       button(
@@ -252,7 +252,7 @@ fn segmented<'a>(active: ContactFilter) -> Element<'a, Message> {
 }
 
 fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
-  let cell = eyebrow_text(label, Some(color::text::TERTIARY)).width(Length::Fill);
+  let cell = eyebrow_text(label, Some(color::text::tertiary())).width(Length::Fill);
 
   container(cell)
     .width(Length::Fill)
@@ -265,7 +265,7 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
   let label_color = if active {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let mut children: Vec<Element<'a, Message>> = vec![eyebrow_text(label, Some(label_color)).into()];
@@ -352,7 +352,7 @@ fn contact_row<'a>(contact: &'a CharacterContact, labels: &HashMap<i64, &'a str>
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let standing_text = text(format!("{}{:.1}", if standing >= 0.0 { "+" } else { "" }, standing))
@@ -366,7 +366,7 @@ fn contact_row<'a>(contact: &'a CharacterContact, labels: &HashMap<i64, &'a str>
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .width(Length::Fill);
 

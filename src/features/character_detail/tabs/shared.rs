@@ -22,7 +22,7 @@ pub(super) fn standing_color(value: f64) -> iced::Color {
   } else if value > 0.0 {
     color::with_alpha(color::status::ONLINE, 0.65)
   } else if value >= 0.0 {
-    color::text::SECONDARY
+    color::text::secondary()
   } else if value > -STANDING_HIGH {
     color::with_alpha(color::status::DANGER, 0.65)
   } else {
@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn it_reads_neutral_as_secondary() {
-      assert_eq!(standing_color(0.0), color::text::SECONDARY);
+      assert_eq!(standing_color(0.0), color::text::secondary());
     }
   }
 }

@@ -296,7 +296,7 @@ fn header_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
       text(glyph.to_owned())
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     )
     .width(Length::Fixed(28.0))
@@ -326,7 +326,7 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
   if !draft.show_cc {
     chips = chips.push(
       mouse_area(text("Cc").size(typography::size::SM).style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }))
       .on_press(Message::ComposeCcShown),
     );
@@ -425,7 +425,7 @@ fn suggestion_status<'a>(label: &str) -> Element<'a, Message> {
     text(label.to_owned())
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fill)
@@ -492,7 +492,7 @@ fn body_field(draft: &Draft) -> Element<'_, Message> {
   if let Some(quote) = &draft.quote {
     column = column.push(
       container(text(quote.clone()).size(typography::size::SM).style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }))
       .width(Length::Fill)
       .padding(Padding {
@@ -539,7 +539,7 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
     .map(|p| p.name.clone())
     .unwrap_or_else(|| "Unknown".to_owned());
 
-  let mut trigger_cells: Vec<Element<'a, Message>> = vec![eyebrow_text("FROM", Some(color::text::TERTIARY)).into()];
+  let mut trigger_cells: Vec<Element<'a, Message>> = vec![eyebrow_text("FROM", Some(color::text::tertiary())).into()];
   if let Some(pilot) = from_pilot {
     let portrait = TriggerPortrait {
       id: pilot.id,
@@ -560,7 +560,7 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
     text("\u{25be}")
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   );
@@ -675,7 +675,7 @@ fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
   let (fg, bg) = if enabled {
     (color::surface::BASE, color::accent::PLASMA)
   } else {
-    (color::text::TERTIARY, color::with_alpha(color::text::PRIMARY, 0.05))
+    (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.05))
   };
   let button = container(
     text("Send")
@@ -739,7 +739,7 @@ fn transparent_editor(_theme: &iced::Theme, _status: text_editor::Status) -> tex
       radius: 0.0.into(),
       width: 0.0,
     },
-    placeholder: color::text::TERTIARY,
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::accent::PLASMA_MUTED,
   }
@@ -753,8 +753,8 @@ fn transparent_input(_theme: &iced::Theme, _status: text_input::Status) -> text_
       radius: 0.0.into(),
       width: 0.0,
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::accent::PLASMA_MUTED,
   }

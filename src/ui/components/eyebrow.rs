@@ -13,7 +13,7 @@ where
 }
 
 pub fn eyebrow_text<'a>(label: &str, fill: Option<Color>) -> Text<'a> {
-  let fill = fill.unwrap_or(color::text::SECONDARY);
+  let fill = fill.unwrap_or(color::text::secondary());
 
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)

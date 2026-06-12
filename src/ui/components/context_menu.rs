@@ -76,7 +76,7 @@ where
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
@@ -126,7 +126,7 @@ where
   let label_color = if danger {
     color::status::DANGER
   } else if on_press.is_none() {
-    color::text::TERTIARY
+    color::text::tertiary()
   } else {
     color::text::PRIMARY
   };
@@ -159,7 +159,7 @@ where
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(Padding {

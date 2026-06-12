@@ -50,7 +50,7 @@ pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
     section_label("Query syntax"),
     Space::new().width(Length::Fill).into(),
     icon_button(
-      icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::SECONDARY),
+      icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::secondary()),
       Message::ToggleSearchHelp,
     ),
   ])
@@ -115,13 +115,13 @@ pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
     .width(Length::Fill);
 
   let mut cluster: Vec<Element<'_, Message>> = vec![
-    icon(SEARCH_ICON, SEARCH_ICON_SIZE, color::text::SECONDARY),
+    icon(SEARCH_ICON, SEARCH_ICON_SIZE, color::text::secondary()),
     input.into(),
   ];
 
   if !state.search_query().is_empty() {
     cluster.push(icon_button(
-      icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::SECONDARY),
+      icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::secondary()),
       Message::ClearSearch,
     ));
   }
@@ -130,7 +130,7 @@ pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
   let help_color = if state.search_help_open() {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   cluster.push(icon_button(
     icon(HELP_ICON, HELP_ICON_SIZE, help_color),
@@ -253,7 +253,7 @@ fn example_button_style(_theme: &iced::Theme, status: button::Status) -> button:
 
   button::Style {
     background,
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()
@@ -290,7 +290,7 @@ fn icon_button_style(_theme: &iced::Theme, status: button::Status) -> button::St
 
   button::Style {
     background,
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     border: Border {
       radius: radius::SUBTLE.into(),
       ..Border::default()
@@ -315,8 +315,8 @@ fn input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input:
   text_input::Style {
     background: Background::Color(Color::TRANSPARENT),
     border: Border::default(),
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }
@@ -343,12 +343,12 @@ fn key_chip<'a>(key: &str) -> Element<'a, Message> {
 
 fn muted_text(_theme: &iced::Theme) -> text::Style {
   text::Style {
-    color: Some(color::text::SECONDARY),
+    color: Some(color::text::secondary()),
   }
 }
 
 fn section_label<'a>(label: &str) -> Element<'a, Message> {
-  eyebrow(label, Some(color::text::TERTIARY))
+  eyebrow(label, Some(color::text::tertiary()))
 }
 
 fn tag_chip<'a>(tag: &Tag) -> Element<'a, Message> {
@@ -375,7 +375,7 @@ fn tag_chip_style(_theme: &iced::Theme, status: button::Status) -> button::Style
     button::Status::Hovered | button::Status::Pressed => {
       (color::accent::PLASMA, color::with_alpha(color::accent::PLASMA, 0.4))
     }
-    _ => (color::text::SECONDARY, color::with_alpha(color::text::PRIMARY, 0.12)),
+    _ => (color::text::secondary(), color::with_alpha(color::text::PRIMARY, 0.12)),
   };
 
   button::Style {

@@ -14,7 +14,7 @@ const QUEUE_SIDE_MARGIN: f32 = 28.0;
 
 pub(super) fn empty_state<'a>() -> Element<'a, Message> {
   let body = Column::with_children(vec![
-    eyebrow("Queue \u{b7} 0 skills", Some(color::text::SECONDARY)),
+    eyebrow("Queue \u{b7} 0 skills", Some(color::text::secondary())),
     text("Empty queue")
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
@@ -26,7 +26,7 @@ pub(super) fn empty_state<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -46,7 +46,7 @@ pub(super) fn empty_state<'a>() -> Element<'a, Message> {
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.10),
+        color: color::rule(),
         width: 1.0,
         radius: radius::CARD.into(),
       },

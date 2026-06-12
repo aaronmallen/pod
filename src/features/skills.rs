@@ -386,7 +386,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     text("Add a character to view skills")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .width(Length::Fill)
   .height(Length::Fill)

@@ -111,7 +111,7 @@ fn category_pill<'a>(category: Category, selected: bool) -> Element<'a, Message>
   let text_color = if selected {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   button(
@@ -163,7 +163,7 @@ fn search_field(state: &State) -> Element<'_, Message> {
       text(format!("{} {suffix}", fmt_count(count)))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(typography::colored(color::text::TERTIARY))
+        .style(typography::colored(color::text::tertiary()))
         .into(),
     );
   }
@@ -189,7 +189,7 @@ fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
   let (label_color, glyph_color) = if enabled {
     (color::accent::PLASMA, color::accent::PLASMA)
   } else {
-    (color::text::TERTIARY, color::text::TERTIARY)
+    (color::text::tertiary(), color::text::tertiary())
   };
 
   let content = Row::with_children(vec![
@@ -250,7 +250,7 @@ fn help_toggle<'a>(open: bool) -> Element<'a, Message> {
   let color = if open {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   button(Icon::help().size(15.0).color(color).render())
     .padding(Padding {
@@ -311,7 +311,7 @@ fn totals_summary(state: &State) -> Element<'_, Message> {
 
 fn summary_stat<'a>(label: &'a str, value: String) -> Element<'a, Message> {
   Column::with_children(vec![
-    eyebrow(label, Some(color::text::SECONDARY)),
+    eyebrow(label, Some(color::text::secondary())),
     text(value)
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -417,7 +417,7 @@ fn plain_header<'a>(label: &'a str) -> Element<'a, Message> {
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .width(Length::Fill)
   .align_y(Vertical::Center)
@@ -435,7 +435,7 @@ fn header_cell<'a>(
   let label_color = if active {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let mut content: Vec<Element<'a, Message>> = vec![
@@ -491,13 +491,13 @@ fn table_row<'a>(
     group_cell(inventory_row),
     category_cell(inventory_row),
     numeric_cell(fmt_count(inventory_row.quantity), color::text::PRIMARY),
-    numeric_cell(fmt_volume(inventory_row.row_volume), color::text::SECONDARY),
-    numeric_cell(fmt_isk(inventory_row.unit_price), color::text::SECONDARY),
+    numeric_cell(fmt_volume(inventory_row.row_volume), color::text::secondary()),
+    numeric_cell(fmt_isk(inventory_row.unit_price), color::text::secondary()),
     numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY),
     owner_cell(inventory_row.owner_id, roster, corporations),
     text_cell(
       inventory_row.location_label.clone().unwrap_or_default(),
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
   ];
 
@@ -557,7 +557,7 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       text(inventory_row.type_name.clone())
         .font(typography::body::REGULAR)
         .size(typography::size::XS)
-        .style(typography::colored(color::text::SECONDARY))
+        .style(typography::colored(color::text::secondary()))
         .into(),
     );
   }
@@ -612,7 +612,7 @@ fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
     text(if expanded { "\u{25bc}" } else { "\u{25b6}" })
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .padding(0)
   .width(Length::Fixed(TOGGLE_WIDTH))
@@ -714,7 +714,7 @@ pub(super) fn help_popover<'a>() -> Element<'a, Message> {
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
@@ -724,7 +724,7 @@ pub(super) fn help_popover<'a>() -> Element<'a, Message> {
 }
 
 fn help_section_label<'a>(label: &'a str) -> Element<'a, Message> {
-  container(eyebrow(label, Some(color::text::TERTIARY)))
+  container(eyebrow(label, Some(color::text::tertiary())))
     .padding(Padding {
       top: spacing::UNIT,
       right: spacing::SPACE_3_5,
@@ -785,7 +785,7 @@ fn code_chip<'a>(label: &'static str, accent: bool) -> Element<'a, Message> {
   let text_color = if accent {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   let border_color = if accent {
     color::with_alpha(color::accent::PLASMA, 0.35)
@@ -825,7 +825,7 @@ fn note_text<'a>(note: &'static str) -> Element<'a, Message> {
     text(note)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .width(Length::Fill)
   .into()

@@ -120,7 +120,7 @@ impl<'a, Message> LineChart<'a, Message> {
       frame.fill_text(canvas::Text {
         content: label,
         position: Point::new(t * width, height - 4.0),
-        color: color::text::DIM,
+        color: color::text::dim(),
         size: AXIS_LABEL_SIZE.into(),
         font: typography::mono::REGULAR,
         align_x: tick_alignment(i).into(),
@@ -147,7 +147,7 @@ impl<'a, Message> LineChart<'a, Message> {
       frame.fill_text(canvas::Text {
         content: (self.value_label)(grid_value),
         position: Point::new(width - 4.0, y - 3.0),
-        color: color::text::TERTIARY,
+        color: color::text::tertiary(),
         size: AXIS_LABEL_SIZE.into(),
         font: typography::mono::REGULAR,
         align_x: Horizontal::Right.into(),
@@ -257,13 +257,13 @@ impl<'a, Message> LineChart<'a, Message> {
       &card,
       canvas::Stroke::default()
         .with_width(1.0)
-        .with_color(color::with_alpha(color::text::PRIMARY, 0.18)),
+        .with_color(color::rule_strong()),
     );
 
     frame.fill_text(canvas::Text {
       content: date.to_uppercase(),
       position: Point::new(card_x + 10.0, card_y + 8.0),
-      color: color::text::SECONDARY,
+      color: color::text::secondary(),
       size: 9.0.into(),
       font: typography::mono::REGULAR,
       ..canvas::Text::default()
@@ -285,7 +285,7 @@ impl<'a, Message> LineChart<'a, Message> {
       frame.fill_text(canvas::Text {
         content: self.liquid_label.to_owned(),
         position: Point::new(card_x + 22.0, row_y),
-        color: color::text::SECONDARY,
+        color: color::text::secondary(),
         size: 9.0.into(),
         font: typography::mono::REGULAR,
         ..canvas::Text::default()

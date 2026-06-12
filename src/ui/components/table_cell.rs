@@ -23,7 +23,7 @@ impl TableCell {
     Self {
       align: Horizontal::Left,
       clip: false,
-      color: color::text::SECONDARY,
+      color: color::text::secondary(),
       content: content.into(),
       font: typography::body::REGULAR,
       size: typography::size::SM,

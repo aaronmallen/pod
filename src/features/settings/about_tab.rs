@@ -59,7 +59,7 @@ fn panel_header<'a>() -> Element<'a, Message> {
   let blurb = text("Pod's identity and the EVE Online Developer License trademark notice.")
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
-    .style(typography::colored(color::text::SECONDARY));
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -84,7 +84,7 @@ fn body<'a>() -> Element<'a, Message> {
   let version = text(format!("v{VERSION}"))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
-    .style(typography::colored(color::text::SECONDARY));
+    .style(typography::colored(color::text::secondary()));
   let identity_row = Row::with_children(vec![name.into(), version.into()])
     .align_y(Vertical::Bottom)
     .spacing(spacing::SPACE_2);
@@ -92,12 +92,12 @@ fn body<'a>() -> Element<'a, Message> {
   let build_info = text(format!("Build {GIT_SHA} \u{00b7} {BUILD_DATE}"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::text::TERTIARY));
+    .style(typography::colored(color::text::tertiary()));
 
   let license = text("MIT License")
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(typography::colored(color::text::TERTIARY));
+    .style(typography::colored(color::text::tertiary()));
 
   let identity = Column::with_children(vec![
     identity_row.into(),
@@ -112,14 +112,14 @@ fn body<'a>() -> Element<'a, Message> {
     text(TRADEMARK_NOTICE)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .max_width(NOTICE_MAX_WIDTH);
 
   let copyright = text(TRADEMARK_COPYRIGHT)
     .font(typography::body::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::text::TERTIARY));
+    .style(typography::colored(color::text::tertiary()));
 
   let inner = container(
     Column::with_children(vec![

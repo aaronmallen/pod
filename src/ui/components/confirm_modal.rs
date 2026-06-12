@@ -43,7 +43,7 @@ where
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let header_block =
@@ -93,7 +93,7 @@ where
       .style(|_| container::Style {
         background: Some(Background::Color(color::surface::RAISED)),
         border: Border {
-          color: color::with_alpha(color::text::PRIMARY, 0.18),
+          color: color::rule_strong(),
           width: 1.0,
           radius: radius::CARD.into(),
         },

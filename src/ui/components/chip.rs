@@ -52,7 +52,7 @@ where
   }
 
   pub fn view(self) -> Element<'a, M> {
-    let base = self.color.unwrap_or(color::text::SECONDARY);
+    let base = self.color.unwrap_or(color::text::secondary());
     let fill = if self.selected { color::accent::PLASMA } else { base };
     let background = if self.selected {
       color::with_alpha(color::accent::PLASMA, 0.12)
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_colored_removable_variant() {
-      let _removable: Element<'_, i32> = Chip::new("Nullsec", Some(color::text::SECONDARY)).on_remove(1).view();
+      let _removable: Element<'_, i32> = Chip::new("Nullsec", Some(color::text::secondary())).on_remove(1).view();
     }
 
     #[test]

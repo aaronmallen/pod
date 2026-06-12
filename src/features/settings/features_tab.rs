@@ -167,7 +167,7 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
   )
   .font(typography::body::REGULAR)
   .size(typography::size::MD)
-  .style(typography::colored(color::text::SECONDARY));
+  .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -178,7 +178,7 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     text(format!("{on}/{total}"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .padding(Padding {
     top: spacing::UNIT / 2.0,
@@ -302,7 +302,7 @@ fn feature_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Me
   let description = text(entry.description)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(typography::colored(color::text::SECONDARY));
+    .style(typography::colored(color::text::secondary()));
   let labels = Column::with_children(vec![
     title.into(),
     container(description).max_width(DESCRIPTION_MAX_WIDTH).into(),

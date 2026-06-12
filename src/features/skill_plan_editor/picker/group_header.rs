@@ -19,7 +19,7 @@ pub(in crate::features::skill_plan_editor) fn group_header(
     .size(typography::size::XS_PLUS)
     .width(Length::Fixed(12.0))
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let label = text(name.to_owned())
@@ -33,7 +33,7 @@ pub(in crate::features::skill_plan_editor) fn group_header(
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let inner = Row::with_children(vec![

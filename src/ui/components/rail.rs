@@ -144,7 +144,7 @@ where
   let icon_color = if active {
     color::text::PRIMARY
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let cell = container(

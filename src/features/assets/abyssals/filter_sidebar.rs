@@ -30,7 +30,7 @@ pub(in crate::features::assets) fn rail(state: &State) -> Element<'_, Message> {
 
 fn header(active: bool) -> Element<'static, Message> {
   let mut items: Vec<Element<'static, Message>> = vec![
-    container(eyebrow("Filters", Some(color::text::TERTIARY)))
+    container(eyebrow("Filters", Some(color::text::tertiary())))
       .width(Length::Fill)
       .into(),
   ];
@@ -55,7 +55,7 @@ fn reset_button() -> Element<'static, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(Padding {
@@ -66,7 +66,7 @@ fn reset_button() -> Element<'static, Message> {
   })
   .on_press(Message::AbyssalFilterReset)
   .style(|_, _| button::Style {
-    text_color: color::text::TERTIARY,
+    text_color: color::text::tertiary(),
     ..button::Style::default()
   })
   .into()
@@ -94,8 +94,8 @@ fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
   } else {
     (
       color::with_alpha(color::text::PRIMARY, 0.12),
-      color::text::SECONDARY,
-      color::text::TERTIARY,
+      color::text::secondary(),
+      color::text::tertiary(),
       "Filter by module type",
     )
   };
@@ -155,7 +155,7 @@ fn selected_chip(name: String) -> Element<'static, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .padding(Padding {
@@ -166,7 +166,7 @@ fn selected_chip(name: String) -> Element<'static, Message> {
       })
       .on_press(Message::AbyssalSourceTypeSelected(None))
       .style(|_, _| button::Style {
-        text_color: color::text::SECONDARY,
+        text_color: color::text::secondary(),
         ..button::Style::default()
       })
       .into(),
@@ -205,7 +205,7 @@ fn section<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Messag
   Column::with_children(vec![
     container(
       Column::with_children(vec![
-        eyebrow(label, Some(color::text::TERTIARY)),
+        eyebrow(label, Some(color::text::tertiary())),
         Space::new().height(spacing::SPACE_2_5).into(),
         content,
       ])

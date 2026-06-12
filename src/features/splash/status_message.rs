@@ -20,7 +20,7 @@ where
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let bar: Element<'a, M> = match progress {

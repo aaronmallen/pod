@@ -37,7 +37,7 @@ where
   }
 
   pub fn view(self) -> Element<'a, M> {
-    let fill = self.color.unwrap_or(color::text::SECONDARY);
+    let fill = self.color.unwrap_or(color::text::secondary());
     let background = self.color.map_or_else(
       || color::with_alpha(color::text::PRIMARY, 0.06),
       |c| color::with_alpha(c, BG_ALPHA),

@@ -40,7 +40,7 @@ fn footer(card_data: &AbyssalCard) -> Element<'_, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ];
@@ -53,7 +53,7 @@ fn footer(card_data: &AbyssalCard) -> Element<'_, Message> {
       text("\u{00b7}")
         .size(typography::size::SM)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
     );
@@ -63,7 +63,7 @@ fn footer(card_data: &AbyssalCard) -> Element<'_, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .width(Length::Fill)
         .into(),

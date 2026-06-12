@@ -49,7 +49,7 @@ pub(super) fn modal_view<'a>(
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: radius::CARD.into(),
       },
@@ -72,7 +72,7 @@ fn header(entity_name: &str) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     text(entity_name.to_owned())
@@ -121,7 +121,7 @@ fn current_tags<'a>(modal: &AddTagModal, assigned: &[&'a Tag]) -> Option<Element
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let body = Column::with_children(vec![
@@ -210,7 +210,7 @@ fn tag_row<'a>(entity_type: &'static str, entity_id: i64, tag: &Tag) -> Element<
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
     text(tag.name().clone())
@@ -286,7 +286,7 @@ fn empty_placeholder<'a>(nothing_assignable: bool) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fill)
@@ -300,7 +300,7 @@ fn footer<'a>() -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
 
   let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
@@ -343,8 +343,8 @@ fn search_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }

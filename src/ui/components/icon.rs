@@ -226,7 +226,7 @@ impl Icon {
 
   fn from_bytes(bytes: &'static [u8]) -> Self {
     Self {
-      color: color::text::SECONDARY,
+      color: color::text::secondary(),
       handle: svg::Handle::from_memory(bytes),
       size: DEFAULT_SIZE,
     }

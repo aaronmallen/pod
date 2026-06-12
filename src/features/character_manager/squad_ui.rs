@@ -60,7 +60,7 @@ pub(super) fn modal_view<'a>(creator: &'a SquadCreator) -> Element<'a, Message> 
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
     border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.18),
+      color: color::rule_strong(),
       width: 1.0,
       radius: radius::CARD.into(),
     },
@@ -195,7 +195,7 @@ fn field<'a>(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     input.into(),
@@ -211,7 +211,7 @@ fn color_field<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     color_picker::color_swatch(Some(&creator.color), Message::SquadColorPickerToggled),
@@ -285,8 +285,8 @@ fn field_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_i
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }

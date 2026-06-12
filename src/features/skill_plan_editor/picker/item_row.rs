@@ -125,7 +125,7 @@ fn chip<'a>(label: &'a str, active: bool, on_press: Message) -> Element<'a, Mess
     )
   } else {
     (
-      color::text::SECONDARY,
+      color::text::secondary(),
       color::with_alpha(color::text::PRIMARY, 0.2),
       None,
     )

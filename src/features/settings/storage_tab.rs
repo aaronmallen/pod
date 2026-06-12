@@ -497,7 +497,7 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
   )
   .font(typography::body::REGULAR)
   .size(typography::size::MD)
-  .style(typography::colored(color::text::SECONDARY));
+  .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -537,7 +537,7 @@ fn customized_badge(settings: &Settings) -> Element<'_, Message> {
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .align_y(Vertical::Center)
@@ -600,7 +600,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text(kind.xdg_label())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
   );
   let header = Row::with_children(header_row)
@@ -611,7 +611,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text(kind.description())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .max_width(DESCRIPTION_MAX_WIDTH);
 
@@ -674,12 +674,12 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     text("default")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
     text(default.display().to_string())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -721,7 +721,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
     text("Export logs")
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ];
 
@@ -744,7 +744,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
       text("Exporting\u{2026}")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(typography::colored(color::text::TERTIARY))
+        .style(typography::colored(color::text::tertiary()))
         .into(),
     );
   }
@@ -789,7 +789,7 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
   let box_border = if checked {
     color::accent::PLASMA
   } else {
-    color::with_alpha(color::text::PRIMARY, 0.18)
+    color::rule_strong()
   };
   let check: Element<'a, Message> = if checked {
     text("\u{2713}")
@@ -825,7 +825,7 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
     )
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(typography::colored(color::text::SECONDARY)),
+    .style(typography::colored(color::text::secondary())),
   )
   .max_width(580.0);
 
@@ -870,11 +870,11 @@ fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
     text("Read-only — the live database runs here on local disk; the share never drives the DB over the wire.")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY));
+      .style(typography::colored(color::text::secondary()));
   let path = text(working_copy.display().to_string())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
-    .style(typography::colored(color::text::SECONDARY));
+    .style(typography::colored(color::text::secondary()));
 
   let cell = container(
     Column::with_children(vec![label.into(), explanation.into(), path.into()])
@@ -905,7 +905,7 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
           format!("Last synced {}", status::format_since(secs)),
         )
       }
-      None => (color::text::TERTIARY, "Not synced yet".to_owned()),
+      None => (color::text::tertiary(), "Not synced yet".to_owned()),
     },
   };
 
@@ -914,7 +914,7 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
     text(summary)
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .align_y(Vertical::Center)
@@ -1050,7 +1050,7 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
   )
   .font(typography::body::REGULAR)
   .size(typography::size::MD)
-  .style(typography::colored(color::text::SECONDARY));
+  .style(typography::colored(color::text::secondary()));
 
   let from_to =
     Column::with_children(vec![path_line("from", &pending.from), path_line("to", &pending.to)]).spacing(spacing::UNIT);
@@ -1113,7 +1113,7 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
     border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.18),
+      color: color::rule_strong(),
       width: 1.0,
       radius: radius::CARD.into(),
     },
@@ -1136,7 +1136,7 @@ fn path_line<'a>(label: &'a str, dir: &Path) -> Element<'a, Message> {
       text(label)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
-        .style(typography::colored(color::text::TERTIARY)),
+        .style(typography::colored(color::text::tertiary())),
     )
     .width(Length::Fixed(40.0))
     .into(),
@@ -1165,8 +1165,8 @@ fn path_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_in
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }

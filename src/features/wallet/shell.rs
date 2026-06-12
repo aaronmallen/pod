@@ -170,7 +170,7 @@ fn division_caption<'a>(text_value: &str) -> Element<'a, Message> {
     text(text_value.to_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::TERTIARY)),
+      .style(typography::colored(color::text::tertiary())),
   )
   .padding(Padding {
     top: spacing::SPACE_2,
@@ -344,7 +344,7 @@ fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
     TableCell::new(super::humanize_ref_type(&entry.ref_type))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .color(color::text::SECONDARY)
+      .color(color::text::secondary())
       .view::<Message>(),
   ])
   .width(Length::Fill)
@@ -372,7 +372,7 @@ fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> E
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .align(Horizontal::Right)
-      .color(color::text::TERTIARY)
+      .color(color::text::tertiary())
       .view::<Message>(),
   ])
   .width(Length::Fixed(JOURNAL_RIGHT_COL_WIDTH))
@@ -430,7 +430,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       &fmt_isk(Some(entry.unit_price)),
       Length::FillPortion(2),
       Horizontal::Right,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
     amount_cell(
       &fmt_isk(Some(entry.total)),
@@ -441,14 +441,14 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       &entry.location,
       Length::FillPortion(2),
       Horizontal::Left,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
     character_cell(state, entry.character_id, Length::FillPortion(2)),
     mono_cell(
       &fmt_relative(&entry.date, now),
       Length::FillPortion(1),
       Horizontal::Left,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
   ])
 }
@@ -504,7 +504,7 @@ fn character_cell(state: &State, character_id: i64, width: Length) -> Element<'_
       .size(typography::size::MD)
       .width(Length::Fill)
       .wrapping(text::Wrapping::Word)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .spacing(spacing::SPACE_2_5)
@@ -570,7 +570,7 @@ fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a,
       &entry.status.to_uppercase(),
       Length::FillPortion(2),
       Horizontal::Left,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
     party_cell(Some(entry.issuer_id), entry.issuer.as_deref(), Length::FillPortion(2)),
     party_cell(counterparty_id, counterparty_name, Length::FillPortion(2)),
@@ -579,13 +579,13 @@ fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a,
       &fmt_isk(entry.collateral),
       Length::FillPortion(2),
       Horizontal::Right,
-      color::text::TERTIARY,
+      color::text::tertiary(),
     ),
     mono_cell(
       &fmt_relative(&entry.date_issued, now),
       Length::FillPortion(1),
       Horizontal::Left,
-      color::text::SECONDARY,
+      color::text::secondary(),
     ),
   ])
 }
@@ -659,7 +659,7 @@ fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element
       .size(typography::size::MD)
       .width(Length::Fill)
       .wrapping(text::Wrapping::Word)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   );
 
@@ -803,7 +803,7 @@ fn empty_ledger(message: &str) -> Element<'_, Message> {
     text(message.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .width(Length::Fill)
   .height(Length::Fill)
@@ -823,7 +823,7 @@ fn no_source_state<'a>(title: &str, detail: &str) -> Element<'a, Message> {
     text(detail.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -895,7 +895,7 @@ fn recent_activity<'a>(entries: &[&'a JournalEntry], now: DateTime<Utc>) -> Elem
       text("No recent activity.")
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
-        .style(typography::colored(color::text::TERTIARY))
+        .style(typography::colored(color::text::tertiary()))
         .into(),
     );
   } else {
@@ -937,12 +937,12 @@ fn recent_activity_row<'a>(entry: &'a JournalEntry, now: DateTime<Utc>) -> Eleme
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .width(Length::Fill)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
     text(fmt_relative(&entry.date, now))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
   ])
   .align_y(Vertical::Center);
@@ -990,7 +990,7 @@ fn category_bar<'a>(category: &super::CategoryFlow, max_total: f64) -> Element<'
     text(fmt_isk(Some(total)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .align_y(Vertical::Center);

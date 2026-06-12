@@ -136,7 +136,7 @@ pub(in crate::features::character_detail) fn body(
 fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
   let total_isk = stats.kill_isk + stats.loss_isk;
   let (eff_label, eff_color) = if total_isk <= 0.0 {
-    ("\u{2014}".to_owned(), color::text::SECONDARY)
+    ("\u{2014}".to_owned(), color::text::secondary())
   } else {
     let pct = stats.kill_isk / total_isk * 100.0;
     let color = if pct >= 50.0 {
@@ -163,7 +163,7 @@ fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
 }
 
 fn summary_tile<'a>(label: &str, value: String, accent: iced::Color) -> Element<'a, Message> {
-  let label_el = eyebrow_text(label, Some(color::text::SECONDARY));
+  let label_el = eyebrow_text(label, Some(color::text::secondary()));
   let value_el = text(value)
     .font(typography::mono::MEDIUM)
     .size(22.0)
@@ -204,7 +204,7 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
     let label_color = if selected {
       color::accent::PLASMA
     } else {
-      color::text::SECONDARY
+      color::text::secondary()
     };
     buttons.push(
       iced::widget::button(
@@ -250,7 +250,7 @@ fn entries_card<'a>(visible: &[&'a KillLogEntry]) -> Element<'a, Message> {
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .width(Length::Fill)
@@ -267,7 +267,7 @@ fn entries_card<'a>(visible: &[&'a KillLogEntry]) -> Element<'a, Message> {
 }
 
 fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
-  let cell = eyebrow_text(label, Some(color::text::TERTIARY)).width(Length::Fill);
+  let cell = eyebrow_text(label, Some(color::text::tertiary())).width(Length::Fill);
 
   container(cell)
     .width(Length::Fill)
@@ -335,7 +335,7 @@ fn kill_row<'a>(entry: &'a KillLogEntry, last: bool) -> Element<'a, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           })
           .into(),
       ),
@@ -347,7 +347,7 @@ fn kill_row<'a>(entry: &'a KillLogEntry, last: bool) -> Element<'a, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           })
           .into(),
       ),
@@ -433,7 +433,7 @@ fn victim_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .width(Length::Fill)
       .into(),
@@ -449,7 +449,7 @@ fn system_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into();
   };

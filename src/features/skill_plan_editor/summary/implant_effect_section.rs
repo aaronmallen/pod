@@ -88,7 +88,7 @@ fn figure_column(title: &'static str, sec: f64, highlight: bool) -> Element<'sta
       color: Some(if highlight {
         color::accent::PLASMA
       } else {
-        color::text::TERTIARY
+        color::text::tertiary()
       }),
     });
 
@@ -136,7 +136,7 @@ fn savings_callout(saved: f64) -> Element<'static, Message> {
     (
       color::surface::SUNKEN,
       color::with_alpha(color::text::PRIMARY, 0.1),
-      color::text::TERTIARY,
+      color::text::tertiary(),
     )
   };
 
@@ -174,7 +174,7 @@ fn bonus_pill(key: AttrKey, value: u32) -> Element<'static, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
       Space::new().width(4.0).into(),

@@ -1,4 +1,5 @@
 pub mod about_tab;
+pub mod accessibility_tab;
 pub mod features_tab;
 pub mod log_export;
 pub mod storage_tab;
@@ -26,24 +27,31 @@ const INDICATOR_INSET: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Category {
+  About,
+  Accessibility,
   #[default]
   Features,
   Storage,
   Tags,
-  About,
 }
 
 impl Category {
   /// The categories that appear in the normal top-of-rail list, in order. `About` is excluded here
   /// because it is pinned to the bottom of the rail, separated from the rest.
-  const ALL: [Category; 3] = [Category::Features, Category::Storage, Category::Tags];
+  const ALL: [Category; 4] = [
+    Category::Accessibility,
+    Category::Features,
+    Category::Storage,
+    Category::Tags,
+  ];
 
   fn label(self) -> &'static str {
     match self {
+      Category::About => "About",
+      Category::Accessibility => "Accessibility",
       Category::Features => "Features",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
-      Category::About => "About",
     }
   }
 }
@@ -51,6 +59,7 @@ impl Category {
 #[derive(Clone, Debug)]
 pub enum Message {
   About(about_tab::Message),
+  Accessibility(accessibility_tab::Message),
   CategorySelected(Category),
   Features(features_tab::Message),
   ResetToDefaults,
@@ -60,12 +69,8 @@ pub enum Message {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Outcome {
-  #[allow(dead_code)]
   AccessibilityChanged,
-  ExportLogs {
-    end: DateTime<Utc>,
-    start: DateTime<Utc>,
-  },
+  ExportLogs { end: DateTime<Utc>, start: DateTime<Utc> },
   None,
   Persist,
   ReleaseLock,
@@ -74,6 +79,7 @@ pub enum Outcome {
 
 #[derive(Debug)]
 pub struct State {
+  accessibility: accessibility_tab::State,
   active: Category,
   db: Database,
   features: features_tab::State,
@@ -84,10 +90,12 @@ pub struct State {
 
 impl State {
   pub fn new(settings: Settings, db: Database) -> Self {
+    let accessibility = accessibility_tab::State::from_settings(&settings);
     let features = features_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
     State {
+      accessibility,
       active: Category::default(),
       db,
       features,
@@ -121,6 +129,10 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
   let (outcome, task) = match message {
     Message::About(msg) => (about_tab::update(msg), Task::none()),
+    Message::Accessibility(msg) => (
+      accessibility_tab::update(&mut state.accessibility, msg, &mut state.settings),
+      Task::none(),
+    ),
     Message::CategorySelected(category) => {
       state.active = category;
       (Outcome::None, Task::none())
@@ -138,8 +150,16 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       (outcome, task.map(Message::Tags))
     }
     Message::ResetToDefaults => {
+      let active = state.active;
       reset_active(state);
-      (Outcome::Persist, Task::none())
+      // Resetting the scale must re-scale every open window, not just persist; only the
+      // AccessibilityChanged outcome makes the app hoist the new scale factor live.
+      let outcome = if active == Category::Accessibility {
+        Outcome::AccessibilityChanged
+      } else {
+        Outcome::Persist
+      };
+      (outcome, Task::none())
     }
   };
   if matches!(outcome, Outcome::AccessibilityChanged | Outcome::Persist) {
@@ -151,6 +171,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
 fn reset_active(state: &mut State) {
   let defaults = Settings::default();
   match state.active {
+    Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
     Category::Features => *state.settings.features_mut() = *defaults.features(),
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
     Category::Tags | Category::About => {}
@@ -173,7 +194,7 @@ fn header<'a>() -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
   let title = text("Settings")
     .font(typography::body::MEDIUM)
@@ -202,7 +223,7 @@ fn header<'a>() -> Element<'a, Message> {
     };
     button::Style {
       background: Some(Background::Color(iced::Color::TRANSPARENT)),
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       border: Border {
         color: color::with_alpha(color::text::PRIMARY, border_alpha),
         width: 1.0,
@@ -221,7 +242,7 @@ fn categories_pane(state: &State) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -279,12 +300,12 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
   let label_color = if active {
     color::text::PRIMARY
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   let badge_color = if active {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let mut row_children: Vec<Element<'_, Message>> = vec![
@@ -371,19 +392,23 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
 
 fn badge_for(state: &State, category: Category) -> String {
   match category {
+    Category::About => String::new(),
+    Category::Accessibility => accessibility_tab::badge(&state.settings),
     Category::Features => features_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
-    Category::About => String::new(),
   }
 }
 
 fn active_panel(state: &State) -> Element<'_, Message> {
   match state.active {
+    Category::About => about_tab::view().map(Message::About),
+    Category::Accessibility => {
+      accessibility_tab::view(&state.accessibility, &state.settings).map(Message::Accessibility)
+    }
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
-    Category::About => about_tab::view().map(Message::About),
   }
 }
 
@@ -424,6 +449,18 @@ mod tests {
       state.settings.features().wallet(),
       "Features reset should re-enable wallet"
     );
+  }
+
+  #[tokio::test]
+  async fn reset_on_accessibility_restores_the_default_scale_and_signals_a_live_change() {
+    let mut state = state().await;
+    state.active = Category::Accessibility;
+    state.settings.accessibility_mut().set_scale(125);
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::AccessibilityChanged);
+    assert_eq!(*state.settings.accessibility().scale(), 100);
   }
 
   #[tokio::test]

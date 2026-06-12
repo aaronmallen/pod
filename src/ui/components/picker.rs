@@ -68,7 +68,7 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -122,7 +122,7 @@ pub fn picker_dropdown<'a, M: 'a + Clone>(groups: Vec<PickerGroup<'a, M>>) -> El
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: 10.0.into(),
       },
@@ -177,7 +177,7 @@ pub fn trigger_identity<'a, M: 'a>(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -187,7 +187,7 @@ pub fn trigger_identity<'a, M: 'a>(
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let mut cells: Vec<Element<'a, M>> = Vec::with_capacity(3);
@@ -246,7 +246,7 @@ fn section_header<'a, M: 'a>(title: String) -> Element<'a, M> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   container(label)
@@ -282,7 +282,7 @@ fn trigger_style(open: bool, status: button::Status) -> button::Style {
     background: background.map(Background::Color),
     border: Border {
       color: if open {
-        color::with_alpha(color::text::PRIMARY, 0.18)
+        color::rule_strong()
       } else {
         iced::Color::TRANSPARENT
       },

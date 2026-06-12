@@ -39,7 +39,7 @@ fn bar_label_row(label: String, time_str: String) -> Element<'static, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])

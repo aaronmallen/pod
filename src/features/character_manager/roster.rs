@@ -224,7 +224,7 @@ fn squad_bar<'a>(group: &'a SquadGroup, collapsed: bool, dragged: bool) -> Eleme
     .height(Length::Fixed(SQUAD_CHEVRON_GLYPH))
     .rotation(Rotation::Floating(Radians(if collapsed { -FRAC_PI_2 } else { 0.0 })))
     .style(|_, _| svg::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
   let chevron = mouse_area(
     container(chevron_glyph)
@@ -299,7 +299,7 @@ fn squad_bar<'a>(group: &'a SquadGroup, collapsed: bool, dragged: bool) -> Eleme
 }
 
 fn squad_kebab<'a>(squad_id: i64) -> Element<'a, Message> {
-  let dot = || status::dot_sized(color::text::SECONDARY, SQUAD_KEBAB_DOT);
+  let dot = || status::dot_sized(color::text::secondary(), SQUAD_KEBAB_DOT);
   let dots = Column::with_children(vec![dot(), dot(), dot()])
     .spacing(SQUAD_KEBAB_DOT_GAP)
     .align_x(Horizontal::Center);
@@ -341,7 +341,7 @@ fn squad_name_block<'a>(group: &'a SquadGroup) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -389,7 +389,7 @@ fn squad_stats<'a>(cards: &'a [CardModel]) -> Element<'a, Message> {
 }
 
 fn bar_stat<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
-  let label = eyebrow(label, Some(color::text::TERTIARY));
+  let label = eyebrow(label, Some(color::text::tertiary()));
 
   let body = container(Column::with_children(vec![label, value]).spacing(spacing::UNIT)).padding(Padding {
     left: BAR_STAT_PAD_X,
@@ -453,13 +453,13 @@ fn empty_drop<'a>(label: &str, squad_id: i64, drag: DragContext) -> Element<'a, 
     .width(Length::Fixed(EMPTY_DROP_ICON))
     .height(Length::Fixed(EMPTY_DROP_ICON))
     .style(|_, _| svg::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
   let caption = text(label.to_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
   let column = Column::with_children(vec![glyph.into(), caption.into()])
     .spacing(EMPTY_DROP_GAP)
@@ -481,7 +481,7 @@ fn empty_drop<'a>(label: &str, squad_id: i64, drag: DragContext) -> Element<'a, 
         color: if highlighted {
           color::with_alpha(color::accent::PLASMA, DROP_BORDER_ALPHA)
         } else {
-          color::with_alpha(color::text::PRIMARY, 0.18)
+          color::rule_strong()
         },
         width: 1.0,
         radius: radius::CARD.into(),
@@ -501,7 +501,7 @@ fn unassigned_section<'a>(
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if show_header {
-    children.push(header_row("Unassigned", cards.len(), color::text::TERTIARY));
+    children.push(header_row("Unassigned", cards.len(), color::text::tertiary()));
   }
   children.push(grid(cards, squad_id, sync, drag));
 
@@ -527,7 +527,7 @@ fn header_row<'a>(label: &'a str, count: usize, count_color: Color) -> Element<'
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
   let count = text(count.to_string())
     .font(typography::mono::REGULAR)
@@ -649,7 +649,7 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
       mouse_area(scroll).on_move(Message::DragMoved).into()
     }
     Some(Filtered::Error(error)) => centered(message_text(format!("Search failed: {error}"), color::status::DANGER)),
-    Some(Filtered::Loading) | None => centered(message_text("Searching…".to_owned(), color::text::SECONDARY)),
+    Some(Filtered::Loading) | None => centered(message_text("Searching…".to_owned(), color::text::secondary())),
   }
 }
 
@@ -679,7 +679,7 @@ fn no_matches<'a>() -> Element<'a, Message> {
         .width(Length::Fixed(NO_MATCH_ICON))
         .height(Length::Fixed(NO_MATCH_ICON))
         .style(|_, _| svg::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
       message_text("No capsuleers match".to_owned(), color::text::PRIMARY),
@@ -687,7 +687,7 @@ fn no_matches<'a>() -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
       button(
@@ -714,7 +714,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     ])

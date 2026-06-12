@@ -78,7 +78,7 @@ fn title_block<'a>(label: &str) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -93,7 +93,7 @@ fn stepper<'a>(local_id: i64, attribute: super::Attribute, value: u32) -> Elemen
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().width(4.0).into(),
@@ -143,7 +143,7 @@ fn step_btn<'a>(glyph: &'a str, message: Message) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(7.0)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(0.0)

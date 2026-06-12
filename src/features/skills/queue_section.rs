@@ -47,7 +47,7 @@ fn queue_list<'a>(computed: &'a ComputedQueue, skip_n: usize, now: DateTime<Utc>
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.10),
+        color: color::rule(),
         width: 1.0,
         radius: radius::CARD.into(),
       },

@@ -159,12 +159,12 @@ fn compose_button<'a>() -> Element<'a, Message> {
   let content = Row::with_children(vec![
     Icon::pencil()
       .size(14.0)
-      .color(color::text::SECONDARY)
+      .color(color::text::secondary())
       .render::<Message>(),
     text("Compose")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -194,7 +194,7 @@ fn compose_button_style(status: button::Status) -> button::Style {
     text_color: if hovered {
       color::text::PRIMARY
     } else {
-      color::text::SECONDARY
+      color::text::secondary()
     },
     ..button::Style::default()
   }

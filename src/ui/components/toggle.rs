@@ -57,10 +57,7 @@ where
       let (background, border_color) = if on {
         (color::accent::PLASMA, color::accent::PLASMA)
       } else {
-        (
-          color::with_alpha(color::text::PRIMARY, 0.08),
-          color::with_alpha(color::text::PRIMARY, 0.18),
-        )
+        (color::with_alpha(color::text::PRIMARY, 0.08), color::rule_strong())
       };
       container::Style {
         background: Some(Background::Color(background)),

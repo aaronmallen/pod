@@ -242,7 +242,7 @@ fn prompt_overlay<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().height(spacing::SPACE_6).into(),
@@ -307,7 +307,7 @@ fn ghost_btn<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
       radius: radius::CONTROL.into(),
       ..Border::default()
     },
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     ..button::Style::default()
   })
   .into()

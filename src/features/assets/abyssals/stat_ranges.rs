@@ -203,7 +203,7 @@ pub(super) fn placeholder() -> Element<'static, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(Padding {
@@ -230,7 +230,7 @@ fn stat_slider_row<'a>(
   let readout_color = if is_active {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let min_el = value_label(
@@ -341,7 +341,7 @@ fn value_label<'a>(
           width: 1.0,
         },
         icon: color::accent::PLASMA,
-        placeholder: color::text::TERTIARY,
+        placeholder: color::text::tertiary(),
         selection: color::with_alpha(color::accent::PLASMA, 0.25),
         value: color::accent::PLASMA,
       })
@@ -373,7 +373,7 @@ fn bound_text(label: String) -> Element<'static, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     })
     .into()
 }

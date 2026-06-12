@@ -59,7 +59,7 @@ fn close_btn<'a>() -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(14.0)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -75,7 +75,7 @@ fn close_btn<'a>() -> Element<'a, Message> {
       radius: radius::CONTROL.into(),
       ..Border::default()
     },
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     ..button::Style::default()
   })
   .into()
@@ -104,7 +104,7 @@ fn ghost_btn<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
         radius: radius::CONTROL.into(),
         ..Border::default()
       },
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       ..button::Style::default()
     })
     .into()
@@ -147,7 +147,7 @@ fn inert_trigger<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> 
       text_color: if active {
         color::text::PRIMARY
       } else {
-        color::text::SECONDARY
+        color::text::secondary()
       },
       ..button::Style::default()
     }
@@ -173,8 +173,8 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
         radius: 4.0.into(),
         width: 0.0,
       },
-      icon: color::text::SECONDARY,
-      placeholder: color::text::TERTIARY,
+      icon: color::text::secondary(),
+      placeholder: color::text::tertiary(),
       value: color::text::PRIMARY,
       selection: color::accent::PLASMA_MUTED,
     })
@@ -185,7 +185,7 @@ fn save_btn<'a>(dirty: bool) -> Element<'a, Message> {
   let (label_color, bg) = if dirty {
     (color::surface::BASE, color::accent::PLASMA)
   } else {
-    (color::text::TERTIARY, color::with_alpha(color::accent::PLASMA, 0.18))
+    (color::text::tertiary(), color::with_alpha(color::accent::PLASMA, 0.18))
   };
 
   button(

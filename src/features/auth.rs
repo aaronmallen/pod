@@ -236,9 +236,9 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
   match &flow.status {
     Status::Waiting => children.push(body_text(
       "A browser window opened to EVE SSO. Authorize there and Pod will finish automatically — you don't need to come back here.",
-      color::text::SECONDARY,
+      color::text::secondary(),
     )),
-    Status::Completing => children.push(body_text(completing, color::text::SECONDARY)),
+    Status::Completing => children.push(body_text(completing, color::text::secondary())),
     Status::Failed(error) => children.push(
       text(error)
         .font(typography::mono::REGULAR)

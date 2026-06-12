@@ -21,7 +21,7 @@ pub(in crate::features::skills) fn pip_ladder<'a>(current: u8, target: u8) -> El
         color::with_alpha(color::accent::PLASMA, 0.5),
       )
     } else {
-      (iced::Color::TRANSPARENT, color::with_alpha(color::text::PRIMARY, 0.10))
+      (iced::Color::TRANSPARENT, color::rule())
     };
 
     container(Space::new())
@@ -58,14 +58,14 @@ pub(in crate::features::skills) fn level_transition<'a>(current: u8, target: u8)
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     text("\u{2192}")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
     text(roman(i64::from(target)))

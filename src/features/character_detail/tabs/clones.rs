@@ -74,7 +74,7 @@ fn jump_section(jumps: &[CloneWithImplants<crate::store::model::CharacterJumpClo
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .width(Length::Fill)
@@ -169,7 +169,7 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
   let index_color = if implant.is_some() {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
   let index = text(format!("{slot:02}"))
     .font(typography::mono::REGULAR)
@@ -196,7 +196,7 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::with_alpha(color::text::PRIMARY, 0.18)),
+        color: Some(color::rule_strong()),
       })
       .width(Length::Fill)
       .into(),

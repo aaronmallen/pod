@@ -103,7 +103,7 @@ fn group_cell<'a>(state: &State, pilot_id: i64, summary: Option<GroupModel>, lea
   let at_v_color = if summary.at_v > 0 {
     color::with_alpha(color::text::PRIMARY, 0.7)
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let counts = Row::with_children(vec![
@@ -119,7 +119,7 @@ fn group_cell<'a>(state: &State, pilot_id: i64, summary: Option<GroupModel>, lea
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])
@@ -232,7 +232,7 @@ fn label_group<'a>(state: &State, group: &'a SkillCatalogGroup) -> Element<'a, M
     Icon::chevron_right()
   }
   .size(12.0)
-  .color(color::text::TERTIARY)
+  .color(color::text::tertiary())
   .render();
 
   button(
@@ -273,14 +273,14 @@ fn label_skill(skill: &SkillCatalogEntry) -> Element<'_, Message> {
       .size(typography::size::SM)
       .width(Length::Fill)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     text(format!("\u{00d7}{}", skill.rank))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])
@@ -404,11 +404,11 @@ fn skill_cell<'a>(state: &State, pilot_id: i64, level: u8, leader: bool) -> Elem
     roman(i64::from(level))
   };
   let label_color = if level == 0 {
-    color::text::TERTIARY
+    color::text::tertiary()
   } else if leader {
     color::text::PRIMARY
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let content = Row::with_children(vec![

@@ -72,7 +72,7 @@ fn completes_col<'a>(
   };
 
   container(Column::with_children(vec![
-    eyebrow(&offset_label, Some(color::text::TERTIARY)),
+    eyebrow(&offset_label, Some(color::text::tertiary())),
     text(fmt_eta(now, cum_end_secs))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -112,7 +112,7 @@ fn skill_col<'a>(item: &'a ComputedQueueItem) -> Element<'a, Message> {
     title_children.push(rank_badge(item.rank));
   }
   if !item.group_name.is_empty() {
-    title_children.push(eyebrow_text(&item.group_name, Some(color::text::TERTIARY)).into());
+    title_children.push(eyebrow_text(&item.group_name, Some(color::text::tertiary())).into());
   }
   let title = Row::with_children(title_children)
     .spacing(spacing::SPACE_2_5)
@@ -146,7 +146,7 @@ fn sp_col<'a>(sp_needed: u64) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
     ])

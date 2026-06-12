@@ -72,7 +72,7 @@ pub(in crate::features::skills) fn readout<'a>(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     primary,
@@ -83,7 +83,7 @@ pub(in crate::features::skills) fn readout<'a>(
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -102,8 +102,8 @@ pub(in crate::features::skills) fn attr_chip<'a>(attr: Attr, primary: bool) -> E
   } else {
     (
       color::with_alpha(color::text::PRIMARY, 0.05),
-      color::text::SECONDARY,
-      color::with_alpha(color::text::PRIMARY, 0.10),
+      color::text::secondary(),
+      color::rule(),
     )
   };
 
@@ -139,7 +139,7 @@ pub(in crate::features::skills) fn rank_badge<'a>(rank: u8) -> Element<'a, Messa
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -150,7 +150,7 @@ pub(in crate::features::skills) fn rank_badge<'a>(rank: u8) -> Element<'a, Messa
   })
   .style(|_| container::Style {
     border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.10),
+      color: color::rule(),
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },

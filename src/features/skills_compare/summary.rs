@@ -200,7 +200,7 @@ fn stat_row<'a>(state: &State, label: &str, values: &[f64], fmt: impl Fn(f64) ->
     vec![false; values.len()]
   };
 
-  let label_cell = container(eyebrow_text(label, Some(color::text::SECONDARY)))
+  let label_cell = container(eyebrow_text(label, Some(color::text::secondary())))
     .width(Length::Fixed(LABEL_COLUMN_WIDTH))
     .height(Length::Fixed(ROW_HEIGHT))
     .padding(Padding {

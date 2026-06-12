@@ -109,30 +109,96 @@ pub mod surface {
 pub mod text {
   use iced::Color;
 
-  pub const DIM: Color = Color {
-    r: 0.957,
-    g: 0.949,
-    b: 0.925,
-    a: 0.45,
-  };
+  use super::high_contrast;
+
   pub const PRIMARY: Color = Color {
     r: 0.957,
     g: 0.949,
     b: 0.925,
     a: 1.0,
   };
-  pub const SECONDARY: Color = Color {
+
+  const DIM_HC: Color = Color {
+    r: 0.573,
+    g: 0.565,
+    b: 0.545,
+    a: 1.0,
+  };
+  const DIM_OFF: Color = Color {
+    r: 0.957,
+    g: 0.949,
+    b: 0.925,
+    a: 0.45,
+  };
+  const SECONDARY_HC: Color = Color {
+    r: 0.812,
+    g: 0.804,
+    b: 0.780,
+    a: 1.0,
+  };
+  const SECONDARY_OFF: Color = Color {
     r: 0.957,
     g: 0.949,
     b: 0.925,
     a: 0.55,
   };
-  pub const TERTIARY: Color = Color {
+  const TERTIARY_HC: Color = Color {
+    r: 0.682,
+    g: 0.675,
+    b: 0.651,
+    a: 1.0,
+  };
+  const TERTIARY_OFF: Color = Color {
     r: 0.957,
     g: 0.949,
     b: 0.925,
     a: 0.35,
   };
+
+  pub fn dim() -> Color {
+    if high_contrast() { DIM_HC } else { DIM_OFF }
+  }
+
+  pub fn secondary() -> Color {
+    if high_contrast() { SECONDARY_HC } else { SECONDARY_OFF }
+  }
+
+  pub fn tertiary() -> Color {
+    if high_contrast() { TERTIARY_HC } else { TERTIARY_OFF }
+  }
+}
+
+const RULE_HC_ALPHA: f32 = 0.22;
+const RULE_OFF_ALPHA: f32 = 0.10;
+const RULE_STRONG_HC_ALPHA: f32 = 0.34;
+const RULE_STRONG_OFF_ALPHA: f32 = 0.18;
+
+static HIGH_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn high_contrast() -> bool {
+  HIGH_CONTRAST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn rule() -> iced::Color {
+  with_alpha(
+    text::PRIMARY,
+    if high_contrast() { RULE_HC_ALPHA } else { RULE_OFF_ALPHA },
+  )
+}
+
+pub fn rule_strong() -> iced::Color {
+  with_alpha(
+    text::PRIMARY,
+    if high_contrast() {
+      RULE_STRONG_HC_ALPHA
+    } else {
+      RULE_STRONG_OFF_ALPHA
+    },
+  )
+}
+
+pub fn set_high_contrast(enabled: bool) {
+  HIGH_CONTRAST.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
@@ -144,6 +210,103 @@ pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
 
 #[cfg(test)]
 mod tests {
+  mod high_contrast {
+    use std::sync::Mutex;
+
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    use super::super::{rule, rule_strong, set_high_contrast, text};
+
+    static GUARD: Mutex<()> = Mutex::new(());
+
+    const DIM_HC: iced::Color = iced::Color {
+      r: 0.573,
+      g: 0.565,
+      b: 0.545,
+      a: 1.0,
+    };
+    const DIM_OFF: iced::Color = iced::Color {
+      r: 0.957,
+      g: 0.949,
+      b: 0.925,
+      a: 0.45,
+    };
+    const SECONDARY_HC: iced::Color = iced::Color {
+      r: 0.812,
+      g: 0.804,
+      b: 0.780,
+      a: 1.0,
+    };
+    const SECONDARY_OFF: iced::Color = iced::Color {
+      r: 0.957,
+      g: 0.949,
+      b: 0.925,
+      a: 0.55,
+    };
+    const TERTIARY_HC: iced::Color = iced::Color {
+      r: 0.682,
+      g: 0.675,
+      b: 0.651,
+      a: 1.0,
+    };
+    const TERTIARY_OFF: iced::Color = iced::Color {
+      r: 0.957,
+      g: 0.949,
+      b: 0.925,
+      a: 0.35,
+    };
+
+    #[test]
+    fn it_returns_the_translucent_overlays_when_disabled() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      set_high_contrast(false);
+
+      assert_eq!(text::secondary(), SECONDARY_OFF);
+      assert_eq!(text::tertiary(), TERTIARY_OFF);
+      assert_eq!(text::dim(), DIM_OFF);
+      assert_eq!(rule().a, 0.10);
+      assert_eq!(rule_strong().a, 0.18);
+    }
+
+    #[test]
+    fn it_returns_the_tuned_solids_when_enabled() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      set_high_contrast(true);
+
+      assert_eq!(text::secondary(), SECONDARY_HC);
+      assert_eq!(text::tertiary(), TERTIARY_HC);
+      assert_eq!(text::dim(), DIM_HC);
+      assert_eq!(rule().a, 0.22);
+      assert_eq!(rule_strong().a, 0.34);
+
+      set_high_contrast(false);
+    }
+
+    #[test]
+    fn it_keeps_primary_text_unchanged_in_both_states() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      set_high_contrast(true);
+      let on = text::PRIMARY;
+      set_high_contrast(false);
+      let off = text::PRIMARY;
+
+      assert_eq!(on, off);
+    }
+
+    #[test]
+    fn it_firms_the_solids_above_the_overlays() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      set_high_contrast(false);
+      let off = text::secondary();
+      set_high_contrast(true);
+      let on = text::secondary();
+      set_high_contrast(false);
+
+      assert_ne!(on, off);
+    }
+  }
+
   mod chart {
     mod series {
       use pretty_assertions::{assert_eq, assert_ne};

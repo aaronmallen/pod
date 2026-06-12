@@ -169,7 +169,7 @@ fn ghost_identity(model: &CardModel) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   container(Column::with_children(vec![name.into(), ticker.into()]).spacing(spacing::UNIT))
@@ -265,7 +265,7 @@ fn identity(model: &CardModel) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   container(Column::with_children(vec![name.into(), ticker.into()]).spacing(spacing::UNIT))
@@ -310,7 +310,7 @@ fn add_tag_affordance<'a>(character_id: i64) -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding([spacing::UNIT / 2.0, spacing::SPACE_2])
@@ -320,7 +320,7 @@ fn add_tag_affordance<'a>(character_id: i64) -> Element<'a, Message> {
   })
   .style(|_, _| button::Style {
     background: None,
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     border: Border {
       color: color::with_alpha(color::text::PRIMARY, 0.1),
       width: HAIRLINE,
@@ -336,7 +336,7 @@ fn training_section(model: &CardModel) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let header: Element<'_, Message> = match &model.training {
@@ -425,7 +425,7 @@ fn stat<'a>(label: &'a str, value: String, value_font: iced::Font) -> Element<'a
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
   let value = text(value)
     .font(value_font)

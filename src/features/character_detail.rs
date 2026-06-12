@@ -514,7 +514,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
     text("Select a character to view details")
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .width(Length::Fill)
   .height(Length::Fill)

@@ -22,7 +22,7 @@ pub fn empty_state<'a>() -> Element<'a, Message> {
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
       Space::new().height(Length::Fixed(spacing::SPACE_6)).into(),

@@ -194,7 +194,7 @@ fn sort_header<'a>(label: &'a str, column: SortColumn, width: f32, sort: Sort) -
   let label_color = if active {
     color::accent::PLASMA
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
 
   let mut children: Vec<Element<'a, Message>> = vec![
@@ -252,6 +252,6 @@ fn header_label(label: &str) -> text::Text<'_> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
 }

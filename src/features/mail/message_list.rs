@@ -467,7 +467,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
       })
       .style(move |_| text::Style {
         color: Some(if row.is_read {
-          color::text::SECONDARY
+          color::text::secondary()
         } else {
           color::text::PRIMARY
         }),
@@ -480,7 +480,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -506,7 +506,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
       })
       .style(move |_| text::Style {
         color: Some(if row.is_read {
-          color::text::SECONDARY
+          color::text::secondary()
         } else {
           color::text::PRIMARY
         }),
@@ -520,7 +520,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
     .size(typography::size::SM)
     .wrapping(text::Wrapping::Word)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let mut content = Column::with_children(vec![sender.into(), subject_row.into(), snippet.into()])
@@ -627,7 +627,7 @@ fn sender_kind_icon<'a>(kind: SenderKind) -> Option<Element<'a, Message>> {
     SenderKind::Corp => Icon::notif_corp(),
     SenderKind::System => Icon::notif_system(),
   };
-  Some(icon.size(INDICATOR_ICON_SIZE).color(color::text::SECONDARY).render())
+  Some(icon.size(INDICATOR_ICON_SIZE).color(color::text::secondary()).render())
 }
 
 fn importance_flag<'a>() -> Element<'a, Message> {
@@ -643,7 +643,7 @@ fn attachment_indicator<'a>() -> Element<'a, Message> {
   text("\u{1f4ce}")
     .size(typography::size::XS_PLUS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into()
 }

@@ -74,7 +74,7 @@ where
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: radius::SUBTLE.into(),
       },
@@ -93,7 +93,7 @@ where
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(0)
@@ -109,7 +109,7 @@ fn empty_state<'a, M>() -> Element<'a, M>
 where
   M: 'a,
 {
-  container(eyebrow("No characters linked", color::text::TERTIARY))
+  container(eyebrow("No characters linked", color::text::tertiary()))
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_6,
@@ -141,7 +141,7 @@ where
   let mut left = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
   left = left.push(eyebrow(
     format!("{} / {} endpoints", model.done, model.total),
-    color::text::TERTIARY,
+    color::text::tertiary(),
   ));
   if model.errors > 0 {
     left = left.push(eyebrow(
@@ -153,7 +153,7 @@ where
   let body = Row::with_children(vec![
     left.into(),
     Space::new().width(Length::Fill).into(),
-    eyebrow("Auto every 8s", color::text::TERTIARY),
+    eyebrow("Auto every 8s", color::text::tertiary()),
   ])
   .align_y(Vertical::Center);
 
@@ -218,7 +218,7 @@ where
   let body = Row::with_children(vec![
     dot(dot_color),
     eyebrow("Sync queue", color::text::PRIMARY),
-    eyebrow(summary, color::text::TERTIARY),
+    eyebrow(summary, color::text::tertiary()),
     Space::new().width(Length::Fill).into(),
     close_button(on_close),
   ])
@@ -309,11 +309,11 @@ where
   M: 'a,
 {
   let (label, tone) = match row.state {
-    RowState::Syncing => ("Syncing".to_owned(), color::text::SECONDARY),
-    RowState::Queued => ("Queued".to_owned(), color::text::TERTIARY),
+    RowState::Syncing => ("Syncing".to_owned(), color::text::secondary()),
+    RowState::Queued => ("Queued".to_owned(), color::text::tertiary()),
     _ => match row.next_in_secs {
-      Some(secs) => (format!("Next in {}", format_next_in(secs)), color::text::TERTIARY),
-      None => (String::new(), color::text::TERTIARY),
+      Some(secs) => (format!("Next in {}", format_next_in(secs)), color::text::tertiary()),
+      None => (String::new(), color::text::tertiary()),
     },
   };
 
@@ -336,10 +336,10 @@ where
 {
   let (glyph, glyph_color) = match row.state {
     RowState::Attention => ("∅", color::status::WARNING),
-    RowState::Done => ("✓", color::text::SECONDARY),
+    RowState::Done => ("✓", color::text::secondary()),
     RowState::Error => ("!", color::status::DANGER),
-    RowState::Queued => ("··", color::text::TERTIARY),
-    RowState::Syncing => ("~", color::text::SECONDARY),
+    RowState::Queued => ("··", color::text::tertiary()),
+    RowState::Syncing => ("~", color::text::secondary()),
   };
 
   container(
@@ -360,7 +360,7 @@ where
   M: 'a,
 {
   let primary_color = if row.state == RowState::Queued {
-    color::text::SECONDARY
+    color::text::secondary()
   } else {
     color::text::PRIMARY
   };
@@ -377,7 +377,7 @@ where
     (RowState::Error, None) => (row.character_name.to_uppercase(), color::status::DANGER),
     (RowState::Attention, Some(message)) => (message.to_uppercase(), color::status::WARNING),
     (RowState::Attention, None) => (row.character_name.to_uppercase(), color::status::WARNING),
-    _ => (row.character_name.to_uppercase(), color::text::TERTIARY),
+    _ => (row.character_name.to_uppercase(), color::text::tertiary()),
   };
 
   let sub = text(sub_text)
@@ -400,7 +400,7 @@ where
     RowState::Attention => color::status::WARNING,
     RowState::Done => color::status::ONLINE,
     RowState::Error => color::status::DANGER,
-    RowState::Queued => color::text::TERTIARY,
+    RowState::Queued => color::text::tertiary(),
     RowState::Syncing => {
       if pulse_on {
         color::accent::PLASMA

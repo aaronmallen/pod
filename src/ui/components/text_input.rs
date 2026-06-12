@@ -177,7 +177,7 @@ impl<'a, M: Clone + 'static> TextInput<'a, M> {
 
     let mut children: Vec<Element<'a, M>> = Vec::new();
     if let Some(icon) = self.leading_icon {
-      children.push(icon.size(self.icon_size).color(color::text::SECONDARY).render::<M>());
+      children.push(icon.size(self.icon_size).color(color::text::secondary()).render::<M>());
     }
     children.push(input.into());
     if let Some(trailing) = self.trailing {
@@ -211,8 +211,8 @@ pub fn inner_style() -> impl Fn(&iced::Theme, text_input::Status) -> text_input:
   |_, _| text_input::Style {
     background: Background::Color(Color::TRANSPARENT),
     border: Border::default(),
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     selection: color::accent::PLASMA_MUTED,
     value: color::text::PRIMARY,
   }
@@ -226,8 +226,8 @@ pub fn style() -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style
       radius: DEFAULT_RADIUS.into(),
       width: 1.0,
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     selection: color::accent::PLASMA_MUTED,
     value: color::text::PRIMARY,
   }

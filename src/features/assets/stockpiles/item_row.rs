@@ -90,7 +90,7 @@ fn readout(item: &StockpileItemLine, ok: bool) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   );

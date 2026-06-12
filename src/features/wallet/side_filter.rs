@@ -65,7 +65,7 @@ where
         color: Some(if active {
           color::accent::PLASMA
         } else {
-          color::text::SECONDARY
+          color::text::secondary()
         }),
       }),
   )

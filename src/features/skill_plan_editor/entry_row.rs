@@ -84,7 +84,7 @@ fn index_col<'a>(index: usize) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fixed(INDEX_COL_WIDTH))
@@ -118,7 +118,7 @@ fn priority_dot<'a>(priority: Priority, id: i64) -> Element<'a, Message> {
 fn priority_color(priority: Priority) -> Color {
   match priority {
     Priority::Low => color::status::ONLINE,
-    Priority::Normal => color::text::TERTIARY,
+    Priority::Normal => color::text::tertiary(),
     Priority::High => color::status::DANGER,
   }
 }
@@ -148,7 +148,7 @@ fn skill_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
   }
   if entry.skipped {
     name_items.push(Space::new().width(spacing::SPACE_2).into());
-    name_items.push(badge("already trained", Some(color::text::TERTIARY)));
+    name_items.push(badge("already trained", Some(color::text::tertiary())));
   }
 
   let name_row = row(name_items).align_y(Vertical::Center);
@@ -158,7 +158,7 @@ fn skill_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])
@@ -200,7 +200,7 @@ fn sp_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
     ])
@@ -230,7 +230,7 @@ fn time_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .into(),
     ])
@@ -299,7 +299,7 @@ fn note_btn<'a>(id: i64) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(11.0)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -315,7 +315,7 @@ fn note_btn<'a>(id: i64) -> Element<'a, Message> {
       radius: 4.0.into(),
       ..Border::default()
     },
-    text_color: color::text::SECONDARY,
+    text_color: color::text::secondary(),
     ..button::Style::default()
   })
   .into()
@@ -325,7 +325,7 @@ fn drag_handle<'a>(id: i64, is_dragging: bool) -> Element<'a, Message> {
   let handle_color = if is_dragging {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
   mouse_area(
     container(
@@ -370,7 +370,7 @@ fn dash_col<'a>(width: f32) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(13.0)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .width(Length::Fixed(width))

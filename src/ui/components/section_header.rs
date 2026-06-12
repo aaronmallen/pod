@@ -25,7 +25,7 @@ pub fn section_header<'a, M: 'a>(label: &str, right: Option<&str>) -> Element<'a
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().width(Length::Fill).into(),
@@ -37,7 +37,7 @@ pub fn section_header<'a, M: 'a>(label: &str, right: Option<&str>) -> Element<'a
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::DIM),
+          color: Some(color::text::dim()),
         })
         .into(),
     );
@@ -54,7 +54,7 @@ fn column_cell<'a, M: 'a>(label: &str, right: bool) -> Element<'a, M> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     })
     .width(Length::Fill);
 

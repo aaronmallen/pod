@@ -134,11 +134,11 @@ pub(in crate::features::character_detail) fn body(
   let eyebrow = Row::with_children(vec![
     eyebrow_text(
       &format!("Notifications \u{00b7} {}", visible.len()),
-      Some(color::text::SECONDARY),
+      Some(color::text::secondary()),
     )
     .into(),
     Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
-    eyebrow_text(&format!("{unread} unread"), Some(color::text::DIM)).into(),
+    eyebrow_text(&format!("{unread} unread"), Some(color::text::dim())).into(),
     Space::new().width(Length::Fill).into(),
     segmented(filter),
   ])
@@ -160,7 +160,7 @@ fn segmented<'a>(active: NotificationsFilter) -> Element<'a, Message> {
     let label_color = if selected {
       color::accent::PLASMA
     } else {
-      color::text::SECONDARY
+      color::text::secondary()
     };
     buttons.push(
       button(
@@ -206,7 +206,7 @@ fn notifications_card<'a>(visible: &[&'a CharacterNotification]) -> Element<'a, 
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .width(Length::Fill)
@@ -233,7 +233,7 @@ fn notif_row<'a>(notification: &'a CharacterNotification, last: bool) -> Element
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .align_x(Horizontal::Right);
@@ -310,7 +310,7 @@ fn content_col<'a>(notification: &'a CharacterNotification, cat: &'static str, u
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -383,7 +383,7 @@ fn category_color(category: &str) -> iced::Color {
     "structure" | "moon" | "mission" | "industry" | "standing" => color::accent::PLASMA,
     "market" | "insurance" | "reward" => color::status::ONLINE,
     "contract" | "clone" | "contact" => color::with_alpha(color::accent::PLASMA, 0.7),
-    _ => color::text::SECONDARY,
+    _ => color::text::secondary(),
   }
 }
 

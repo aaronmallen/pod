@@ -48,7 +48,7 @@ pub(super) fn idle<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])

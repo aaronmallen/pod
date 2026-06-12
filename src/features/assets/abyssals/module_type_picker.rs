@@ -735,7 +735,7 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     ])
@@ -750,7 +750,7 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
           .font(typography::body::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           }),
       )
       .padding(Padding {
@@ -766,7 +766,7 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
           radius: radius::CONTROL.into(),
           width: 1.0,
         },
-        text_color: color::text::SECONDARY,
+        text_color: color::text::secondary(),
         ..button::Style::default()
       })
       .into(),
@@ -780,12 +780,12 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::LG)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     )
     .on_press(Message::AbyssalTypeModalClosed)
     .style(|_, _| button::Style {
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       ..button::Style::default()
     })
     .into(),
@@ -808,7 +808,7 @@ fn footer() -> Element<'static, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::TERTIARY),
+          color: Some(color::text::tertiary()),
         })
         .width(Length::Fill)
         .into(),
@@ -1007,7 +1007,7 @@ fn variant_chip(label: &'static str, type_id: i64, selected: bool) -> Element<'s
     (
       Some(Background::Color(color::surface::BASE)),
       color::with_alpha(color::text::PRIMARY, 0.12),
-      color::text::SECONDARY,
+      color::text::secondary(),
     )
   };
 

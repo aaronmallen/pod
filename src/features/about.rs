@@ -69,19 +69,19 @@ pub fn view<'a>() -> Element<'a, Message> {
     .font(typography::body::MEDIUM)
     .size(14.0)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let build_info = text(format!("Build {GIT_SHA} · {BUILD_DATE}"))
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
 
   let separator = container(rule::horizontal::<Message>()).width(Length::Fixed(240.0));
 
   let license = text("MIT License").size(typography::size::SM).style(|_| text::Style {
-    color: Some(color::text::TERTIARY),
+    color: Some(color::text::tertiary()),
   });
 
   let notice = container(
@@ -89,7 +89,7 @@ pub fn view<'a>() -> Element<'a, Message> {
       .size(typography::size::XS)
       .align_x(Horizontal::Center)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .max_width(NOTICE_MAX_WIDTH);
@@ -97,7 +97,7 @@ pub fn view<'a>() -> Element<'a, Message> {
   let copyright = text(TRADEMARK_COPYRIGHT)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
 
   let content = column([

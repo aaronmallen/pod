@@ -150,7 +150,7 @@ where
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   Row::with_children(vec![swatch.into(), caption.into()])
@@ -209,7 +209,7 @@ where
   .style(|_, status| {
     let (border_alpha, text_color) = match status {
       button::Status::Hovered | button::Status::Pressed => (0.18, color::text::PRIMARY),
-      _ => (0.1, color::text::SECONDARY),
+      _ => (0.1, color::text::secondary()),
     };
     button::Style {
       background: Some(Background::Color(Color::TRANSPARENT)),
@@ -251,7 +251,7 @@ where
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     });
 
   let input = text_input("#RRGGBB", hex_draft)
@@ -269,7 +269,7 @@ where
     .style(move |_| container::Style {
       background: Some(Background::Color(preview_fill)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: HEX_PREVIEW_RADIUS.into(),
       },
@@ -323,7 +323,7 @@ where
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into()
 }
@@ -338,7 +338,7 @@ where
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.18),
+        color: color::rule_strong(),
         width: 1.0,
         radius: POPOVER_RADIUS.into(),
       },

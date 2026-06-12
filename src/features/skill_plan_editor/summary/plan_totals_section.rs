@@ -28,7 +28,7 @@ pub(super) fn plan_totals_section(
       .font(typography::mono::MEDIUM)
       .size(16.0)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().height(4.0).into(),
@@ -36,7 +36,7 @@ pub(super) fn plan_totals_section(
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     Space::new().height(2.0).into(),
@@ -44,7 +44,7 @@ pub(super) fn plan_totals_section(
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])

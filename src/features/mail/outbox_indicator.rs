@@ -58,7 +58,7 @@ fn failure_row(id: i64, last_error: &str) -> Element<'_, Message> {
     .size(typography::size::SM)
     .width(Length::Fill)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   Row::with_children(vec![

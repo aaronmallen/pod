@@ -30,7 +30,7 @@ where
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -44,7 +44,7 @@ where
     let tag_color = if accent {
       color::accent::PLASMA
     } else {
-      color::text::SECONDARY
+      color::text::secondary()
     };
     children.push(
       text(right.to_uppercase())

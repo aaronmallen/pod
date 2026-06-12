@@ -472,7 +472,7 @@ fn header(state: &State) -> Element<'_, Message> {
     )
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
-    .style(typography::colored(color::text::SECONDARY)),
+    .style(typography::colored(color::text::secondary())),
   )
   .max_width(BLURB_MAX_WIDTH);
 
@@ -531,7 +531,7 @@ fn create_row(state: &State) -> Element<'_, Message> {
       .style(typography::colored(if can_add {
         color::surface::BASE
       } else {
-        color::text::TERTIARY
+        color::text::tertiary()
       })),
   )
   .padding(Padding {
@@ -567,7 +567,7 @@ fn sort_selector(state: &State) -> Element<'_, Message> {
           .style(typography::colored(if active {
             color::accent::PLASMA
           } else {
-            color::text::SECONDARY
+            color::text::secondary()
           })),
       )
       .padding(Padding {
@@ -607,7 +607,7 @@ fn filter_field(state: &State) -> Element<'_, Message> {
 fn meta_strip(state: &State) -> Element<'_, Message> {
   let colored = state.tags.iter().filter(|t| t.color().is_some()).count();
   let mut children: Vec<Element<'_, Message>> = vec![
-    meta_count(state.tags.len(), "TAGS", color::text::SECONDARY),
+    meta_count(state.tags.len(), "TAGS", color::text::secondary()),
     dot(),
     meta_count(colored, "COLORED", color::accent::PLASMA),
   ];
@@ -644,7 +644,7 @@ fn meta_count<'a>(count: usize, label: &'a str, count_color: Color) -> Element<'
     text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
   ])
   .spacing(spacing::UNIT)
@@ -653,7 +653,7 @@ fn meta_count<'a>(count: usize, label: &'a str, count_color: Color) -> Element<'
 }
 
 fn dot<'a>() -> Element<'a, Message> {
-  status::dot_sized(color::text::TERTIARY, 3.0)
+  status::dot_sized(color::text::tertiary(), 3.0)
 }
 
 fn list(state: &State) -> Element<'_, Message> {
@@ -668,7 +668,7 @@ fn list(state: &State) -> Element<'_, Message> {
       text(copy)
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
-        .style(typography::colored(color::text::SECONDARY)),
+        .style(typography::colored(color::text::secondary())),
     )
     .width(Length::Fill)
     .padding(80.0)
@@ -755,7 +755,7 @@ fn drag_handle<'a>(tag_id: i64, draggable: bool) -> Element<'a, Message> {
     .font(typography::body::REGULAR)
     .size(typography::size::LG)
     .style(typography::colored(if draggable {
-      color::text::TERTIARY
+      color::text::tertiary()
     } else {
       color::with_alpha(color::text::PRIMARY, 0.1)
     }));
@@ -809,7 +809,7 @@ fn swatch_button<'a>(color: Option<&str>, on_toggle: Message) -> Element<'a, Mes
       a: 0.5,
       ..c
     },
-    None => color::with_alpha(color::text::PRIMARY, 0.18),
+    None => color::rule_strong(),
   };
   button(Space::new())
     .width(Length::Fixed(SWATCH_SIZE))
@@ -870,7 +870,7 @@ fn delete_button<'a>(tag_id: i64) -> Element<'a, Message> {
     text("\u{00d7}")
       .font(typography::mono::REGULAR)
       .size(typography::size::LG)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .center_x(Length::Fill)
   .center_y(Length::Fill);
@@ -885,7 +885,7 @@ fn delete_button<'a>(tag_id: i64) -> Element<'a, Message> {
         button::Status::Hovered | button::Status::Pressed => {
           (color::with_alpha(color::status::DANGER, 0.5), color::status::DANGER)
         }
-        _ => (color::with_alpha(color::text::PRIMARY, 0.1), color::text::SECONDARY),
+        _ => (color::with_alpha(color::text::PRIMARY, 0.1), color::text::secondary()),
       };
       button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
@@ -914,8 +914,8 @@ fn plain_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_
   text_input::Style {
     background: Background::Color(Color::TRANSPARENT),
     border: Border::default(),
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }
@@ -929,8 +929,8 @@ fn edit_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_i
       width: 1.0,
       radius: radius::SUBTLE.into(),
     },
-    icon: color::text::SECONDARY,
-    placeholder: color::text::TERTIARY,
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::with_alpha(color::accent::PLASMA, 0.4),
   }
@@ -963,7 +963,7 @@ fn add_button_style(enabled: bool) -> button::Style {
   } else {
     button::Style {
       background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-      text_color: color::text::TERTIARY,
+      text_color: color::text::tertiary(),
       border: Border {
         color: color::with_alpha(color::text::PRIMARY, 0.1),
         width: 1.0,

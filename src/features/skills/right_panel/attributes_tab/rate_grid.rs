@@ -28,8 +28,10 @@ pub fn rate_grid<'a, Message: 'a>(matrix: &[PairRate; 6]) -> Element<'a, Message
   }
 
   let body = Column::with_children({
-    let mut children: Vec<Element<'a, Message>> =
-      vec![eyebrow("Training rate by attribute pair", Some(color::text::SECONDARY))];
+    let mut children: Vec<Element<'a, Message>> = vec![eyebrow(
+      "Training rate by attribute pair",
+      Some(color::text::secondary()),
+    )];
     children.extend(grid_rows);
     children
   })
@@ -52,7 +54,7 @@ fn rate_cell<'a, Message: 'a>(cell: PairRate, label: &str) -> Element<'a, Messag
     )
   } else {
     (
-      color::text::SECONDARY,
+      color::text::secondary(),
       color::surface::RAISED,
       color::with_alpha(color::text::PRIMARY, 0.1),
     )
@@ -81,7 +83,7 @@ fn rate_cell<'a, Message: 'a>(cell: PairRate, label: &str) -> Element<'a, Messag
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::TERTIARY),
+      color: Some(color::text::tertiary()),
     })
     .into(),
   ])

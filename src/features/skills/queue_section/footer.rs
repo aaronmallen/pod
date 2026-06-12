@@ -16,7 +16,10 @@ pub(super) fn footer<'a>(total_n: usize, total_secs: f64, now: DateTime<Utc>) ->
   let total_secs = total_secs.round() as i64;
 
   let body = Row::with_children(vec![
-    eyebrow(&format!("Total \u{b7} {total_n} skills"), Some(color::text::SECONDARY)),
+    eyebrow(
+      &format!("Total \u{b7} {total_n} skills"),
+      Some(color::text::secondary()),
+    ),
     Space::new().width(Length::Fill).into(),
     text(fmt_duration(total_secs))
       .font(typography::mono::MEDIUM)
@@ -29,7 +32,7 @@ pub(super) fn footer<'a>(total_n: usize, total_secs: f64, now: DateTime<Utc>) ->
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])

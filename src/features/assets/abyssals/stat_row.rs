@@ -29,7 +29,7 @@ pub(super) fn view(stat: &AbyssalStat) -> Element<'_, Message> {
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(|_: &Theme| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   let delta_line = text(format_delta_line(delta, stat.base_value, &stat.unit_suffix))
@@ -53,7 +53,7 @@ pub(super) fn view(stat: &AbyssalStat) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_: &Theme| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])
@@ -100,7 +100,7 @@ fn direction_color(direction: Option<bool>) -> Color {
   match direction {
     Some(true) => color::status::ONLINE,
     Some(false) => color::status::DANGER,
-    None => color::text::TERTIARY,
+    None => color::text::tertiary(),
   }
 }
 

@@ -23,7 +23,7 @@ pub fn section_header<'a, Message: 'a>(base: Attributes) -> Element<'a, Message>
   .sum();
 
   Column::with_children(vec![
-    eyebrow("Neural attributes", Some(color::text::SECONDARY)),
+    eyebrow("Neural attributes", Some(color::text::secondary())),
     text(format!("{total} pts allocated · base"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)

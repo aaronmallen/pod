@@ -581,7 +581,7 @@ fn modal_close_button<'a>(close: Message) -> Element<'a, Message> {
     text("\u{2715}")
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .padding(Padding {
     top: spacing::UNIT + 1.0,
@@ -599,7 +599,7 @@ fn modal_close_button<'a>(close: Message) -> Element<'a, Message> {
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       ..button::Style::default()
     }
   })
@@ -630,7 +630,7 @@ fn modal_header<'a>(title: &'a str, subtitle: &'a str, close: Message) -> Elemen
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    eyebrow(subtitle, Some(color::text::SECONDARY)),
+    eyebrow(subtitle, Some(color::text::secondary())),
   ])
   .spacing(spacing::UNIT)
   .width(Length::Fill);
@@ -685,7 +685,7 @@ fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
     text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .padding(Padding {
     top: spacing::UNIT + 3.0,
@@ -744,7 +744,7 @@ fn editor_form(editor: &Editor) -> Element<'_, Message> {
     text(format!("{resolved} type{}", if resolved == 1 { "" } else { "s" }))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
     add_item_button(),
   ])
@@ -960,7 +960,7 @@ fn suggestion_status<'a>(label: &str) -> Element<'a, Message> {
   container(
     text(label.to_owned())
       .size(typography::size::SM)
-      .style(typography::colored(color::text::TERTIARY)),
+      .style(typography::colored(color::text::tertiary())),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -1035,7 +1035,7 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
     ))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(typography::colored(color::text::TERTIARY))
+    .style(typography::colored(color::text::tertiary()))
     .into(),
   ])
   .align_y(Vertical::Center)
@@ -1148,7 +1148,7 @@ fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
     text("est. value (ESI avg)")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
-      .style(typography::colored(color::text::TERTIARY))
+      .style(typography::colored(color::text::tertiary()))
       .into(),
     text(format!("{} ISK", fmt_isk(value)))
       .font(typography::mono::REGULAR)
@@ -1170,7 +1170,7 @@ fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
         .style(typography::colored(if active {
           color::accent::PLASMA
         } else {
-          color::text::SECONDARY
+          color::text::secondary()
         })),
     )
     .padding(Padding {
@@ -1207,7 +1207,7 @@ fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Elemen
   let tint = if enabled {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let content = Row::with_children(vec![
@@ -1287,7 +1287,7 @@ fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
           text(fmt_count(item.quantity as i64))
             .font(typography::mono::REGULAR)
             .size(typography::size::SM)
-            .style(typography::colored(color::text::SECONDARY))
+            .style(typography::colored(color::text::secondary()))
             .into(),
         ])
         .spacing(spacing::SPACE_2)
@@ -1332,7 +1332,7 @@ fn section_label<'a>(label: &str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(typography::colored(color::text::SECONDARY))
+    .style(typography::colored(color::text::secondary()))
     .into()
 }
 
@@ -1340,7 +1340,7 @@ fn muted_text<'a>(value: &str) -> Element<'a, Message> {
   text(value.to_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
-    .style(typography::colored(color::text::TERTIARY))
+    .style(typography::colored(color::text::tertiary()))
     .into()
 }
 
@@ -1362,7 +1362,7 @@ fn import_shell_body<'a>(
       text(hint.to_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
-        .style(typography::colored(color::text::SECONDARY))
+        .style(typography::colored(color::text::secondary()))
         .into(),
       field,
     ])
@@ -1423,7 +1423,7 @@ fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_ed
       radius: radius::CONTROL.into(),
       width: 1.0,
     },
-    placeholder: color::text::TERTIARY,
+    placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::accent::PLASMA_MUTED,
   }
@@ -1434,7 +1434,7 @@ fn add_item_button<'a>() -> Element<'a, Message> {
     text("+ Add item")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY)),
+      .style(typography::colored(color::text::secondary())),
   )
   .padding(Padding {
     top: spacing::UNIT + 2.0,
@@ -1484,7 +1484,7 @@ fn field_label<'a>(label: &'a str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
-    .style(typography::colored(color::text::SECONDARY))
+    .style(typography::colored(color::text::secondary()))
     .into()
 }
 

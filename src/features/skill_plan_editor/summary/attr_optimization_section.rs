@@ -80,7 +80,7 @@ fn attr_column(title: &'static str, attrs: Attributes, highlight: bool) -> Eleme
       color: Some(if highlight {
         color::accent::PLASMA
       } else {
-        color::text::TERTIARY
+        color::text::tertiary()
       }),
     });
 
@@ -130,7 +130,7 @@ fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static,
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .width(Length::Fixed(28.0))
       .into(),
@@ -138,7 +138,7 @@ fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static,
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .width(Length::Fill)
       .into(),
@@ -206,9 +206,9 @@ fn remap_status_row(remap_availability: u32, remap_reason: &str) -> Element<'sta
   let (dot_color, status_text) = if remap_availability > 0 {
     (color::status::ONLINE, "Remap available now".to_owned())
   } else if remap_reason.is_empty() {
-    (color::text::TERTIARY, "No remap available".to_owned())
+    (color::text::tertiary(), "No remap available".to_owned())
   } else {
-    (color::text::TERTIARY, remap_reason.to_owned())
+    (color::text::tertiary(), remap_reason.to_owned())
   };
 
   row(vec![

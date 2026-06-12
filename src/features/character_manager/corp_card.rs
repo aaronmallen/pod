@@ -85,14 +85,14 @@ fn plate(model: &CorpCardModel) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     None => text("UNAFFILIATED")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   };
@@ -127,7 +127,7 @@ fn identity(model: &CorpCardModel) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
 
   container(Column::with_children(vec![name.into(), alliance.into()]).spacing(spacing::UNIT))
@@ -216,7 +216,7 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     });
   let value = text(value.unwrap_or_else(|| PLACEHOLDER.to_owned()))
     .font(value_font)

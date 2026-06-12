@@ -32,6 +32,10 @@ impl Windows {
     self.ids.iter().find(|(_, kind)| **kind == window).map(|(id, _)| *id)
   }
 
+  pub fn ids(&self) -> impl Iterator<Item = window::Id> + '_ {
+    self.ids.keys().copied()
+  }
+
   pub fn is_empty(&self) -> bool {
     self.ids.is_empty()
   }

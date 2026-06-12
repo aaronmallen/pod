@@ -57,12 +57,12 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
 
 fn compare_button<'a>() -> Element<'a, Message> {
   let label = Row::with_children(vec![
-    Icon::compare().size(16.0).color(color::text::SECONDARY).render(),
+    Icon::compare().size(16.0).color(color::text::secondary()).render(),
     text("Compare")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -89,7 +89,7 @@ fn compare_button<'a>() -> Element<'a, Message> {
         text_color: if hover {
           color::text::PRIMARY
         } else {
-          color::text::SECONDARY
+          color::text::secondary()
         },
         ..button::Style::default()
       }
@@ -134,7 +134,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into();
 

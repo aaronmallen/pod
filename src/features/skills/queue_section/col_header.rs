@@ -49,7 +49,7 @@ fn label<'a>(text_value: &'static str) -> Element<'a, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
-      color: Some(color::text::SECONDARY),
+      color: Some(color::text::secondary()),
     })
     .into()
 }

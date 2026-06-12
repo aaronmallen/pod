@@ -79,7 +79,7 @@ pub(super) fn view<'a>(model: &'a StockpileCard, expanded: &HashSet<i64>) -> Ele
 }
 
 fn expand_toggle<'a>(id: i64, label: String) -> Element<'a, Message> {
-  button(eyebrow_text(&label, Some(color::text::SECONDARY)).width(Length::Fill))
+  button(eyebrow_text(&label, Some(color::text::secondary())).width(Length::Fill))
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_2,
@@ -120,9 +120,9 @@ fn items<'a>(model: &'a StockpileCard, expanded: bool) -> Element<'a, Message> {
 
 fn location_caption(model: &StockpileCard) -> (String, iced::Color) {
   match (&model.location_name, model.location_id) {
-    (Some(name), _) => (name.to_uppercase(), color::text::SECONDARY),
-    (None, Some(_)) => ("Unknown location".to_uppercase(), color::text::TERTIARY),
-    (None, None) => ("Any location".to_uppercase(), color::text::TERTIARY),
+    (Some(name), _) => (name.to_uppercase(), color::text::secondary()),
+    (None, Some(_)) => ("Unknown location".to_uppercase(), color::text::tertiary()),
+    (None, None) => ("Any location".to_uppercase(), color::text::tertiary()),
   }
 }
 
@@ -134,7 +134,7 @@ fn location_line(model: &StockpileCard) -> Element<'_, Message> {
     Space::new().width(Length::Fill).into(),
     eyebrow(
       &format!("est {} ISK", fmt_isk(model.target_isk)),
-      Some(color::text::TERTIARY),
+      Some(color::text::tertiary()),
     ),
   ])
   .spacing(spacing::SPACE_2)
@@ -202,7 +202,7 @@ fn overflow_button<'a>(id: i64) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::LG)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       }),
   )
   .padding(Padding {
@@ -228,10 +228,10 @@ fn status_strip<'a>(model: &'a StockpileCard, ready: bool) -> Element<'a, Messag
     let short = model.short_items();
     let row = Row::with_children(vec![
       eyebrow(&format!("{short} short"), Some(color::status::DANGER)),
-      eyebrow("\u{b7}", Some(color::text::TERTIARY)),
+      eyebrow("\u{b7}", Some(color::text::tertiary())),
       eyebrow(
         &format!("{} ISK to fill", fmt_isk(model.fill_isk)),
-        Some(color::text::SECONDARY),
+        Some(color::text::secondary()),
       ),
       Space::new().width(Length::Fill).into(),
       multibuy_button(model.id),

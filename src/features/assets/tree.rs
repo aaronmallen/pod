@@ -57,8 +57,8 @@ impl Tier {
       return color::accent::PLASMA;
     }
     match self {
-      Self::Region => color::text::TERTIARY,
-      Self::All | Self::Constellation | Self::System => color::text::SECONDARY,
+      Self::Region => color::text::tertiary(),
+      Self::All | Self::Constellation | Self::System => color::text::secondary(),
       Self::Station => color::accent::PLASMA,
     }
   }
@@ -100,11 +100,11 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
   let tree = state.geo_tree();
   let header = container(
     Row::with_children(vec![
-      eyebrow("Locations", Some(color::text::SECONDARY)),
+      eyebrow("Locations", Some(color::text::secondary())),
       Space::new().width(Length::Fill).into(),
       eyebrow(
         &format!("{} regions", fmt_count(tree.regions.len() as i64)),
-        Some(color::text::TERTIARY),
+        Some(color::text::tertiary()),
       ),
     ])
     .width(Length::Fill)
@@ -156,7 +156,7 @@ fn rule_divider<'a>() -> Element<'a, Message> {
 
 fn saved_filters_section(state: &State) -> Element<'_, Message> {
   let header = Row::with_children(vec![
-    eyebrow("Saved filters", Some(color::text::SECONDARY)),
+    eyebrow("Saved filters", Some(color::text::secondary())),
     Space::new().width(Length::Fill).into(),
     button(eyebrow("+ new", Some(color::accent::PLASMA)))
       .padding(0)
@@ -197,7 +197,7 @@ fn saved_filter_row(filter: &crate::store::model::SavedAssetFilter, active: bool
   let chip_color = if active {
     color::surface::BASE
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   let chip = container(
     text("\u{2605}")
@@ -242,7 +242,7 @@ fn saved_filter_row(filter: &crate::store::model::SavedAssetFilter, active: bool
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
   ])
@@ -414,7 +414,7 @@ fn caret_slot<'a>(caret: Option<(GeoNodeKey, bool)>) -> Element<'a, Message> {
       } else {
         Icon::chevron()
       };
-      button(chevron.size(CARET_ICON).color(color::text::TERTIARY).render())
+      button(chevron.size(CARET_ICON).color(color::text::tertiary()).render())
         .padding(0)
         .on_press(Message::GeoNodeToggled(key))
         .style(|_, _| button::Style::default())
@@ -478,7 +478,7 @@ fn node_row(spec: RowSpec<'_>) -> Element<'_, Message> {
   let name_color = if selected {
     color::text::PRIMARY
   } else if tier.is_context() {
-    color::text::SECONDARY
+    color::text::secondary()
   } else {
     color::with_alpha(color::text::PRIMARY, 0.78)
   };
@@ -512,7 +512,7 @@ fn node_row(spec: RowSpec<'_>) -> Element<'_, Message> {
     let metric_color = if selected {
       color::accent::PLASMA
     } else {
-      color::text::TERTIARY
+      color::text::tertiary()
     };
     content.push(
       text(metric)
@@ -614,7 +614,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
   .width(Length::Fill);
 
   let name_field = Column::with_children(vec![
-    eyebrow("Filter name", Some(color::text::SECONDARY)),
+    eyebrow("Filter name", Some(color::text::secondary())),
     TextInput::new(
       "e.g. Jita modules",
       state.saved_filter_draft_name(),
@@ -632,7 +632,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
   if !capture.is_empty() {
     body_children.push(
       Column::with_children(vec![
-        eyebrow("Captures", Some(color::text::SECONDARY)),
+        eyebrow("Captures", Some(color::text::secondary())),
         container(
           text(capture)
             .font(typography::mono::REGULAR)
@@ -730,7 +730,7 @@ fn modal_close_button<'a>() -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -749,7 +749,7 @@ fn modal_close_button<'a>() -> Element<'a, Message> {
         width: 1.0,
         radius: radius::CONTROL.into(),
       },
-      text_color: color::text::SECONDARY,
+      text_color: color::text::secondary(),
       ..button::Style::default()
     }
   })
@@ -762,7 +762,7 @@ fn modal_secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, M
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -790,7 +790,7 @@ fn modal_primary_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Messag
   let label_color = if enabled {
     color::surface::BASE
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
   let mut button = button(
     text(label)

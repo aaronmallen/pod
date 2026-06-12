@@ -24,7 +24,7 @@ pub(super) fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: Dat
 
   let header = Row::with_children(vec![
     eyebrow("Currently training", Some(color::accent::PLASMA)),
-    eyebrow_text(&item.group_name, Some(color::text::SECONDARY)).into(),
+    eyebrow_text(&item.group_name, Some(color::text::secondary())).into(),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center);
@@ -68,7 +68,7 @@ pub(super) fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: Dat
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])

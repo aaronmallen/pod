@@ -104,14 +104,14 @@ where
 {
   match last_synced_secs {
     Some(secs) => Row::with_children(vec![
-      mono_text("Synced", color::text::SECONDARY),
-      mono_text("·", color::text::TERTIARY),
-      mono_text(format_since(secs), color::text::DIM),
+      mono_text("Synced", color::text::secondary()),
+      mono_text("·", color::text::tertiary()),
+      mono_text(format_since(secs), color::text::dim()),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center)
     .into(),
-    None => mono_text("Idle", color::text::DIM),
+    None => mono_text("Idle", color::text::dim()),
   }
 }
 
@@ -169,7 +169,7 @@ where
   Row::with_children(vec![
     mono_text("Syncing", color::text::PRIMARY),
     progress_bar(percent),
-    mono_text(format!("{done}/{total}"), color::text::SECONDARY),
+    mono_text(format!("{done}/{total}"), color::text::secondary()),
   ])
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center)

@@ -247,7 +247,7 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
         fmt_isk(value)
       };
       let cell_color = if value <= 0.0 {
-        color::text::TERTIARY
+        color::text::tertiary()
       } else {
         color::text::PRIMARY
       };
@@ -306,7 +306,7 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
 }
 
 fn matrix_label_cell<'a>(label: &str, align: Horizontal) -> Element<'a, Message> {
-  container(eyebrow(label, Some(color::text::SECONDARY)))
+  container(eyebrow(label, Some(color::text::secondary())))
     .width(Length::Fill)
     .align_x(align)
     .into()
@@ -403,14 +403,14 @@ fn category_card(summary: &ValueSummary) -> Element<'_, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::SECONDARY),
+            color: Some(color::text::secondary()),
           })
           .into(),
         text(format!("{pct:.1}%"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           })
           .into(),
       ])
@@ -438,7 +438,7 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           })
           .into(),
         top_item_icon(item.type_id),
@@ -454,7 +454,7 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
             .font(typography::mono::REGULAR)
             .size(typography::size::XS)
             .style(|_| text::Style {
-              color: Some(color::text::SECONDARY),
+              color: Some(color::text::secondary()),
             })
             .into(),
         ])

@@ -12,7 +12,7 @@ pub fn from_queue_button<'a>() -> Element<'a, Message> {
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       }),
   )
   .padding(Padding {
@@ -34,7 +34,7 @@ pub fn from_queue_button<'a>() -> Element<'a, Message> {
       text_color: if hover {
         color::text::PRIMARY
       } else {
-        color::text::SECONDARY
+        color::text::secondary()
       },
       ..button::Style::default()
     }

@@ -72,7 +72,7 @@ pub fn attr_row<'a, Message: 'a>(row: AttrRow, first: bool) -> Element<'a, Messa
       .size(typography::size::XS)
       .width(Length::Fixed(34.0))
       .style(|_| text::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
     container(attr_bar(row, accent)).width(Length::Fill).into(),

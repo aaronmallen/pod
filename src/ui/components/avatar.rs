@@ -176,7 +176,7 @@ where
       .size(height * INITIALS_RATIO)
       .font(typography::body::REGULAR)
       .style(|_| text::Style {
-        color: Some(color::text::DIM),
+        color: Some(color::text::dim()),
       }),
   )
   .width(width)

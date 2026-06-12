@@ -42,7 +42,7 @@ pub fn remap_cta<'a, Message: 'a>(bonus_remaps: i64, days: RemapDays) -> Element
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])

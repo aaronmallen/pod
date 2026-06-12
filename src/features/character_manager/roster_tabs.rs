@@ -45,12 +45,12 @@ where
   let label_color = if selected {
     color::text::PRIMARY
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   let count_color = if selected {
     color::accent::PLASMA
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let content = Row::with_children(vec![

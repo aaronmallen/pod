@@ -570,6 +570,7 @@ fn blank<'a>() -> Element<'a, Message> {
 fn boot() -> (App, Task<Message>) {
   let settings = config::load().unwrap_or_default();
   let accessibility = *settings.accessibility();
+  color::set_high_contrast(*accessibility.high_contrast());
   let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);
 
@@ -1524,7 +1525,7 @@ fn settings_route_view(app: &App) -> Element<'_, Message> {
 
 fn placeholder<'a>(message: String) -> Element<'a, Message> {
   container(text(message).size(typography::size::MD).style(|_| text::Style {
-    color: Some(color::text::SECONDARY),
+    color: Some(color::text::secondary()),
   }))
   .width(Length::Fill)
   .height(Length::Fill)
@@ -1725,7 +1726,7 @@ fn outbox_indicator(outbox: &sync::OutboxStatus) -> Option<Element<'_, Message>>
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
-        color: Some(color::text::DIM),
+        color: Some(color::text::dim()),
       })
       .into(),
   ];
@@ -2337,7 +2338,8 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       if let Some(runtime) = app.runtime.as_mut() {
         *runtime.settings.accessibility_mut() = accessibility;
       }
-      return task;
+      color::set_high_contrast(*accessibility.high_contrast());
+      return Task::batch(vec![task, refresh_all_windows(app)]);
     }
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
     settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
@@ -2371,6 +2373,14 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     character_manager::load(&runtime.db, runtime.settings.features().enabled()).map(Message::CharacterManager);
 
   Task::batch(vec![task, reload])
+}
+
+// The resolved color functions are read inside each window's `view` closure, which only re-runs
+// when that window redraws. Unlike `scale_factor`, iced does not re-read them every frame, so after
+// the high-contrast flag flips we issue a benign per-window action (querying size and discarding it)
+// to schedule a fresh draw of every open window, applying the new palette live without a restart.
+fn refresh_all_windows(app: &App) -> Task<Message> {
+  Task::batch(app.windows.ids().map(|id| window::size(id).discard()))
 }
 
 /// Routes the storage tab's "Sync now" action, always reporting an outcome rather than silently

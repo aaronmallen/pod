@@ -327,7 +327,7 @@ fn preset_row<'a>(preset: Preset, enabled: bool) -> Element<'a, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -395,7 +395,7 @@ fn weekday_header<'a>() -> Element<'a, Message> {
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           }),
       )
       .width(Length::Fill)
@@ -440,7 +440,7 @@ fn day_cell<'a>(cell: DayCell, selected: bool) -> Element<'a, Message> {
   } else if cell.in_month {
     color::text::PRIMARY
   } else {
-    color::text::TERTIARY
+    color::text::tertiary()
   };
 
   let label = container(
@@ -477,7 +477,7 @@ fn time_stepper(cal: &Calendar) -> Element<'_, Message> {
       .font(typography::mono::REGULAR)
       .size(typography::size::LG)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
     stepper(
@@ -530,7 +530,7 @@ fn step_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     )
     .width(Length::Fixed(22.0))
@@ -558,7 +558,7 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
     .unwrap_or_else(|| "—".to_owned());
 
   let summary = Column::with_children(vec![
-    eyebrow_text("SNOOZE UNTIL", Some(color::text::TERTIARY)).into(),
+    eyebrow_text("SNOOZE UNTIL", Some(color::text::tertiary())).into(),
     text(resolved)
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
@@ -594,7 +594,7 @@ fn footer_button<'a>(label: &str, message: Message, primary: bool) -> Element<'a
     (color::surface::BASE, Some(color::accent::PLASMA), color::accent::PLASMA)
   } else {
     (
-      color::text::SECONDARY,
+      color::text::secondary(),
       None,
       color::with_alpha(color::text::PRIMARY, 0.1),
     )
@@ -635,7 +635,7 @@ fn nav_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
       text(glyph.to_owned())
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         }),
     )
     .width(Length::Fixed(24.0))
@@ -688,7 +688,7 @@ fn action_row<'a>(label: &str, message: Message, danger: bool) -> Element<'a, Me
   let tone = if danger {
     color::status::DANGER
   } else {
-    color::text::SECONDARY
+    color::text::secondary()
   };
   mouse_area(
     container(

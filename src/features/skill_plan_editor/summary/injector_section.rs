@@ -31,7 +31,7 @@ pub(super) fn injector_section(estimate: InjectorEstimate, remaining_plan_sp: u6
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
   .style(|_| text::Style {
-    color: Some(color::text::TERTIARY),
+    color: Some(color::text::tertiary()),
   });
 
   container(
@@ -90,7 +90,7 @@ fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static,
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
-        color: Some(color::text::SECONDARY),
+        color: Some(color::text::secondary()),
       })
       .into(),
   ])
@@ -104,7 +104,7 @@ fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static,
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
   .style(|_| text::Style {
-    color: Some(color::text::TERTIARY),
+    color: Some(color::text::tertiary()),
   });
 
   let body = column(vec![count_row.into(), Space::new().height(1.0).into(), label.into()]).width(Length::Fill);

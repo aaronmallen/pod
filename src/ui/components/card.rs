@@ -23,7 +23,7 @@ where
   let border_color = if accent {
     color::with_alpha(color::accent::PLASMA, 0.30)
   } else {
-    color::with_alpha(color::text::PRIMARY, 0.10)
+    color::rule()
   };
 
   container(content)

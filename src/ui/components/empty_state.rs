@@ -36,7 +36,7 @@ impl<'a, M: Clone + 'static> EmptyState<'a, M> {
     let mut children: Vec<Element<'a, M>> = Vec::new();
 
     if let Some(icon) = self.icon {
-      children.push(icon.color(color::text::TERTIARY).size(ICON_SIZE).render());
+      children.push(icon.color(color::text::tertiary()).size(ICON_SIZE).render());
       children.push(Space::new().height(Length::Fixed(CONTENT_SPACING)).into());
     }
 
@@ -45,7 +45,7 @@ impl<'a, M: Clone + 'static> EmptyState<'a, M> {
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {
-          color: Some(color::text::SECONDARY),
+          color: Some(color::text::secondary()),
         })
         .into(),
     );
@@ -57,7 +57,7 @@ impl<'a, M: Clone + 'static> EmptyState<'a, M> {
           .font(typography::body::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
-            color: Some(color::text::TERTIARY),
+            color: Some(color::text::tertiary()),
           })
           .into(),
       );
@@ -102,7 +102,7 @@ pub fn load_state_view<M: Clone + 'static>(view: LoadStateView<'_, M>) -> Elemen
   match view {
     LoadStateView::Empty(empty) => empty.render(),
     LoadStateView::Error(message) => placeholder(message, color::status::DANGER),
-    LoadStateView::Loading(message) => placeholder(message, color::text::SECONDARY),
+    LoadStateView::Loading(message) => placeholder(message, color::text::secondary()),
   }
 }
 

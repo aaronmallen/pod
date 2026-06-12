@@ -1211,7 +1211,7 @@ fn corp_filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Me
     Some(CorpFiltered::Loaded(corps)) if corps.is_empty() => corp_no_matches(),
     Some(CorpFiltered::Loaded(corps)) => corp_grid_scroll(corps, sync),
     Some(CorpFiltered::Error(error)) => corp_message(format!("Search failed: {error}"), color::status::DANGER),
-    Some(CorpFiltered::Loading) | None => corp_message("Searching…".to_owned(), color::text::SECONDARY),
+    Some(CorpFiltered::Loading) | None => corp_message("Searching…".to_owned(), color::text::secondary()),
   }
 }
 
@@ -1259,7 +1259,7 @@ fn corporations_empty_state<'a>() -> Element<'a, Message> {
     text("Add a corporation to start tracking it.")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
   ])
   .spacing(spacing::SPACE_3)
@@ -1293,7 +1293,7 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
       .width(Length::Fixed(NO_MATCH_ICON))
       .height(Length::Fixed(NO_MATCH_ICON))
       .style(|_, _| svg::Style {
-        color: Some(color::text::TERTIARY),
+        color: Some(color::text::tertiary()),
       })
       .into(),
     text("No corporations match")
@@ -1303,7 +1303,7 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
     text("Try a different search or clear filters")
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
-      .style(typography::colored(color::text::SECONDARY))
+      .style(typography::colored(color::text::secondary()))
       .into(),
     button(
       text("Clear filters")

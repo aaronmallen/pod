@@ -26,7 +26,7 @@ where
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
-          color: Some(color::text::DIM),
+          color: Some(color::text::dim()),
         })
         .into(),
     ])

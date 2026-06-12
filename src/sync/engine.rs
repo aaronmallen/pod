@@ -329,6 +329,7 @@ impl Engine {
       Command::Drain => self.drain_at = now,
       Command::Enroll(subject) => self.enroll_subject(subject, now).await,
       Command::RunNow(subject) => self.schedule.run_now(subject, now),
+      Command::SetFeatures(features) => self.schedule.reconcile_features(features),
       Command::Shutdown => {} // intercepted in the run loop before reaching here; arm exists for exhaustiveness
       Command::Withdraw(subject) => self.schedule.withdraw(subject),
     }

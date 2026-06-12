@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use super::{command::Command, subject::Subject};
+use crate::config::FeatureFlags;
 
 #[derive(Clone, Debug)]
 pub struct Handle {
@@ -28,6 +29,10 @@ impl Handle {
 
   pub fn run_now(&self, subject: Subject) {
     let _ = self.commands.send(Command::RunNow(subject));
+  }
+
+  pub fn set_features(&self, features: FeatureFlags) {
+    let _ = self.commands.send(Command::SetFeatures(features));
   }
 
   pub fn shutdown(&self) {
@@ -99,5 +104,20 @@ mod tests {
       "every enroll survives a backed-up channel, none silently dropped"
     );
     assert!(saw_run_now, "the trailing run-now is delivered too");
+  }
+
+  #[tokio::test]
+  async fn it_sends_a_set_features_command() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let handle = Handle::new(tx);
+    let flags: FeatureFlags = toml::from_str("wallet = false").unwrap();
+
+    handle.set_features(flags);
+
+    assert_eq!(
+      rx.recv().await,
+      Some(Command::SetFeatures(flags)),
+      "set_features sends the SetFeatures command"
+    );
   }
 }

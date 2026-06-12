@@ -163,6 +163,47 @@ impl Schedule {
     }
   }
 
+  pub fn reconcile_features(&mut self, new_features: FeatureFlags) {
+    let old_features = self.features;
+
+    let mut changed_kinds: HashSet<JobKind> = HashSet::new();
+
+    for kind in JobKind::ALL {
+      let old_enabled = kind.is_feature_enabled(&old_features);
+      let new_enabled = kind.is_feature_enabled(&new_features);
+
+      if old_enabled != new_enabled {
+        changed_kinds.insert(*kind);
+      }
+    }
+
+    self.entries.retain(|entry| {
+      let kind = entry.key.kind;
+      let is_disabled = !kind.is_feature_enabled(&new_features);
+      !(is_disabled && !entry.in_flight)
+    });
+
+    self.features = new_features;
+
+    let now = if let Some(min_next_run) = self.entries.iter().map(|e| e.next_run_at).min() {
+      min_next_run
+    } else {
+      Instant::now()
+    };
+    let tracked_subjects: HashSet<Subject> = self.entries.iter().map(|entry| entry.key.subject).collect();
+
+    for subject in tracked_subjects {
+      for kind in changed_kinds.iter().copied() {
+        if kind.is_feature_enabled(&new_features) && kind.applies_to(subject) {
+          let key = JobKey::new(kind, subject);
+          if !self.entries.iter().any(|entry| entry.key == key) {
+            self.entries.push(Entry::new(key, now));
+          }
+        }
+      }
+    }
+  }
+
   pub fn withdraw(&mut self, subject: Subject) {
     self.entries.retain(|entry| entry.key.subject != subject);
   }
@@ -517,6 +558,94 @@ mod tests {
       assert!(
         !due.contains(&wallet),
         "Wallet is off, so CharacterWallet must not be scheduled, got {due:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_drops_pending_jobs_when_a_feature_is_disabled() {
+      let now = Instant::now();
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      let mut schedule = Schedule::with_features(flags_all_on);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      assert!(schedule.due(now).contains(&wallet_key), "wallet job is due initially");
+
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      schedule.reconcile_features(flags_wallet_off);
+
+      let due_after = schedule.due(now);
+      assert!(
+        !due_after.contains(&wallet_key),
+        "wallet job is dropped when wallet is disabled, got {due_after:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_preserves_in_flight_jobs_when_a_feature_is_disabled() {
+      let now = Instant::now();
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      let mut schedule = Schedule::with_features(flags_all_on);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      schedule.mark_in_flight(wallet_key);
+
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      schedule.reconcile_features(flags_wallet_off);
+
+      assert!(
+        schedule.next_in(wallet_key, now).is_some(),
+        "in-flight wallet job is preserved despite feature being disabled"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_enrolls_newly_enabled_features_for_tracked_subjects() {
+      let now = Instant::now();
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      let mut schedule = Schedule::with_features(flags_wallet_off);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      assert!(
+        !schedule.due(now).contains(&wallet_key),
+        "wallet job is not scheduled when wallet is off"
+      );
+
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      schedule.reconcile_features(flags_all_on);
+
+      assert!(
+        schedule.due(now).contains(&wallet_key),
+        "wallet job is scheduled when wallet is re-enabled"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_re_enroll_already_enrolled_jobs() {
+      let now = Instant::now();
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      let mut schedule = Schedule::with_features(flags_wallet_off);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      schedule.reconcile_features(flags_all_on);
+      schedule.reschedule_success(wallet_key, now);
+
+      schedule.reconcile_features(flags_wallet_off);
+      schedule.reconcile_features(flags_all_on);
+
+      let due = schedule.due(now);
+      assert!(
+        due
+          .iter()
+          .filter(|k| k.kind == JobKind::CharacterWallet && k.subject == CHARACTER)
+          .count()
+          <= 1,
+        "wallet job appears at most once after re-enabling multiple times, got {due:?}"
       );
     }
   }

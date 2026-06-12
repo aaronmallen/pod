@@ -29,6 +29,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0017] | Interface Scale and Accessibility Config        | ![Active][badge-active] | 2026-06-11 |
 | [0018] | Runtime High-Contrast Color Resolution          | ![Active][badge-active] | 2026-06-11 |
 | [0019] | Central Feature Registry                        | ![Active][badge-active] | 2026-06-12 |
+| [0020] | Calendar Feature                                | ![Active][badge-active] | 2026-06-12 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -52,5 +53,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0017]: 0017-interface-scale-and-accessibility-config.md
 [0018]: 0018-runtime-high-contrast-color-resolution.md
 [0019]: 0019-central-feature-registry.md
+[0020]: 0020-calendar-feature.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

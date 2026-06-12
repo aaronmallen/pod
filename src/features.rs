@@ -1,6 +1,7 @@
 pub mod about;
 pub mod assets;
 pub mod auth;
+pub mod calendar;
 pub mod character_detail;
 pub mod character_manager;
 pub mod mail;

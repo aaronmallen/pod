@@ -4,7 +4,7 @@ use figment::{
   Figment,
   providers::{Format, Serialized, Toml},
 };
-use getset::{Getters, MutGetters, Setters};
+use getset::{CopyGetters, Getters, MutGetters, Setters};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,72 @@ impl Default for AccessibilityConfig {
       scale: default_scale_100(),
     }
   }
+}
+
+#[derive(Clone, Copy, CopyGetters, Debug, Deserialize, Eq, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct CalendarTweaks {
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  color_by_pilot: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_calendar_density")]
+  density: CalendarDensity,
+  #[getset(get_copy = "pub")]
+  #[serde(default)]
+  local_time: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  month_chips: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default)]
+  pod_overlays: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  show_weekends: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  week_hours: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_calendar_week_start")]
+  week_start: CalendarWeekStart,
+}
+
+impl CalendarTweaks {
+  fn is_default(&self) -> bool {
+    *self == CalendarTweaks::default()
+  }
+}
+
+impl Default for CalendarTweaks {
+  fn default() -> Self {
+    Self {
+      color_by_pilot: true,
+      density: CalendarDensity::default(),
+      local_time: false,
+      month_chips: true,
+      pod_overlays: false,
+      show_weekends: true,
+      week_hours: true,
+      week_start: CalendarWeekStart::default(),
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarDensity {
+  #[default]
+  Comfortable,
+  Compact,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarWeekStart {
+  #[default]
+  Monday,
+  Sunday,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -198,11 +264,14 @@ impl Default for FeatureFlags {
   }
 }
 
-#[derive(Clone, Debug, Deserialize, Getters, MutGetters, Serialize)]
+#[derive(Clone, Debug, Deserialize, Getters, MutGetters, Serialize, Setters)]
 pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default, skip_serializing_if = "AccessibilityConfig::is_default")]
   accessibility: AccessibilityConfig,
+  #[getset(get = "pub", get_mut = "pub", set = "pub")]
+  #[serde(default, skip_serializing_if = "CalendarTweaks::is_default")]
+  calendar_tweaks: CalendarTweaks,
   #[getset(get = "pub")]
   #[serde(default = "default_eve_client_id")]
   eve_client_id: String,
@@ -218,6 +287,7 @@ impl Default for Settings {
   fn default() -> Self {
     Self {
       accessibility: AccessibilityConfig::default(),
+      calendar_tweaks: CalendarTweaks::default(),
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
       storage: StorageConfig::default(),
@@ -368,6 +438,14 @@ fn resolve_working_copy_dir(state_home: Option<PathBuf>, fallback_root: PathBuf)
 #[allow(dead_code)]
 pub fn database_path() -> PathBuf {
   data_dir().join("pod.db")
+}
+
+fn default_calendar_density() -> CalendarDensity {
+  CalendarDensity::default()
+}
+
+fn default_calendar_week_start() -> CalendarWeekStart {
+  CalendarWeekStart::default()
 }
 
 fn default_eve_client_id() -> String {

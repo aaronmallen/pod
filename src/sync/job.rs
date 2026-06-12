@@ -11,6 +11,7 @@ use crate::{
 pub enum JobKind {
   AssetSync,
   CharacterAbyssals,
+  CharacterCalendar,
   CharacterClones,
   CharacterContacts,
   CharacterContracts,
@@ -34,6 +35,7 @@ impl JobKind {
   pub const ALL: &'static [JobKind] = &[
     JobKind::AssetSync,
     JobKind::CharacterAbyssals,
+    JobKind::CharacterCalendar,
     JobKind::CharacterClones,
     JobKind::CharacterContacts,
     JobKind::CharacterContracts,
@@ -106,6 +108,7 @@ impl JobKind {
     match (self, subject) {
       (Self::AssetSync, Subject::Corporation(_)) => Some(scopes::CORPORATION_ASSETS),
       (Self::AssetSync, Subject::Character(_)) => Some(scopes::CHARACTER_ASSETS),
+      (Self::CharacterCalendar, _) => Some(scopes::CHARACTER_CALENDAR_READ),
       (Self::CharacterClones, _) => Some(scopes::CHARACTER_CLONES),
       (Self::CharacterContacts, _) => Some(scopes::CHARACTER_CONTACTS),
       (Self::CharacterContracts, _) => Some(scopes::CHARACTER_CONTRACTS),
@@ -129,6 +132,7 @@ impl JobKind {
       (
         Self::AssetSync
           | Self::CharacterAbyssals
+          | Self::CharacterCalendar
           | Self::CharacterClones
           | Self::CharacterContacts
           | Self::CharacterContracts
@@ -163,9 +167,11 @@ impl JobKind {
       | Self::CorporationProfile
       | Self::CorporationWallet => Duration::from_secs(3600),
       Self::CharacterSkills => Duration::from_secs(60),
-      Self::CharacterKillmails | Self::CharacterMail | Self::CharacterNotifications | Self::CharacterTelemetry => {
-        Duration::from_secs(300)
-      }
+      Self::CharacterCalendar
+      | Self::CharacterKillmails
+      | Self::CharacterMail
+      | Self::CharacterNotifications
+      | Self::CharacterTelemetry => Duration::from_secs(300),
       Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
     }
@@ -175,6 +181,7 @@ impl JobKind {
     match self {
       Self::AssetSync => &[scopes::CHARACTER_ASSETS, scopes::CORPORATION_ASSETS],
       Self::CharacterAbyssals => &[],
+      Self::CharacterCalendar => &[scopes::CHARACTER_CALENDAR_READ],
       Self::CharacterClones => &[scopes::CHARACTER_CLONES, scopes::CHARACTER_IMPLANTS],
       Self::CharacterContacts => &[scopes::CHARACTER_CONTACTS],
       Self::CharacterContracts => &[scopes::CHARACTER_CONTRACTS],
@@ -248,6 +255,7 @@ async fn run_character_job(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::
 async fn run_character_job_a(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
   Some(match ctx.key.kind {
     JobKind::CharacterAbyssals => super::jobs::abyssals::run(ctx).await,
+    JobKind::CharacterCalendar => super::jobs::character_calendar::run(ctx).await,
     JobKind::CharacterClones => super::jobs::character_clones::run(ctx).await,
     JobKind::CharacterContacts => super::jobs::character_contacts::run(ctx).await,
     JobKind::CharacterContracts => super::jobs::character_contracts::run(ctx).await,

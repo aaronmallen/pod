@@ -180,7 +180,7 @@ impl Schedule {
     self.entries.retain(|entry| {
       let kind = entry.key.kind;
       let is_disabled = !kind.is_feature_enabled(&new_features);
-      !(is_disabled && !entry.in_flight)
+      !is_disabled || entry.in_flight
     });
 
     self.features = new_features;

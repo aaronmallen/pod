@@ -52,6 +52,7 @@ impl DetailDataType {
       JobKind::CharacterStandings => Some(Self::Standings),
       JobKind::AssetSync
       | JobKind::CharacterAbyssals
+      | JobKind::CharacterCalendar
       | JobKind::CharacterContracts
       | JobKind::CharacterMail
       | JobKind::CharacterMarketOrders

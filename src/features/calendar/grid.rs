@@ -1,8 +1,28 @@
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
-use iced::Color;
+use iced::{
+  Background, Color, Element, Length,
+  widget::{Space, container},
+};
 
-use super::{CalendarEvent, State, palette};
+use super::{CalendarEvent, Message, State, palette};
 use crate::config::CalendarWeekStart;
+
+const ACCENT_WIDTH: f32 = 3.0;
+
+/// The solid, full-saturation color bar drawn down the left edge of an event block (the design's
+/// `border-left: 3px solid`). Rendered as a sibling strip rather than a border because iced borders
+/// are uniform on all sides; callers place it as the first child of the block with zero left padding
+/// so it sits flush against the edge.
+pub(super) fn accent_strip<'a>(tint: Color) -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fixed(ACCENT_WIDTH))
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(tint)),
+      ..container::Style::default()
+    })
+    .into()
+}
 
 pub(super) const MIN_BLOCK_MINUTES: i64 = 30;
 pub(super) const MINUTES_PER_DAY: i64 = 1440;

@@ -1,12 +1,13 @@
 use chrono::{DateTime, Datelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
 use super::{
-  Message, Scope, State, View, agenda, day, detail, month, palette, palette::OwnerType, switcher, tweaks, week, year,
+  Message, Scope, State, View, agenda, day, detail, grid, month, palette, palette::OwnerType, switcher, tweaks, week,
+  year,
 };
 use crate::{
   config::Feature,
@@ -69,7 +70,13 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if let Some(detail_state) = state.detail()
     && let Some(card) = detail::modal(state, detail_state)
   {
-    return modal_overlay(base.into(), Some(Message::DetailClosed), card);
+    let centered = container(card)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center)
+      .padding(spacing::SPACE_6);
+    return modal_overlay(base.into(), Some(Message::DetailClosed), centered.into());
   }
 
   base.into()
@@ -142,11 +149,70 @@ fn content<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   {
     children.push(banner);
   }
+  children.push(legend_bar(state));
   children.push(view_body(state, now));
 
   Column::with_children(children)
     .width(Length::Fill)
     .height(Length::Fill)
+    .into()
+}
+
+/// The sunken band beneath the header: owner/pilot legend on the left, an event count + timezone
+/// summary on the right. Mirrors the design's black status strip (kept out of the header itself).
+fn legend_bar<'a>(state: &'a State) -> Element<'a, Message> {
+  let scope_label = if state.tweaks().color_by_pilot() {
+    "Pilots"
+  } else {
+    "Owner"
+  };
+  let count = state.visible_events().len();
+  let summary = if state.tweaks().local_time() {
+    format!(
+      "{count} {} \u{00B7} times in EVE + local",
+      if count == 1 { "event" } else { "events" }
+    )
+  } else {
+    format!(
+      "{count} {} \u{00B7} times in EVE",
+      if count == 1 { "event" } else { "events" }
+    )
+  };
+
+  let band = Row::with_children(vec![
+    text(scope_label.to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    type_legend(state),
+    Space::new().width(Length::Fill).into(),
+    text(summary)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_y(Vertical::Center);
+
+  container(band)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2_5,
+      left: HEADER_SIDE_PADDING,
+      right: HEADER_SIDE_PADDING,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
     .into()
 }
 
@@ -173,19 +239,24 @@ fn date_nav<'a>(state: &'a State) -> Element<'a, Message> {
   .on_press(Message::CursorToday)
   .style(|_, status| nav_button_style(status));
 
-  let title = Column::with_children(vec![
-    text(nav_title(state))
+  let (title_text, sub_text) = nav_period(state);
+  let mut title_lines: Vec<Element<'a, Message>> = vec![
+    text(title_text)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(state.view().label().to_uppercase())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .spacing(spacing::UNIT);
+  ];
+  if let Some(sub) = sub_text {
+    title_lines.push(
+      text(sub.to_uppercase())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    );
+  }
+  let title = Column::with_children(title_lines).spacing(spacing::UNIT);
 
   Row::with_children(vec![
     nav_button(Icon::chevron_left(), Message::CursorPrev).into(),
@@ -205,7 +276,6 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     rule::vertical(44.0),
     date_nav(state),
     Space::new().width(Length::Fill).into(),
-    type_legend(state),
     view_segmented(state),
     tweaks_button(),
   ])
@@ -286,9 +356,60 @@ fn nav_button_style(status: button::Status) -> button::Style {
   }
 }
 
-fn nav_title(state: &State) -> String {
+/// The header date label, which differs per view: a "from" hint for Agenda, the full day for Day, a
+/// date range for Week, month + year for Month, and just the year for Year. Returns (title, optional
+/// subtitle) — the subtitle is rendered as a small uppercase mono line beneath.
+fn nav_period(state: &State) -> (String, Option<String>) {
   let cursor = state.cursor();
-  format!("{} {}", long_month(cursor), cursor.year())
+  match state.view() {
+    View::Agenda => (
+      "Agenda".to_owned(),
+      Some(format!("From {} {}", short_month(cursor), cursor.day())),
+    ),
+    View::Day => (
+      format!("{}, {} {}", long_weekday(cursor), long_month(cursor), cursor.day()),
+      Some(format!("{} \u{00B7} EVE / UTC", cursor.year())),
+    ),
+    View::Week => {
+      let dates = grid::week_dates(cursor, state.tweaks().week_start(), state.tweaks().show_weekends());
+      let first = dates.first().copied().unwrap_or(cursor);
+      let last = dates.last().copied().unwrap_or(cursor);
+      let span = if first.month0() == last.month0() {
+        format!("{} {} \u{2013} {}", short_month(first), first.day(), last.day())
+      } else {
+        format!(
+          "{} {} \u{2013} {} {}",
+          short_month(first),
+          first.day(),
+          short_month(last),
+          last.day()
+        )
+      };
+      (span, Some(format!("{} \u{00B7} Week", first.year())))
+    }
+    View::Month => (format!("{} {}", long_month(cursor), cursor.year()), None),
+    View::Year => (cursor.year().to_string(), Some("Year".to_owned())),
+  }
+}
+
+fn short_month(day: DateTime<Utc>) -> &'static str {
+  const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  MONTHS[(day.month0() as usize).min(11)]
+}
+
+fn long_weekday(day: DateTime<Utc>) -> &'static str {
+  const DAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+  ];
+  DAYS[day.weekday().num_days_from_monday() as usize]
 }
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {

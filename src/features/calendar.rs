@@ -528,6 +528,7 @@ mod tests {
           ],
         );
 
+        state.tweaks.set_pod_overlays(false);
         assert_eq!(state.visible_events().len(), 1);
 
         state.tweaks.set_pod_overlays(true);

@@ -6,10 +6,14 @@ use iced::{
 };
 
 use super::{CalendarEvent, Message, State, View, grid};
-use crate::ui::style::{color, radius, spacing, typography};
+use crate::ui::{
+  components::rule,
+  style::{color, radius, spacing, typography},
+};
 
 const COLUMNS: usize = 4;
 const DAY_DOT: f32 = 4.0;
+const YEAR_MAX_WIDTH: f32 = 1760.0;
 
 pub(super) fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let tweaks = state.tweaks();
@@ -47,7 +51,7 @@ pub(super) fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Mess
       left: spacing::SPACE_6 + spacing::SPACE_2,
       right: spacing::SPACE_6 + spacing::SPACE_2,
     })
-    .max_width(spacing::layout::GRID_MAX_WIDTH);
+    .max_width(YEAR_MAX_WIDTH);
 
   container(
     iced::widget::scrollable(container(grid_body).width(Length::Fill).align_x(Horizontal::Center))
@@ -197,6 +201,7 @@ fn mini_month<'a>(
 
   Column::with_children(vec![
     month_title(year, month0, count),
+    rule::horizontal(),
     dow_header.into(),
     grid_body.into(),
   ])
@@ -240,11 +245,6 @@ fn month_title<'a>(year: i32, month0: u32, count: usize) -> Element<'a, Message>
   .style(|_, status| {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-      border: Border {
-        color: color::rule(),
-        width: 1.0,
-        radius: 0.0.into(),
-      },
       text_color: if hovered {
         color::accent::PLASMA
       } else {

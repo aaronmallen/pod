@@ -50,13 +50,13 @@ pub struct CalendarTweaks {
   #[serde(default = "default_calendar_density")]
   density: CalendarDensity,
   #[getset(get_copy = "pub")]
-  #[serde(default)]
+  #[serde(default = "default_true")]
   local_time: bool,
   #[getset(get_copy = "pub")]
   #[serde(default = "default_true")]
   month_chips: bool,
   #[getset(get_copy = "pub")]
-  #[serde(default)]
+  #[serde(default = "default_true")]
   pod_overlays: bool,
   #[getset(get_copy = "pub")]
   #[serde(default = "default_true")]
@@ -80,12 +80,12 @@ impl Default for CalendarTweaks {
     Self {
       color_by_pilot: true,
       density: CalendarDensity::default(),
-      local_time: false,
+      local_time: true,
       month_chips: true,
-      pod_overlays: false,
+      pod_overlays: true,
       show_weekends: true,
       week_hours: true,
-      week_start: CalendarWeekStart::default(),
+      week_start: CalendarWeekStart::Sunday,
     }
   }
 }
@@ -445,7 +445,7 @@ fn default_calendar_density() -> CalendarDensity {
 }
 
 fn default_calendar_week_start() -> CalendarWeekStart {
-  CalendarWeekStart::default()
+  CalendarWeekStart::Sunday
 }
 
 fn default_eve_client_id() -> String {

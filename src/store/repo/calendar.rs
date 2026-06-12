@@ -140,9 +140,14 @@ pub async fn attendee_tally(db: &Database, character_id: i64, event_id: i64) -> 
 }
 
 pub async fn attention_count(db: &Database, now: &str) -> Result<i64, Error> {
+  // Attention = upcoming events that still want an RSVP from the pilot: those whose owner type can
+  // be responded to (corp/alliance/faction) and that haven't been answered yet. Events you can't
+  // respond to (personal, EVE-server, Pod overlays) and ones you've already answered never count,
+  // so acknowledging an invite clears the rail badge.
   let count = sqlx::query_scalar::<_, i64>(
     "SELECT COUNT(*) FROM character_calendar \
-    WHERE timestamp >= ? AND (importance != 0 OR response = 'not_responded')",
+    WHERE timestamp >= ? AND response = 'not_responded' \
+    AND owner_type IN ('corporation', 'alliance', 'faction')",
   )
   .bind(now)
   .fetch_one(&db.0)
@@ -392,27 +397,31 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_counts_upcoming_important_or_unresponded_events() {
+    async fn it_counts_upcoming_respondable_unanswered_events() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let now = "2026-06-12T00:00:00Z";
 
+      // Future corp invite, already answered — excluded (acknowledging clears it).
       super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 1, "accepted"), &[])
         .await
         .unwrap();
+      // Future corp invite, unanswered — the one that counts.
       super::upsert_complete(&db, &make_event(42, 2, "2026-06-21T19:00:00Z", 0, "not_responded"), &[])
         .await
         .unwrap();
-      super::upsert_complete(&db, &make_event(42, 3, "2026-06-22T19:00:00Z", 0, "accepted"), &[])
-        .await
-        .unwrap();
+      // Future non-respondable (EVE server) downtime, unanswered — excluded, nothing to answer.
+      let mut downtime = make_event(42, 3, "2026-06-22T11:00:00Z", 1, "not_responded");
+      downtime.owner_type = "eve_server".to_owned();
+      super::upsert_complete(&db, &downtime, &[]).await.unwrap();
+      // Past corp invite, unanswered — excluded, already elapsed.
       super::upsert_complete(&db, &make_event(42, 4, "2026-06-01T19:00:00Z", 1, "not_responded"), &[])
         .await
         .unwrap();
 
       let count = super::attention_count(&db, now).await.unwrap();
 
-      assert_eq!(count, 2);
+      assert_eq!(count, 1);
     }
   }
 }

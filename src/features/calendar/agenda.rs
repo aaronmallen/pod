@@ -11,11 +11,15 @@ use super::{
 };
 use crate::{
   config::CalendarDensity,
-  ui::style::{color, radius, spacing, typography},
+  ui::{
+    components::rule,
+    style::{color, radius, spacing, typography},
+  },
 };
 
 const SPINE_GLYPH: f32 = 28.0;
 const TIME_COLUMN: f32 = 112.0;
+const EDGE_PADDING: f32 = 20.0;
 
 pub(super) fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let from = start_of_day(state.cursor());
@@ -48,14 +52,13 @@ pub(super) fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Mess
     .collect();
 
   let content = Column::with_children(rows).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_2,
     bottom: spacing::SPACE_6,
-    ..Padding::ZERO
+    left: EDGE_PADDING,
+    right: EDGE_PADDING,
   });
 
-  scrollable(container(content).width(Length::Fill).align_x(Horizontal::Center))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+  scrollable(content).width(Length::Fill).height(Length::Fill).into()
 }
 
 fn agenda_row<'a>(state: &'a State, event: &'a CalendarEvent) -> Element<'a, Message> {
@@ -153,16 +156,15 @@ fn day_group<'a>(
       .width(Length::Fill)
       .style(|_| container::Style {
         background: Some(Background::Color(color::surface::BASE)),
-        border: Border {
-          color: color::rule(),
-          width: 1.0,
-          radius: 0.0.into(),
-        },
         ..container::Style::default()
       })
       .into(),
+    rule::horizontal(),
   ];
-  children.extend(items.into_iter().map(|event| agenda_row(state, event)));
+  for event in items {
+    children.push(agenda_row(state, event));
+    children.push(rule::horizontal());
+  }
 
   Column::with_children(children).width(Length::Fill).into()
 }
@@ -363,11 +365,6 @@ fn row_style(status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   button::Style {
     background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.03))),
-    border: Border {
-      color: color::rule(),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
     text_color: color::text::PRIMARY,
     ..button::Style::default()
   }

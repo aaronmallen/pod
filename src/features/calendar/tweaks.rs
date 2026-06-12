@@ -20,10 +20,8 @@ pub enum Tweak {
   ColorByPilot(bool),
   Density(CalendarDensity),
   LocalTime(bool),
-  MonthChips(bool),
   PodOverlays(bool),
   ShowWeekends(bool),
-  WeekHours(bool),
   WeekStart(CalendarWeekStart),
 }
 
@@ -39,17 +37,11 @@ impl Tweak {
       Tweak::LocalTime(value) => {
         tweaks.set_local_time(value);
       }
-      Tweak::MonthChips(value) => {
-        tweaks.set_month_chips(value);
-      }
       Tweak::PodOverlays(value) => {
         tweaks.set_pod_overlays(value);
       }
       Tweak::ShowWeekends(value) => {
         tweaks.set_show_weekends(value);
-      }
-      Tweak::WeekHours(value) => {
-        tweaks.set_week_hours(value);
       }
       Tweak::WeekStart(value) => {
         tweaks.set_week_start(value);
@@ -93,17 +85,7 @@ pub(super) fn panel<'a>(tweaks: CalendarTweaks) -> Element<'a, Message> {
       tweaks.pod_overlays(),
       Tweak::PodOverlays(!tweaks.pod_overlays()),
     ),
-    section("Grids"),
-    toggle_row(
-      "Month chips",
-      tweaks.month_chips(),
-      Tweak::MonthChips(!tweaks.month_chips()),
-    ),
-    toggle_row(
-      "Week hours",
-      tweaks.week_hours(),
-      Tweak::WeekHours(!tweaks.week_hours()),
-    ),
+    section("Week"),
     segmented_row(
       "Week starts",
       &[

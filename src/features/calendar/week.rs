@@ -301,18 +301,26 @@ fn event_block<'a>(state: &'a State, packed: Packed<'a>, hour_height: f32) -> El
     );
   }
 
-  button(Column::with_children(lines).spacing(1.0))
+  let inner = container(Column::with_children(lines).spacing(1.0))
     .width(Length::Fill)
-    .height(Length::Fixed(height))
     .padding(Padding {
       top: 2.0,
       bottom: 2.0,
       left: spacing::UNIT + 1.0,
       right: spacing::UNIT + 1.0,
-    })
-    .on_press(Message::EventOpened(event.character_id, event.event_id))
-    .style(move |_, status| block_style(tint, status))
-    .into()
+    });
+
+  button(
+    Row::with_children(vec![grid::accent_strip(tint), inner.into()])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(height))
+  .padding(0.0)
+  .on_press(Message::EventOpened(event.character_id, event.event_id))
+  .style(move |_, status| block_style(tint, status))
+  .into()
 }
 
 fn header_row<'a>(dates: &[DateTime<Utc>], now: DateTime<Utc>) -> Element<'a, Message> {

@@ -161,18 +161,26 @@ fn event_block<'a>(state: &'a State, packed: Packed<'a>, hour_height: f32) -> El
     );
   }
 
-  button(Column::with_children(lines).spacing(2.0))
+  let inner = container(Column::with_children(lines).spacing(2.0))
     .width(Length::Fill)
-    .height(Length::Fixed(height))
     .padding(Padding {
       top: if tall { spacing::UNIT + 2.0 } else { 3.0 },
       bottom: if tall { spacing::UNIT + 2.0 } else { 3.0 },
       left: spacing::SPACE_2,
       right: spacing::SPACE_2,
-    })
-    .on_press(Message::EventOpened(event.character_id, event.event_id))
-    .style(move |_, status| block_style(tint, status))
-    .into()
+    });
+
+  button(
+    Row::with_children(vec![grid::accent_strip(tint), inner.into()])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(height))
+  .padding(0.0)
+  .on_press(Message::EventOpened(event.character_id, event.event_id))
+  .style(move |_, status| block_style(tint, status))
+  .into()
 }
 
 fn event_canvas<'a>(
@@ -197,7 +205,7 @@ fn event_canvas<'a>(
       .padding(Padding {
         top: 0.0,
         bottom: 0.0,
-        left: spacing::SPACE_2,
+        left: GUTTER + spacing::SPACE_2,
         right: spacing::SPACE_3,
       })
       .into(),
@@ -329,7 +337,7 @@ fn moment_layer<'a>(state: &'a State, hour_height: f32, moments: &[Packed<'a>]) 
     .padding(Padding {
       top: 0.0,
       bottom: 0.0,
-      left: spacing::SPACE_2,
+      left: GUTTER + spacing::SPACE_2,
       right: spacing::SPACE_3,
     })
     .into()

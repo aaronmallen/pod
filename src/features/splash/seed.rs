@@ -12,14 +12,15 @@ use crate::{
   store::{
     Database,
     model::{
-      AbyssalModuleStat, Bloodline, Certificate, CertificateSkill, DogmaAttribute as DogmaAttributeMeta, Faction,
-      ItemCategory, ItemGroup, ItemType, MarketGroup, Race, ShipMastery, SkillMetadata,
+      AbyssalModuleStat, AgentType, Bloodline, Certificate, CertificateSkill, Constellation,
+      DogmaAttribute as DogmaAttributeMeta, Faction, ItemCategory, ItemGroup, ItemType, MarketGroup, NpcAgent,
+      NpcAgentSkill, NpcCorporationDivision, Race, Region, ShipMastery, SkillMetadata, SolarSystem, Station,
     },
-    repo::{assets, sde, skills},
+    repo::{assets, org, sde, skills},
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 2;
+const SEED_FORMAT_REVISION: u32 = 3;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 const SKILL_RANK_ATTR_ID: i32 = 275;
@@ -217,6 +218,133 @@ struct SdeCertEntry {
   skill_types: HashMap<i32, CertSkillLevel>,
 }
 
+#[derive(Deserialize)]
+struct SdeAgentTypeEntry {
+  name: String,
+}
+
+#[derive(Deserialize)]
+struct SdeNpcCorporationDivisionEntry {
+  name: Option<LocalizedString>,
+}
+
+#[derive(Deserialize)]
+struct SdeNpcCorporationEntry {
+  #[serde(rename = "factionID")]
+  faction_id: Option<i64>,
+  name: Option<LocalizedString>,
+  #[serde(rename = "stationID")]
+  station_id: Option<i64>,
+  #[serde(rename = "tickerName")]
+  ticker_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SdeRegionEntry {
+  name: Option<LocalizedString>,
+}
+
+#[derive(Deserialize)]
+struct SdeConstellationEntry {
+  name: Option<LocalizedString>,
+  position: SdePosition,
+  #[serde(rename = "regionID")]
+  region_id: i64,
+}
+
+#[derive(Deserialize)]
+struct SdeSolarSystemEntry {
+  #[serde(rename = "constellationID")]
+  constellation_id: i64,
+  name: Option<LocalizedString>,
+  position: SdePosition,
+  #[serde(rename = "securityClass")]
+  security_class: Option<String>,
+  #[serde(rename = "securityStatus")]
+  security_status: f64,
+  #[serde(rename = "starID")]
+  star_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdePosition {
+  x: f64,
+  y: f64,
+  z: f64,
+}
+
+#[derive(Deserialize)]
+struct SdeNpcStationEntry {
+  #[serde(rename = "operationID")]
+  operation_id: Option<i64>,
+  #[serde(rename = "orbitID")]
+  orbit_id: Option<i64>,
+  #[serde(rename = "ownerID")]
+  owner_id: Option<i64>,
+  position: SdePosition,
+  #[serde(rename = "reprocessingEfficiency", default)]
+  reprocessing_efficiency: f64,
+  #[serde(rename = "reprocessingStationsTake", default)]
+  reprocessing_stations_take: f64,
+  #[serde(rename = "solarSystemID")]
+  solar_system_id: i64,
+  #[serde(rename = "typeID")]
+  type_id: i64,
+  #[serde(rename = "useOperationName", default)]
+  use_operation_name: bool,
+}
+
+#[derive(Deserialize)]
+struct SdeStationOperationEntry {
+  #[serde(rename = "operationName")]
+  operation_name: Option<LocalizedString>,
+}
+
+#[derive(Deserialize)]
+struct SdeMapPlanetEntry {
+  #[serde(rename = "celestialIndex")]
+  celestial_index: i32,
+  #[serde(rename = "solarSystemID")]
+  solar_system_id: i64,
+}
+
+#[derive(Deserialize)]
+struct SdeMapMoonEntry {
+  #[serde(rename = "orbitID")]
+  orbit_id: i64,
+  #[serde(rename = "orbitIndex")]
+  orbit_index: i32,
+}
+
+#[derive(Deserialize)]
+struct SdeNpcCharacterEntry {
+  agent: Option<SdeAgentEntry>,
+  #[serde(rename = "corporationID")]
+  corporation_id: Option<i64>,
+  #[serde(rename = "locationID")]
+  location_id: Option<i64>,
+  name: Option<LocalizedString>,
+  #[serde(default)]
+  skills: Vec<SdeAgentSkillEntry>,
+}
+
+#[derive(Deserialize)]
+struct SdeAgentEntry {
+  #[serde(rename = "agentTypeID")]
+  agent_type_id: Option<i64>,
+  #[serde(rename = "divisionID")]
+  division_id: Option<i64>,
+  #[serde(rename = "isLocator", default)]
+  is_locator: bool,
+  level: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeAgentSkillEntry {
+  #[serde(rename = "typeID")]
+  type_id: i64,
+}
+
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
   let (tx, rx) = iced::futures::channel::mpsc::channel(64);
   tokio::spawn(run_seed(db, http, tx));
@@ -359,6 +487,30 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
     step(tx, "Seeding ship masteries\u{2026}").await;
     seed_masteries(db, &mastery_path).await?;
   }
+
+  step(tx, "Seeding NPC corporations\u{2026}").await;
+  seed_npc_corporations(db, &r.join("npcCorporations.yaml")).await?;
+
+  step(tx, "Seeding regions\u{2026}").await;
+  seed_regions(db, &r.join("mapRegions.yaml")).await?;
+
+  step(tx, "Seeding constellations\u{2026}").await;
+  seed_constellations(db, &r.join("mapConstellations.yaml")).await?;
+
+  step(tx, "Seeding solar systems\u{2026}").await;
+  seed_solar_systems(db, &r.join("mapSolarSystems.yaml")).await?;
+
+  step(tx, "Seeding NPC stations\u{2026}").await;
+  seed_npc_stations(db, r).await?;
+
+  step(tx, "Seeding agent types\u{2026}").await;
+  seed_agent_types(db, &r.join("agentTypes.yaml")).await?;
+
+  step(tx, "Seeding NPC corporation divisions\u{2026}").await;
+  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.yaml")).await?;
+
+  step(tx, "Seeding NPC agents\u{2026}").await;
+  seed_npc_agents(db, &r.join("npcCharacters.yaml")).await?;
 
   Ok(())
 }
@@ -696,6 +848,265 @@ async fn seed_masteries(db: &Database, path: &Path) -> Result<(), String> {
   skills::mastery_upsert_many(db, &records)
     .await
     .map_err(|e| e.to_string())
+}
+
+async fn seed_agent_types(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeAgentTypeEntry> = read_yaml(path).await?;
+
+  let records: Vec<AgentType> = entries
+    .into_iter()
+    .map(|(id, e)| AgentType {
+      id,
+      name: e.name,
+    })
+    .collect();
+
+  sde::upsert_many_agent_types(db, &records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn seed_npc_corporation_divisions(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeNpcCorporationDivisionEntry> = read_yaml(path).await?;
+
+  let records: Vec<NpcCorporationDivision> = entries
+    .into_iter()
+    .map(|(id, e)| NpcCorporationDivision {
+      id,
+      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+    })
+    .collect();
+
+  sde::upsert_many_npc_corporation_divisions(db, &records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn seed_npc_corporations(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeNpcCorporationEntry> = read_yaml(path).await?;
+
+  let records: Vec<org::SeedCorporation> = entries
+    .into_iter()
+    .map(|(id, e)| org::SeedCorporation {
+      faction_id: e.faction_id,
+      home_station_id: e.station_id,
+      id,
+      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      ticker: e.ticker_name.unwrap_or_default(),
+    })
+    .collect();
+
+  org::upsert_many_seed_corporations(db, &records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn seed_regions(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeRegionEntry> = read_yaml(path).await?;
+
+  let records: Vec<Region> = entries
+    .into_iter()
+    .map(|(id, e)| Region {
+      description: None,
+      id,
+      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+    })
+    .collect();
+
+  sde::upsert_many_regions(db, &records).await.map_err(|e| e.to_string())
+}
+
+async fn seed_constellations(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeConstellationEntry> = read_yaml(path).await?;
+
+  let records: Vec<Constellation> = entries
+    .into_iter()
+    .map(|(id, e)| Constellation {
+      id,
+      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      position_x: e.position.x,
+      position_y: e.position.y,
+      position_z: e.position.z,
+      region_id: e.region_id,
+    })
+    .collect();
+
+  sde::upsert_many_constellations(db, &records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn seed_solar_systems(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeSolarSystemEntry> = read_yaml(path).await?;
+
+  let records: Vec<SolarSystem> = entries
+    .into_iter()
+    .map(|(id, e)| SolarSystem {
+      constellation_id: e.constellation_id,
+      id,
+      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      position_x: e.position.x,
+      position_y: e.position.y,
+      position_z: e.position.z,
+      security_class: e.security_class,
+      security_status: e.security_status,
+      star_id: e.star_id,
+    })
+    .collect();
+
+  sde::upsert_many_solar_systems(db, &records)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn seed_npc_stations(db: &Database, r: &Path) -> Result<(), String> {
+  let stations: HashMap<i64, SdeNpcStationEntry> = read_yaml(&r.join("npcStations.yaml")).await?;
+  let planets: HashMap<i64, SdeMapPlanetEntry> = read_yaml(&r.join("mapPlanets.yaml")).await?;
+  let moons: HashMap<i64, SdeMapMoonEntry> = read_yaml(&r.join("mapMoons.yaml")).await?;
+  let operations: HashMap<i64, SdeStationOperationEntry> = read_yaml(&r.join("stationOperations.yaml")).await?;
+  let systems = sde::solar_system_names(db).await.map_err(|e| e.to_string())?;
+  let corporations = org::corporation_names(db).await.map_err(|e| e.to_string())?;
+
+  let records: Vec<Station> = stations
+    .into_iter()
+    .map(|(id, e)| {
+      let orbit_name = derive_orbit_name(e.orbit_id, &planets, &moons, &systems);
+      let corporation_name = e.owner_id.and_then(|owner| corporations.get(&owner)).cloned();
+      let operation_name = e
+        .operation_id
+        .and_then(|op| operations.get(&op))
+        .and_then(|op| op.operation_name.clone())
+        .map(LocalizedString::en);
+      let name = derive_station_name(
+        orbit_name.as_deref(),
+        corporation_name.as_deref(),
+        operation_name.as_deref().filter(|_| e.use_operation_name),
+      );
+
+      Station {
+        id,
+        max_dockable_ship_volume: 0.0,
+        name,
+        office_rental_cost: 0.0,
+        owner: e.owner_id,
+        position_x: e.position.x,
+        position_y: e.position.y,
+        position_z: e.position.z,
+        race_id: None,
+        reprocessing_efficiency: e.reprocessing_efficiency,
+        reprocessing_stations_take: e.reprocessing_stations_take,
+        services: "[]".to_owned(),
+        system_id: e.solar_system_id,
+        type_id: e.type_id,
+      }
+    })
+    .collect();
+
+  sde::seed_many_stations(db, &records).await.map_err(|e| e.to_string())
+}
+
+async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeNpcCharacterEntry> = read_yaml(path).await?;
+
+  let mut agents: Vec<NpcAgent> = Vec::new();
+  let mut skills: Vec<NpcAgentSkill> = Vec::new();
+
+  for (id, entry) in entries {
+    let Some(agent) = entry.agent else {
+      continue;
+    };
+
+    for skill in &entry.skills {
+      skills.push(NpcAgentSkill {
+        agent_id: id,
+        skill_type_id: skill.type_id,
+      });
+    }
+
+    agents.push(NpcAgent {
+      agent_type_id: agent.agent_type_id,
+      corporation_id: entry.corporation_id,
+      division_id: agent.division_id,
+      id,
+      is_locator: i32::from(agent.is_locator),
+      level: agent.level,
+      location_id: entry.location_id,
+      name: entry.name.map(LocalizedString::en).unwrap_or_default(),
+    });
+  }
+
+  sde::seed_many_npc_agents(db, &agents, &skills)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn derive_orbit_name(
+  orbit_id: Option<i64>,
+  planets: &HashMap<i64, SdeMapPlanetEntry>,
+  moons: &HashMap<i64, SdeMapMoonEntry>,
+  systems: &HashMap<i64, String>,
+) -> Option<String> {
+  let orbit_id = orbit_id?;
+
+  if let Some(planet) = planets.get(&orbit_id) {
+    let system_name = systems.get(&planet.solar_system_id)?;
+    return Some(format!("{system_name} {}", roman_numeral(planet.celestial_index)));
+  }
+
+  if let Some(moon) = moons.get(&orbit_id) {
+    let planet = planets.get(&moon.orbit_id)?;
+    let system_name = systems.get(&planet.solar_system_id)?;
+    let planet_name = format!("{system_name} {}", roman_numeral(planet.celestial_index));
+    return Some(format!("{planet_name} - Moon {}", moon.orbit_index));
+  }
+
+  None
+}
+
+fn derive_station_name(
+  orbit_name: Option<&str>,
+  corporation_name: Option<&str>,
+  operation_name: Option<&str>,
+) -> String {
+  let orbit = orbit_name.unwrap_or("");
+  let corporation = corporation_name.unwrap_or("");
+
+  match operation_name {
+    Some(operation) if !operation.is_empty() => format!("{orbit} - {corporation} {operation}"),
+    _ => format!("{orbit} - {corporation}"),
+  }
+}
+
+fn roman_numeral(value: i32) -> String {
+  const NUMERALS: [(i32, &str); 13] = [
+    (1000, "M"),
+    (900, "CM"),
+    (500, "D"),
+    (400, "CD"),
+    (100, "C"),
+    (90, "XC"),
+    (50, "L"),
+    (40, "XL"),
+    (10, "X"),
+    (9, "IX"),
+    (5, "V"),
+    (4, "IV"),
+    (1, "I"),
+  ];
+
+  if value <= 0 {
+    return value.to_string();
+  }
+
+  let mut remaining = value;
+  let mut result = String::new();
+  for (amount, numeral) in NUMERALS {
+    while remaining >= amount {
+      result.push_str(numeral);
+      remaining -= amount;
+    }
+  }
+  result
 }
 
 fn composite_version(sde_build: &str) -> String {
@@ -1715,6 +2126,67 @@ mod tests {
       )
       .await;
       write_yaml(dir, "masteries.yaml", "596:\n  1:\n    - 100\n").await;
+      write_yaml(
+        dir,
+        "npcCorporations.yaml",
+        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000004, tickerName: CN }\n",
+      )
+      .await;
+      write_yaml(dir, "mapRegions.yaml", "10000002: { name: { en: The Forge } }\n").await;
+      write_yaml(
+        dir,
+        "mapConstellations.yaml",
+        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "mapSolarSystems.yaml",
+        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, securityClass: B, \
+        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "mapPlanets.yaml",
+        "40009082: { celestialIndex: 4, solarSystemID: 30000142 }\n",
+      )
+      .await;
+      write_yaml(dir, "mapMoons.yaml", "40009087: { orbitID: 40009082, orbitIndex: 4 }\n").await;
+      write_yaml(
+        dir,
+        "stationOperations.yaml",
+        "14: { operationName: { en: Assembly Plant } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "npcStations.yaml",
+        "60000004: { operationID: 14, orbitID: 40009087, ownerID: 1000035, solarSystemID: 30000142, typeID: 596, \
+        useOperationName: true, reprocessingEfficiency: 0.5, reprocessingStationsTake: 0.05, \
+        position: { x: 1.0, y: 2.0, z: 3.0 } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "agentTypes.yaml",
+        "2: { name: BasicAgent }\n4: { name: ResearchAgent }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "npcCorporationDivisions.yaml",
+        "22: { name: { en: Distribution } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "npcCharacters.yaml",
+        "3008416:\n  agent: { agentTypeID: 2, divisionID: 22, isLocator: false, level: 1 }\n  \
+        corporationID: 1000035\n  locationID: 60000004\n  name: { en: Antaken Kamola }\n  \
+        skills:\n  - typeID: 3300\n",
+      )
+      .await;
     }
 
     fn channel() -> (Tx, iced::futures::channel::mpsc::Receiver<Progress>) {
@@ -1741,6 +2213,24 @@ mod tests {
       assert_eq!(mass.display_name().as_deref(), Some("Mass"));
       assert_eq!(mass.high_is_good(), false);
       assert_eq!(mass.unit_id(), Some(2));
+
+      let region: String = sqlx::query_scalar("SELECT name FROM regions WHERE id = 10000002")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(region, "The Forge");
+
+      let station: String = sqlx::query_scalar("SELECT name FROM stations WHERE id = 60000004")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(station, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+
+      let agent: String = sqlx::query_scalar("SELECT name FROM npc_agents WHERE id = 3008416")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(agent, "Antaken Kamola");
     }
 
     #[tokio::test]
@@ -1912,6 +2402,341 @@ mod tests {
         .await
         .unwrap();
       assert_eq!(count, 4);
+    }
+  }
+
+  mod roman_numeral {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_converts_celestial_indices_to_roman_numerals() {
+      assert_eq!(roman_numeral(1), "I");
+      assert_eq!(roman_numeral(4), "IV");
+      assert_eq!(roman_numeral(9), "IX");
+      assert_eq!(roman_numeral(14), "XIV");
+      assert_eq!(roman_numeral(29), "XXIX");
+    }
+
+    #[test]
+    fn it_falls_back_to_arabic_for_non_positive_values() {
+      assert_eq!(roman_numeral(0), "0");
+      assert_eq!(roman_numeral(-3), "-3");
+    }
+  }
+
+  mod derive_orbit_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fixture() -> (
+      HashMap<i64, SdeMapPlanetEntry>,
+      HashMap<i64, SdeMapMoonEntry>,
+      HashMap<i64, String>,
+    ) {
+      let planets = HashMap::from([(
+        40009082,
+        SdeMapPlanetEntry {
+          celestial_index: 4,
+          solar_system_id: 30000142,
+        },
+      )]);
+      let moons = HashMap::from([(
+        40009087,
+        SdeMapMoonEntry {
+          orbit_id: 40009082,
+          orbit_index: 4,
+        },
+      )]);
+      let systems = HashMap::from([(30000142, "Jita".to_owned())]);
+      (planets, moons, systems)
+    }
+
+    #[test]
+    fn it_names_a_planet_with_a_roman_celestial_index() {
+      let (planets, moons, systems) = fixture();
+
+      let name = derive_orbit_name(Some(40009082), &planets, &moons, &systems);
+
+      assert_eq!(name.as_deref(), Some("Jita IV"));
+    }
+
+    #[test]
+    fn it_names_a_moon_with_an_arabic_orbit_index_under_its_parent_planet() {
+      let (planets, moons, systems) = fixture();
+
+      let name = derive_orbit_name(Some(40009087), &planets, &moons, &systems);
+
+      assert_eq!(name.as_deref(), Some("Jita IV - Moon 4"));
+    }
+
+    #[test]
+    fn it_returns_none_for_an_unknown_orbit() {
+      let (planets, moons, systems) = fixture();
+
+      assert_eq!(derive_orbit_name(Some(999), &planets, &moons, &systems), None);
+      assert_eq!(derive_orbit_name(None, &planets, &moons, &systems), None);
+    }
+  }
+
+  mod derive_station_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_appends_the_operation_name_when_present() {
+      let name = derive_station_name(Some("Jita IV - Moon 4"), Some("Caldari Navy"), Some("Assembly Plant"));
+
+      assert_eq!(name, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+    }
+
+    #[test]
+    fn it_omits_the_operation_name_when_absent() {
+      let name = derive_station_name(Some("Tanoo IV"), Some("Amarr Navy"), None);
+
+      assert_eq!(name, "Tanoo IV - Amarr Navy");
+    }
+  }
+
+  mod seed_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    async fn write(dir: &Path, name: &str, body: &str) {
+      tokio::fs::write(dir.join(name), body).await.unwrap();
+    }
+
+    async fn seed_item_type(db: &Database, id: i64) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (16, 'Skill', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (255, 16, 'G', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_types (id, group_id, description, name, published) VALUES (?, 255, '', 'Skill', 1)",
+      )
+      .bind(id)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_seeds_agent_types_and_divisions() {
+      let tmp = tempfile::tempdir().unwrap();
+      write(
+        tmp.path(),
+        "agentTypes.yaml",
+        "2: { name: BasicAgent }\n4: { name: ResearchAgent }\n",
+      )
+      .await;
+      write(
+        tmp.path(),
+        "npcCorporationDivisions.yaml",
+        "18: { name: { en: \"R&D\" } }\n22: { name: { en: Distribution } }\n",
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+
+      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+        .await
+        .unwrap();
+      seed_npc_corporation_divisions(&db, &tmp.path().join("npcCorporationDivisions.yaml"))
+        .await
+        .unwrap();
+
+      let agent_type: String = sqlx::query_scalar("SELECT name FROM agent_types WHERE id = 4")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(agent_type, "ResearchAgent");
+
+      let division: String = sqlx::query_scalar("SELECT name FROM npc_corporation_divisions WHERE id = 18")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(division, "R&D");
+    }
+
+    #[tokio::test]
+    async fn it_upserts_npc_corporations_without_clobbering_esi_columns() {
+      let tmp = tempfile::tempdir().unwrap();
+      write(
+        tmp.path(),
+        "npcCorporations.yaml",
+        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000001, tickerName: CN }\n",
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (1000035, 42, 7, 99, 'Stale', 0.1, 'OLD')",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"))
+        .await
+        .unwrap();
+
+      let (name, ticker, faction, ceo, members): (String, String, i64, i64, i64) =
+        sqlx::query_as("SELECT name, ticker, faction_id, ceo_id, member_count FROM corporations WHERE id = 1000035")
+          .fetch_one(&db.0)
+          .await
+          .unwrap();
+      assert_eq!(name, "Caldari Navy");
+      assert_eq!(ticker, "CN");
+      assert_eq!(faction, 500_001);
+
+      assert_eq!(ceo, 42);
+      assert_eq!(members, 99);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_geo_and_derives_station_names_end_to_end() {
+      let tmp = tempfile::tempdir().unwrap();
+      let r = tmp.path();
+      write(r, "mapRegions.yaml", "10000002: { name: { en: The Forge } }\n").await;
+      write(
+        r,
+        "mapConstellations.yaml",
+        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write(
+        r,
+        "mapSolarSystems.yaml",
+        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, securityClass: B, \
+        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write(
+        r,
+        "npcCorporations.yaml",
+        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60003760, tickerName: CN }\n",
+      )
+      .await;
+      write(
+        r,
+        "mapPlanets.yaml",
+        "40009082: { celestialIndex: 4, solarSystemID: 30000142 }\n",
+      )
+      .await;
+      write(r, "mapMoons.yaml", "40009087: { orbitID: 40009082, orbitIndex: 4 }\n").await;
+      write(
+        r,
+        "stationOperations.yaml",
+        "14: { operationName: { en: Assembly Plant } }\n",
+      )
+      .await;
+      write(
+        r,
+        "npcStations.yaml",
+        "60003760: { operationID: 14, orbitID: 40009087, ownerID: 1000035, solarSystemID: 30000142, typeID: 52678, \
+        useOperationName: true, reprocessingEfficiency: 0.5, reprocessingStationsTake: 0.05, \
+        position: { x: 1.0, y: 2.0, z: 3.0 } }\n",
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 52678).await;
+
+      seed_npc_corporations(&db, &r.join("npcCorporations.yaml"))
+        .await
+        .unwrap();
+      seed_regions(&db, &r.join("mapRegions.yaml")).await.unwrap();
+      seed_constellations(&db, &r.join("mapConstellations.yaml"))
+        .await
+        .unwrap();
+      seed_solar_systems(&db, &r.join("mapSolarSystems.yaml")).await.unwrap();
+      seed_npc_stations(&db, r).await.unwrap();
+
+      let region: String = sqlx::query_scalar("SELECT name FROM regions WHERE id = 10000002")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(region, "The Forge");
+
+      let station: String = sqlx::query_scalar("SELECT name FROM stations WHERE id = 60003760")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(station, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+    }
+
+    #[tokio::test]
+    async fn it_seeds_npc_agents_and_their_skills() {
+      let tmp = tempfile::tempdir().unwrap();
+      let r = tmp.path();
+      write(
+        r,
+        "npcCharacters.yaml",
+        "3008416:\n  agent: { agentTypeID: 2, divisionID: 22, isLocator: false, level: 1 }\n  \
+        name: { en: Antaken Kamola }\n  \
+        skills:\n  - typeID: 3300\n  - typeID: 3301\n\
+        3008999:\n  name: { en: Not An Agent }\n",
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 3300).await;
+      seed_item_type(&db, 3301).await;
+      sqlx::query("INSERT INTO agent_types (id, name) VALUES (2, 'BasicAgent')")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO npc_corporation_divisions (id, name) VALUES (22, 'Distribution')")
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      seed_npc_agents(&db, &r.join("npcCharacters.yaml")).await.unwrap();
+
+      let agents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM npc_agents")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(agents, 1);
+
+      let (name, level): (String, i64) = sqlx::query_as("SELECT name, level FROM npc_agents WHERE id = 3008416")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(name, "Antaken Kamola");
+      assert_eq!(level, 1);
+
+      let skills: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM npc_agent_skills WHERE agent_id = 3008416")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(skills, 2);
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_across_reseed() {
+      let tmp = tempfile::tempdir().unwrap();
+      write(tmp.path(), "agentTypes.yaml", "2: { name: BasicAgent }\n").await;
+      let db = store::open_test().await.unwrap();
+
+      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+        .await
+        .unwrap();
+      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+        .await
+        .unwrap();
+
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_types")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(count, 1);
     }
   }
 }

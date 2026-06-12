@@ -32,6 +32,15 @@ const SEARCH_SELECT: &str = "\
   LEFT JOIN characters ceo ON ceo.id = oc.ceo_id \
   LEFT JOIN stations hq ON hq.id = oc.home_station_id";
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeedCorporation {
+  pub faction_id: Option<i64>,
+  pub home_station_id: Option<i64>,
+  pub id: i64,
+  pub name: String,
+  pub ticker: String,
+}
+
 pub async fn all_corporations(db: &Database) -> Result<Vec<Corporation>, Error> {
   let rows = sqlx::query_as::<_, Corporation>(
     "SELECT alliance_id, ceo_id, creator_id, date_founded AS creation_date, description, \
@@ -401,6 +410,41 @@ pub async fn upsert_corporation(db: &Database, corp: &Corporation) -> Result<(),
   .bind(corp.war_eligible())
   .execute(&db.0)
   .await?;
+  Ok(())
+}
+
+pub async fn corporation_names(db: &Database) -> Result<HashMap<i64, String>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM corporations")
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows.into_iter().collect())
+}
+
+pub async fn upsert_many_seed_corporations(db: &Database, corporations: &[SeedCorporation]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+
+  for corporation in corporations {
+    sqlx::query(
+      "INSERT INTO corporations \
+        (id, ceo_id, creator_id, faction_id, home_station_id, member_count, name, tax_rate, ticker) \
+      VALUES (?, 0, 0, ?, ?, 0, ?, 0.0, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        faction_id      = excluded.faction_id, \
+        home_station_id = excluded.home_station_id, \
+        name            = excluded.name, \
+        ticker          = excluded.ticker",
+    )
+    .bind(corporation.id)
+    .bind(corporation.faction_id)
+    .bind(corporation.home_station_id)
+    .bind(corporation.name.as_str())
+    .bind(corporation.ticker.as_str())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
   Ok(())
 }
 

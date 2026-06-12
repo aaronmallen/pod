@@ -6,8 +6,9 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    Bloodline, Constellation, DogmaAttribute, Faction, InaccessibleStructure, ItemCategory, ItemGroup, ItemType,
-    MarketGroup, OwnerType, Race, Region, SolarSystem, Station, Structure,
+    AgentType, Bloodline, Constellation, DogmaAttribute, Faction, InaccessibleStructure, ItemCategory, ItemGroup,
+    ItemType, MarketGroup, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType, Race, Region, SolarSystem,
+    Station, Structure,
   },
 };
 
@@ -851,6 +852,222 @@ pub async fn upsert_station(db: &Database, station: &Station) -> Result<(), Erro
   .bind(station.type_id())
   .execute(&db.0)
   .await?;
+  Ok(())
+}
+
+pub async fn solar_system_names(db: &Database) -> Result<std::collections::HashMap<i64, String>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM solar_systems")
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows.into_iter().collect())
+}
+
+pub async fn upsert_many_agent_types(db: &Database, agent_types: &[AgentType]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for agent_type in agent_types {
+    sqlx::query(
+      "INSERT INTO agent_types (id, name) VALUES (?, ?) \
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+    )
+    .bind(agent_type.id())
+    .bind(agent_type.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn upsert_many_constellations(db: &Database, constellations: &[Constellation]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for constellation in constellations {
+    sqlx::query(
+      "INSERT INTO constellations \
+        (id, name, position_x, position_y, position_z, region_id) \
+      VALUES (?, ?, ?, ?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        name       = excluded.name, \
+        position_x = excluded.position_x, \
+        position_y = excluded.position_y, \
+        position_z = excluded.position_z, \
+        region_id  = excluded.region_id",
+    )
+    .bind(constellation.id())
+    .bind(constellation.name())
+    .bind(constellation.position_x())
+    .bind(constellation.position_y())
+    .bind(constellation.position_z())
+    .bind(constellation.region_id())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn upsert_many_npc_corporation_divisions(
+  db: &Database,
+  divisions: &[NpcCorporationDivision],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for division in divisions {
+    sqlx::query(
+      "INSERT INTO npc_corporation_divisions (id, name) VALUES (?, ?) \
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+    )
+    .bind(division.id())
+    .bind(division.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn upsert_many_regions(db: &Database, regions: &[Region]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for region in regions {
+    sqlx::query(
+      "INSERT INTO regions (id, description, name) VALUES (?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+    )
+    .bind(region.id())
+    .bind(region.description())
+    .bind(region.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn upsert_many_solar_systems(db: &Database, systems: &[SolarSystem]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for system in systems {
+    sqlx::query(
+      "INSERT INTO solar_systems \
+        (id, constellation_id, name, position_x, position_y, position_z, \
+        security_class, security_status, star_id) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        constellation_id = excluded.constellation_id, \
+        name             = excluded.name, \
+        position_x       = excluded.position_x, \
+        position_y       = excluded.position_y, \
+        position_z       = excluded.position_z, \
+        security_class   = excluded.security_class, \
+        security_status  = excluded.security_status, \
+        star_id          = excluded.star_id",
+    )
+    .bind(system.id())
+    .bind(system.constellation_id())
+    .bind(system.name())
+    .bind(system.position_x())
+    .bind(system.position_y())
+    .bind(system.position_z())
+    .bind(system.security_class())
+    .bind(system.security_status())
+    .bind(system.star_id())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn seed_many_stations(db: &Database, stations: &[Station]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+
+  for station in stations {
+    sqlx::query(
+      "INSERT INTO stations \
+        (id, max_dockable_ship_volume, name, office_rental_cost, owner, \
+        position_x, position_y, position_z, race_id, reprocessing_efficiency, \
+        reprocessing_stations_take, services, system_id, type_id) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        name                       = excluded.name, \
+        owner                      = excluded.owner, \
+        position_x                 = excluded.position_x, \
+        position_y                 = excluded.position_y, \
+        position_z                 = excluded.position_z, \
+        reprocessing_efficiency    = excluded.reprocessing_efficiency, \
+        reprocessing_stations_take = excluded.reprocessing_stations_take, \
+        system_id                  = excluded.system_id, \
+        type_id                    = excluded.type_id",
+    )
+    .bind(station.id())
+    .bind(station.max_dockable_ship_volume())
+    .bind(station.name())
+    .bind(station.office_rental_cost())
+    .bind(station.owner())
+    .bind(station.position_x())
+    .bind(station.position_y())
+    .bind(station.position_z())
+    .bind(station.race_id())
+    .bind(station.reprocessing_efficiency())
+    .bind(station.reprocessing_stations_take())
+    .bind(station.services())
+    .bind(station.system_id())
+    .bind(station.type_id())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn seed_many_npc_agents(db: &Database, agents: &[NpcAgent], skills: &[NpcAgentSkill]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+
+  for agent in agents {
+    sqlx::query(
+      "INSERT INTO npc_agents \
+        (id, agent_type_id, corporation_id, division_id, is_locator, level, location_id, name) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        agent_type_id  = excluded.agent_type_id, \
+        corporation_id = excluded.corporation_id, \
+        division_id    = excluded.division_id, \
+        is_locator     = excluded.is_locator, \
+        level          = excluded.level, \
+        location_id    = excluded.location_id, \
+        name           = excluded.name",
+    )
+    .bind(agent.id())
+    .bind(agent.agent_type_id())
+    .bind(agent.corporation_id())
+    .bind(agent.division_id())
+    .bind(agent.is_locator())
+    .bind(agent.level())
+    .bind(agent.location_id())
+    .bind(agent.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  for skill in skills {
+    sqlx::query("INSERT OR IGNORE INTO npc_agent_skills (agent_id, skill_type_id) VALUES (?, ?)")
+      .bind(skill.agent_id())
+      .bind(skill.skill_type_id())
+      .execute(&mut *tx)
+      .await?;
+  }
+
+  tx.commit().await?;
   Ok(())
 }
 

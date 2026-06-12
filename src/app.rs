@@ -22,7 +22,7 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    about, assets, auth, character_detail, character_manager, character_manager::OwnedPilot, mail, settings,
+    about, assets, auth, character_detail, character_manager, character_manager::OwnedPilot, mail, registry, settings,
     skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::{menu, updater},
@@ -1327,8 +1327,9 @@ fn main_view(app: &App) -> Element<'_, Message> {
     });
 
   let mail_unread = rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread));
+  let enabled_features = enabled_features(app);
   let body = Row::with_children(vec![
-    rail(app.route.destination(), mail_unread, Message::Nav),
+    rail(app.route.destination(), mail_unread, &enabled_features, Message::Nav),
     content.into(),
   ])
   .width(Length::Fill)
@@ -2976,6 +2977,16 @@ fn handle_init_failed(app: &mut App, error: String) -> Task<Message> {
 }
 
 fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
+  let enabled = enabled_features(app);
+  let is_feature_disabled = |dest: rail::Destination| {
+    registry::feature_for_destination(dest).is_some_and(|feature| !enabled.contains(&feature))
+  };
+
+  if is_feature_disabled(destination) {
+    navigate(app, Route::Characters);
+    return Task::none();
+  }
+
   match destination {
     rail::Destination::Skills => {
       let roster = app

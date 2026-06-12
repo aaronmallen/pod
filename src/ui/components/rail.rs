@@ -4,7 +4,11 @@ use iced::{
   widget::{Column, Row, Space, button, container, stack, svg},
 };
 
-use crate::ui::style::{color, radius, spacing};
+use crate::{
+  config::Feature,
+  features::registry,
+  ui::style::{color, radius, spacing},
+};
 
 const BADGE_INSET: f32 = 8.0;
 const BADGE_SIZE: f32 = 6.0;
@@ -34,7 +38,12 @@ pub enum Destination {
   Wallet,
 }
 
-pub fn rail<'a, M>(active: Destination, mail_unread: i64, on_nav: impl Fn(Destination) -> M + 'a) -> Element<'a, M>
+pub fn rail<'a, M>(
+  active: Destination,
+  mail_unread: i64,
+  enabled_features: &[Feature],
+  on_nav: impl Fn(Destination) -> M + 'a,
+) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
@@ -71,18 +80,46 @@ where
     left: 0.0,
   });
 
-  let skills = nav_item(SKILLS_ICON, active == Destination::Skills, on_nav(Destination::Skills));
+  let is_skills_enabled =
+    registry::feature_for_destination(Destination::Skills).is_none_or(|feature| enabled_features.contains(&feature));
 
-  let mail = nav_item_badged(
-    MAIL_ICON,
-    active == Destination::Mail,
-    mail_unread > 0,
-    on_nav(Destination::Mail),
-  );
+  let is_mail_enabled =
+    registry::feature_for_destination(Destination::Mail).is_none_or(|feature| enabled_features.contains(&feature));
 
-  let wallet = nav_item(WALLET_ICON, active == Destination::Wallet, on_nav(Destination::Wallet));
+  let is_wallet_enabled =
+    registry::feature_for_destination(Destination::Wallet).is_none_or(|feature| enabled_features.contains(&feature));
 
-  let assets = nav_item(ASSETS_ICON, active == Destination::Assets, on_nav(Destination::Assets));
+  let is_assets_enabled =
+    registry::feature_for_destination(Destination::Assets).is_none_or(|feature| enabled_features.contains(&feature));
+
+  let skills = if is_skills_enabled {
+    nav_item(SKILLS_ICON, active == Destination::Skills, on_nav(Destination::Skills))
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
+
+  let mail = if is_mail_enabled {
+    nav_item_badged(
+      MAIL_ICON,
+      active == Destination::Mail,
+      mail_unread > 0,
+      on_nav(Destination::Mail),
+    )
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
+
+  let wallet = if is_wallet_enabled {
+    nav_item(WALLET_ICON, active == Destination::Wallet, on_nav(Destination::Wallet))
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
+
+  let assets = if is_assets_enabled {
+    nav_item(ASSETS_ICON, active == Destination::Assets, on_nav(Destination::Assets))
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
 
   let settings = container(nav_item(
     SETTINGS_ICON,
@@ -256,31 +293,46 @@ mod tests {
 
   #[test]
   fn rail_renders_with_characters_active() {
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_skills_active() {
-    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_mail_active_and_unread_badge() {
-    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_wallet_active() {
-    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_assets_active() {
-    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_settings_active() {
-    let _el: Element<'_, Destination> = rail(Destination::Settings, 0, |destination| destination);
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Settings, 0, &all_features, |destination| destination);
+  }
+
+  #[test]
+  fn rail_hides_disabled_feature_icons_but_always_shows_characters_and_settings() {
+    let no_features: Vec<Feature> = vec![];
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &no_features, |destination| destination);
+
+    let mail_only = vec![Feature::Mail];
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &mail_only, |destination| destination);
   }
 }

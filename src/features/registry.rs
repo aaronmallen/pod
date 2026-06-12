@@ -99,7 +99,6 @@ pub fn descriptor(feature: Feature) -> Descriptor {
   }
 }
 
-#[allow(dead_code)]
 pub fn feature_for_destination(destination: Destination) -> Option<Feature> {
   Feature::ALL
     .into_iter()

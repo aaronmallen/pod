@@ -408,7 +408,7 @@ fn stats_row(model: &CardModel) -> Element<'_, Message> {
   let columns = Row::with_children(vec![
     stat("Location", location, typography::body::REGULAR),
     Space::new().width(Length::Fixed(HAIRLINE)).into(),
-    stat("ISK", isk, typography::mono::REGULAR),
+    stat("ISK", isk, typography::mono::SEMIBOLD),
   ])
   .width(Length::Fill);
 

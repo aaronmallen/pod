@@ -28,6 +28,12 @@ pub mod mono {
     style: font::Style::Normal,
   };
   pub const REGULAR: Font = Font::with_name("JetBrains Mono");
+  pub const SEMIBOLD: Font = Font {
+    family: font::Family::Name("JetBrains Mono"),
+    weight: font::Weight::Semibold,
+    stretch: font::Stretch::Normal,
+    style: font::Style::Normal,
+  };
 }
 
 pub mod size {

@@ -59,7 +59,7 @@ pub fn spawn(
     image,
     image_store,
     features,
-    super::mail_handlers::registry(),
+    super::mail_handlers::registry().extend(super::calendar_handlers::registry()),
   )
 }
 

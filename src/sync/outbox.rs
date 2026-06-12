@@ -25,6 +25,7 @@ pub trait KindHandler: Send + Sync {
 #[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OutboxKind {
+  CalendarRespond,
   MailDelete,
   MailSend,
   MailSetLabels,
@@ -37,10 +38,12 @@ impl OutboxKind {
     OutboxKind::MailSetRead,
     OutboxKind::MailSetLabels,
     OutboxKind::MailDelete,
+    OutboxKind::CalendarRespond,
   ];
 
   pub fn as_str(self) -> &'static str {
     match self {
+      Self::CalendarRespond => "calendar.respond",
       Self::MailDelete => "mail.delete",
       Self::MailSend => "mail.send",
       Self::MailSetLabels => "mail.set_labels",
@@ -64,6 +67,7 @@ impl FromStr for OutboxKind {
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
+      "calendar.respond" => Ok(Self::CalendarRespond),
       "mail.delete" => Ok(Self::MailDelete),
       "mail.send" => Ok(Self::MailSend),
       "mail.set_labels" => Ok(Self::MailSetLabels),
@@ -81,6 +85,14 @@ pub struct Registry {
 impl Registry {
   pub fn new() -> Self {
     Self::default()
+  }
+
+  #[must_use]
+  pub fn extend(mut self, other: Registry) -> Self {
+    for handler in other.handlers {
+      self = self.with(handler);
+    }
+    self
   }
 
   #[must_use]
@@ -230,7 +242,13 @@ mod tests {
     fn its_strings_match_the_spec_and_migration_set() {
       assert_eq!(
         OutboxKind::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
-        ["mail.send", "mail.set_read", "mail.set_labels", "mail.delete"]
+        [
+          "mail.send",
+          "mail.set_read",
+          "mail.set_labels",
+          "mail.delete",
+          "calendar.respond"
+        ]
       );
     }
 
@@ -297,6 +315,19 @@ mod tests {
       let error = registry.resolve("mail.send").err().expect("no handler");
 
       assert_eq!(error, ResolveError::Unregistered(OutboxKind::MailSend));
+    }
+
+    #[test]
+    fn it_folds_another_registrys_handlers_in_via_extend() {
+      let registry = Registry::new()
+        .with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())))
+        .extend(Registry::new().with(Box::new(StubHandler::new(
+          OutboxKind::CalendarRespond,
+          StubCalls::default(),
+        ))));
+
+      assert!(registry.handler(OutboxKind::MailSend).is_some());
+      assert!(registry.handler(OutboxKind::CalendarRespond).is_some());
     }
 
     #[tokio::test]

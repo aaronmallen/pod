@@ -1,3 +1,4 @@
+mod calendar_handlers;
 mod command;
 mod drain;
 mod engine;

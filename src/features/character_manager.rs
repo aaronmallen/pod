@@ -68,6 +68,7 @@ pub struct State {
   drop_target: Option<DropTarget>,
   enabled_features: Vec<Feature>,
   filtered: Option<Filtered>,
+  granted_scopes_by_id: HashMap<i64, Option<String>>,
   groups: Vec<SquadGroup>,
   load_error: Option<String>,
   pending: HashMap<i64, CardModel>,
@@ -310,6 +311,7 @@ pub enum Message {
 #[derive(Clone, Debug)]
 pub struct OwnedPilot {
   pub color: Color,
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,
 }
@@ -321,6 +323,7 @@ pub type Roster = (
   Vec<Tag>,
   Vec<CorpCardModel>,
   Vec<Feature>,
+  HashMap<i64, Option<String>>,
 );
 
 impl State {
@@ -942,7 +945,15 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       tracing::info!(character_id = id, "character selected; detail view not yet implemented");
       Task::none()
     }
-    Message::CharactersLoaded(Ok((groups, unassigned, unassigned_squad_id, all_tags, corps, enabled_features))) => {
+    Message::CharactersLoaded(Ok((
+      groups,
+      unassigned,
+      unassigned_squad_id,
+      all_tags,
+      corps,
+      enabled_features,
+      granted_scopes_by_id,
+    ))) => {
       state.reauth_by_id = groups
         .iter()
         .flat_map(|group| group.cards.iter())
@@ -952,6 +963,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       state.all_tags = all_tags;
       state.corps = corps;
       state.enabled_features = enabled_features;
+      state.granted_scopes_by_id = granted_scopes_by_id;
       state.groups = groups;
       state.unassigned = unassigned;
       state.unassigned_squad_id = unassigned_squad_id;
@@ -1378,6 +1390,7 @@ pub fn owned_roster(state: &State) -> Vec<OwnedPilot> {
   cards
     .map(|card| OwnedPilot {
       color: card.accent.unwrap_or(DEFAULT_SQUAD_ACCENT),
+      granted_scopes: state.granted_scopes_by_id.get(&card.character_id).cloned().flatten(),
       id: card.character_id,
       name: card.name.clone(),
     })
@@ -1563,6 +1576,7 @@ async fn load_roster_at(
     tags,
     corps,
     enabled_features.to_vec(),
+    granted_by_id,
   ))
 }
 
@@ -1840,7 +1854,7 @@ fn parse_hex(value: Option<&str>) -> Option<Color> {
 
 const SEARCH_DEBOUNCE_MS: u64 = 200;
 
-fn needs_reauthorization(granted: Option<&str>, required: &[&str]) -> bool {
+pub fn needs_reauthorization(granted: Option<&str>, required: &[&str]) -> bool {
   let granted: HashSet<&str> = granted.unwrap_or_default().split_whitespace().collect();
   required.iter().any(|scope| !granted.contains(scope))
 }

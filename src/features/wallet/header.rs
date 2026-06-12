@@ -2,15 +2,19 @@ use chrono::{DateTime, Utc};
 use iced::Element;
 
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
-use crate::ui::{
-  components::{
-    header::{header as shared_header, header_divider, stat_block},
-    picker::{
-      PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
-      picker_trigger, trigger_identity,
+use crate::{
+  config::Feature,
+  features::{character_manager, registry},
+  ui::{
+    components::{
+      header::{header as shared_header, header_divider, stat_block},
+      picker::{
+        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
+        picker_trigger, trigger_identity,
+      },
     },
+    style::color,
   },
-  style::color,
 };
 
 pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
@@ -132,6 +136,8 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     .find(|row| row.character_id == pilot.id)
     .and_then(|row| row.liquid);
   let sub = format!("{}  ·  {} ISK", pilot.corp, fmt_isk(liquid));
+  let required_scopes = registry::descriptor(Feature::Wallet).scopes;
+  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),
@@ -139,6 +145,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
+    needs_reauth,
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }
@@ -151,6 +158,7 @@ fn corp_row<'a>(state: &'a State, corp: &'a RosterCorp) -> Element<'a, Message> 
     corp.logo.path(),
     None,
     matches!(state.active(), Scope::Corporation(id) if id == corp.id),
+    false,
     Message::ScopeSelected(Scope::Corporation(corp.id)),
   )
 }

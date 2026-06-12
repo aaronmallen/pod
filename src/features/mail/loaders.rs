@@ -7,7 +7,7 @@ use crate::{
   store::{
     Database, images,
     model::{CharacterMailLabel, OwnerType, character_mail_view::UnifiedMail, mail_overlay_state::MailOverlayState},
-    repo::{character, mail, org},
+    repo::{character, infra, mail, org},
   },
 };
 
@@ -101,6 +101,7 @@ pub(super) fn strip_html_snippet(html: &str) -> String {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RosterPilot {
   pub corp: String,
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,
   pub portrait: images::ImageState,
@@ -109,6 +110,13 @@ pub struct RosterPilot {
 
 pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   let characters = character::all_owned(db).await.unwrap_or_default();
+  let credentials = infra::all(db).await.unwrap_or_default();
+  let scopes_by_id: std::collections::HashMap<i64, Option<String>> = credentials
+    .into_iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Character)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+
   let mut roster = Vec::with_capacity(characters.len());
   for character in &characters {
     let corp = org::get_corporation(db, character.corporation_id())
@@ -125,6 +133,7 @@ pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {
     );
     roster.push(RosterPilot {
       corp,
+      granted_scopes: scopes_by_id.get(&character.id()).cloned().flatten(),
       id: character.id(),
       name: character.name().to_owned(),
       portrait,

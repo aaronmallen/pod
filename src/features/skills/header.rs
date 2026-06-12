@@ -6,16 +6,20 @@ use iced::{
 };
 
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
-use crate::ui::{
-  components::{
-    header::{header as header_band, header_divider, stat_block},
-    icon::Icon,
-    picker::{
-      PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
-      trigger_identity,
+use crate::{
+  config::Feature,
+  features::{character_manager, registry},
+  ui::{
+    components::{
+      header::{header as header_band, header_divider, stat_block},
+      icon::Icon,
+      picker::{
+        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
+        trigger_identity,
+      },
     },
+    style::{color, radius, spacing, typography},
   },
-  style::{color, radius, spacing, typography},
 };
 
 pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -138,6 +142,9 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     })
     .into();
 
+  let required_scopes = registry::descriptor(Feature::SkillMonitoring).scopes;
+  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
+
   picker_character_row(
     pilot.id,
     pilot.name.clone(),
@@ -145,6 +152,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     pilot.portrait.path(),
     Some(total_sp),
     selected,
+    needs_reauth,
     Message::CharacterChanged(pilot.id),
   )
 }

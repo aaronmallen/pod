@@ -313,6 +313,7 @@ mod tests {
   fn pilot(id: i64) -> OwnedPilot {
     OwnedPilot {
       color: Color::WHITE,
+      granted_scopes: None,
       id,
       name: format!("Pilot {id}"),
     }

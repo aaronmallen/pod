@@ -31,8 +31,8 @@ pub use crate::features::skill_plan_editor::Seed as EditorSeed;
 use crate::{
   store::{
     Database, images,
-    model::CharacterSkillqueue,
-    repo::{character, org, skills},
+    model::{CharacterSkillqueue, OwnerType},
+    repo::{character, infra, org, skills},
   },
   ui::{
     components::{
@@ -134,6 +134,7 @@ impl State {
 #[derive(Clone, Debug)]
 struct PickerPilot {
   corp: String,
+  granted_scopes: Option<String>,
   id: i64,
   name: String,
   portrait: images::ImageState,
@@ -371,9 +372,15 @@ async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
     .and_then(|state| state.total_sp)
     .unwrap_or(0);
   let portrait = images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id);
+  let granted_scopes = infra::get(db, id, OwnerType::Character)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|credential| credential.scopes().clone());
 
   PickerPilot {
     corp,
+    granted_scopes,
     id,
     name,
     portrait,
@@ -516,6 +523,7 @@ mod tests {
   fn pilot(id: i64, name: &str) -> PickerPilot {
     PickerPilot {
       corp: "TEST".to_owned(),
+      granted_scopes: None,
       id,
       name: name.to_owned(),
       portrait: images::ImageState::Stale {

@@ -14,8 +14,11 @@ pub use self::{
 use crate::{
   store::{
     Database, images,
-    model::{character_financials::CharacterFinancials, character_wallet_period_summary::CharacterWalletPeriodSummary},
-    repo::{character, finance, org},
+    model::{
+      OwnerType, character_financials::CharacterFinancials,
+      character_wallet_period_summary::CharacterWalletPeriodSummary,
+    },
+    repo::{character, finance, infra, org},
   },
   ui::components::resizable_pane::PaneDrag,
   window_state,
@@ -104,6 +107,7 @@ pub struct NetWorthPoint {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RosterPilot {
   pub corp: String,
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub liquid: Option<f64>,
   pub name: String,
@@ -778,6 +782,12 @@ async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   let financials = finance::financials_all(db).await.unwrap_or_default();
   let liquid_by_id: std::collections::HashMap<i64, Option<f64>> =
     financials.iter().map(|row| (row.character_id, row.liquid)).collect();
+  let credentials = infra::all(db).await.unwrap_or_default();
+  let scopes_by_id: std::collections::HashMap<i64, Option<String>> = credentials
+    .into_iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Character)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
 
   let mut roster = Vec::with_capacity(characters.len());
   for character in &characters {
@@ -794,6 +804,7 @@ async fn load_roster(db: &Database) -> Vec<RosterPilot> {
     );
     roster.push(RosterPilot {
       corp,
+      granted_scopes: scopes_by_id.get(&character.id()).cloned().flatten(),
       id: character.id(),
       liquid: liquid_by_id.get(&character.id()).copied().flatten(),
       name: character.name().to_owned(),
@@ -1125,6 +1136,7 @@ mod tests {
   fn pilot(id: i64, liquid: Option<f64>) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
+      granted_scopes: None,
       id,
       liquid,
       name: format!("Pilot {id}"),
@@ -1227,6 +1239,7 @@ mod tests {
       let mut state = State::new();
       state.roster = vec![RosterPilot {
         corp: "TST".to_owned(),
+        granted_scopes: None,
         id: 1,
         liquid: None,
         name: "Pilot 1".to_owned(),

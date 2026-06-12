@@ -26,12 +26,12 @@ use crate::{
   store::{
     Database, images,
     model::{
-      SavedAssetFilter, StatTemplate,
+      OwnerType, SavedAssetFilter, StatTemplate,
       asset_query::{
         GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
       },
     },
-    repo::{assets, character, org},
+    repo::{assets, character, infra, org},
   },
   ui::components::resizable_pane::{self, PaneDrag},
   window_state::UiState,
@@ -145,6 +145,7 @@ pub enum SliderEndpoint {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RosterPilot {
   pub corp: String,
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,
   pub portrait: images::ImageState,
@@ -1754,6 +1755,13 @@ async fn load_container_children(
 
 async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   let characters = character::all_owned(db).await.unwrap_or_default();
+  let credentials = infra::all(db).await.unwrap_or_default();
+  let scopes_by_id: std::collections::HashMap<i64, Option<String>> = credentials
+    .into_iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Character)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+
   let mut roster = Vec::with_capacity(characters.len());
   for character in &characters {
     let corp = org::get_corporation(db, character.corporation_id())
@@ -1769,6 +1777,7 @@ async fn load_roster(db: &Database) -> Vec<RosterPilot> {
     );
     roster.push(RosterPilot {
       corp,
+      granted_scopes: scopes_by_id.get(&character.id()).cloned().flatten(),
       id: character.id(),
       name: character.name().to_owned(),
       portrait,
@@ -1849,6 +1858,7 @@ mod tests {
   fn pilot(id: i64) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
+      granted_scopes: None,
       id,
       name: format!("Pilot {id}"),
       portrait: images::ImageState::Stale {
@@ -1878,6 +1888,7 @@ mod tests {
     fn fresh_pilot(id: i64) -> RosterPilot {
       RosterPilot {
         corp: "TST".to_owned(),
+        granted_scopes: None,
         id,
         name: format!("Pilot {id}"),
         portrait: images::ImageState::Fresh(std::path::PathBuf::from(format!("/cache/{id}.jpg"))),

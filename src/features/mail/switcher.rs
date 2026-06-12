@@ -1,9 +1,13 @@
 use iced::Element;
 
 use super::{Message, RosterPilot, Scope, State};
-use crate::ui::components::picker::{
-  PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
-  trigger_identity,
+use crate::{
+  config::Feature,
+  features::{character_manager, registry},
+  ui::components::picker::{
+    PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
+    trigger_identity,
+  },
 };
 
 pub(super) fn trigger(state: &State) -> Element<'_, Message> {
@@ -47,6 +51,8 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
   } else {
     pilot.corp.clone()
   };
+  let required_scopes = registry::descriptor(Feature::Mail).scopes;
+  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),
@@ -54,6 +60,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.portrait.path(),
     None,
     matches!(state.active(), Scope::Character(id) if id == pilot.id),
+    needs_reauth,
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }

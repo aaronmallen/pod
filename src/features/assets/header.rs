@@ -1,15 +1,19 @@
 use iced::Element;
 
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_count, fmt_isk, fmt_volume};
-use crate::ui::{
-  components::{
-    header::{header as shared_header, header_divider, stat_block},
-    picker::{
-      PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
-      picker_trigger, trigger_identity,
+use crate::{
+  config::Feature,
+  features::{character_manager, registry},
+  ui::{
+    components::{
+      header::{header as shared_header, header_divider, stat_block},
+      picker::{
+        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
+        picker_trigger, trigger_identity,
+      },
     },
+    style::color,
   },
-  style::color,
 };
 
 pub(super) fn header(state: &State) -> Element<'_, Message> {
@@ -102,6 +106,8 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 }
 
 fn character_row(pilot: &RosterPilot, active: Scope) -> Element<'_, Message> {
+  let required_scopes = registry::descriptor(Feature::AssetTracking).scopes;
+  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),
@@ -109,6 +115,7 @@ fn character_row(pilot: &RosterPilot, active: Scope) -> Element<'_, Message> {
     pilot.portrait.path(),
     None,
     active == Scope::Character(pilot.id),
+    needs_reauth,
     Message::ScopeSelected(Scope::Character(pilot.id)),
   )
 }
@@ -121,6 +128,7 @@ fn corporation_row(corp: &RosterCorp, active: Scope) -> Element<'_, Message> {
     corp.logo.path(),
     None,
     active == Scope::Corporation(corp.id),
+    false,
     Message::ScopeSelected(Scope::Corporation(corp.id)),
   )
 }

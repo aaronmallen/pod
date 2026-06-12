@@ -1015,6 +1015,7 @@ mod tests {
       let mut state = State::new(42);
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
+        granted_scopes: None,
         id: 42,
         name: "Vex".to_owned(),
         portrait: images::ImageState::Stale {
@@ -1045,6 +1046,7 @@ mod tests {
       let mut state = State::new(42);
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
+        granted_scopes: None,
         id: 42,
         name: "Vex".to_owned(),
         portrait: images::ImageState::Fresh("/cache/42.jpg".into()),
@@ -1307,6 +1309,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       state.roster = vec![RosterPilot {
         corp: "VEX".to_owned(),
+        granted_scopes: None,
         id: 42,
         name: "Vex".to_owned(),
         portrait: images::ImageState::Stale {
@@ -1514,6 +1517,7 @@ mod tests {
       state.roster = vec![
         RosterPilot {
           corp: "VEX".to_owned(),
+          granted_scopes: None,
           id: 42,
           name: "Vex Voronova".to_owned(),
           portrait: images::ImageState::Stale {
@@ -1524,6 +1528,7 @@ mod tests {
         },
         RosterPilot {
           corp: "ALT".to_owned(),
+          granted_scopes: None,
           id: 43,
           name: "Alt Pilot".to_owned(),
           portrait: images::ImageState::Stale {

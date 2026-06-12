@@ -3,13 +3,15 @@ use std::path::PathBuf;
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, button, container, scrollable, text},
+  widget::{Column, Row, button, container, scrollable, svg, text},
 };
 
 use crate::ui::{
   components::avatar::avatar,
   style::{color, radius, spacing, typography},
 };
+
+static LOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/lock.svg");
 
 const CARET: &str = "\u{25be}";
 const DROPDOWN_WIDTH: f32 = 360.0;
@@ -40,21 +42,50 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
   portrait: Option<PathBuf>,
   trailing: Option<Element<'a, M>>,
   selected: bool,
+  needs_reauth: bool,
   on_press: M,
 ) -> Element<'a, M> {
   let name = name.into();
 
-  let swatch = container(avatar(id, &name, Length::Fixed(ROW_PORTRAIT), ROW_PORTRAIT, portrait))
+  let swatch = if needs_reauth {
+    container(
+      svg(svg::Handle::from_memory(LOCK_ICON))
+        .width(Length::Fixed(ROW_PORTRAIT - 8.0))
+        .height(Length::Fixed(ROW_PORTRAIT - 8.0))
+        .style(|_, _| svg::Style {
+          color: Some(color::text::secondary()),
+        }),
+    )
     .width(Length::Fixed(ROW_PORTRAIT))
     .height(Length::Fixed(ROW_PORTRAIT))
-    .clip(true)
+    .align_x(iced::alignment::Horizontal::Center)
+    .align_y(Vertical::Center)
     .style(|_| container::Style {
       border: Border {
         radius: radius::SUBTLE.into(),
         ..Border::default()
       },
       ..container::Style::default()
-    });
+    })
+  } else {
+    container(avatar(id, &name, Length::Fixed(ROW_PORTRAIT), ROW_PORTRAIT, portrait))
+      .width(Length::Fixed(ROW_PORTRAIT))
+      .height(Length::Fixed(ROW_PORTRAIT))
+      .clip(true)
+      .style(|_| container::Style {
+        border: Border {
+          radius: radius::SUBTLE.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+  };
+
+  let subtitle = if needs_reauth {
+    format!("{} · not authorized", sub.into())
+  } else {
+    sub.into()
+  };
 
   let identity = Column::with_children(vec![
     text(name)
@@ -64,7 +95,7 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(sub.into())
+    text(subtitle)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -368,20 +399,30 @@ mod tests {
     fn it_builds_a_row_with_a_portrait() {
       let portrait = Some(PathBuf::from("/tmp/p.png"));
 
-      let _el: Element<'_, Msg> = picker_character_row(1, "Cinder Vex", "PALE", portrait, None, true, Msg::Selected(1));
+      let _el: Element<'_, Msg> =
+        picker_character_row(1, "Cinder Vex", "PALE", portrait, None, true, false, Msg::Selected(1));
     }
 
     #[test]
     fn it_builds_a_row_without_a_portrait() {
-      let _el: Element<'_, Msg> = picker_character_row(2, "Mara Quill", "BRAVE", None, None, false, Msg::Selected(2));
+      let _el: Element<'_, Msg> =
+        picker_character_row(2, "Mara Quill", "BRAVE", None, None, false, false, Msg::Selected(2));
     }
 
     #[test]
     fn it_builds_a_row_with_a_trailing_column() {
       let trailing: Element<'_, Msg> = text("47.3M SP").into();
 
-      let _el: Element<'_, Msg> =
-        picker_character_row(3, "Vala Rook", "BRAVE", None, Some(trailing), false, Msg::Selected(3));
+      let _el: Element<'_, Msg> = picker_character_row(
+        3,
+        "Vala Rook",
+        "BRAVE",
+        None,
+        Some(trailing),
+        false,
+        false,
+        Msg::Selected(3),
+      );
     }
   }
 

@@ -2,6 +2,7 @@ mod abyssal_item;
 mod abyssal_module_stat;
 pub mod abyssal_source_type_filter;
 mod abyssal_stat_template;
+mod agent_type;
 mod alliance;
 pub mod asset_query;
 mod bloodline;
@@ -68,6 +69,9 @@ mod mail_triage;
 mod market_group;
 mod market_order;
 mod market_price;
+mod npc_agent;
+mod npc_agent_skill;
+mod npc_corporation_division;
 mod outbox;
 mod owned_corporation;
 mod race;
@@ -98,6 +102,8 @@ pub use abyssal_item::Model as AbyssalItem;
 pub use abyssal_module_stat::Model as AbyssalModuleStat;
 #[allow(unused_imports)]
 pub use abyssal_stat_template::{StatRange, StatTemplate};
+#[allow(unused_imports)]
+pub use agent_type::Model as AgentType;
 pub use alliance::Model as Alliance;
 pub use bloodline::Model as Bloodline;
 pub use certificate::Model as Certificate;
@@ -185,6 +191,12 @@ pub use mail_triage::Model as MailTriage;
 pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;
+#[allow(unused_imports)]
+pub use npc_agent::Model as NpcAgent;
+#[allow(unused_imports)]
+pub use npc_agent_skill::Model as NpcAgentSkill;
+#[allow(unused_imports)]
+pub use npc_corporation_division::Model as NpcCorporationDivision;
 pub use outbox::Model as Outbox;
 pub use owned_corporation::Model as OwnedCorporation;
 pub use race::Model as Race;

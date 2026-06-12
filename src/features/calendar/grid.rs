@@ -207,6 +207,7 @@ mod tests {
       owner_name: "Corp".to_owned(),
       owner_type: "corporation".to_owned(),
       response: "accepted".to_owned(),
+      source: None,
       timestamp: timestamp.to_owned(),
       title: "Op".to_owned(),
     }

@@ -22,8 +22,8 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    about, assets, auth, character_detail, character_manager, character_manager::OwnedPilot, mail, registry, settings,
-    skill_plan_editor, skills, skills_compare, splash, wallet,
+    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, mail, registry,
+    settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::{menu, updater},
   store,
@@ -98,6 +98,8 @@ struct App {
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
   auth: auth::State,
+  calendar: Option<calendar::State>,
+  calendar_attention: i64,
   character_detail: Option<character_detail::State>,
   character_manager: Option<character_manager::State>,
   coalescer: WriteCoalescer,
@@ -197,6 +199,8 @@ enum Message {
   About(about::Message),
   Assets(assets::Message),
   Auth(auth::Message),
+  Calendar(calendar::Message),
+  CalendarAttentionCounted(i64),
   CharacterDetail(character_detail::Message),
   CharacterManager(character_manager::Message),
   ClockTick,
@@ -257,6 +261,8 @@ impl Message {
       Message::About(_) => "About",
       Message::Assets(_) => "Assets",
       Message::Auth(_) => "Auth",
+      Message::Calendar(_) => "Calendar",
+      Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
       Message::Compare(_) => "Compare",
@@ -605,6 +611,8 @@ fn boot() -> (App, Task<Message>) {
     accessibility,
     assets: None,
     auth: auth::State::default(),
+    calendar: None,
+    calendar_attention: 0,
     character_detail: None,
     character_manager: None,
     coalescer: WriteCoalescer::new(),
@@ -1065,6 +1073,77 @@ fn mail_clock_reload(app: &App) -> Task<Message> {
   }
 }
 
+fn navigate_to_calendar(app: &mut App, target: Option<i64>) -> Task<Message> {
+  navigate(app, Route::Calendar);
+  let tweaks = app
+    .calendar
+    .as_ref()
+    .map(calendar::State::tweaks)
+    .unwrap_or_else(|| calendar_tweaks(app));
+  let features = calendar_features(app);
+  let selection = target.unwrap_or(calendar::EMPTY_CALENDAR_SELECTION);
+  app.calendar = Some(calendar::State::new(selection, app.now, tweaks, features));
+  match (target, app.runtime.as_ref()) {
+    (Some(id), Some(runtime)) => calendar::load(&runtime.db, id, features).map(Message::Calendar),
+    _ => Task::none(),
+  }
+}
+
+fn resolve_calendar_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> Option<i64> {
+  if let Some(id) = last_selected
+    && roster.iter().any(|pilot| pilot.id == id)
+  {
+    return Some(id);
+  }
+  roster.first().map(|pilot| pilot.id)
+}
+
+fn calendar_features(app: &App) -> config::FeatureFlags {
+  if let Some(state) = app.settings.as_ref() {
+    return *state.settings().features();
+  }
+  if let Some(runtime) = app.runtime.as_ref() {
+    return *runtime.settings.features();
+  }
+  config::FeatureFlags::default()
+}
+
+fn calendar_tweaks(app: &App) -> config::CalendarTweaks {
+  if let Some(state) = app.settings.as_ref() {
+    return *state.settings().calendar_tweaks();
+  }
+  if let Some(runtime) = app.runtime.as_ref() {
+    return *runtime.settings.calendar_tweaks();
+  }
+  config::CalendarTweaks::default()
+}
+
+fn calendar_clock_reload(app: &App) -> Task<Message> {
+  if app.route != Route::Calendar {
+    return Task::none();
+  }
+  match (app.calendar.as_ref(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => {
+      calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar)
+    }
+    _ => Task::none(),
+  }
+}
+
+fn calendar_attention_tick(app: &App) -> Task<Message> {
+  match app.runtime.as_ref() {
+    Some(runtime) => {
+      let db = runtime.db.clone();
+      let now = app.now.to_rfc3339();
+      Task::perform(
+        async move { store::repo::calendar::attention_count(&db, &now).await.unwrap_or(0) },
+        Message::CalendarAttentionCounted,
+      )
+    }
+    None => Task::none(),
+  }
+}
+
 fn snooze_wake_tick(app: &App) -> Task<Message> {
   match app.runtime.as_ref() {
     Some(runtime) => Task::perform(
@@ -1174,7 +1253,11 @@ fn assets_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
 fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
   let mut keys = match app.route {
     Route::Assets => app.assets.as_ref().map(assets::State::stale_images).unwrap_or_default(),
-    Route::Calendar => Vec::new(),
+    Route::Calendar => app
+      .calendar
+      .as_ref()
+      .map(calendar::State::stale_images)
+      .unwrap_or_default(),
     Route::CharacterDetail(_) => app
       .character_detail
       .as_ref()
@@ -1278,7 +1361,11 @@ fn image_reload(app: &App) -> Task<Message> {
         tasks.push(assets::load(&runtime.db).map(Message::Assets));
       }
     }
-    Route::Calendar => {}
+    Route::Calendar => {
+      if let Some(state) = app.calendar.as_ref() {
+        tasks.push(calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar));
+      }
+    }
     Route::CharacterDetail(_) => {
       if let Some(detail) = app.character_detail.as_ref() {
         let owned = owned_pilot_ids(app);
@@ -1335,7 +1422,13 @@ fn main_view(app: &App) -> Element<'_, Message> {
   let mail_unread = rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread));
   let enabled_features = enabled_features(app);
   let body = Row::with_children(vec![
-    rail(app.route.destination(), mail_unread, &enabled_features, Message::Nav),
+    rail(
+      app.route.destination(),
+      mail_unread,
+      app.calendar_attention,
+      &enabled_features,
+      Message::Nav,
+    ),
     content.into(),
   ])
   .width(Length::Fill)
@@ -1467,7 +1560,7 @@ fn read_only_banner_label(hostname: &str, refused_since: Option<&str>) -> String
 fn route_view(app: &App) -> Element<'_, Message> {
   match app.route {
     Route::Assets => assets_route_view(app),
-    Route::Calendar => placeholder("Calendar\u{2026}".to_owned()),
+    Route::Calendar => calendar_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
     Route::Characters => characters_route_view(app),
     Route::Mail => mail_route_view(app),
@@ -1479,6 +1572,13 @@ fn route_view(app: &App) -> Element<'_, Message> {
 
 fn starting_up<'a>() -> Element<'a, Message> {
   placeholder("Starting up\u{2026}".to_owned())
+}
+
+fn calendar_route_view(app: &App) -> Element<'_, Message> {
+  match &app.calendar {
+    Some(state) => calendar::view(state, app.now).map(Message::Calendar),
+    None => starting_up(),
+  }
 }
 
 fn characters_route_view(app: &App) -> Element<'_, Message> {
@@ -1909,6 +2009,9 @@ fn subscription(app: &App) -> Subscription<Message> {
   if let Some(state) = &app.mail {
     subs.push(mail::subscription(state).map(Message::Mail));
   }
+  if let Some(state) = &app.calendar {
+    subs.push(calendar::subscription(state).map(Message::Calendar));
+  }
   if let Some(state) = &app.wallet {
     subs.push(wallet::subscription(state).map(Message::Wallet));
   }
@@ -2173,6 +2276,8 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::About(msg) => handle_about(app, msg),
     Message::Assets(msg) => handle_assets(app, msg),
     Message::Auth(msg) => handle_auth(app, msg),
+    Message::Calendar(msg) => handle_calendar(app, msg),
+    Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
@@ -2396,14 +2501,27 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   };
   runtime.settings = updated;
   let enabled = runtime.settings.features().enabled();
-  runtime.sync.set_features(*runtime.settings.features());
-  let reload = character_manager::load(&runtime.db, enabled.clone()).map(Message::CharacterManager);
+  let flags = *runtime.settings.features();
+  let db = runtime.db.clone();
+  runtime.sync.set_features(flags);
+  let mut tasks = vec![
+    task,
+    character_manager::load(&db, enabled.clone()).map(Message::CharacterManager),
+  ];
+
+  let route = app.route;
+  if let Some(state) = app.calendar.as_mut() {
+    state.set_features(flags);
+    if route == Route::Calendar {
+      tasks.push(calendar::reload(&db, state.active(), flags).map(Message::Calendar));
+    }
+  }
 
   if let Some(detail) = app.character_detail.as_mut() {
     detail.sync_features(&enabled);
   }
 
-  Task::batch(vec![task, reload])
+  Task::batch(tasks)
 }
 
 // The resolved color functions are read inside each window's `view` closure, which only re-runs
@@ -2917,6 +3035,23 @@ fn remove_subject_then_update(app: &mut App, subject: sync::Subject, msg: charac
   }
 }
 
+fn handle_calendar(app: &mut App, msg: calendar::Message) -> Task<Message> {
+  if let calendar::Message::ReauthRequested(id) = msg {
+    return update(app, Message::ReauthCharacter(id));
+  }
+
+  let (Some(state), Some(runtime)) = (app.calendar.as_mut(), app.runtime.as_ref()) else {
+    return Task::none();
+  };
+
+  calendar::update(state, msg, &runtime.db, app.now).map(Message::Calendar)
+}
+
+fn handle_calendar_attention_counted(app: &mut App, count: i64) -> Task<Message> {
+  app.calendar_attention = count;
+  Task::none()
+}
+
 fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Task<Message> {
   if let character_detail::Message::CharacterChanged(id) = msg {
     let owned: Vec<i64> = owned_pilot_ids(app);
@@ -2988,7 +3123,13 @@ fn owned_pilot_ids(app: &App) -> Vec<i64> {
 fn handle_clock_tick(app: &mut App) -> Task<Message> {
   app.now = Utc::now();
   drain_due_save(app, Instant::now());
-  Task::batch([snooze_wake_tick(app), mail_unread_tick(app), mail_clock_reload(app)])
+  Task::batch([
+    snooze_wake_tick(app),
+    mail_unread_tick(app),
+    mail_clock_reload(app),
+    calendar_attention_tick(app),
+    calendar_clock_reload(app),
+  ])
 }
 
 fn handle_init_failed(app: &mut App, error: String) -> Task<Message> {
@@ -3037,6 +3178,15 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
         .unwrap_or_default();
       let target = resolve_mail_target(&roster, app.selected_character);
       navigate_to_mail(app, target)
+    }
+    rail::Destination::Calendar => {
+      let roster = app
+        .character_manager
+        .as_ref()
+        .map(character_manager::owned_roster)
+        .unwrap_or_default();
+      let target = resolve_calendar_target(&roster, app.selected_character);
+      navigate_to_calendar(app, target)
     }
     rail::Destination::Wallet => navigate_to_wallet(app),
     rail::Destination::Assets => navigate_to_assets(app),
@@ -3413,6 +3563,8 @@ mod tests {
       accessibility: config::AccessibilityConfig::default(),
       assets: None,
       auth: auth::State::default(),
+      calendar: None,
+      calendar_attention: 0,
       character_detail: None,
       character_manager: None,
       coalescer: WriteCoalescer::new(),
@@ -3510,10 +3662,16 @@ mod tests {
     }
 
     #[test]
+    fn it_maps_a_calendar_route_to_the_calendar_destination() {
+      assert_eq!(Route::Calendar.destination(), rail::Destination::Calendar);
+    }
+
+    #[test]
     fn it_round_trips_characters_settings_and_mail_through_from() {
       assert_eq!(Route::from(Route::Characters.destination()), Route::Characters);
       assert_eq!(Route::from(Route::Settings.destination()), Route::Settings);
       assert_eq!(Route::from(Route::Mail.destination()), Route::Mail);
+      assert_eq!(Route::from(Route::Calendar.destination()), Route::Calendar);
     }
   }
 
@@ -3876,6 +4034,52 @@ mod tests {
       assert_eq!(app.route, Route::Assets);
       assert!(app.assets.is_some());
       assert_eq!(app.route.destination(), rail::Destination::Assets);
+    }
+
+    #[test]
+    fn it_navigates_to_the_calendar_screen_on_the_calendar_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
+
+      assert_eq!(app.route, Route::Calendar);
+      assert!(app.calendar.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Calendar);
+    }
+
+    #[tokio::test]
+    async fn it_redirects_a_disabled_calendar_nav_to_characters() {
+      let mut app = test_app();
+      let mut runtime = test_runtime().await;
+      runtime
+        .settings
+        .features_mut()
+        .set_enabled(config::Feature::Calendar, false);
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
+
+      assert_eq!(app.route, Route::Characters);
+      assert!(app.calendar.is_none());
+    }
+
+    #[test]
+    fn it_preserves_calendar_tweaks_across_a_re_navigation() {
+      let mut app = test_app();
+
+      let _ = navigate_to_calendar(&mut app, None);
+      let mut tweaks = app.calendar.as_ref().expect("calendar state").tweaks();
+      tweaks.set_pod_overlays(true);
+      app.calendar = Some(calendar::State::new(
+        calendar::EMPTY_CALENDAR_SELECTION,
+        app.now,
+        tweaks,
+        config::FeatureFlags::default(),
+      ));
+
+      let _ = navigate_to_calendar(&mut app, None);
+
+      assert!(app.calendar.as_ref().expect("calendar state").tweaks().pod_overlays());
     }
 
     #[test]
@@ -4501,6 +4705,15 @@ mod tests {
       let _ = update(&mut app, Message::MailUnreadCounted(9));
       assert_eq!(app.mail_unread, 9);
       let _ = update(&mut app, Message::ReauthCharacter(1));
+    }
+
+    #[test]
+    fn it_records_the_calendar_attention_count() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::CalendarAttentionCounted(4));
+
+      assert_eq!(app.calendar_attention, 4);
     }
 
     #[test]
@@ -5730,12 +5943,22 @@ mod tests {
         "WindowOpened"
       );
       assert_eq!(Message::MailUnreadCounted(3).variant_name(), "MailUnreadCounted");
+      assert_eq!(
+        Message::CalendarAttentionCounted(3).variant_name(),
+        "CalendarAttentionCounted"
+      );
     }
   }
 
   fn featured_app() -> App {
     let mut app = test_app();
     app.assets = Some(assets::State::new());
+    app.calendar = Some(calendar::State::new(
+      42,
+      app.now,
+      config::CalendarTweaks::default(),
+      config::FeatureFlags::default(),
+    ));
     app.character_detail = Some(character_detail::State::new(1, &[]));
     app.character_manager = Some(character_manager::State::new());
     app.mail = Some(mail::State::new(42));

@@ -21,6 +21,7 @@ const RAIL_WIDTH: f32 = 68.0;
 const SETTINGS_BOTTOM_INSET: f32 = 16.0;
 
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
+static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
 static POD_MARK: &[u8] = include_bytes!("../../../assets/images/identity/pod-mark.svg");
@@ -42,6 +43,7 @@ pub enum Destination {
 pub fn rail<'a, M>(
   active: Destination,
   mail_unread: i64,
+  calendar_attention: i64,
   enabled_features: &[Feature],
   on_nav: impl Fn(Destination) -> M + 'a,
 ) -> Element<'a, M>
@@ -87,6 +89,9 @@ where
   let is_mail_enabled =
     registry::feature_for_destination(Destination::Mail).is_none_or(|feature| enabled_features.contains(&feature));
 
+  let is_calendar_enabled =
+    registry::feature_for_destination(Destination::Calendar).is_none_or(|feature| enabled_features.contains(&feature));
+
   let is_wallet_enabled =
     registry::feature_for_destination(Destination::Wallet).is_none_or(|feature| enabled_features.contains(&feature));
 
@@ -105,6 +110,17 @@ where
       active == Destination::Mail,
       mail_unread > 0,
       on_nav(Destination::Mail),
+    )
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
+
+  let calendar = if is_calendar_enabled {
+    nav_item_badged(
+      CALENDAR_ICON,
+      active == Destination::Calendar,
+      calendar_attention > 0,
+      on_nav(Destination::Calendar),
     )
   } else {
     Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
@@ -140,6 +156,7 @@ where
       items.into(),
       skills,
       mail,
+      calendar,
       wallet,
       assets,
       Space::new().width(Length::Fill).height(Length::Fill).into(),
@@ -295,45 +312,51 @@ mod tests {
   #[test]
   fn rail_renders_with_characters_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_skills_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_mail_active_and_unread_badge() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, 0, &all_features, |destination| destination);
+  }
+
+  #[test]
+  fn rail_renders_with_calendar_active_and_attention_badge() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Calendar, 0, 2, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_wallet_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_assets_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_renders_with_settings_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Settings, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Settings, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
   fn rail_hides_disabled_feature_icons_but_always_shows_characters_and_settings() {
     let no_features: Vec<Feature> = vec![];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &no_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &no_features, |destination| destination);
 
     let mail_only = vec![Feature::Mail];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, &mail_only, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &mail_only, |destination| destination);
   }
 }

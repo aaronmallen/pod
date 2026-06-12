@@ -309,7 +309,10 @@ fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, Message> 
 
 fn provenance<'a>(event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, Message> {
   let line = if owner == OwnerType::Pod {
-    "Pod-derived overlay \u{2014} not an ESI calendar event.".to_owned()
+    match event.source.as_deref() {
+      Some(source) => format!("Pod-derived overlay \u{00B7} {source} \u{2014} not an ESI calendar event."),
+      None => "Pod-derived overlay \u{2014} not an ESI calendar event.".to_owned(),
+    }
   } else {
     format!(
       "ESI \u{00B7} GET /characters/{}/calendar/{}",
@@ -500,6 +503,7 @@ mod tests {
       owner_name: "Corp".to_owned(),
       owner_type: "corporation".to_owned(),
       response: response.to_owned(),
+      source: None,
       timestamp: "2026-06-20T19:00:00Z".to_owned(),
       title: "Op".to_owned(),
     }

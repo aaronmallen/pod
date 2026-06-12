@@ -21,7 +21,7 @@ use iced::{Element, Task};
 
 pub use self::loaders::{CalendarEvent, RosterPilot};
 use crate::{
-  config::CalendarTweaks,
+  config::{CalendarTweaks, FeatureFlags},
   store::{Database, images, model::AttendeeTally},
 };
 
@@ -92,6 +92,7 @@ pub struct State {
   cursor: DateTime<Utc>,
   detail: Option<Detail>,
   events: Vec<CalendarEvent>,
+  features: FeatureFlags,
   picker_open: bool,
   roster: Vec<RosterPilot>,
   tweaks: CalendarTweaks,
@@ -100,7 +101,7 @@ pub struct State {
 }
 
 impl State {
-  pub fn new(active: i64, cursor: DateTime<Utc>, tweaks: CalendarTweaks) -> Self {
+  pub fn new(active: i64, cursor: DateTime<Utc>, tweaks: CalendarTweaks, features: FeatureFlags) -> Self {
     State {
       active: if active == EMPTY_CALENDAR_SELECTION {
         Scope::All
@@ -110,6 +111,7 @@ impl State {
       cursor,
       detail: None,
       events: Vec::new(),
+      features,
       picker_open: false,
       roster: Vec::new(),
       tweaks,
@@ -120,6 +122,10 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn set_features(&mut self, features: FeatureFlags) {
+    self.features = features;
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -226,17 +232,17 @@ pub(super) struct Detail {
   event_id: i64,
 }
 
-pub fn load(db: &Database, character: i64) -> Task<Message> {
+pub fn load(db: &Database, character: i64, features: FeatureFlags) -> Task<Message> {
   let scope = if character == EMPTY_CALENDAR_SELECTION {
     Scope::All
   } else {
     Scope::Mine(character)
   };
-  reload(db, scope)
+  reload(db, scope, features)
 }
 
-pub fn reload(db: &Database, scope: Scope) -> Task<Message> {
-  Task::perform(load_calendar(db.clone(), scope), |loaded| {
+pub fn reload(db: &Database, scope: Scope, features: FeatureFlags) -> Task<Message> {
+  Task::perform(load_calendar(db.clone(), scope, features), |loaded| {
     Message::Loaded(Box::new(loaded))
   })
 }
@@ -305,12 +311,12 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     }
     Message::ReauthRequested(_) => Task::none(),
     Message::Responded(character_id, event_id, response) => respond_to(state, db, character_id, event_id, response),
-    Message::RsvpWritten => reload(db, state.active),
+    Message::RsvpWritten => reload(db, state.active, state.features),
     Message::ScopeSelected(scope) => {
       state.active = scope;
       state.picker_open = false;
       state.detail = None;
-      reload(db, scope)
+      reload(db, scope, state.features)
     }
     Message::TweakChanged(tweak) => {
       tweak.apply(&mut state.tweaks);
@@ -345,13 +351,21 @@ async fn load_attendees(db: Database, character_id: i64, event_id: i64) -> Optio
   loaders::load_attendees(&db, character_id, event_id).await
 }
 
-async fn load_calendar(db: Database, scope: Scope) -> Loaded {
+async fn load_calendar(db: Database, scope: Scope, features: FeatureFlags) -> Loaded {
   let roster = loaders::load_roster(&db).await;
-  let events = match scope {
+  let mut events = match scope {
     Scope::All => loaders::load_combined(&db).await,
     Scope::Empty => Vec::new(),
     Scope::Mine(id) => loaders::load_events(&db, id).await,
   };
+  let overlay_ids: Vec<i64> = match scope {
+    Scope::All => roster.iter().map(|pilot| pilot.id).collect(),
+    Scope::Empty => Vec::new(),
+    Scope::Mine(id) => vec![id],
+  };
+  if !overlay_ids.is_empty() {
+    events.extend(loaders::load_overlays(&db, &overlay_ids, features).await);
+  }
   Loaded {
     events,
     roster,
@@ -422,13 +436,19 @@ mod tests {
       owner_name: "Corp".to_owned(),
       owner_type: owner_type.to_owned(),
       response: response.to_owned(),
+      source: None,
       timestamp: "2026-06-20T19:00:00Z".to_owned(),
       title: "Op".to_owned(),
     }
   }
 
   fn state_with(active: Scope, roster: Vec<RosterPilot>, events: Vec<CalendarEvent>) -> State {
-    let mut state = State::new(EMPTY_CALENDAR_SELECTION, now(), CalendarTweaks::default());
+    let mut state = State::new(
+      EMPTY_CALENDAR_SELECTION,
+      now(),
+      CalendarTweaks::default(),
+      FeatureFlags::default(),
+    );
     state.active = active;
     state.roster = roster;
     state.events = events;

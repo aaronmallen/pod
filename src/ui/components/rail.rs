@@ -31,6 +31,7 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Destination {
   Assets,
+  Calendar,
   Characters,
   Mail,
   Settings,

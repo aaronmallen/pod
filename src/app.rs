@@ -312,6 +312,7 @@ impl Message {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
   Assets,
+  Calendar,
   CharacterDetail(i64),
   #[default]
   Characters,
@@ -325,6 +326,7 @@ impl From<rail::Destination> for Route {
   fn from(destination: rail::Destination) -> Self {
     match destination {
       rail::Destination::Assets => unreachable!("Assets is routed via Message::Nav, not From"),
+      rail::Destination::Calendar => Route::Calendar,
       rail::Destination::Characters => Route::Characters,
       rail::Destination::Mail => Route::Mail,
       rail::Destination::Settings => Route::Settings,
@@ -345,6 +347,7 @@ impl Route {
   fn destination(self) -> rail::Destination {
     match self {
       Route::Assets => rail::Destination::Assets,
+      Route::Calendar => rail::Destination::Calendar,
       Route::Characters | Route::CharacterDetail(_) => rail::Destination::Characters,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
@@ -356,6 +359,7 @@ impl Route {
   fn name(self) -> &'static str {
     match self {
       Route::Assets => "Assets",
+      Route::Calendar => "Calendar",
       Route::CharacterDetail(_) => "CharacterDetail",
       Route::Characters => "Characters",
       Route::Mail => "Mail",
@@ -1170,6 +1174,7 @@ fn assets_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
 fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
   let mut keys = match app.route {
     Route::Assets => app.assets.as_ref().map(assets::State::stale_images).unwrap_or_default(),
+    Route::Calendar => Vec::new(),
     Route::CharacterDetail(_) => app
       .character_detail
       .as_ref()
@@ -1273,6 +1278,7 @@ fn image_reload(app: &App) -> Task<Message> {
         tasks.push(assets::load(&runtime.db).map(Message::Assets));
       }
     }
+    Route::Calendar => {}
     Route::CharacterDetail(_) => {
       if let Some(detail) = app.character_detail.as_ref() {
         let owned = owned_pilot_ids(app);
@@ -1461,6 +1467,7 @@ fn read_only_banner_label(hostname: &str, refused_since: Option<&str>) -> String
 fn route_view(app: &App) -> Element<'_, Message> {
   match app.route {
     Route::Assets => assets_route_view(app),
+    Route::Calendar => placeholder("Calendar\u{2026}".to_owned()),
     Route::CharacterDetail(_) => character_detail_route_view(app),
     Route::Characters => characters_route_view(app),
     Route::Mail => mail_route_view(app),
@@ -5814,6 +5821,7 @@ mod tests {
 
       for route in [
         Route::Assets,
+        Route::Calendar,
         Route::CharacterDetail(1),
         Route::Characters,
         Route::Mail,

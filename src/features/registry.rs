@@ -21,6 +21,12 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[scopes::CHARACTER_ASSETS],
       tab: None,
     },
+    Feature::Calendar => Descriptor {
+      jobs: &[JobKind::CharacterCalendar],
+      rail: Some(Destination::Calendar),
+      scopes: &[scopes::CHARACTER_CALENDAR_READ, scopes::CHARACTER_CALENDAR_RESPOND],
+      tab: None,
+    },
     Feature::CloneMonitoring => Descriptor {
       jobs: &[JobKind::CharacterClones],
       rail: None,
@@ -180,6 +186,7 @@ mod tests {
         feature_for_destination(Destination::Assets),
         Some(Feature::AssetTracking)
       );
+      assert_eq!(feature_for_destination(Destination::Calendar), Some(Feature::Calendar));
       assert_eq!(feature_for_destination(Destination::Mail), Some(Feature::Mail));
       assert_eq!(
         feature_for_destination(Destination::Skills),

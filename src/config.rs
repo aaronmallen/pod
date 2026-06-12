@@ -54,6 +54,7 @@ pub enum Error {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Feature {
   AssetTracking,
+  Calendar,
   CloneMonitoring,
   CombatLog,
   Contacts,
@@ -67,7 +68,7 @@ pub enum Feature {
 
 impl Feature {
   #[allow(dead_code)]
-  pub const ALL: [Feature; 10] = [
+  pub const ALL: [Feature; 11] = [
     Feature::CloneMonitoring,
     Feature::Contacts,
     Feature::CombatLog,
@@ -76,6 +77,7 @@ impl Feature {
     Feature::LocationTracking,
     Feature::SkillMonitoring,
     Feature::Mail,
+    Feature::Calendar,
     Feature::Wallet,
     Feature::AssetTracking,
   ];
@@ -84,6 +86,7 @@ impl Feature {
   pub fn noun(self) -> &'static str {
     match self {
       Feature::AssetTracking => "Asset",
+      Feature::Calendar => "Calendar event",
       Feature::CloneMonitoring => "Clone",
       Feature::CombatLog => "Kill log",
       Feature::Contacts => "Contact",
@@ -103,6 +106,9 @@ pub struct FeatureFlags {
   #[getset(get = "pub")]
   #[serde(default = "default_true")]
   asset_tracking: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  calendar: bool,
   #[getset(get = "pub")]
   #[serde(default = "default_true")]
   clone_monitoring: bool,
@@ -144,6 +150,7 @@ impl FeatureFlags {
   pub fn is_enabled(&self, feature: Feature) -> bool {
     match feature {
       Feature::AssetTracking => self.asset_tracking,
+      Feature::Calendar => self.calendar,
       Feature::CloneMonitoring => self.clone_monitoring,
       Feature::CombatLog => self.combat_log,
       Feature::Contacts => self.contacts,
@@ -159,6 +166,7 @@ impl FeatureFlags {
   pub fn set_enabled(&mut self, feature: Feature, value: bool) {
     match feature {
       Feature::AssetTracking => self.asset_tracking = value,
+      Feature::Calendar => self.calendar = value,
       Feature::CloneMonitoring => self.clone_monitoring = value,
       Feature::CombatLog => self.combat_log = value,
       Feature::Contacts => self.contacts = value,
@@ -176,6 +184,7 @@ impl Default for FeatureFlags {
   fn default() -> Self {
     Self {
       asset_tracking: true,
+      calendar: true,
       clone_monitoring: true,
       combat_log: true,
       contacts: true,

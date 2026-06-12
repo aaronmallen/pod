@@ -19,7 +19,7 @@ const PANEL_BLURB: &str = "Toggle individual Pod capabilities on or off. Changes
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 10] = [
+const CATALOG: [Catalog; 11] = [
   Catalog {
     feature: Feature::CloneMonitoring,
     section: Section::Character,
@@ -67,6 +67,12 @@ const CATALOG: [Catalog; 10] = [
     section: Section::World,
     title: "Mail",
     description: "Sync EVE mail headers and message bodies.",
+  },
+  Catalog {
+    feature: Feature::Calendar,
+    section: Section::World,
+    title: "Calendar",
+    description: "Sync calendar events and respond to invitations.",
   },
   Catalog {
     feature: Feature::Wallet,
@@ -396,7 +402,7 @@ mod tests {
   }
 
   #[test]
-  fn the_five_world_capabilities_are_grouped_under_world() {
+  fn the_world_capabilities_are_grouped_under_world() {
     let world: Vec<Feature> = CATALOG
       .iter()
       .filter(|entry| entry_in_section(entry, Section::World))
@@ -409,6 +415,7 @@ mod tests {
         Feature::LocationTracking,
         Feature::SkillMonitoring,
         Feature::Mail,
+        Feature::Calendar,
         Feature::Wallet,
         Feature::AssetTracking,
       ]

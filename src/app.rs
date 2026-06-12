@@ -4722,6 +4722,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_settings_hoists_an_interface_scale_change_onto_the_app_and_runtime() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Accessibility(settings::accessibility_tab::Message::ScaleChanged(125)),
+      );
+
+      assert_eq!(
+        *app.accessibility.scale(),
+        125,
+        "the new scale is hoisted onto the app live"
+      );
+      assert_eq!(
+        *app.runtime.as_ref().unwrap().settings.accessibility().scale(),
+        125,
+        "the runtime settings mirror the new scale so a later save persists it",
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_drives_the_color_engine_when_high_contrast_toggles() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Accessibility(settings::accessibility_tab::Message::HighContrastToggled(true)),
+      );
+
+      assert!(*app.accessibility.high_contrast(), "the toggle is hoisted onto the app");
+      assert!(
+        color::high_contrast(),
+        "the runtime color engine reflects the high-contrast toggle"
+      );
+
+      // The engine flag is process-global; leave it as it was found for any sibling tests.
+      color::set_high_contrast(false);
+    }
+
+    #[tokio::test]
     async fn handle_auth_cancel_with_a_runtime_is_handled_not_deferred() {
       let runtime = test_runtime().await;
       let mut app = test_app();

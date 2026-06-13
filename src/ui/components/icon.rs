@@ -226,6 +226,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pin.svg"))
   }
 
+  pub fn plus() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
+  }
+
   pub fn reply() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/reply.svg"))
   }
@@ -258,6 +262,10 @@ impl Icon {
 
   pub fn star() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/star.svg"))
+  }
+
+  pub fn tag() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/tag.svg"))
   }
 
   pub fn tier_all() -> Self {

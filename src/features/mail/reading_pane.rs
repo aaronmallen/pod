@@ -79,6 +79,13 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
     false,
     false,
   ));
+  row = row.push(toolbar_button(
+    Icon::tag(),
+    "Label",
+    Message::LabelPickerOpened(mail_id),
+    !render.labels.is_empty(),
+    false,
+  ));
   row = row.push(toolbar_divider());
   row = row.push(toolbar_button(
     Icon::star().color(star_tone),

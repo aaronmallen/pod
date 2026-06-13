@@ -5,14 +5,15 @@ use iced::{
 };
 
 use super::{
-  Folder, Message, StandardFolder, State, compose, folder_pane, message_list, outbox_indicator, reading_pane, snooze,
-  switcher,
+  Folder, Message, StandardFolder, State, compose, folder_pane, labels, message_list, outbox_indicator, reading_pane,
+  snooze, switcher,
 };
 use crate::{
   config::Feature,
   ui::{
     components::{
       backdrop,
+      confirm_modal::confirm_modal,
       eyebrow::eyebrow_text,
       forbidden,
       icon::Icon,
@@ -30,6 +31,8 @@ const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const SNOOZE_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 56.0;
 const SNOOZE_OVERLAY_RIGHT: f32 = 120.0;
+const LABEL_PICKER_TOP: f32 = spacing::layout::HEADER_HEIGHT + 52.0;
+const LABEL_PICKER_READING_OFFSET: f32 = 200.0;
 
 pub(super) fn shell(state: &State) -> Element<'_, Message> {
   let body = Column::with_children(vec![header(state), panes(state)])
@@ -67,6 +70,50 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
     return Stack::with_children(vec![
       base.into(),
       backdrop::click_catcher(Message::SnoozeMenuToggled),
+      positioned,
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
+  if let Some(draft) = state.label_modal() {
+    return modal_overlay(
+      base.into(),
+      Some(Message::LabelModalClosed),
+      labels::create_modal(draft),
+    );
+  }
+
+  if let Some(label) = state.pending_label_delete() {
+    let body = format!(
+      "Deleting \u{201c}{}\u{201d} removes it from every message, here and in EVE.",
+      label.name
+    );
+    let confirm = confirm_modal(
+      "Mail label",
+      "Delete label?",
+      body,
+      "Delete",
+      Message::LabelDeleteConfirmed,
+      Message::LabelDeleteCancelled,
+    );
+    return modal_overlay(base.into(), Some(Message::LabelDeleteCancelled), confirm);
+  }
+
+  if let Some((mail_id, anchor, applied)) = state.label_picker_view() {
+    let menu = labels::toggle_picker(mail_id, &state.folder_data().labels, &applied);
+    let (top, left) = match anchor {
+      Some(point) => (point.y.max(0.0), point.x.max(0.0)),
+      None => (
+        LABEL_PICKER_TOP,
+        state.folder_pane_width() + state.message_list_pane_width() + LABEL_PICKER_READING_OFFSET,
+      ),
+    };
+    let positioned = positioned_dropdown(menu, top, left);
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::click_catcher(Message::LabelPickerClosed),
       positioned,
     ])
     .width(Length::Fill)

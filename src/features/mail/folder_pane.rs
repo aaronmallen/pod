@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, container, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -23,7 +23,11 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
   let mut column = Column::new().width(Length::Fill);
   column = column.push(unified_section(state, selected));
   column = column.push(folders_section(&data.standard_counts, selected));
-  column = column.push(labels_section(data.labels.as_slice()));
+  column = column.push(labels_section(
+    data.labels.as_slice(),
+    state.dragging_mail().is_some(),
+    state.drop_target(),
+  ));
 
   let scroll = scrollable(column)
     .style(crate::ui::style::control::scrollbar)
@@ -198,9 +202,9 @@ fn folder_icon<'a>(icon: Icon, active: bool) -> Element<'a, Message> {
   icon.size(16.0).color(tone).render::<Message>()
 }
 
-fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
+fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<i64>) -> Element<'_, Message> {
   let mut column = Column::new().width(Length::Fill).spacing(1.0);
-  column = column.push(section_header("Labels"));
+  column = column.push(labels_header());
 
   if labels.is_empty() {
     column = column.push(
@@ -220,14 +224,10 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
     );
   } else {
     for label in labels {
-      let folder = Folder::Label(label.label_id);
-      let chip = container(label_entry(label)).width(Length::Fill).padding(Padding {
-        top: spacing::SPACE_2 - 1.0,
-        bottom: spacing::SPACE_2 - 1.0,
-        left: spacing::SPACE_2 + 2.0,
-        right: spacing::SPACE_2_5,
-      });
-      column = column.push(mouse_area(chip).on_press(Message::FolderSelected(folder)));
+      column = column.push(label_row(label, drop_target == Some(label.label_id)));
+    }
+    if dragging {
+      column = column.push(drag_hint());
     }
   }
 
@@ -242,10 +242,110 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
     .into()
 }
 
+fn labels_header<'a>() -> Element<'a, Message> {
+  let add = button(
+    Icon::plus()
+      .size(14.0)
+      .color(color::text::secondary())
+      .render::<Message>(),
+  )
+  .padding(spacing::UNIT - 1.0)
+  .on_press(Message::LabelModalOpened)
+  .style(|_, status| add_button_style(status));
+
+  let row = Row::with_children(vec![
+    shared_section_header::<Message>("Labels", None),
+    Space::new().width(Length::Fill).into(),
+    add.into(),
+  ])
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_2 / 2.0,
+      right: 0.0,
+    })
+    .into()
+}
+
+fn add_button_style(status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  button::Style {
+    background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
+    border: Border {
+      radius: radius::SUBTLE.into(),
+      ..Border::default()
+    },
+    text_color: if hovered {
+      color::accent::PLASMA
+    } else {
+      color::text::secondary()
+    },
+    ..button::Style::default()
+  }
+}
+
+fn label_row(label: &FolderLabel, over: bool) -> Element<'_, Message> {
+  let label_id = label.label_id;
+  let chip = container(label_entry(label, over))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2 - 1.0,
+      bottom: spacing::SPACE_2 - 1.0,
+      left: spacing::SPACE_2 + 2.0,
+      right: spacing::SPACE_2_5,
+    })
+    .style(move |_| label_row_style(over));
+
+  mouse_area(chip)
+    .on_press(Message::FolderSelected(Folder::Label(label_id)))
+    .on_right_press(Message::LabelDeleteRequested(label_id))
+    .on_enter(Message::LabelDropTargetEntered(label_id))
+    .on_exit(Message::LabelDropTargetLeft(label_id))
+    .into()
+}
+
+fn label_row_style(over: bool) -> container::Style {
+  container::Style {
+    background: over.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    border: Border {
+      color: if over {
+        color::accent::PLASMA
+      } else {
+        iced::Color::TRANSPARENT
+      },
+      radius: radius::SUBTLE.into(),
+      width: if over { 1.0 } else { 0.0 },
+    },
+    ..container::Style::default()
+  }
+}
+
+fn drag_hint<'a>() -> Element<'a, Message> {
+  container(
+    text("Drag a message here to tag it")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    bottom: 0.0,
+    left: spacing::SPACE_2_5,
+    right: spacing::SPACE_2_5,
+  })
+  .into()
+}
+
 const LABEL_DOT_RADIUS: f32 = 3.0;
 const LABEL_DOT_SIZE: f32 = 10.0;
 
-fn label_entry(label: &FolderLabel) -> Element<'_, Message> {
+fn label_entry(label: &FolderLabel, over: bool) -> Element<'_, Message> {
   let fill = label
     .color
     .as_deref()
@@ -265,11 +365,16 @@ fn label_entry(label: &FolderLabel) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  let name_tone = if over {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
   let name = text(label.name.clone())
     .size(typography::size::MD)
     .width(Length::Fill)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
+    .style(move |_| text::Style {
+      color: Some(name_tone),
     });
 
   Row::with_children(vec![dot.into(), name.into()])

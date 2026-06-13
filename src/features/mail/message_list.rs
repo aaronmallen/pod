@@ -29,6 +29,7 @@ pub struct MessageRow {
   pub is_pinned: bool,
   pub is_read: bool,
   pub is_starred: bool,
+  pub label_ids: Vec<i64>,
   pub labels: Vec<MessageLabel>,
   pub mail_id: i64,
   pub sender: String,
@@ -174,6 +175,7 @@ async fn key_to_row(db: &Database, key: MailKey, now: DateTime<Utc>) -> MessageR
     is_pinned: overlay.is_pinned,
     is_read: key.is_read,
     is_starred: overlay.is_starred,
+    label_ids,
     labels,
     mail_id: key.mail_id,
     sender: key.sender,
@@ -379,8 +381,9 @@ pub(super) fn pane<'a>(state: &'a State, rows: &'a [MessageRow], width: f32) -> 
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
     .height(Length::Fill);
+  let tracked = mouse_area(list).on_move(Message::LabelDragMoved);
 
-  let column = Column::with_children(vec![search_box(state.search()), list.into()])
+  let column = Column::with_children(vec![search_box(state.search()), tracked.into()])
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -559,7 +562,10 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
     });
 
   let mail_id = row.mail_id;
-  mouse_area(row_container).on_press(Message::Selected(mail_id)).into()
+  mouse_area(row_container)
+    .on_press(Message::Selected(mail_id))
+    .on_right_press(Message::LabelRowMenuOpened(mail_id))
+    .into()
 }
 
 const AVATAR_SIZE: f32 = 36.0;
@@ -661,6 +667,7 @@ mod tests {
       has_attachment: false,
       important: false,
       sender_kind: SenderKind::Character,
+      label_ids: Vec::new(),
       labels: Vec::new(),
       mail_id,
       sender: sender.to_owned(),
@@ -727,6 +734,7 @@ mod tests {
         is_pinned,
         is_read,
         is_starred,
+        label_ids: Vec::new(),
         labels: labels
           .iter()
           .map(|name| MessageLabel {

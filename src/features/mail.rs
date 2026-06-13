@@ -1,5 +1,6 @@
 mod compose;
 mod folder_pane;
+mod labels;
 mod loaders;
 mod message_list;
 mod outbox_indicator;
@@ -12,10 +13,14 @@ mod triage;
 
 use std::collections::HashMap;
 
-use iced::{Element, Task, widget::text_editor};
+use iced::{Element, Point, Task, widget::text_editor};
 
 pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot, search_recipients};
-use self::{loaders::MessageLabel, message_list::MessageRow};
+use self::{
+  labels::LabelDraft,
+  loaders::{FolderLabel, MessageLabel},
+  message_list::MessageRow,
+};
 use crate::{
   store::{
     Database, images,
@@ -124,6 +129,23 @@ pub enum Message {
   FolderPaneDragged(f32),
   FolderSelected(Folder),
   Forward(i64),
+  LabelColorPicked(String),
+  LabelDeleteCancelled,
+  LabelDeleteConfirmed,
+  LabelDeleteRequested(i64),
+  LabelDragMoved(Point),
+  LabelDropReleased,
+  LabelDropTargetEntered(i64),
+  LabelDropTargetLeft(i64),
+  LabelModalClosed,
+  LabelModalOpened,
+  LabelModalSubmitted,
+  LabelNameChanged(String),
+  LabelPickerClosed,
+  LabelPickerOpened(i64),
+  LabelRowMenuOpened(i64),
+  LabelToggled(i64, i64),
+  LabelsWritten,
   ListPaneDragEnd,
   ListPaneDragStart,
   ListPaneDragged(f32),
@@ -162,19 +184,31 @@ pub enum Message {
   Unsnooze(i64),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LabelPicker {
+  anchor: Option<Point>,
+  mail_id: i64,
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,
   all_messages: Vec<MessageRow>,
   compose: Option<compose::Draft>,
+  cursor: Option<Point>,
+  dragging_mail: Option<i64>,
+  drop_target: Option<i64>,
   folder: Folder,
   folder_data: FolderPaneData,
   folder_pane: PaneDrag,
   headers: Vec<CharacterMail>,
+  label_modal: Option<LabelDraft>,
+  label_picker: Option<LabelPicker>,
   message_list_pane: PaneDrag,
   messages: Vec<MessageRow>,
   outbox_indicator: OutboxIndicator,
   overlays: HashMap<i64, MailOverlayState>,
+  pending_label_delete: Option<i64>,
   picker_open: bool,
   render: Option<ReadingRender>,
   roster: Vec<RosterPilot>,
@@ -200,6 +234,9 @@ impl State {
       active: Scope::Character(active),
       all_messages: Vec::new(),
       compose: None,
+      cursor: None,
+      dragging_mail: None,
+      drop_target: None,
       folder: Folder::default(),
       folder_data: FolderPaneData::default(),
       folder_pane: PaneDrag::with_min_width(
@@ -208,6 +245,8 @@ impl State {
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       ),
       headers: Vec::new(),
+      label_modal: None,
+      label_picker: None,
       message_list_pane: PaneDrag::with_min_width(
         MESSAGE_LIST_PANE_DEFAULT_WIDTH,
         MESSAGE_LIST_PANE_MIN_WIDTH,
@@ -216,6 +255,7 @@ impl State {
       messages: Vec::new(),
       outbox_indicator: OutboxIndicator::default(),
       overlays: HashMap::new(),
+      pending_label_delete: None,
       picker_open: false,
       render: None,
       roster: Vec::new(),
@@ -362,6 +402,43 @@ impl State {
     self.compose.as_ref()
   }
 
+  pub(super) fn label_modal(&self) -> Option<&LabelDraft> {
+    self.label_modal.as_ref()
+  }
+
+  pub(super) fn pending_label_delete(&self) -> Option<&FolderLabel> {
+    let label_id = self.pending_label_delete?;
+    self.folder_data.labels.iter().find(|label| label.label_id == label_id)
+  }
+
+  pub(super) fn dragging_mail(&self) -> Option<i64> {
+    self.dragging_mail
+  }
+
+  pub(super) fn drop_target(&self) -> Option<i64> {
+    self.drop_target
+  }
+
+  pub(super) fn label_picker_view(&self) -> Option<(i64, Option<Point>, Vec<i64>)> {
+    let picker = self.label_picker?;
+    Some((picker.mail_id, picker.anchor, self.applied_label_ids(picker.mail_id)))
+  }
+
+  fn applied_label_ids(&self, mail_id: i64) -> Vec<i64> {
+    if let Some(render) = self.render.as_ref()
+      && render.mail.header.mail_id() == mail_id
+    {
+      return render.mail.label_ids.clone();
+    }
+    self
+      .messages
+      .iter()
+      .chain(self.all_messages.iter())
+      .find(|row| row.mail_id == mail_id)
+      .map(|row| row.label_ids.clone())
+      .unwrap_or_default()
+  }
+
   fn character_for(&self, mail_id: i64) -> Option<i64> {
     if let Some(render) = self.render.as_ref()
       && render.mail.header.mail_id() == mail_id
@@ -463,6 +540,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = false;
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
+      state.label_modal = None;
+      state.label_picker = None;
+      state.pending_label_delete = None;
+      state.dragging_mail = None;
+      state.drop_target = None;
       Task::none()
     }
     Message::PickerToggled => {
@@ -482,6 +564,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.render = None;
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
+      state.label_picker = None;
       reload_for(db, state.active, folder)
     }
     Message::SearchChanged(query) => {
@@ -539,6 +622,23 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::ComposeClosed
     | Message::ComposeSend
     | Message::ComposeSent(_) => update_compose(state, message, db),
+    Message::LabelColorPicked(_)
+    | Message::LabelDeleteCancelled
+    | Message::LabelDeleteConfirmed
+    | Message::LabelDeleteRequested(_)
+    | Message::LabelDragMoved(_)
+    | Message::LabelDropReleased
+    | Message::LabelDropTargetEntered(_)
+    | Message::LabelDropTargetLeft(_)
+    | Message::LabelModalClosed
+    | Message::LabelModalOpened
+    | Message::LabelModalSubmitted
+    | Message::LabelNameChanged(_)
+    | Message::LabelPickerClosed
+    | Message::LabelPickerOpened(_)
+    | Message::LabelRowMenuOpened(_)
+    | Message::LabelToggled(..)
+    | Message::LabelsWritten => update_labels(state, message, db),
     Message::OutboxRetry(id) => Task::perform(read_state::retry_outbox(db.clone(), id), |indicator| {
       Message::OutboxRefreshed(Box::new(indicator))
     }),
@@ -628,6 +728,10 @@ fn handle_message_selected(state: &mut State, mail_id: i64, db: &Database) -> Ta
   state.selected = Some(mail_id);
   state.snooze_menu = SnoozeMenu::Closed;
   state.snooze_calendar = None;
+  state.label_picker = None;
+  // A row press both selects and arms a potential drag-to-label; the drag is a no-op unless released over a label target.
+  state.dragging_mail = Some(mail_id);
+  state.drop_target = None;
   let Some(character_id) = state
     .messages
     .iter()
@@ -867,6 +971,141 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
   Task::none()
 }
 
+fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::LabelModalOpened => {
+      state.label_modal = Some(LabelDraft::blank());
+      state.label_picker = None;
+      Task::none()
+    }
+    Message::LabelModalClosed => {
+      state.label_modal = None;
+      Task::none()
+    }
+    Message::LabelNameChanged(value) => {
+      if let Some(draft) = state.label_modal.as_mut() {
+        draft.name = value.chars().take(labels::NAME_MAX_CHARS).collect();
+      }
+      Task::none()
+    }
+    Message::LabelColorPicked(hex) => {
+      if let Some(draft) = state.label_modal.as_mut() {
+        draft.color = hex;
+      }
+      Task::none()
+    }
+    Message::LabelModalSubmitted => {
+      let Some(draft) = state.label_modal.as_ref() else {
+        return Task::none();
+      };
+      if !draft.can_create() {
+        return Task::none();
+      }
+      let draft = draft.clone();
+      state.label_modal = None;
+      let Scope::Character(character_id) = state.active;
+      let temp_id = labels::temp_label_id();
+      Task::perform(labels::enqueue_create(db.clone(), character_id, temp_id, draft), |()| {
+        Message::LabelsWritten
+      })
+    }
+    Message::LabelPickerOpened(mail_id) => {
+      state.label_modal = None;
+      state.snooze_menu = SnoozeMenu::Closed;
+      state.label_picker = Some(LabelPicker {
+        anchor: None,
+        mail_id,
+      });
+      Task::none()
+    }
+    Message::LabelRowMenuOpened(mail_id) => {
+      state.selected = Some(mail_id);
+      state.label_modal = None;
+      state.label_picker = Some(LabelPicker {
+        anchor: state.cursor,
+        mail_id,
+      });
+      Task::none()
+    }
+    Message::LabelPickerClosed => {
+      state.label_picker = None;
+      Task::none()
+    }
+    Message::LabelToggled(mail_id, label_id) => {
+      let Some(character_id) = state.character_for(mail_id) else {
+        return Task::none();
+      };
+      Task::perform(
+        labels::enqueue_toggle(db.clone(), character_id, mail_id, label_id),
+        |()| Message::LabelsWritten,
+      )
+    }
+    Message::LabelDeleteRequested(label_id) => {
+      state.pending_label_delete = Some(label_id);
+      Task::none()
+    }
+    Message::LabelDeleteCancelled => {
+      state.pending_label_delete = None;
+      Task::none()
+    }
+    Message::LabelDeleteConfirmed => {
+      let Some(label_id) = state.pending_label_delete.take() else {
+        return Task::none();
+      };
+      let Scope::Character(character_id) = state.active;
+      Task::perform(labels::enqueue_delete(db.clone(), character_id, label_id), |()| {
+        Message::LabelsWritten
+      })
+    }
+    Message::LabelDragMoved(point) => {
+      state.cursor = Some(point);
+      Task::none()
+    }
+    Message::LabelDropTargetEntered(label_id) => {
+      if state.dragging_mail.is_some() {
+        state.drop_target = Some(label_id);
+      }
+      Task::none()
+    }
+    Message::LabelDropTargetLeft(label_id) => {
+      if state.drop_target == Some(label_id) {
+        state.drop_target = None;
+      }
+      Task::none()
+    }
+    Message::LabelDropReleased => {
+      let drop = state.dragging_mail.zip(state.drop_target);
+      state.dragging_mail = None;
+      state.drop_target = None;
+      let Some((mail_id, label_id)) = drop else {
+        return Task::none();
+      };
+      let Some(character_id) = state.character_for(mail_id) else {
+        return Task::none();
+      };
+      Task::perform(
+        labels::enqueue_assign(db.clone(), character_id, mail_id, label_id),
+        |()| Message::LabelsWritten,
+      )
+    }
+    Message::LabelsWritten => reload_after_label_write(state, db),
+    _ => Task::none(),
+  }
+}
+
+fn reload_after_label_write(state: &State, db: &Database) -> Task<Message> {
+  let folder = reload_for(db, state.active, state.folder);
+  let Some(render) = state.render.as_ref() else {
+    return folder;
+  };
+  let mail_id = render.mail.header.mail_id();
+  let character_id = render.mail.header.character_id();
+  let render = Task::perform(load_render(db.clone(), character_id, mail_id), |render| {
+    Message::RenderLoaded(Box::new(render))
+  });
+  Task::batch([folder, render])
+}
+
 pub fn view(state: &State) -> Element<'_, Message> {
   shell::shell(state)
 }
@@ -880,6 +1119,15 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.message_list_pane.is_active() {
     return iced::event::listen_with(|event, _status, _id| {
       resizable_pane::drag_event(event, Message::ListPaneDragged, Message::ListPaneDragEnd)
+    });
+  }
+  if state.dragging_mail.is_some() {
+    return iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+      )
+      .then_some(Message::LabelDropReleased)
     });
   }
   iced::Subscription::none()
@@ -1051,6 +1299,7 @@ mod tests {
         has_attachment: false,
         important: false,
         sender_kind: SenderKind::Character,
+        label_ids: Vec::new(),
         labels: Vec::new(),
         mail_id,
         sender: "Vex".to_owned(),
@@ -1268,6 +1517,7 @@ mod tests {
         has_attachment: false,
         important: false,
         sender_kind: message_list::SenderKind::Character,
+        label_ids: Vec::new(),
         labels: Vec::new(),
         mail_id,
         sender: "Vex".to_owned(),
@@ -1666,6 +1916,7 @@ mod tests {
         has_attachment: false,
         important: false,
         sender_kind: SenderKind::Character,
+        label_ids: Vec::new(),
         labels: labels
           .iter()
           .map(|name| MessageLabel {

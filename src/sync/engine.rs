@@ -83,6 +83,7 @@ where
 {
   let (command_tx, command_rx) = mpsc::unbounded_channel();
   let (event_tx, event_rx) = mpsc::channel(EVENT_BUFFER);
+  let (restart_tx, restart_rx) = mpsc::unbounded_channel();
   let supervisor = Supervisor {
     command_rx,
     db,
@@ -93,10 +94,11 @@ where
     image,
     image_store,
     outbox,
+    restart_rx,
     sso,
   };
   tokio::spawn(supervisor.supervise());
-  (Handle::new(command_tx), event_rx)
+  (Handle::new(command_tx, restart_tx), event_rx)
 }
 
 struct Engine {
@@ -527,6 +529,11 @@ impl Breaker {
       backoff: backoff_for(self.consecutive),
     })
   }
+
+  fn reset(&mut self) {
+    self.attempts = 0;
+    self.consecutive = 0;
+  }
 }
 
 enum Disposition {
@@ -552,6 +559,7 @@ where
   image: Arc<eve_image::Client>,
   image_store: images::Store,
   outbox: O,
+  restart_rx: mpsc::UnboundedReceiver<()>,
   sso: Arc<eve_sso::Client>,
 }
 
@@ -570,6 +578,7 @@ where
       image,
       image_store,
       outbox,
+      restart_rx,
       sso,
     } = self;
     let build = || Engine {
@@ -587,7 +596,10 @@ where
     };
     // Each attempt rebuilds a fresh Engine but feeds it the same command_rx and event_tx, so the
     // app's Handle and forward_sync_events stay wired to whichever engine is current.
-    supervise_loop(&events, command_rx, |command_rx| Box::pin(build().run(command_rx))).await;
+    supervise_loop(&events, command_rx, restart_rx, |command_rx| {
+      Box::pin(build().run(command_rx))
+    })
+    .await;
   }
 }
 
@@ -614,6 +626,10 @@ fn disposition(outcome: Result<ExitReason, Box<dyn Any + Send>>) -> Disposition 
   }
 }
 
+fn give_up_reason(consecutive: u32) -> String {
+  format!("the sync engine died {consecutive} times in quick succession; auto-restart gave up")
+}
+
 fn panic_message(panic: &(dyn Any + Send)) -> &str {
   panic
     .downcast_ref::<&'static str>()
@@ -625,6 +641,7 @@ fn panic_message(panic: &(dyn Any + Send)) -> &str {
 async fn supervise_loop<F>(
   events: &mpsc::Sender<Event>,
   mut command_rx: mpsc::UnboundedReceiver<Command>,
+  mut restart_rx: mpsc::UnboundedReceiver<()>,
   mut run_engine: F,
 ) where
   F: for<'a> FnMut(&'a mut mpsc::UnboundedReceiver<Command>) -> BoxFuture<'a, ExitReason>,
@@ -652,12 +669,28 @@ async fn supervise_loop<F>(
       }
       Disposition::Restart => match breaker.record_restart(started.elapsed()) {
         None => {
+          let consecutive = breaker.consecutive;
           tracing::error!(
             target: "pod::lifecycle",
-            consecutive = breaker.consecutive,
+            consecutive,
             "the sync engine died repeatedly in quick succession; the circuit breaker tripped, giving up auto-restart"
           );
-          return;
+          let _ = events.try_send(Event::GaveUp {
+            reason: give_up_reason(consecutive),
+          });
+          // The breaker has tripped, so stop auto-restarting — but stay alive parked on the restart
+          // channel so a user-triggered "Restart sync" can still reach the (otherwise dead) engine
+          // and resume. The supervisor only truly exits when every Handle is dropped (app teardown).
+          match restart_rx.recv().await {
+            Some(()) => {
+              breaker.reset();
+              tracing::info!(target: "pod::lifecycle", "restarting the sync engine on request after giving up");
+              let _ = events.try_send(Event::Restarted {
+                attempt: 0,
+              });
+            }
+            None => return,
+          }
         }
         Some(plan) => {
           tracing::warn!(
@@ -667,7 +700,17 @@ async fn supervise_loop<F>(
             backoff_secs = plan.backoff.as_secs(),
             "the sync engine died unexpectedly; restarting after backoff"
           );
-          tokio::time::sleep(plan.backoff).await;
+          // A manual restart short-circuits the backoff wait and resets the breaker so retries
+          // resume immediately rather than after the (possibly capped) delay.
+          tokio::select! {
+            _ = tokio::time::sleep(plan.backoff) => {}
+            signal = restart_rx.recv() => {
+              if signal.is_none() {
+                return;
+              }
+              breaker.reset();
+            }
+          }
           let _ = events.try_send(Event::Restarted {
             attempt: plan.attempt,
           });
@@ -1125,6 +1168,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_clears_the_streak_and_attempt_count_on_reset() {
+      let mut breaker = Breaker::default();
+      for _ in 0..RESPAWN_BREAKER_THRESHOLD - 1 {
+        breaker.record_restart(Duration::ZERO);
+      }
+
+      breaker.reset();
+      let after_reset: Vec<_> = (0..RESPAWN_BREAKER_THRESHOLD - 1)
+        .map(|_| breaker.record_restart(Duration::ZERO))
+        .collect();
+
+      assert!(
+        after_reset.iter().all(Option::is_some),
+        "after a reset the breaker grants a full fresh run of restarts before tripping again"
+      );
+      assert_eq!(
+        after_reset
+          .first()
+          .and_then(|plan| plan.as_ref())
+          .map(|plan| plan.attempt),
+        Some(1),
+        "a reset restarts the attempt counter from one"
+      );
+    }
+
+    #[test]
     fn it_plans_a_restart_with_a_rising_attempt_count() {
       let mut breaker = Breaker::default();
 
@@ -1137,6 +1206,21 @@ mod tests {
 
       assert_eq!(first.attempt, 1);
       assert_eq!(second.attempt, 2);
+    }
+
+    #[test]
+    fn it_resets_the_streak_when_an_engine_survives_the_window() {
+      let mut breaker = Breaker::default();
+      for _ in 0..RESPAWN_BREAKER_THRESHOLD - 1 {
+        assert!(breaker.record_restart(Duration::ZERO).is_some());
+      }
+
+      let after_a_long_run = breaker.record_restart(RESPAWN_BREAKER_WINDOW);
+
+      assert!(
+        after_a_long_run.is_some(),
+        "an engine that lived past the window resets the streak, so the next death restarts rather than trips"
+      );
     }
 
     #[test]
@@ -1157,21 +1241,6 @@ mod tests {
       assert!(
         plans.last().expect("at least one plan").is_none(),
         "the threshold-th rapid death trips the breaker and stops restarting"
-      );
-    }
-
-    #[test]
-    fn it_resets_the_streak_when_an_engine_survives_the_window() {
-      let mut breaker = Breaker::default();
-      for _ in 0..RESPAWN_BREAKER_THRESHOLD - 1 {
-        assert!(breaker.record_restart(Duration::ZERO).is_some());
-      }
-
-      let after_a_long_run = breaker.record_restart(RESPAWN_BREAKER_WINDOW);
-
-      assert!(
-        after_a_long_run.is_some(),
-        "an engine that lived past the window resets the streak, so the next death restarts rather than trips"
       );
     }
   }
@@ -1220,9 +1289,62 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
+    async fn it_gives_up_and_parks_after_the_circuit_breaker_trips() {
+      let (events_tx, mut events_rx) = mpsc::channel(EVENT_BUFFER);
+      let (_command_tx, command_rx) = mpsc::unbounded_channel();
+      let (restart_tx, restart_rx) = mpsc::unbounded_channel();
+      let runs = Arc::new(AtomicU32::new(0));
+      let runs_in_loop = Arc::clone(&runs);
+
+      let loop_handle = tokio::spawn(async move {
+        super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |_command_rx| {
+          let runs = Arc::clone(&runs_in_loop);
+          Box::pin(async move {
+            runs.fetch_add(1, Ordering::SeqCst);
+            panic!("engine hot-loops");
+          })
+        })
+        .await;
+      });
+
+      let gave_up = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+          match events_rx.recv().await {
+            Some(Event::GaveUp {
+              reason,
+            }) => return reason,
+            Some(_) => continue,
+            None => panic!("the event channel closed before the supervisor gave up"),
+          }
+        }
+      })
+      .await
+      .expect("the breaker should trip and emit a give-up signal rather than hot-loop forever");
+
+      assert_eq!(
+        runs.load(Ordering::SeqCst),
+        RESPAWN_BREAKER_THRESHOLD,
+        "the engine runs exactly threshold times: each death restarts until the threshold-th trips"
+      );
+      assert!(
+        gave_up.contains("gave up"),
+        "the give-up signal carries a human-meaningful reason, got {gave_up:?}"
+      );
+
+      // Parking after give-up keeps the supervisor alive; dropping the last restart sender (app
+      // teardown) is what finally lets it exit.
+      drop(restart_tx);
+      tokio::time::timeout(Duration::from_secs(5), loop_handle)
+        .await
+        .expect("the supervisor exits once its restart channel closes")
+        .expect("the supervisor task should not panic");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn it_respawns_the_engine_after_an_unexpected_death_and_keeps_the_command_path() {
       let (events_tx, mut events_rx) = mpsc::channel(EVENT_BUFFER);
       let (command_tx, command_rx) = mpsc::unbounded_channel();
+      let (_restart_tx, restart_rx) = mpsc::unbounded_channel();
       let runs = Arc::new(AtomicU32::new(0));
       let runs_in_loop = Arc::clone(&runs);
       let reached_new_engine = Arc::new(AtomicU32::new(0));
@@ -1233,7 +1355,7 @@ mod tests {
       command_tx.send(Command::Drain).unwrap();
 
       let loop_handle = tokio::spawn(async move {
-        super::super::supervise_loop(&events_tx, command_rx, move |command_rx| {
+        super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |command_rx| {
           let runs = Arc::clone(&runs_in_loop);
           let reached = Arc::clone(&reached_in_loop);
           Box::pin(async move {
@@ -1282,32 +1404,102 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn it_gives_up_after_the_circuit_breaker_trips() {
-      let (events_tx, _events_rx) = mpsc::channel(EVENT_BUFFER);
+    async fn it_resumes_from_a_parked_give_up_when_a_manual_restart_arrives() {
+      let (events_tx, mut events_rx) = mpsc::channel(EVENT_BUFFER);
       let (_command_tx, command_rx) = mpsc::unbounded_channel();
+      let (restart_tx, restart_rx) = mpsc::unbounded_channel();
       let runs = Arc::new(AtomicU32::new(0));
       let runs_in_loop = Arc::clone(&runs);
 
       let loop_handle = tokio::spawn(async move {
-        super::super::supervise_loop(&events_tx, command_rx, move |_command_rx| {
+        super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |_command_rx| {
           let runs = Arc::clone(&runs_in_loop);
           Box::pin(async move {
-            runs.fetch_add(1, Ordering::SeqCst);
-            panic!("engine hot-loops");
+            // Panic until the breaker trips, then on the manual respawn settle cleanly so the loop
+            // ends and the run count proves the restart reached a fresh engine attempt.
+            if runs.fetch_add(1, Ordering::SeqCst) < RESPAWN_BREAKER_THRESHOLD {
+              panic!("engine hot-loops");
+            }
+            ExitReason::Shutdown
           })
         })
         .await;
       });
 
-      tokio::time::timeout(Duration::from_secs(30), loop_handle)
+      tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+          match events_rx.recv().await {
+            Some(Event::GaveUp {
+              ..
+            }) => return,
+            Some(_) => continue,
+            None => panic!("the event channel closed before the supervisor gave up"),
+          }
+        }
+      })
+      .await
+      .expect("the supervisor should give up and park");
+
+      restart_tx.send(()).unwrap();
+      tokio::time::timeout(Duration::from_secs(5), loop_handle)
         .await
-        .expect("the breaker should trip and end the loop rather than hot-loop forever")
+        .expect("the manual restart should unpark the supervisor and let the fresh engine settle")
         .expect("the supervisor task should not panic");
 
       assert_eq!(
         runs.load(Ordering::SeqCst),
-        RESPAWN_BREAKER_THRESHOLD,
-        "the engine runs exactly threshold times: each death restarts until the threshold-th trips"
+        RESPAWN_BREAKER_THRESHOLD + 1,
+        "the manual restart resets the breaker and respawns the engine one more time past the trip"
+      );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn it_short_circuits_backoff_when_a_manual_restart_arrives() {
+      let (events_tx, mut events_rx) = mpsc::channel(EVENT_BUFFER);
+      let (_command_tx, command_rx) = mpsc::unbounded_channel();
+      let (restart_tx, restart_rx) = mpsc::unbounded_channel();
+      let runs = Arc::new(AtomicU32::new(0));
+      let runs_in_loop = Arc::clone(&runs);
+
+      // A manual restart sent while the supervisor is backing off should resume immediately and
+      // reset the streak rather than counting toward the breaker.
+      restart_tx.send(()).unwrap();
+
+      let loop_handle = tokio::spawn(async move {
+        super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |_command_rx| {
+          let runs = Arc::clone(&runs_in_loop);
+          Box::pin(async move {
+            if runs.fetch_add(1, Ordering::SeqCst) == 0 {
+              panic!("first attempt dies");
+            }
+            ExitReason::Shutdown
+          })
+        })
+        .await;
+      });
+
+      tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+          match events_rx.recv().await {
+            Some(Event::Restarted {
+              ..
+            }) => return,
+            Some(_) => continue,
+            None => panic!("the event channel closed before a restart was emitted"),
+          }
+        }
+      })
+      .await
+      .expect("a queued manual restart short-circuits the backoff and emits a restart promptly");
+      tokio::time::timeout(Duration::from_secs(5), loop_handle)
+        .await
+        .expect("the loop should terminate once the respawn shuts down")
+        .expect("the supervisor task should not panic");
+
+      assert_eq!(
+        runs.load(Ordering::SeqCst),
+        2,
+        "the engine ran twice: the dying attempt and the manually-resumed respawn"
       );
     }
 
@@ -1315,11 +1507,12 @@ mod tests {
     async fn it_stops_without_respawn_on_a_deliberate_shutdown() {
       let (events_tx, _events_rx) = mpsc::channel(EVENT_BUFFER);
       let (_command_tx, command_rx) = mpsc::unbounded_channel();
+      let (_restart_tx, restart_rx) = mpsc::unbounded_channel();
       let runs = Arc::new(AtomicU32::new(0));
       let runs_in_loop = Arc::clone(&runs);
 
       let loop_handle = tokio::spawn(async move {
-        super::super::supervise_loop(&events_tx, command_rx, move |_command_rx| {
+        super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |_command_rx| {
           let runs = Arc::clone(&runs_in_loop);
           Box::pin(async move {
             runs.fetch_add(1, Ordering::SeqCst);

@@ -848,8 +848,9 @@ async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event
       return;
     }
   }
-  // The sync event channel closing means the engine task itself ended; emit once here so the
-  // app's lifecycle channel (which outlives any single engine) reflects the real Stopped state.
+  // The channel closes only once the whole supervisor ends — a deliberate Shutdown or app teardown,
+  // since a give-up now parks (emitting Event::GaveUp) rather than dropping the stream. Emit a
+  // reasonless Stopped so the chip reflects the terminal state even on this teardown path.
   let _ = tx
     .send(Message::EngineStopped {
       reason: None,
@@ -914,8 +915,9 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
 /// diverge and nothing is ever pushed to the canonical share.
 fn inert_sync() -> (sync::Handle, tokio::sync::mpsc::Receiver<sync::Event>) {
   let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
+  let (restart, _restart_rx) = tokio::sync::mpsc::unbounded_channel();
   let (_events_tx, events) = tokio::sync::mpsc::channel(1);
-  (sync::Handle::new(commands), events)
+  (sync::Handle::new(commands, restart), events)
 }
 
 fn read_only_engine_state(held_by: Option<HolderInfo>) -> EngineState {
@@ -3618,10 +3620,10 @@ fn handle_restart_sync(app: &mut App) -> Task<Message> {
   if !app.engine_state.is_stopped() {
     return Task::none();
   }
-  // A respawn needs the parked StoreReady, which the boot path consumes once seeding completes.
-  // When it is gone, this honest placeholder leaves the chip in Stopped rather than faking a
-  // restart; full supervision and respawn live in the engine-supervision sibling spec.
-  let Some(ready) = app.store_ready.clone() else {
+  // The supervisor outlives any single engine and stays parked after it gives up, so the live Handle
+  // still reaches it. Signalling restart_sync resets the circuit breaker and respawns a fresh engine
+  // over the same command/event channels — no Runtime rebuild and no re-threaded Handle.
+  let Some(runtime) = app.runtime.as_ref() else {
     tracing::warn!(
       target: "pod::lifecycle",
       "restart requested but the runtime handle is unavailable; leaving sync stopped"
@@ -3629,14 +3631,45 @@ fn handle_restart_sync(app: &mut App) -> Task<Message> {
     return Task::none();
   };
   tracing::info!(target: "pod::lifecycle", "restarting the sync engine on request");
+  runtime.sync.restart_sync();
   app.engine_state = EngineState::Running;
-  build_runtime(ready)
+  Task::none()
+}
+
+fn apply_engine_lifecycle(app: &mut App, event: &sync::Event) {
+  // A parked read-only instance runs an inert engine, so its lifecycle is owned by the lease, not by
+  // these events; never let a stray sync event overwrite ReadOnly.
+  if app.engine_state.is_read_only() {
+    return;
+  }
+  match event {
+    sync::Event::GaveUp {
+      reason,
+    } => {
+      tracing::warn!(target: "pod::lifecycle", %reason, "the sync engine supervisor gave up auto-restart");
+      app.engine_state = EngineState::Stopped {
+        reason: Some(reason.clone()),
+      };
+    }
+    // A respawn (auto or manual) means the engine is live again; leave the settled-state early return
+    // behind and recompute Running/Idle from the in-flight job stats.
+    sync::Event::Restarted {
+      ..
+    } => {
+      app.engine_state = if expected_job_stats(app).in_progress() {
+        EngineState::Running
+      } else {
+        EngineState::Idle
+      };
+    }
+    _ => refresh_running_engine_state(app),
+  }
 }
 
 fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
   app.status.apply(&event);
   app.outbox.apply(&event);
-  refresh_running_engine_state(app);
+  apply_engine_lifecycle(app, &event);
   let sync::Event::Finished {
     key, ..
   } = event
@@ -3900,15 +3933,35 @@ mod tests {
     let eve_image = Arc::new(eve_image::Client::new(http.clone()));
     let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (restart_tx, _restart_rx) = tokio::sync::mpsc::unbounded_channel();
     let runtime = Runtime {
       db,
       esi,
       eve_image,
       settings: config::Settings::default(),
       sso,
-      sync: sync::Handle::new(tx),
+      sync: sync::Handle::new(tx, restart_tx),
     };
     (runtime, rx)
+  }
+
+  async fn test_runtime_with_restart() -> (Runtime, tokio::sync::mpsc::UnboundedReceiver<()>) {
+    let db = store::open_test().await.unwrap();
+    let http = http::Client::builder(http::Cache::new(db.clone())).build();
+    let esi = Arc::new(esi::Client::builder(http.clone()).user_agent("test").build().unwrap());
+    let eve_image = Arc::new(eve_image::Client::new(http.clone()));
+    let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let (restart_tx, restart_rx) = tokio::sync::mpsc::unbounded_channel();
+    let runtime = Runtime {
+      db,
+      esi,
+      eve_image,
+      settings: config::Settings::default(),
+      sso,
+      sync: sync::Handle::new(tx, restart_tx),
+    };
+    (runtime, restart_rx)
   }
 
   fn temp_sync_session() -> (tempfile::TempDir, store::sync_session::SyncSession) {
@@ -6251,6 +6304,42 @@ mod tests {
       }
     }
 
+    #[tokio::test]
+    async fn it_ignores_a_manual_restart_when_the_engine_is_not_stopped() {
+      let mut app = test_app();
+      let (runtime, mut restart_rx) = test_runtime_with_restart().await;
+      app.runtime = Some(runtime);
+      app.engine_state = EngineState::Running;
+
+      let _ = update(&mut app, Message::RestartSync);
+
+      assert_eq!(
+        restart_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        "restart is a stopped-only escape hatch; a running engine is never re-signalled"
+      );
+    }
+
+    #[test]
+    fn it_keeps_a_parked_engine_read_only_when_a_stray_give_up_arrives() {
+      let mut app = test_app();
+      app.engine_state = read_only_engine_state(Some(holder()));
+
+      let _ = update(
+        &mut app,
+        Message::Sync(sync::Event::GaveUp {
+          reason: "irrelevant".to_owned(),
+        }),
+      );
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::ReadOnly {
+          held_by: Some(holder()),
+        }
+      );
+    }
+
     #[test]
     fn it_keeps_a_parked_engine_read_only_when_the_inert_stream_closes() {
       let mut app = test_app();
@@ -6292,6 +6381,29 @@ mod tests {
     }
 
     #[test]
+    fn it_returns_to_running_when_a_respawn_arrives_after_a_stop() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      app.engine_state = EngineState::Stopped {
+        reason: Some("gave up".to_owned()),
+      };
+
+      let _ = update(
+        &mut app,
+        Message::Sync(sync::Event::Restarted {
+          attempt: 0,
+        }),
+      );
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::Idle,
+        "a respawn with no in-flight jobs leaves the engine alive but idle, no longer stopped"
+      );
+      assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Active);
+    }
+
+    #[test]
     fn it_settles_a_running_engine_to_idle_when_jobs_finish() {
       let mut app = test_app();
       app.character_manager = Some(character_manager::State::new());
@@ -6305,6 +6417,29 @@ mod tests {
 
       assert_eq!(app.engine_state, EngineState::Idle);
       assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Active);
+    }
+
+    #[tokio::test]
+    async fn it_signals_the_supervisor_to_restart_on_a_manual_restart() {
+      let mut app = test_app();
+      let (runtime, mut restart_rx) = test_runtime_with_restart().await;
+      app.runtime = Some(runtime);
+      app.engine_state = EngineState::Stopped {
+        reason: Some("gave up".to_owned()),
+      };
+
+      let _ = update(&mut app, Message::RestartSync);
+
+      assert_eq!(
+        restart_rx.try_recv(),
+        Ok(()),
+        "a manual restart reaches the parked supervisor over its dedicated channel"
+      );
+      assert_eq!(
+        app.engine_state,
+        EngineState::Running,
+        "the chip optimistically shows Running once the restart is dispatched"
+      );
     }
 
     #[test]
@@ -6326,6 +6461,27 @@ mod tests {
         }
       );
       assert!(!super::syncing_with(&app.engine_state, &in_progress_stats()));
+      assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Stopped);
+    }
+
+    #[test]
+    fn it_stops_with_a_meaningful_reason_when_the_supervisor_gives_up() {
+      let mut app = test_app();
+      app.engine_state = EngineState::Running;
+
+      let _ = update(
+        &mut app,
+        Message::Sync(sync::Event::GaveUp {
+          reason: "the sync engine died 5 times in quick succession; auto-restart gave up".to_owned(),
+        }),
+      );
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::Stopped {
+          reason: Some("the sync engine died 5 times in quick succession; auto-restart gave up".to_owned()),
+        }
+      );
       assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Stopped);
     }
 

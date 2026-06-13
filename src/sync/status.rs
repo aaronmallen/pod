@@ -39,6 +39,9 @@ impl OutboxStatus {
       | Event::Finished {
         ..
       }
+      | Event::GaveUp {
+        ..
+      }
       | Event::Heartbeat
       | Event::Restarted {
         ..
@@ -130,7 +133,10 @@ impl SyncStatus {
         let (phase, reason) = phase_for_outcome(outcome);
         self.set(*key, phase, reason, None);
       }
-      Event::Heartbeat
+      Event::GaveUp {
+        ..
+      }
+      | Event::Heartbeat
       | Event::Restarted {
         ..
       } => {}

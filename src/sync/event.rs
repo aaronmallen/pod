@@ -5,6 +5,7 @@ pub enum Event {
   BackingOff { key: JobKey, retry_secs: u64 },
   Failed { key: JobKey, reason: String },
   Finished { key: JobKey, outcome: Outcome },
+  GaveUp { reason: String },
   Heartbeat,
   OutboxDone { id: i64 },
   OutboxFailed { id: i64, reason: String },

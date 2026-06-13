@@ -121,7 +121,6 @@ pub struct IndustryJob {
   pub owner_name: String,
   pub probability: Option<f64>,
   pub product_name: String,
-  pub product_type_id: Option<i64>,
   pub runs: i64,
   pub security: Option<f64>,
   pub start_date: String,
@@ -153,10 +152,6 @@ impl IndustryJob {
   pub fn remaining_seconds(&self, now: DateTime<Utc>) -> i64 {
     self.end().map(|end| (end - now).num_seconds().max(0)).unwrap_or(0)
   }
-
-  pub fn start(&self) -> Option<DateTime<Utc>> {
-    parse_time(&self.start_date)
-  }
 }
 
 #[derive(Clone, Debug)]
@@ -176,16 +171,6 @@ pub struct SlotCaps {
   pub manufacturing: i64,
   pub reactions: i64,
   pub science: i64,
-}
-
-impl SlotCaps {
-  pub fn for_bucket(self, bucket: SlotBucket) -> i64 {
-    match bucket {
-      SlotBucket::Manufacturing => self.manufacturing,
-      SlotBucket::Reactions => self.reactions,
-      SlotBucket::Science => self.science,
-    }
-  }
 }
 
 struct LocationNames {
@@ -396,7 +381,6 @@ async fn build_job(
     owner_name: input.owner_name,
     probability: input.probability,
     product_name,
-    product_type_id: input.product_type_id,
     runs: input.runs,
     security: location.security,
     start_date: input.start_date,
@@ -605,7 +589,6 @@ mod tests {
       owner_name: "Pilot".to_owned(),
       probability: None,
       product_name: "Rifter".to_owned(),
-      product_type_id: Some(587),
       runs: 10,
       security: Some(0.9),
       start_date: start.to_owned(),

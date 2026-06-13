@@ -4,9 +4,13 @@ use iced::{
   widget::{Row, Space, button, container, stack, text},
 };
 
-use crate::ui::style::{color, radius, typography};
+use crate::ui::{
+  components::icon::Icon,
+  style::{color, radius, typography},
+};
 
 const COUNT_SIZE: f32 = typography::size::XS_PLUS;
+const ICON_SIZE: f32 = 15.0;
 const LABEL_SIZE: f32 = typography::size::MD;
 const TAB_CELL_PADDING_X: f32 = 12.0;
 const TAB_LABEL_GAP: f32 = 8.0;
@@ -39,6 +43,7 @@ impl TabLayout {
 
 pub struct Tab<'a, M> {
   pub count: String,
+  pub icon: Option<Icon>,
   pub label: &'a str,
   pub on_press: Option<M>,
   pub selected: bool,
@@ -46,7 +51,7 @@ pub struct Tab<'a, M> {
 
 pub fn tab_select_with<'a, M>(tabs: Vec<Tab<'a, M>>, layout: TabLayout) -> Element<'a, M>
 where
-  M: Clone + 'a,
+  M: Clone + 'static,
 {
   Row::with_children(
     tabs
@@ -62,10 +67,11 @@ where
 
 fn tab<'a, M>(descriptor: Tab<'a, M>, layout: TabLayout) -> Element<'a, M>
 where
-  M: Clone + 'a,
+  M: Clone + 'static,
 {
   let Tab {
     count,
+    icon,
     label,
     on_press,
     selected,
@@ -82,7 +88,11 @@ where
     color::text::tertiary()
   };
 
-  let content = Row::with_children(vec![
+  let mut content_children: Vec<Element<'a, M>> = Vec::new();
+  if let Some(icon) = icon {
+    content_children.push(icon.color(label_color).size(ICON_SIZE).render::<M>());
+  }
+  content_children.push(
     text(label.to_owned())
       .font(typography::body::MEDIUM)
       .size(LABEL_SIZE)
@@ -90,6 +100,8 @@ where
         color: Some(label_color),
       })
       .into(),
+  );
+  content_children.push(
     text(count)
       .font(typography::mono::REGULAR)
       .size(COUNT_SIZE)
@@ -97,9 +109,10 @@ where
         color: Some(count_color),
       })
       .into(),
-  ])
-  .spacing(TAB_LABEL_GAP)
-  .align_y(Vertical::Center);
+  );
+  let content = Row::with_children(content_children)
+    .spacing(TAB_LABEL_GAP)
+    .align_y(Vertical::Center);
 
   let cell_padding = Padding {
     left: TAB_CELL_PADDING_X,
@@ -177,6 +190,7 @@ mod tests {
   fn characters_tab(selected: bool, on_press: Option<()>) -> Tab<'static, ()> {
     Tab {
       count: "12".to_owned(),
+      icon: None,
       label: "Characters",
       on_press,
       selected,

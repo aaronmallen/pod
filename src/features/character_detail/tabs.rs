@@ -85,6 +85,7 @@ pub(super) fn tab_strip(enabled: &[Tab], active: Tab) -> Element<'_, Message> {
       let selected = tab == active;
       SelectTab {
         count: String::new(),
+        icon: None,
         label: tab.label(),
         on_press: (!selected).then_some(Message::TabChanged(tab)),
         selected,

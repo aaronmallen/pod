@@ -136,7 +136,7 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
     },
     Scope::All => {
       let badge = container(
-        Icon::notif_industry()
+        Icon::industry()
           .color(color::accent::PLASMA)
           .size(20.0)
           .render::<Message>(),
@@ -176,7 +176,7 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{features::industry::IndustryTweaks, store::images};
+  use crate::store::images;
 
   fn character(id: i64) -> RosterOwner {
     RosterOwner {
@@ -190,7 +190,7 @@ mod tests {
         id,
         kind: images::ImageKind::CharacterPortrait,
       }),
-      slots: super::super::SlotCaps::default(),
+      slots: super::super::loaders::SlotCaps::default(),
     }
   }
 
@@ -206,16 +206,12 @@ mod tests {
       }),
       name: format!("Corp {id}"),
       portrait: None,
-      slots: super::super::SlotCaps::default(),
+      slots: super::super::loaders::SlotCaps::default(),
     }
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>) -> State {
-    let mut state = State::new(
-      0,
-      IndustryTweaks::default(),
-      vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS],
-    );
+    let mut state = State::new(0, vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS]);
     state.active = active;
     state.roster = roster;
     state

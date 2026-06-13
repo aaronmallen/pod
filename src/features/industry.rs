@@ -1,25 +1,15 @@
-// The module and its public surface (Message/State/Scope/update/view/load/subscription) are mounted
-// by the app router in a follow-up wiring change; until then the wiring is dead from the binary's
-// perspective — the re-exported public types likewise have no in-binary consumer yet. The wiring
-// task removes this allow.
-#![allow(dead_code, unused_imports)]
-
 mod jobs;
 mod loaders;
 mod shell;
 mod side_rail;
 mod switcher;
-mod tweaks;
 
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use iced::{Element, Subscription, Task};
 
-pub use self::{
-  loaders::{Activity, IndustryJob, Loaded, Owner, RosterOwner, SlotBucket, SlotCaps},
-  tweaks::{BarColor, Density, GroupBy, IndustryTweaks},
-};
+pub use self::loaders::{Activity, IndustryJob, Loaded, Owner, RosterOwner};
 use crate::store::{Database, images};
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
@@ -31,6 +21,15 @@ pub enum Filter {
   All,
   Active,
   Ready,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GroupBy {
+  Activity,
+  Facility,
+  #[default]
+  None,
+  Owner,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -67,25 +66,22 @@ pub enum Message {
   ScopeSelected(Scope),
   TabSelected(Tab),
   Tick,
-  TweakChanged(tweaks::Tweak),
-  TweaksToggled,
 }
 
 #[derive(Debug)]
 pub struct State {
   active: Scope,
   filter: Filter,
+  group_by: GroupBy,
   jobs: Vec<IndustryJob>,
   picker_open: bool,
   required_scopes: Vec<&'static str>,
   roster: Vec<RosterOwner>,
   tab: Tab,
-  tweaks: IndustryTweaks,
-  tweaks_open: bool,
 }
 
 impl State {
-  pub fn new(active: i64, tweaks: IndustryTweaks, required_scopes: Vec<&'static str>) -> Self {
+  pub fn new(active: i64, required_scopes: Vec<&'static str>) -> Self {
     State {
       active: if active == EMPTY_INDUSTRY_SELECTION {
         Scope::All
@@ -93,13 +89,12 @@ impl State {
         Scope::Char(active)
       },
       filter: Filter::default(),
+      group_by: GroupBy::default(),
       jobs: Vec::new(),
       picker_open: false,
       required_scopes,
       roster: Vec::new(),
       tab: Tab::default(),
-      tweaks,
-      tweaks_open: false,
     }
   }
 
@@ -121,16 +116,12 @@ impl State {
       .collect()
   }
 
-  pub fn tweaks(&self) -> IndustryTweaks {
-    self.tweaks
-  }
-
   pub(super) fn filter(&self) -> Filter {
     self.filter
   }
 
-  pub(super) fn jobs(&self) -> &[IndustryJob] {
-    &self.jobs
+  pub(super) fn group_by(&self) -> GroupBy {
+    self.group_by
   }
 
   pub(super) fn owner(&self, owner: Owner) -> Option<&RosterOwner> {
@@ -173,10 +164,6 @@ impl State {
 
   pub(super) fn tab(&self) -> Tab {
     self.tab
-  }
-
-  pub(super) fn tweaks_open(&self) -> bool {
-    self.tweaks_open
   }
 
   pub(super) fn unauthorized_characters(&self) -> Vec<&RosterOwner> {
@@ -242,7 +229,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       Task::none()
     }
     Message::GroupBySelected(group_by) => {
-      state.tweaks.set_group_by(group_by);
+      state.group_by = group_by;
       Task::none()
     }
     Message::Loaded(loaded) => {
@@ -273,14 +260,6 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       Task::none()
     }
     Message::Tick => Task::none(),
-    Message::TweakChanged(tweak) => {
-      tweak.apply(&mut state.tweaks);
-      Task::none()
-    }
-    Message::TweaksToggled => {
-      state.tweaks_open = !state.tweaks_open;
-      Task::none()
-    }
   }
 }
 
@@ -291,7 +270,7 @@ pub fn view<'a>(state: &'a State, required_scopes: &[&'static str], now: DateTim
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  use super::{loaders::SlotCaps, *};
   use crate::clients::esi::scopes;
 
   fn now() -> DateTime<Utc> {
@@ -353,7 +332,6 @@ mod tests {
       owner_name: "Pilot 1".to_owned(),
       probability: (activity == Activity::Invention).then_some(0.42),
       product_name: "Rifter".to_owned(),
-      product_type_id: Some(587),
       runs: 10,
       security: Some(0.9),
       start_date: "2026-06-13T11:00:00Z".to_owned(),
@@ -371,7 +349,7 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>, jobs: Vec<IndustryJob>) -> State {
-    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, IndustryTweaks::default(), required());
+    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required());
     state.active = active;
     state.roster = roster;
     state.jobs = jobs;
@@ -407,21 +385,10 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_with_grouping_and_compact_density() {
+    fn it_renders_each_group_by() {
       let mut state = populated();
-      state.tweaks.set_density(Density::Compact);
-      state.tweaks.set_group_by(GroupBy::Owner);
-      state.tweaks.set_bar_color(BarColor::Status);
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_each_group_by_with_the_rail_off() {
-      let mut state = populated();
-      state.tweaks.set_show_rail(false);
       for group_by in [GroupBy::None, GroupBy::Owner, GroupBy::Activity, GroupBy::Facility] {
-        state.tweaks.set_group_by(group_by);
+        state.group_by = group_by;
         let _el: Element<'_, Message> = view(&state, &required(), now());
       }
     }
@@ -439,14 +406,6 @@ mod tests {
     fn it_renders_the_scope_picker_overlay() {
       let mut state = populated();
       state.picker_open = true;
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_the_tweaks_overlay() {
-      let mut state = populated();
-      state.tweaks_open = true;
 
       let _el: Element<'_, Message> = view(&state, &required(), now());
     }
@@ -481,13 +440,6 @@ mod tests {
       let _ = update(&mut state, Message::TabSelected(Tab::Jobs), &db, n);
       let _ = update(&mut state, Message::Tick, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
-      let _ = update(&mut state, Message::TweaksToggled, &db, n);
-      let _ = update(
-        &mut state,
-        Message::TweakChanged(tweaks::Tweak::ShowRail(false)),
-        &db,
-        n,
-      );
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Char(1)), &db, n);
 

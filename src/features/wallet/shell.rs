@@ -202,6 +202,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
       let selected = state.tab == tab;
       tab_select::Tab {
         count: count.to_string(),
+        icon: None,
         label,
         on_press: (!selected).then_some(Message::TabSelected(tab)),
         selected,

@@ -5,15 +5,12 @@ use iced::{
   widget::{Column, Row, Space, button, container, image, scrollable, text},
 };
 
-use super::{
-  Activity, Filter, IndustryJob, Message, State,
-  tweaks::{BarColor, Density, GroupBy},
-};
+use super::{Activity, Filter, GroupBy, IndustryJob, Message, State};
 use crate::{
   clients::eve_image::Size,
   store::images::{self, IconResolution},
   ui::{
-    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile},
+    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -21,7 +18,6 @@ use crate::{
 const COUNTDOWN_WARNING_SECS: i64 = 3_600;
 const ROW_SIDE_PADDING: f32 = 24.0;
 const TILE_BOX_COMFORTABLE: f32 = 40.0;
-const TILE_BOX_COMPACT: f32 = 34.0;
 const TILE_ICON: Size = Size::S64;
 const VALUE_WIDTH: f32 = 132.0;
 
@@ -39,10 +35,10 @@ pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Messa
     .width(Length::Fill)
     .height(Length::Fill);
 
-  let mut children: Vec<Element<'a, Message>> = vec![container(left).width(Length::Fill).height(Length::Fill).into()];
-  if state.tweaks().show_rail() {
-    children.push(super::side_rail::rail(state, now));
-  }
+  let children: Vec<Element<'a, Message>> = vec![
+    container(left).width(Length::Fill).height(Length::Fill).into(),
+    super::side_rail::rail(state, now),
+  ];
 
   Row::with_children(children)
     .width(Length::Fill)
@@ -215,7 +211,7 @@ fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
     ("Facility", GroupBy::Facility),
   ]
   .into_iter()
-  .map(|(label, group_by)| group_button(label, group_by, state.tweaks().group_by() == group_by))
+  .map(|(label, group_by)| group_button(label, group_by, state.group_by() == group_by))
   .collect();
 
   let band = Row::with_children(vec![
@@ -234,7 +230,7 @@ fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
 
-  container(band)
+  let bar = container(band)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
@@ -244,13 +240,11 @@ fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
     })
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::rule(),
-        radius: 0.0.into(),
-        width: 1.0,
-      },
       ..container::Style::default()
-    })
+    });
+
+  Column::with_children(vec![bar.into(), rule::horizontal()])
+    .width(Length::Fill)
     .into()
 }
 
@@ -402,9 +396,7 @@ fn job_groups<'a>(state: &'a State, jobs: &[&'a IndustryJob], now: DateTime<Utc>
     .into();
   }
 
-  let density = state.tweaks().density();
-  let bar_color = state.tweaks().bar_color();
-  let groups = grouped(jobs, state.tweaks().group_by(), now);
+  let groups = grouped(jobs, state.group_by(), now);
 
   let mut children: Vec<Element<'a, Message>> = Vec::new();
   for group in groups {
@@ -413,40 +405,27 @@ fn job_groups<'a>(state: &'a State, jobs: &[&'a IndustryJob], now: DateTime<Utc>
       children.push(group_header(&label, group.jobs.len(), ready));
     }
     for job in group.jobs {
-      children.push(job_row(job, now, density, bar_color));
+      children.push(job_row(job, now));
     }
   }
 
   Column::with_children(children).width(Length::Fill).into()
 }
 
-fn job_row<'a>(
-  job: &'a IndustryJob,
-  now: DateTime<Utc>,
-  density: Density,
-  bar_color: BarColor,
-) -> Element<'a, Message> {
+fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message> {
   let ready = job.is_ready(now);
-  let compact = density == Density::Compact;
-  let box_size = if compact {
-    TILE_BOX_COMPACT
-  } else {
-    TILE_BOX_COMFORTABLE
-  };
   let pct = job.progress(now);
   let remaining = job.remaining_seconds(now);
 
   let bar = if ready {
     color::status::ONLINE
-  } else if bar_color == BarColor::Status {
-    color::accent::PLASMA
   } else {
     activity_color(job.activity)
   };
 
   let identity = Row::with_children(vec![
-    blueprint_tile(job.blueprint_type_id, box_size),
-    job_identity(job, compact),
+    blueprint_tile(job.blueprint_type_id, TILE_BOX_COMFORTABLE),
+    job_identity(job),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
@@ -475,7 +454,7 @@ fn job_row<'a>(
         .into(),
     ])
     .into(),
-    progress_bar(pct, bar, if compact { 7.0 } else { 9.0 }, !ready),
+    progress_bar(pct, bar, 9.0, !ready),
   ])
   .spacing(spacing::SPACE_2)
   .width(Length::Fill);
@@ -491,12 +470,11 @@ fn job_row<'a>(
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  let pad = if compact { spacing::SPACE_3 } else { spacing::SPACE_3_5 };
   container(row)
     .width(Length::Fill)
     .padding(Padding {
-      top: pad,
-      bottom: pad,
+      top: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3_5,
       left: ROW_SIDE_PADDING,
       right: ROW_SIDE_PADDING,
     })
@@ -576,12 +554,8 @@ fn eta_label(job: &IndustryJob, now: DateTime<Utc>) -> String {
   }
 }
 
-fn job_identity<'a>(job: &'a IndustryJob, compact: bool) -> Element<'a, Message> {
-  let name_size = if compact {
-    typography::size::MD
-  } else {
-    typography::size::LG
-  };
+fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
+  let name_size = typography::size::LG;
 
   let mut first_line: Vec<Element<'a, Message>> = vec![
     text(job.product_name.clone())

@@ -51,6 +51,12 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[scopes::CHARACTER_NOTIFICATIONS],
       tab: Some(Tab::Notifications),
     },
+    Feature::Industry => Descriptor {
+      jobs: &[JobKind::CharacterIndustryJobs, JobKind::CorporationIndustryJobs],
+      rail: Some(Destination::Industry),
+      scopes: &[scopes::CHARACTER_INDUSTRY_JOBS, scopes::CORPORATION_INDUSTRY_JOBS],
+      tab: None,
+    },
     Feature::LocationTracking => Descriptor {
       jobs: &[JobKind::CharacterTelemetry],
       rail: None,
@@ -187,6 +193,7 @@ mod tests {
         Some(Feature::AssetTracking)
       );
       assert_eq!(feature_for_destination(Destination::Calendar), Some(Feature::Calendar));
+      assert_eq!(feature_for_destination(Destination::Industry), Some(Feature::Industry));
       assert_eq!(feature_for_destination(Destination::Mail), Some(Feature::Mail));
       assert_eq!(
         feature_for_destination(Destination::Skills),

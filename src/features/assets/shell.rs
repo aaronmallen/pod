@@ -187,6 +187,7 @@ fn tab<'a>(state: &State, tab: Tab, label: &'a str, count: String) -> tab_select
   let selected = state.tab() == tab;
   tab_select::Tab {
     count,
+    icon: None,
     label,
     on_press: (!selected).then_some(Message::TabSelected(tab)),
     selected,

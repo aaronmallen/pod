@@ -84,6 +84,7 @@ impl<'a> Panel<'a> {
 fn tab<'a>(label: &'a str, selected: bool, target: RightTab) -> Tab<'a, Message> {
   Tab {
     count: String::new(),
+    icon: None,
     label,
     on_press: Some(Message::TabSelected(target)),
     selected,

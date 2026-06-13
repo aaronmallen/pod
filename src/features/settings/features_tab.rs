@@ -19,7 +19,7 @@ const PANEL_BLURB: &str = "Toggle individual Pod capabilities on or off. Changes
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 11] = [
+const CATALOG: [Catalog; 12] = [
   Catalog {
     feature: Feature::CloneMonitoring,
     section: Section::Character,
@@ -61,6 +61,12 @@ const CATALOG: [Catalog; 11] = [
     section: Section::World,
     title: "Skill Monitoring",
     description: "Monitor trained skills and the active training queue.",
+  },
+  Catalog {
+    feature: Feature::Industry,
+    section: Section::World,
+    title: "Industry",
+    description: "Monitor running manufacturing, research, and reaction jobs.",
   },
   Catalog {
     feature: Feature::Mail,
@@ -414,6 +420,7 @@ mod tests {
       vec![
         Feature::LocationTracking,
         Feature::SkillMonitoring,
+        Feature::Industry,
         Feature::Mail,
         Feature::Calendar,
         Feature::Wallet,

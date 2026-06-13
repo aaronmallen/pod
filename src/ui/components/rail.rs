@@ -23,6 +23,7 @@ const SETTINGS_BOTTOM_INSET: f32 = 16.0;
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
+static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
 static POD_MARK: &[u8] = include_bytes!("../../../assets/images/identity/pod-mark.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/settings.svg");
@@ -34,6 +35,7 @@ pub enum Destination {
   Assets,
   Calendar,
   Characters,
+  Industry,
   Mail,
   Settings,
   Skills,
@@ -86,6 +88,9 @@ where
   let is_skills_enabled =
     registry::feature_for_destination(Destination::Skills).is_none_or(|feature| enabled_features.contains(&feature));
 
+  let is_industry_enabled =
+    registry::feature_for_destination(Destination::Industry).is_none_or(|feature| enabled_features.contains(&feature));
+
   let is_mail_enabled =
     registry::feature_for_destination(Destination::Mail).is_none_or(|feature| enabled_features.contains(&feature));
 
@@ -100,6 +105,16 @@ where
 
   let skills = if is_skills_enabled {
     nav_item(SKILLS_ICON, active == Destination::Skills, on_nav(Destination::Skills))
+  } else {
+    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
+  };
+
+  let industry = if is_industry_enabled {
+    nav_item(
+      INDUSTRY_ICON,
+      active == Destination::Industry,
+      on_nav(Destination::Industry),
+    )
   } else {
     Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
   };
@@ -155,6 +170,7 @@ where
       logo.into(),
       items.into(),
       skills,
+      industry,
       mail,
       calendar,
       wallet,
@@ -319,6 +335,12 @@ mod tests {
   fn rail_renders_with_skills_active() {
     let all_features = Feature::ALL;
     let _el: Element<'_, Destination> = rail(Destination::Skills, 0, 0, &all_features, |destination| destination);
+  }
+
+  #[test]
+  fn rail_renders_with_industry_active() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Industry, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]

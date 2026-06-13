@@ -5,26 +5,25 @@ use iced::{
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
-use super::{IndustryJob, Message, Owner, Scope, State, Tab, jobs, switcher, tweaks};
+use super::{IndustryJob, Message, Owner, Scope, State, Tab, jobs, switcher};
 use crate::ui::{
   components::{
     backdrop, forbidden,
     icon::Icon,
-    positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
+    positioned_dropdown::positioned_dropdown,
     rule,
-    segmented::segment_button,
+    tab_select::{self, TabLayout},
   },
-  style::{color, radius, spacing, typography},
+  style::{color, control, radius, spacing, typography},
 };
 
 const HEADER_SIDE_PADDING: f32 = 28.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
-const TWEAKS_OVERLAY_RIGHT: f32 = HEADER_SIDE_PADDING;
-const TWEAKS_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
+const TAB_STRIP_HEIGHT: f32 = 48.0;
 
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let body = Column::with_children(vec![header(state, now), tab_bar(state), content(state, now)])
+  let body = Column::with_children(vec![header(state, now), tab_strip(state), content(state, now)])
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -42,18 +41,6 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
       dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
-  }
-
-  if state.tweaks_open() {
-    let panel = positioned_dropdown_right(tweaks::panel(state.tweaks()), TWEAKS_OVERLAY_TOP, TWEAKS_OVERLAY_RIGHT);
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::TweaksToggled),
-      panel,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -161,7 +148,6 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     rule::vertical(44.0),
     stat("Job fees", fmt_isk(stats.fees), None, "active jobs"),
     Space::new().width(Length::Fill).into(),
-    tweaks_button(),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center);
@@ -281,85 +267,50 @@ fn stat<'a>(label: &str, value: String, accent: Option<Element<'a, Message>>, su
   .into()
 }
 
-fn tab_bar<'a>(state: &'a State) -> Element<'a, Message> {
-  let segments: Vec<Element<'a, Message>> = Tab::ALL
+fn tab_strip(state: &State) -> Element<'_, Message> {
+  let tabs = Tab::ALL
     .into_iter()
     .map(|tab| {
-      segment_button(
-        tab.label().to_owned(),
-        state.tab() == tab,
-        Padding {
-          top: spacing::SPACE_2,
-          bottom: spacing::SPACE_2,
-          left: spacing::SPACE_3,
-          right: spacing::SPACE_3,
-        },
-        Message::TabSelected(tab),
-      )
+      let selected = state.tab() == tab;
+      tab_select::Tab {
+        count: tab_count(state, tab),
+        icon: Some(tab_icon(tab)),
+        label: tab.label(),
+        on_press: (!selected).then_some(Message::TabSelected(tab)),
+        selected,
+      }
     })
-    .collect();
+    .collect::<Vec<_>>();
 
-  let control = container(Row::with_children(segments).spacing(2.0))
-    .padding(2.0)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::rule(),
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
-
-  container(Row::with_children(vec![control.into()]).align_y(Vertical::Center))
+  container(tab_select::tab_select_with(tabs, TabLayout::Start))
     .width(Length::Fill)
+    .height(Length::Fixed(TAB_STRIP_HEIGHT))
     .padding(Padding {
-      top: spacing::SPACE_2,
-      bottom: spacing::SPACE_2,
+      top: 0.0,
+      bottom: 0.0,
       left: HEADER_SIDE_PADDING,
       right: HEADER_SIDE_PADDING,
     })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::rule(),
-        radius: 0.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
+    .style(control::bordered_pane)
     .into()
+}
+
+fn tab_count(state: &State, tab: Tab) -> String {
+  match tab {
+    Tab::Jobs => state.visible_jobs().len().to_string(),
+  }
+}
+
+fn tab_icon(tab: Tab) -> Icon {
+  match tab {
+    Tab::Jobs => Icon::industry(),
+  }
 }
 
 fn tab_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   match state.tab() {
     Tab::Jobs => jobs::tab(state, now),
   }
-}
-
-fn tweaks_button<'a>() -> Element<'a, Message> {
-  button(
-    Icon::settings()
-      .color(color::text::secondary())
-      .size(16.0)
-      .render::<Message>(),
-  )
-  .padding(spacing::SPACE_2)
-  .on_press(Message::TweaksToggled)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
-      border: Border {
-        color: color::rule(),
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    }
-  })
-  .into()
 }
 
 struct Stats {

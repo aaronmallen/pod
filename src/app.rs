@@ -25,8 +25,8 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, mail, registry,
-    settings, skill_plan_editor, skills, skills_compare, splash, wallet,
+    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, industry, mail,
+    registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::updater,
   store,
@@ -109,6 +109,7 @@ struct App {
   compare: Option<(window::Id, skills_compare::State)>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   esi_connected: bool,
+  industry: Option<industry::State>,
   init_error: Option<String>,
   last_push: Option<SystemTime>,
   last_synced: Option<DateTime<Utc>>,
@@ -215,6 +216,7 @@ enum Message {
     kind: store::images::ImageKind,
     ready: bool,
   },
+  Industry(industry::Message),
   InitFailed(String),
   LeaseHeartbeat,
   LockReleased,
@@ -272,6 +274,7 @@ impl Message {
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
       Message::Compare(_) => "Compare",
+      Message::Industry(_) => "Industry",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       #[cfg(target_os = "macos")]
@@ -329,6 +332,7 @@ enum Route {
   CharacterDetail(i64),
   #[default]
   Characters,
+  Industry,
   Mail,
   Settings,
   Skills(i64),
@@ -341,6 +345,7 @@ impl From<rail::Destination> for Route {
       rail::Destination::Assets => unreachable!("Assets is routed via Message::Nav, not From"),
       rail::Destination::Calendar => Route::Calendar,
       rail::Destination::Characters => Route::Characters,
+      rail::Destination::Industry => unreachable!("Industry is routed via Message::Nav, not From"),
       rail::Destination::Mail => Route::Mail,
       rail::Destination::Settings => Route::Settings,
       rail::Destination::Skills => unreachable!("Skills is routed via Message::Nav, not From"),
@@ -362,6 +367,7 @@ impl Route {
       Route::Assets => rail::Destination::Assets,
       Route::Calendar => rail::Destination::Calendar,
       Route::Characters | Route::CharacterDetail(_) => rail::Destination::Characters,
+      Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
       Route::Skills(_) => rail::Destination::Skills,
@@ -375,6 +381,7 @@ impl Route {
       Route::Calendar => "Calendar",
       Route::CharacterDetail(_) => "CharacterDetail",
       Route::Characters => "Characters",
+      Route::Industry => "Industry",
       Route::Mail => "Mail",
       Route::Settings => "Settings",
       Route::Skills(_) => "Skills",
@@ -645,6 +652,7 @@ fn boot() -> (App, Task<Message>) {
     compare: None,
     editor: None,
     esi_connected: true,
+    industry: None,
     init_error: None,
     last_push: None,
     last_synced: None,
@@ -1115,6 +1123,33 @@ fn navigate_to_calendar(app: &mut App, target: Option<i64>) -> Task<Message> {
   }
 }
 
+fn industry_required_scopes() -> Vec<&'static str> {
+  registry::descriptor(config::Feature::Industry).scopes.to_vec()
+}
+
+fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
+  navigate(app, Route::Industry);
+  let required = industry_required_scopes();
+  let selection = target.unwrap_or(industry::EMPTY_INDUSTRY_SELECTION);
+  app.industry = Some(industry::State::new(selection, required.clone()));
+  match app.runtime.as_ref() {
+    Some(runtime) => industry::load(&runtime.db, selection, &required).map(Message::Industry),
+    None => Task::none(),
+  }
+}
+
+fn industry_clock_reload(app: &App) -> Task<Message> {
+  if app.route != Route::Industry {
+    return Task::none();
+  }
+  match (app.industry.as_ref(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => {
+      industry::reload(&runtime.db, state.active(), &industry_required_scopes()).map(Message::Industry)
+    }
+    _ => Task::none(),
+  }
+}
+
 fn resolve_calendar_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> Option<i64> {
   if let Some(id) = last_selected
     && roster.iter().any(|pilot| pilot.id == id)
@@ -1294,6 +1329,11 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
       .as_ref()
       .map(character_manager::State::stale_images)
       .unwrap_or_default(),
+    Route::Industry => app
+      .industry
+      .as_ref()
+      .map(industry::State::stale_images)
+      .unwrap_or_default(),
     Route::Mail => app.mail.as_ref().map(mail::State::stale_images).unwrap_or_default(),
     Route::Settings => Vec::new(),
     Route::Skills(_) => app.skills.as_ref().map(skills::State::stale_images).unwrap_or_default(),
@@ -1401,6 +1441,11 @@ fn image_reload(app: &App) -> Task<Message> {
     Route::Characters => {
       if app.character_manager.is_some() {
         tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
+      }
+    }
+    Route::Industry => {
+      if let Some(state) = app.industry.as_ref() {
+        tasks.push(industry::reload(&runtime.db, state.active(), &industry_required_scopes()).map(Message::Industry));
       }
     }
     Route::Mail => {
@@ -1585,6 +1630,7 @@ fn route_view(app: &App) -> Element<'_, Message> {
     Route::Calendar => calendar_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
     Route::Characters => characters_route_view(app),
+    Route::Industry => industry_route_view(app),
     Route::Mail => mail_route_view(app),
     Route::Settings => settings_route_view(app),
     Route::Skills(id) => skills_route_view(app, id),
@@ -1621,6 +1667,13 @@ fn character_detail_route_view(app: &App) -> Element<'_, Message> {
 fn skills_route_view(app: &App, id: i64) -> Element<'_, Message> {
   match &app.skills {
     Some(state) => skills::view(state, id, &app.status, app.now).map(Message::Skills),
+    None => starting_up(),
+  }
+}
+
+fn industry_route_view(app: &App) -> Element<'_, Message> {
+  match &app.industry {
+    Some(state) => industry::view(state, &industry_required_scopes(), app.now).map(Message::Industry),
     None => starting_up(),
   }
 }
@@ -2035,6 +2088,9 @@ fn subscription(app: &App) -> Subscription<Message> {
   if let Some(state) = &app.calendar {
     subs.push(calendar::subscription(state).map(Message::Calendar));
   }
+  if let Some(state) = &app.industry {
+    subs.push(industry::subscription(state).map(Message::Industry));
+  }
   if let Some(state) = &app.wallet {
     subs.push(wallet::subscription(state).map(Message::Wallet));
   }
@@ -2309,6 +2365,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
+    Message::Industry(msg) => handle_industry(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     #[cfg(target_os = "macos")]
@@ -2546,8 +2603,21 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     }
   }
 
+  if let Some(state) = app.industry.as_mut() {
+    state.set_required_scopes(industry_required_scopes());
+    if route == Route::Industry {
+      tasks.push(industry::reload(&db, state.active(), &industry_required_scopes()).map(Message::Industry));
+    }
+  }
+
   if let Some(detail) = app.character_detail.as_mut() {
     detail.sync_features(&enabled);
+  }
+
+  // A feature disabled while its screen is open leaves the route stranded with its rail icon gone;
+  // fall back to Characters so the now-unreachable route can't linger.
+  if registry::feature_for_destination(route.destination()).is_some_and(|feature| !enabled.contains(&feature)) {
+    navigate(app, Route::Characters);
   }
 
   Task::batch(tasks)
@@ -3158,6 +3228,7 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
     mail_clock_reload(app),
     calendar_attention_tick(app),
     calendar_clock_reload(app),
+    industry_clock_reload(app),
   ])
 }
 
@@ -3216,6 +3287,15 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
         .unwrap_or_default();
       let target = resolve_calendar_target(&roster, app.selected_character);
       navigate_to_calendar(app, target)
+    }
+    rail::Destination::Industry => {
+      let roster = app
+        .character_manager
+        .as_ref()
+        .map(character_manager::owned_roster)
+        .unwrap_or_default();
+      let target = resolve_calendar_target(&roster, app.selected_character);
+      navigate_to_industry(app, target)
     }
     rail::Destination::Wallet => navigate_to_wallet(app),
     rail::Destination::Assets => navigate_to_assets(app),
@@ -3291,6 +3371,18 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
       _ => Task::none(),
     },
   }
+}
+
+fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
+  if let industry::Message::ReauthRequested(id) = msg {
+    return update(app, Message::ReauthCharacter(id));
+  }
+
+  let (Some(state), Some(runtime)) = (app.industry.as_mut(), app.runtime.as_ref()) else {
+    return Task::none();
+  };
+
+  industry::update(state, msg, &runtime.db, app.now).map(Message::Industry)
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
@@ -3600,6 +3692,7 @@ mod tests {
       compare: None,
       editor: None,
       esi_connected: true,
+      industry: None,
       init_error: None,
       last_push: None,
       last_synced: None,
@@ -4090,6 +4183,33 @@ mod tests {
 
       assert_eq!(app.route, Route::Characters);
       assert!(app.calendar.is_none());
+    }
+
+    #[test]
+    fn it_navigates_to_the_industry_screen_on_the_industry_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(app.route, Route::Industry);
+      assert!(app.industry.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Industry);
+    }
+
+    #[tokio::test]
+    async fn it_redirects_a_disabled_industry_nav_to_characters() {
+      let mut app = test_app();
+      let mut runtime = test_runtime().await;
+      runtime
+        .settings
+        .features_mut()
+        .set_enabled(config::Feature::Industry, false);
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(app.route, Route::Characters);
+      assert!(app.industry.is_none());
     }
 
     #[test]
@@ -5195,6 +5315,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabling_industry_while_open_redirects_to_characters_and_re_enabling_restores_the_route() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+      assert_eq!(app.route, Route::Industry, "Industry is reachable while enabled");
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Industry,
+          false,
+        )),
+      );
+
+      assert_eq!(
+        app.route,
+        Route::Characters,
+        "disabling Industry while its screen is open redirects to Characters"
+      );
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Industry,
+          true,
+        )),
+      );
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(
+        app.route,
+        Route::Industry,
+        "re-enabling Industry restores the route instantly"
+      );
+    }
+
+    #[tokio::test]
     async fn a_card_reauth_after_toggling_requests_every_enabled_scope_through_the_real_dispatch() {
       // Full repro of the user flow with no runtime, so the auth Start is deferred into
       // `pending_auth` and we can read the exact feature set it carries.
@@ -6077,6 +6237,7 @@ mod tests {
         Route::Calendar,
         Route::CharacterDetail(1),
         Route::Characters,
+        Route::Industry,
         Route::Mail,
         Route::Settings,
         Route::Skills(1),

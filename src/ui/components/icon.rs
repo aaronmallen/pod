@@ -116,6 +116,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/inbox-all.svg"))
   }
 
+  pub fn industry() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/industry.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn live() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/live.svg"))

@@ -125,6 +125,7 @@ pub enum Feature {
   CombatLog,
   Contacts,
   EveNotifications,
+  Industry,
   LocationTracking,
   Mail,
   SkillMonitoring,
@@ -134,7 +135,7 @@ pub enum Feature {
 
 impl Feature {
   #[allow(dead_code)]
-  pub const ALL: [Feature; 11] = [
+  pub const ALL: [Feature; 12] = [
     Feature::CloneMonitoring,
     Feature::Contacts,
     Feature::CombatLog,
@@ -142,6 +143,7 @@ impl Feature {
     Feature::Standings,
     Feature::LocationTracking,
     Feature::SkillMonitoring,
+    Feature::Industry,
     Feature::Mail,
     Feature::Calendar,
     Feature::Wallet,
@@ -157,6 +159,7 @@ impl Feature {
       Feature::CombatLog => "Kill log",
       Feature::Contacts => "Contact",
       Feature::EveNotifications => "Notification",
+      Feature::Industry => "Industry job",
       Feature::LocationTracking => "Location",
       Feature::Mail => "Mail",
       Feature::SkillMonitoring => "Skill",
@@ -187,6 +190,9 @@ pub struct FeatureFlags {
   #[getset(get = "pub")]
   #[serde(default = "default_true")]
   eve_notifications: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  industry: bool,
   #[getset(get = "pub")]
   #[serde(default = "default_true")]
   location_tracking: bool,
@@ -221,6 +227,7 @@ impl FeatureFlags {
       Feature::CombatLog => self.combat_log,
       Feature::Contacts => self.contacts,
       Feature::EveNotifications => self.eve_notifications,
+      Feature::Industry => self.industry,
       Feature::LocationTracking => self.location_tracking,
       Feature::Mail => self.mail,
       Feature::SkillMonitoring => self.skill_monitoring,
@@ -237,6 +244,7 @@ impl FeatureFlags {
       Feature::CombatLog => self.combat_log = value,
       Feature::Contacts => self.contacts = value,
       Feature::EveNotifications => self.eve_notifications = value,
+      Feature::Industry => self.industry = value,
       Feature::LocationTracking => self.location_tracking = value,
       Feature::Mail => self.mail = value,
       Feature::SkillMonitoring => self.skill_monitoring = value,
@@ -255,6 +263,7 @@ impl Default for FeatureFlags {
       combat_log: true,
       contacts: true,
       eve_notifications: true,
+      industry: true,
       location_tracking: true,
       mail: true,
       skill_monitoring: true,

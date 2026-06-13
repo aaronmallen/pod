@@ -13,6 +13,7 @@ pub(in crate::features::skill_plan_editor) fn tabs<'a>(active: PickerTab) -> Ele
     .iter()
     .map(|&tab| Tab {
       count: String::new(),
+      icon: None,
       label: tab.label(),
       on_press: Some(Message::PickerTabSelected(tab)),
       selected: tab == active,

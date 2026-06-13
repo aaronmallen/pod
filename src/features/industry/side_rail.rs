@@ -8,8 +8,9 @@ use iced::{
 };
 
 use super::{
-  Activity, IndustryJob, Message, Owner, RosterOwner, Scope, SlotBucket, State,
+  Activity, IndustryJob, Message, Owner, RosterOwner, Scope, State,
   jobs::{activity_chip, activity_color, progress_bar},
+  loaders::SlotBucket,
 };
 use crate::ui::{
   components::{eyebrow::eyebrow_text, icon_tile::icon_tile, rule},

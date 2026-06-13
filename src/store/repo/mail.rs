@@ -229,6 +229,78 @@ pub async fn membership(db: &Database, character_id: i64, mail_id: i64) -> Resul
   Ok(rows)
 }
 
+pub async fn insert_label(db: &Database, label: &CharacterMailLabel) -> Result<(), Error> {
+  sqlx::query("INSERT INTO character_mail_labels (character_id, label_id, name, color) VALUES (?, ?, ?, ?)")
+    .bind(label.character_id())
+    .bind(label.label_id())
+    .bind(label.name())
+    .bind(label.color())
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+pub async fn remap_label_id(
+  db: &Database,
+  character_id: i64,
+  from_label_id: i64,
+  to_label_id: i64,
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  // Move the label PK before the membership FK so the membership rows can follow it without
+  // tripping the (character_id, label_id) foreign key mid-transaction.
+  sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+
+  sqlx::query("UPDATE character_mail_labels SET label_id = ? WHERE character_id = ? AND label_id = ?")
+    .bind(to_label_id)
+    .bind(character_id)
+    .bind(from_label_id)
+    .execute(&mut *tx)
+    .await?;
+
+  sqlx::query("UPDATE character_mail_label_membership SET label_id = ? WHERE character_id = ? AND label_id = ?")
+    .bind(to_label_id)
+    .bind(character_id)
+    .bind(from_label_id)
+    .execute(&mut *tx)
+    .await?;
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn add_membership(db: &Database, character_id: i64, mail_id: i64, label_id: i64) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT OR IGNORE INTO character_mail_label_membership (character_id, mail_id, label_id) VALUES (?, ?, ?)",
+  )
+  .bind(character_id)
+  .bind(mail_id)
+  .bind(label_id)
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
+pub async fn remove_membership(db: &Database, character_id: i64, mail_id: i64, label_id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM character_mail_label_membership WHERE character_id = ? AND mail_id = ? AND label_id = ?")
+    .bind(character_id)
+    .bind(mail_id)
+    .bind(label_id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+pub async fn delete_label(db: &Database, character_id: i64, label_id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM character_mail_labels WHERE character_id = ? AND label_id = ?")
+    .bind(character_id)
+    .bind(label_id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
 pub async fn unread_count_for_label(db: &Database, character_id: i64, label_id: i64) -> Result<i64, Error> {
   let count = sqlx::query_scalar::<_, i64>(
     "SELECT COUNT(*) FROM character_mail_label_membership mem \
@@ -982,6 +1054,125 @@ mod core_tests {
       super::replace_labels_for_character(&db, 42, &[]).await.unwrap();
 
       assert!(super::membership(&db, 42, 1).await.unwrap().is_empty());
+    }
+  }
+
+  mod label_crud {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn label(character_id: i64, label_id: i64, name: &str, color: Option<&str>) -> CharacterMailLabel {
+      CharacterMailLabel {
+        character_id,
+        color: color.map(str::to_owned),
+        label_id,
+        name: name.to_owned(),
+      }
+    }
+
+    async fn seed_mail(db: &Database, character_id: i64, mail_id: i64) {
+      super::upsert_complete(
+        db,
+        &header(character_id, mail_id, "x", "2026-06-01T10:00:00Z", false),
+        &body_of(character_id, mail_id, "<p>x</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_single_label_with_a_negative_temp_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::insert_label(&db, &label(42, -1, "Pending", Some("#ff0000")))
+        .await
+        .unwrap();
+
+      let labels = super::labels(&db, 42).await.unwrap();
+      assert_eq!(labels.len(), 1);
+      assert_eq!(labels[0].label_id(), -1);
+      assert_eq!(labels[0].color().as_deref(), Some("#ff0000"));
+    }
+
+    #[tokio::test]
+    async fn it_remaps_a_temp_id_to_the_real_id_carrying_membership_along() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, -1, "Pending", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      seed_mail(&db, 42, 11).await;
+      super::add_membership(&db, 42, 10, -1).await.unwrap();
+      super::add_membership(&db, 42, 11, -1).await.unwrap();
+
+      super::remap_label_id(&db, 42, -1, 555).await.unwrap();
+
+      assert_eq!(
+        super::labels(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [555]
+      );
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [555]);
+      assert_eq!(super::membership(&db, 42, 11).await.unwrap(), [555]);
+      assert_eq!(super::headers_for_label(&db, 42, 555).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_adds_membership_idempotently() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [1]);
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_single_membership_leaving_other_labels_intact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 2).await.unwrap();
+
+      super::remove_membership(&db, 42, 10, 1).await.unwrap();
+
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_label_and_cascades_its_membership() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 2).await.unwrap();
+
+      super::delete_label(&db, 42, 1).await.unwrap();
+
+      assert_eq!(
+        super::labels(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [2]
+      );
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
     }
   }
 

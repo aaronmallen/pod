@@ -32,6 +32,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0020] | Calendar Feature                                | ![Active][badge-active] | 2026-06-12 |
 | [0021] | Filterable Standings Data Model                 | ![Active][badge-active] | 2026-06-12 |
 | [0022] | Linux Graphics Backend Diagnostics & GPU Stack  | ![Active][badge-active] | 2026-06-13 |
+| [0023] | Industry Feature                                | ![Active][badge-active] | 2026-06-13 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -58,5 +59,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0020]: 0020-calendar-feature.md
 [0021]: 0021-filterable-standings.md
 [0022]: 0022-linux-graphics-backend-diagnostics.md
+[0023]: 0023-industry-feature.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

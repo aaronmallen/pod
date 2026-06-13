@@ -15,6 +15,7 @@ pub enum JobKind {
   CharacterClones,
   CharacterContacts,
   CharacterContracts,
+  CharacterIndustryJobs,
   CharacterKillmails,
   CharacterMail,
   CharacterMarketOrders,
@@ -24,6 +25,7 @@ pub enum JobKind {
   CharacterStandings,
   CharacterTelemetry,
   CharacterWallet,
+  CorporationIndustryJobs,
   CorporationProfile,
   CorporationWallet,
   KillmailReconcile,
@@ -39,6 +41,7 @@ impl JobKind {
     JobKind::CharacterClones,
     JobKind::CharacterContacts,
     JobKind::CharacterContracts,
+    JobKind::CharacterIndustryJobs,
     JobKind::CharacterKillmails,
     JobKind::CharacterMail,
     JobKind::CharacterMarketOrders,
@@ -48,6 +51,7 @@ impl JobKind {
     JobKind::CharacterStandings,
     JobKind::CharacterTelemetry,
     JobKind::CharacterWallet,
+    JobKind::CorporationIndustryJobs,
     JobKind::CorporationProfile,
     JobKind::CorporationWallet,
     JobKind::KillmailReconcile,
@@ -112,6 +116,7 @@ impl JobKind {
       (Self::CharacterClones, _) => Some(scopes::CHARACTER_CLONES),
       (Self::CharacterContacts, _) => Some(scopes::CHARACTER_CONTACTS),
       (Self::CharacterContracts, _) => Some(scopes::CHARACTER_CONTRACTS),
+      (Self::CharacterIndustryJobs, _) => Some(scopes::CHARACTER_INDUSTRY_JOBS),
       (Self::CharacterKillmails, _) => Some(scopes::CHARACTER_KILLMAILS),
       (Self::CharacterMail, _) => Some(scopes::CHARACTER_MAIL),
       (Self::CharacterMarketOrders, _) => Some(scopes::CHARACTER_ORDERS),
@@ -120,6 +125,7 @@ impl JobKind {
       (Self::CharacterStandings, _) => Some(scopes::CHARACTER_STANDINGS),
       (Self::CharacterTelemetry, _) => Some(scopes::CHARACTER_LOCATION),
       (Self::CharacterWallet, _) => Some(scopes::CHARACTER_WALLET),
+      (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
       (Self::CorporationWallet, _) => Some(scopes::CORPORATION_WALLET),
       _ => None,
@@ -136,6 +142,7 @@ impl JobKind {
           | Self::CharacterClones
           | Self::CharacterContacts
           | Self::CharacterContracts
+          | Self::CharacterIndustryJobs
           | Self::CharacterKillmails
           | Self::CharacterMail
           | Self::CharacterMarketOrders
@@ -147,7 +154,7 @@ impl JobKind {
           | Self::CharacterWallet,
         Subject::Character(_)
       ) | (
-        Self::AssetSync | Self::CorporationProfile | Self::CorporationWallet,
+        Self::AssetSync | Self::CorporationIndustryJobs | Self::CorporationProfile | Self::CorporationWallet,
         Subject::Corporation(_)
       )
     )
@@ -160,10 +167,12 @@ impl JobKind {
       | Self::CharacterClones
       | Self::CharacterContacts
       | Self::CharacterContracts
+      | Self::CharacterIndustryJobs
       | Self::CharacterMarketOrders
       | Self::CharacterProfile
       | Self::CharacterStandings
       | Self::CharacterWallet
+      | Self::CorporationIndustryJobs
       | Self::CorporationProfile
       | Self::CorporationWallet => Duration::from_secs(3600),
       Self::CharacterSkills => Duration::from_secs(60),
@@ -185,6 +194,7 @@ impl JobKind {
       Self::CharacterClones => &[scopes::CHARACTER_CLONES, scopes::CHARACTER_IMPLANTS],
       Self::CharacterContacts => &[scopes::CHARACTER_CONTACTS],
       Self::CharacterContracts => &[scopes::CHARACTER_CONTRACTS],
+      Self::CharacterIndustryJobs => &[scopes::CHARACTER_INDUSTRY_JOBS],
       Self::CharacterKillmails => &[scopes::CHARACTER_KILLMAILS, scopes::CORPORATION_KILLMAILS],
       Self::CharacterMail => &[scopes::CHARACTER_MAIL],
       Self::CharacterMarketOrders => &[scopes::CHARACTER_ORDERS],
@@ -202,6 +212,7 @@ impl JobKind {
       ],
       Self::CharacterStandings => &[scopes::CHARACTER_STANDINGS],
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
+      Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
       Self::CorporationWallet => &[
         scopes::CORPORATION_ROLES,
@@ -259,6 +270,7 @@ async fn run_character_job_a(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
     JobKind::CharacterClones => super::jobs::character_clones::run(ctx).await,
     JobKind::CharacterContacts => super::jobs::character_contacts::run(ctx).await,
     JobKind::CharacterContracts => super::jobs::character_contracts::run(ctx).await,
+    JobKind::CharacterIndustryJobs => super::jobs::industry::run(ctx).await,
     JobKind::CharacterKillmails => super::jobs::character_killmails::run(ctx).await,
     JobKind::CharacterMail => super::jobs::character_mail::run(ctx).await,
     JobKind::CharacterMarketOrders => super::jobs::character_market_orders::run(ctx).await,
@@ -281,6 +293,7 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
   match ctx.key.kind {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
+    JobKind::CorporationIndustryJobs => super::jobs::industry::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationWallet => super::jobs::corporation_wallet::run(ctx).await,

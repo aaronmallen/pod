@@ -69,12 +69,14 @@ impl DetailDataType {
       | JobKind::CharacterAbyssals
       | JobKind::CharacterCalendar
       | JobKind::CharacterContracts
+      | JobKind::CharacterIndustryJobs
       | JobKind::CharacterMail
       | JobKind::CharacterMarketOrders
       | JobKind::CharacterProfile
       | JobKind::CharacterSkills
       | JobKind::CharacterTelemetry
       | JobKind::CharacterWallet
+      | JobKind::CorporationIndustryJobs
       | JobKind::CorporationProfile
       | JobKind::CorporationWallet
       | JobKind::KillmailReconcile

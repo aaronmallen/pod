@@ -11,6 +11,7 @@ pub const CHARACTER_CORPORATION_HISTORY: &str = "esi-characters.read_corporation
 pub const CHARACTER_FATIGUE: &str = "esi-characters.read_fatigue.v1";
 pub const CHARACTER_FITTINGS: &str = "esi-fittings.read_fittings.v1";
 pub const CHARACTER_IMPLANTS: &str = "esi-clones.read_implants.v1";
+pub const CHARACTER_INDUSTRY_JOBS: &str = "esi-industry.read_character_jobs.v1";
 pub const CHARACTER_KILLMAILS: &str = "esi-killmails.read_killmails.v1";
 pub const CHARACTER_LOCATION: &str = "esi-location.read_location.v1";
 pub const CHARACTER_MAIL: &str = "esi-mail.read_mail.v1";

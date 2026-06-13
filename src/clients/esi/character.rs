@@ -10,6 +10,7 @@ use crate::clients::{
         MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, RespondRequest, SendMailRequest, Ship,
         SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
       },
+      industry::IndustryJob,
     },
   },
   eve_sso::Grant,
@@ -157,6 +158,14 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("characters/{}/implants/", self.grant.character_id()));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn industry_jobs(&self) -> Result<Vec<IndustryJob>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/industry/jobs/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn location(&self) -> Result<Location, clients::Error> {
@@ -897,6 +906,56 @@ mod tests {
         let implants = esi.character_authenticated(&grant).implants().await.unwrap();
 
         assert_eq!(implants, vec![9899, 9941, 9942]);
+      }
+    }
+
+    mod industry_jobs {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"activity_id":1,"blueprint_id":1000000000001,"blueprint_location_id":60003760,"blueprint_type_id":962,"duration":3600,"end_date":"2026-01-01T01:00:00Z","facility_id":60003760,"installer_id":42,"job_id":1,"output_location_id":60003760,"runs":10,"start_date":"2026-01-01T00:00:00Z","station_id":60003760,"status":"active"}]"#;
+        let page_two = r#"[{"activity_id":8,"blueprint_id":1000000000002,"blueprint_location_id":60003760,"blueprint_type_id":963,"cost":1500.0,"duration":7200,"end_date":"2026-01-02T02:00:00Z","facility_id":60003760,"installer_id":42,"job_id":2,"licensed_runs":1,"output_location_id":60003760,"probability":0.5,"product_type_id":12345,"runs":1,"start_date":"2026-01-02T00:00:00Z","status":"active"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/industry/jobs/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/industry/jobs/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let jobs = esi.character_authenticated(&grant).industry_jobs().await.unwrap();
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].job_id, 1);
+        assert_eq!(jobs[0].activity_id, 1);
+        assert_eq!(jobs[0].station_id, Some(60003760));
+        assert_eq!(jobs[0].cost, None);
+        assert_eq!(jobs[1].job_id, 2);
+        assert_eq!(jobs[1].cost, Some(1500.0));
+        assert_eq!(jobs[1].probability, Some(0.5));
+        assert_eq!(jobs[1].product_type_id, Some(12345));
+        assert_eq!(jobs[1].station_id, None);
       }
     }
 

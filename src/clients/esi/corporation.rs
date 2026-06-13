@@ -9,6 +9,7 @@ use crate::clients::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationWalletBalance,
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
       },
+      industry::IndustryJob,
     },
   },
   eve_sso::Grant,
@@ -49,6 +50,12 @@ impl<'a> AuthenticatedClient<'a> {
   pub async fn divisions(&self, corporation_id: i64) -> Result<CorporationDivisions, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/divisions/"));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn industry_jobs(&self, corporation_id: i64) -> Result<Vec<IndustryJob>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/industry/jobs/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn member_roles(&self, corporation_id: i64) -> Result<Vec<MemberRole>, clients::Error> {
@@ -263,6 +270,69 @@ mod tests {
         assert_eq!(divisions.hangar[1].name, None);
         assert_eq!(divisions.wallet.len(), 2);
         assert_eq!(divisions.wallet[0].name.as_deref(), Some("Master Wallet"));
+      }
+    }
+
+    mod industry_jobs {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"activity_id":1,"blueprint_id":1000000000001,"blueprint_location_id":60003760,"blueprint_type_id":962,"duration":3600,"end_date":"2026-01-01T01:00:00Z","facility_id":60003760,"installer_id":42,"job_id":10,"output_location_id":60003760,"runs":5,"start_date":"2026-01-01T00:00:00Z","status":"active"}]"#;
+        let page_two = r#"[{"activity_id":9,"blueprint_id":1000000000002,"blueprint_location_id":60003760,"blueprint_type_id":963,"cost":250.0,"duration":7200,"end_date":"2026-01-02T02:00:00Z","facility_id":60003760,"installer_id":43,"job_id":11,"output_location_id":60003760,"runs":1,"start_date":"2026-01-02T00:00:00Z","status":"active"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/industry/jobs/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/industry/jobs/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let jobs = esi.corporation_authenticated(&grant).industry_jobs(2000).await.unwrap();
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].job_id, 10);
+        assert_eq!(jobs[0].activity_id, 1);
+        assert_eq!(jobs[0].cost, None);
+        assert_eq!(jobs[1].job_id, 11);
+        assert_eq!(jobs[1].activity_id, 9);
+        assert_eq!(jobs[1].cost, Some(250.0));
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_when_the_token_lacks_factory_manager_role() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/industry/jobs/"))
+          .respond_with(ResponseTemplate::new(403))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).industry_jobs(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
       }
     }
 

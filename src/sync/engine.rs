@@ -90,12 +90,19 @@ fn spawn_with_registry(
     sso,
   };
   let run = tokio::spawn(engine.run(command_rx));
-  // Watch the engine's top-level task so its termination is never silent. A clean return means the
-  // command channel closed (shutdown); a JoinError carries a panic that would otherwise vanish,
-  // since the default panic output is swallowed once the console is detached.
+  // Watch the engine's top-level task so its termination is never silent. A clean return carries the
+  // typed ExitReason the loop recorded (deliberate Shutdown vs an unexpected channel close); a
+  // JoinError carries a panic that would otherwise vanish, since the default panic output is
+  // swallowed once the console is detached. The Phase-2 supervisor matches on this reason to decide
+  // respawn-vs-not; for now it stays log-only.
   tokio::spawn(async move {
     match run.await {
-      Ok(()) => tracing::warn!(target: "pod::lifecycle", "the sync engine task stopped"),
+      Ok(reason) if reason.is_deliberate() => {
+        tracing::info!(target: "pod::lifecycle", reason = reason.label(), "the sync engine task stopped")
+      }
+      Ok(reason) => {
+        tracing::warn!(target: "pod::lifecycle", reason = reason.label(), "the sync engine task stopped unexpectedly")
+      }
       Err(join_error) if join_error.is_panic() => {
         tracing::error!(target: "pod::lifecycle", %join_error, "the sync engine task panicked")
       }
@@ -404,11 +411,12 @@ impl Engine {
     }
   }
 
-  async fn run(mut self, mut commands: mpsc::UnboundedReceiver<Command>) {
+  async fn run(mut self, mut commands: mpsc::UnboundedReceiver<Command>) -> ExitReason {
     self.enroll_global().await;
     self.discover().await;
     let mut in_flight: JoinSet<(JobKey, Result<Outcome, Error>)> = JoinSet::new();
-    loop {
+    let mut last_dispatched: Option<JobKey> = None;
+    let reason = loop {
       let now = Instant::now();
       if now >= self.paused_until {
         let free = MAX_CONCURRENT_JOBS.saturating_sub(in_flight.len());
@@ -423,6 +431,7 @@ impl Engine {
           let sso = Arc::clone(&self.sso);
           let image = Arc::clone(&self.image);
           let image_store = self.image_store.clone();
+          last_dispatched = Some(key);
           in_flight.spawn(async move { (key, run_job(&db, &esi, &sso, &image, &image_store, key).await) });
         }
         self.maybe_drain(now).await;
@@ -443,13 +452,32 @@ impl Engine {
         command = commands.recv() => match command {
           Some(Command::Shutdown) => {
             in_flight.shutdown().await;
-            break;
+            break ExitReason::Shutdown;
           }
           Some(command) => self.handle_command(command).await,
-          None => break,
+          None => break ExitReason::ChannelClosed,
         },
       }
+    };
+    let in_flight_count = in_flight.len();
+    if reason.is_deliberate() {
+      tracing::debug!(
+        target: "pod::lifecycle",
+        reason = reason.label(),
+        in_flight = in_flight_count,
+        last_dispatched = ?last_dispatched,
+        "sync engine run loop exited",
+      );
+    } else {
+      tracing::warn!(
+        target: "pod::lifecycle",
+        reason = reason.label(),
+        in_flight = in_flight_count,
+        last_dispatched = ?last_dispatched,
+        "sync engine run loop exited unexpectedly",
+      );
     }
+    reason
   }
 
   async fn seeds_for(&self, subject: Subject, now: Instant) -> HashMap<JobKind, Instant> {
@@ -471,6 +499,25 @@ impl Engine {
       }
     }
     seeds
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExitReason {
+  ChannelClosed,
+  Shutdown,
+}
+
+impl ExitReason {
+  fn is_deliberate(self) -> bool {
+    matches!(self, ExitReason::Shutdown)
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      ExitReason::ChannelClosed => "channel-closed",
+      ExitReason::Shutdown => "shutdown",
+    }
   }
 }
 
@@ -600,6 +647,33 @@ mod tests {
     let store = images::Store::new(images_dir.path().to_path_buf());
     let (handle, events) = spawn(db.clone(), db, esi, sso, image, store, FeatureFlags::default());
     (handle, events, images_dir)
+  }
+
+  async fn spawn_run(base_url: String) -> (mpsc::UnboundedSender<Command>, tokio::task::JoinHandle<ExitReason>) {
+    let db = store::open_test().await.unwrap();
+    let http = http::Client::builder(http::Cache::new(db.clone())).build();
+    let esi = Arc::new(esi::Client::with_base_url(http.clone(), base_url.clone()));
+    let image = Arc::new(eve_image::Client::with_base_url(http.clone(), base_url));
+    let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
+    let images_dir = tempfile::tempdir().unwrap();
+    let store = images::Store::new(images_dir.path().to_path_buf());
+    let (events, _event_rx) = mpsc::channel(EVENT_BUFFER);
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+    let engine = Engine {
+      db: db.clone(),
+      drain_at: Instant::now(),
+      esi,
+      events,
+      housekeeping: db,
+      image,
+      image_store: store,
+      outbox: Registry::new(),
+      paused_until: Instant::now(),
+      schedule: Schedule::with_features(FeatureFlags::default()),
+      sso,
+    };
+    let run = tokio::spawn(engine.run(command_rx));
+    (command_tx, run)
   }
 
   async fn wait_for<F: Fn(&Event) -> bool>(events: &mut mpsc::Receiver<Event>, predicate: F) -> Event {
@@ -815,6 +889,56 @@ mod tests {
       }),
     )
     .await;
+  }
+
+  mod exit_reason {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_shutdown_when_a_shutdown_command_breaks_the_loop() {
+      let server = MockServer::start().await;
+      let (commands, run) = spawn_run(server.uri()).await;
+
+      commands.send(Command::Shutdown).unwrap();
+      let reason = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("the run loop should exit promptly on shutdown")
+        .expect("the run task should not panic");
+
+      assert_eq!(
+        reason,
+        ExitReason::Shutdown,
+        "a deliberate Shutdown command yields the deliberate ExitReason::Shutdown"
+      );
+      assert!(
+        reason.is_deliberate(),
+        "Shutdown is a deliberate exit, not an unexpected one"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_channel_closed_when_the_command_sender_is_dropped() {
+      let server = MockServer::start().await;
+      let (commands, run) = spawn_run(server.uri()).await;
+
+      drop(commands);
+      let reason = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("the run loop should exit promptly once the command channel closes")
+        .expect("the run task should not panic");
+
+      assert_eq!(
+        reason,
+        ExitReason::ChannelClosed,
+        "dropping the only command sender closes the channel and yields ExitReason::ChannelClosed"
+      );
+      assert!(
+        !reason.is_deliberate(),
+        "a channel close is an unexpected exit, not a deliberate shutdown"
+      );
+    }
   }
 
   mod is_permanent_failure {

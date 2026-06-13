@@ -2,6 +2,7 @@ pub mod assets;
 pub mod calendar;
 pub mod character;
 pub mod finance;
+pub mod industry;
 pub mod infra;
 pub mod mail;
 pub mod org;

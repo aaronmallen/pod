@@ -24,6 +24,7 @@ pub mod character_contacts_view;
 mod character_contract;
 pub mod character_financials;
 mod character_implant;
+mod character_industry_job;
 mod character_jump_clone;
 mod character_killmail;
 mod character_mail;
@@ -48,6 +49,7 @@ mod constellation;
 mod corporation;
 mod corporation_asset;
 pub mod corporation_card;
+mod corporation_industry_job;
 mod corporation_member_role;
 mod corporation_net_worth_snapshot;
 mod corporation_wallet_division;
@@ -131,6 +133,8 @@ pub use character_contact_label::Model as CharacterContactLabel;
 pub use character_contract::{ContractEscrow, Model as CharacterContract};
 pub use character_implant::Model as CharacterImplant;
 #[allow(unused_imports)]
+pub use character_industry_job::Model as CharacterIndustryJob;
+#[allow(unused_imports)]
 pub use character_jump_clone::Model as CharacterJumpClone;
 #[allow(unused_imports)]
 pub use character_killmail::Model as CharacterKillEntry;
@@ -161,6 +165,8 @@ pub use constellation::Model as Constellation;
 pub use corporation::Model as Corporation;
 #[allow(unused_imports)]
 pub use corporation_asset::Model as CorporationAsset;
+#[allow(unused_imports)]
+pub use corporation_industry_job::Model as CorporationIndustryJob;
 #[allow(unused_imports)]
 pub use corporation_member_role::Model as CorporationMemberRole;
 #[allow(unused_imports)]

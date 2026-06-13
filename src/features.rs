@@ -4,6 +4,7 @@ pub mod auth;
 pub mod calendar;
 pub mod character_detail;
 pub mod character_manager;
+pub mod industry;
 pub mod mail;
 pub mod registry;
 pub mod settings;

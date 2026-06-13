@@ -73,6 +73,12 @@ impl StandingsFilter {
     (StandingsFilter::Other, "Other"),
   ];
 
+  /// Whether the segment needs the agent catalog loaded. The All and Agents segments list agents, so
+  /// they force the (paginated) agent query even with no narrowing text facet.
+  pub fn surfaces_agents(self) -> bool {
+    matches!(self, StandingsFilter::All | StandingsFilter::Agents)
+  }
+
   fn matches(self, row: &StandingsRow) -> bool {
     match self {
       StandingsFilter::Agents => row.kind == StandingKind::Agent && !is_other(row),
@@ -675,7 +681,7 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
     );
   }
 
-  container(Row::with_children(buttons).spacing(2.0))
+  let control = container(Row::with_children(buttons).spacing(2.0))
     .padding(2.0)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
@@ -685,7 +691,12 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
         radius: radius::CONTROL.into(),
       },
       ..container::Style::default()
-    })
+    });
+
+  // Float the segment filter to the right edge of its row.
+  container(control)
+    .width(Length::Fill)
+    .align_x(iced::alignment::Horizontal::Right)
     .into()
 }
 
@@ -848,6 +859,16 @@ mod tests {
 
     fn matched(filter: StandingsFilter) -> usize {
       catalog().iter().filter(|row| filter.matches(row)).count()
+    }
+
+    #[test]
+    fn it_surfaces_agents_only_for_all_and_agents() {
+      assert!(StandingsFilter::All.surfaces_agents());
+      assert!(StandingsFilter::Agents.surfaces_agents());
+
+      assert!(!StandingsFilter::Factions.surfaces_agents());
+      assert!(!StandingsFilter::Corps.surfaces_agents());
+      assert!(!StandingsFilter::Other.surfaces_agents());
     }
 
     #[test]

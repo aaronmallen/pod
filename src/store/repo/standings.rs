@@ -196,6 +196,7 @@ pub async fn catalog(
   db: &Database,
   character_id: i64,
   query: &ParsedQuery,
+  force_agents: bool,
   limit: Option<i64>,
 ) -> Result<Vec<CatalogRow>, Error> {
   let mut facets = Facets::from_query(query);
@@ -209,7 +210,7 @@ pub async fn catalog(
   let mut rows = Vec::new();
   rows.extend(faction_rows(db, &raw, skills).await?);
   rows.extend(corporation_rows(db, &raw, skills).await?);
-  if facets.surfaces_agents() {
+  if force_agents || facets.surfaces_agents() {
     let bound = limit.unwrap_or(DEFAULT_LIMIT);
     rows.extend(agent_rows(db, &facets, &names, &raw, skills, None, bound).await?);
   }
@@ -221,16 +222,19 @@ pub async fn catalog(
 /// Fetches a single keyset page of agent rows for the standings catalog, seeking past `after`.
 ///
 /// Factions and corporations are never paginated (the full set is small and always loaded by [`catalog`]); this
-/// path bounds only the agent rows. Returns no rows when the query does not surface agents.
+/// path bounds only the agent rows. Returns no rows when the query does not surface agents and `force_agents` is
+/// false; `force_agents` lets a caller surface the full agent catalog with no narrowing facet (e.g. the All/Agents
+/// segment filter).
 pub async fn agent_page(
   db: &Database,
   character_id: i64,
   query: &ParsedQuery,
+  force_agents: bool,
   after: Option<(String, i64)>,
   limit: i64,
 ) -> Result<AgentPage, Error> {
   let mut facets = Facets::from_query(query);
-  if !facets.surfaces_agents() {
+  if !force_agents && !facets.surfaces_agents() {
     return Ok(AgentPage {
       next_cursor: None,
       rows: Vec::new(),
@@ -1318,7 +1322,7 @@ mod tests {
     }
 
     async fn run(db: &store::Database, query: &str) -> Vec<CatalogRow> {
-      catalog(db, CHARACTER, &parse(query), Some(500)).await.unwrap()
+      catalog(db, CHARACTER, &parse(query), false, Some(500)).await.unwrap()
     }
 
     fn names(rows: &[CatalogRow]) -> Vec<&str> {
@@ -1344,6 +1348,19 @@ mod tests {
       assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
       assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
       assert!(rows.iter().all(|row| row.raw_standing == 0.0));
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_agents_on_an_empty_query_when_forced() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = catalog(&db, CHARACTER, &parse(""), true, Some(500)).await.unwrap();
+
+      // Forced agents bypass the facet gate but must still survive `keeps`, so the full catalog appears.
+      assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
+      assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
     }
 
     #[tokio::test]
@@ -1553,10 +1570,23 @@ mod tests {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let page = agent_page(&db, CHARACTER, &parse(""), None, 100).await.unwrap();
+        let page = agent_page(&db, CHARACTER, &parse(""), false, None, 100).await.unwrap();
 
         assert!(page.rows.is_empty());
         assert_eq!(page.next_cursor, None);
+      }
+
+      #[tokio::test]
+      async fn it_returns_agents_on_an_empty_query_when_forced() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let page = agent_page(&db, CHARACTER, &parse(""), true, None, 100).await.unwrap();
+
+        assert_eq!(
+          page_names(&page),
+          vec!["Angel Dist Agent", "Navy Researcher", "Navy Sec Agent", "Sisters Agent"]
+        );
       }
 
       #[tokio::test]
@@ -1564,7 +1594,7 @@ mod tests {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let page = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 100)
+        let page = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), false, None, 100)
           .await
           .unwrap();
 
@@ -1579,7 +1609,7 @@ mod tests {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let first = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 2)
+        let first = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), false, None, 2)
           .await
           .unwrap();
         assert_eq!(page_names(&first), vec!["Angel Dist Agent", "Navy Researcher"]);
@@ -1589,6 +1619,7 @@ mod tests {
           &db,
           CHARACTER,
           &parse("region:\"The Forge\""),
+          false,
           first.next_cursor.clone(),
           2,
         )
@@ -1602,6 +1633,7 @@ mod tests {
           &db,
           CHARACTER,
           &parse("region:\"The Forge\""),
+          false,
           second.next_cursor.clone(),
           2,
         )
@@ -1617,7 +1649,7 @@ mod tests {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let only = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 10)
+        let only = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), false, None, 10)
           .await
           .unwrap();
 

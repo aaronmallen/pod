@@ -283,6 +283,9 @@ impl State {
     if let LoadState::Loaded(rows) = &self.standings {
       keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
     }
+    if let LoadState::Loaded(contacts) = &self.contacts {
+      keys.extend(contacts.images.values().filter_map(images::ImageState::stale_key));
+    }
     keys
   }
 
@@ -307,6 +310,10 @@ impl State {
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
     self.granted_scopes.as_deref()
+  }
+
+  fn has_loaded_agents(&self) -> bool {
+    matches!(&self.standings, LoadState::Loaded(rows) if rows.iter().any(|row| row.kind == StandingKind::Agent))
   }
 
   pub(super) fn standings_has_filters(&self) -> bool {
@@ -416,10 +423,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         operation::focus(STANDINGS_SEARCH_INPUT_ID),
       ])
     }
-    Message::StandingsFilterChanged(filter) => {
-      state.standings_filter = filter;
-      Task::none()
-    }
+    Message::StandingsFilterChanged(filter) => change_standings_filter(state, filter, db),
     Message::StandingsInsertQuery(fragment) => {
       append_standings_query(state, &fragment);
       state.standings_help_open = false;
@@ -512,7 +516,13 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       Task::none()
     }
     Message::StandingsScrolled(offset) => {
-      if offset < SCROLL_THRESHOLD || !state.standings_has_more || state.standings_loading_more {
+      // Only the agent-surfacing filters paginate agents; under Factions/Corps/Other a forced-false page
+      // would come back empty and clobber `standings_has_more`, so skip the fetch entirely.
+      if offset < SCROLL_THRESHOLD
+        || !state.standings_has_more
+        || state.standings_loading_more
+        || !state.standings_filter.surfaces_agents()
+      {
         return Task::none();
       }
       let Some(cursor) = state.standings_agent_cursor.clone() else {
@@ -523,6 +533,7 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
         db.clone(),
         state.active,
         state.standings_query.clone(),
+        state.standings_filter.surfaces_agents(),
         cursor,
         state.standings_generation,
       )
@@ -556,6 +567,22 @@ fn append_standings_query(state: &mut State, fragment: &str) {
   };
 }
 
+fn change_standings_filter(
+  state: &mut State,
+  filter: tabs::standings::StandingsFilter,
+  db: &Database,
+) -> Task<Message> {
+  state.standings_filter = filter;
+  // Filtering is in-memory: agents are already loaded from the default All initial load. Reload only as a safety net
+  // when switching to an agent-surfacing filter that has no agent rows loaded (e.g. agents were never fetched under a
+  // non-agent filter) and a load is not already in flight.
+  if filter.surfaces_agents() && !state.has_loaded_agents() && !matches!(state.standings, LoadState::Loading) {
+    trigger_standings_search(state, db)
+  } else {
+    Task::none()
+  }
+}
+
 fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
   state.standings_generation = state.standings_generation.wrapping_add(1);
   state.standings = LoadState::Loading;
@@ -566,15 +593,22 @@ fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
     db.clone(),
     state.active,
     state.standings_query.clone(),
+    state.standings_filter.surfaces_agents(),
     state.standings_generation,
   )
 }
 
-fn run_standings_search(db: Database, character_id: i64, query: String, generation: u64) -> Task<Message> {
+fn run_standings_search(
+  db: Database,
+  character_id: i64,
+  query: String,
+  force_agents: bool,
+  generation: u64,
+) -> Task<Message> {
   Task::perform(
     async move {
       tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
-      load_standings_catalog(&db, character_id, &query).await
+      load_standings_catalog(&db, character_id, &query, force_agents).await
     },
     move |result| {
       Message::StandingsResults(Box::new(StandingsResult {
@@ -589,11 +623,12 @@ fn run_standings_agent_page(
   db: Database,
   character_id: i64,
   query: String,
+  force_agents: bool,
   cursor: (String, i64),
   generation: u64,
 ) -> Task<Message> {
   Task::perform(
-    async move { load_standings_agent_page(&db, character_id, &query, cursor).await },
+    async move { load_standings_agent_page(&db, character_id, &query, force_agents, cursor).await },
     move |page| {
       let (next_cursor, rows) = page.unwrap_or((None, Vec::new()));
       Message::StandingsAgentsPageLoaded(Box::new(StandingsAgentsPage {
@@ -609,12 +644,20 @@ async fn load_standings_agent_page(
   db: &Database,
   character_id: i64,
   query: &str,
+  force_agents: bool,
   cursor: (String, i64),
 ) -> Result<(Option<(String, i64)>, Vec<StandingsRow>), String> {
   let parsed = standings::parse(query);
-  let page = standings::agent_page(db, character_id, &parsed, Some(cursor), STANDINGS_PAGE_SIZE)
-    .await
-    .map_err(|error| error.to_string())?;
+  let page = standings::agent_page(
+    db,
+    character_id,
+    &parsed,
+    force_agents,
+    Some(cursor),
+    STANDINGS_PAGE_SIZE,
+  )
+  .await
+  .map_err(|error| error.to_string())?;
 
   let store = images::default_store();
   let rows = page.rows.into_iter().map(|row| standings_row(&store, row)).collect();
@@ -622,13 +665,19 @@ async fn load_standings_agent_page(
 }
 
 // Factions and corporations are loaded in full (limit 0 suppresses the catalog's own agent page); agents come from
-// the first keyset page so the result carries a cursor for infinite scroll.
-async fn load_standings_catalog(db: &Database, character_id: i64, query: &str) -> Result<StandingsCatalog, String> {
+// the first keyset page so the result carries a cursor for infinite scroll. `force_agents` lets the active segment
+// filter surface the agent catalog with no narrowing text facet.
+async fn load_standings_catalog(
+  db: &Database,
+  character_id: i64,
+  query: &str,
+  force_agents: bool,
+) -> Result<StandingsCatalog, String> {
   let parsed = standings::parse(query);
-  let context = standings::catalog(db, character_id, &parsed, Some(0))
+  let context = standings::catalog(db, character_id, &parsed, force_agents, Some(0))
     .await
     .map_err(|error| error.to_string())?;
-  let agents = standings::agent_page(db, character_id, &parsed, None, STANDINGS_PAGE_SIZE)
+  let agents = standings::agent_page(db, character_id, &parsed, force_agents, None, STANDINGS_PAGE_SIZE)
     .await
     .map_err(|error| error.to_string())?;
 
@@ -1409,6 +1458,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_ignores_a_standings_scroll_when_the_filter_does_not_surface_agents() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+
+      assert!(
+        !state.standings_loading_more,
+        "a non-agent filter does not paginate agents"
+      );
+      assert!(state.standings_has_more, "the cursor and has_more are left untouched");
+      assert_eq!(state.standings_agent_cursor, Some(("Agent".to_owned(), 1)));
+    }
+
+    #[tokio::test]
     async fn it_appends_a_standings_page_and_recomputes_has_more() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = loaded_state(42);
@@ -1534,10 +1601,11 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = loaded_state(42);
       state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(CharacterContacts {
-        contacts: (0..CONTACTS_PAGE_SIZE as i64 * 3).map(contact).collect(),
-        labels: Vec::new(),
-      });
+      state.contacts = LoadState::Loaded(CharacterContacts::resolved(
+        &images::Store::new(std::path::PathBuf::from("/data/images")),
+        (0..CONTACTS_PAGE_SIZE as i64 * 3).map(contact).collect(),
+        Vec::new(),
+      ));
 
       assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE);
 
@@ -1631,6 +1699,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_keeps_an_agent_filter_in_memory_when_agents_are_already_loaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings = LoadState::Loaded(vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)]);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Agents);
+      assert_eq!(
+        state.standings_generation, before,
+        "agents already loaded means no reload"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_reloads_an_agent_filter_when_no_agents_are_loaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings = LoadState::Loaded(vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)]);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
+        &db,
+      );
+
+      assert_eq!(
+        state.standings_generation,
+        before + 1,
+        "switching to agents with none loaded triggers a reload"
+      );
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
     async fn it_toggles_the_help_popover() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(42, &Feature::ALL);
@@ -1691,7 +1802,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       seed_faction(&db).await;
 
-      let catalog = load_standings_catalog(&db, 42, "").await.unwrap();
+      let catalog = load_standings_catalog(&db, 42, "", false).await.unwrap();
       let faction = catalog.rows.iter().find(|row| row.name == "Caldari State").unwrap();
 
       assert_eq!(faction.kind, StandingKind::Faction);
@@ -1793,10 +1904,11 @@ mod tests {
     use super::*;
 
     fn contacts() -> CharacterContacts {
-      CharacterContacts {
-        contacts: Vec::new(),
-        labels: Vec::new(),
-      }
+      CharacterContacts::resolved(
+        &images::Store::new(std::path::PathBuf::from("/data/images")),
+        Vec::new(),
+        Vec::new(),
+      )
     }
 
     #[tokio::test]
@@ -1996,10 +2108,11 @@ mod tests {
       let mut state = State::new(42, &Feature::ALL);
       let loaded = Loaded {
         clones: LoadState::Loaded(None),
-        contacts: LoadState::Loaded(CharacterContacts {
-          contacts: Vec::new(),
-          labels: Vec::new(),
-        }),
+        contacts: LoadState::Loaded(CharacterContacts::resolved(
+          &images::Store::new(std::path::PathBuf::from("/data/images")),
+          Vec::new(),
+          Vec::new(),
+        )),
         granted_scopes: None,
         head: HeadStats {
           total_sp: Some(1_000),

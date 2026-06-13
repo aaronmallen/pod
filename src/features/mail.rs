@@ -1792,6 +1792,287 @@ mod tests {
       assert_eq!(state.search(), "cta");
       assert!(state.render().is_none());
     }
+
+    mod labels_dispatch {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_opens_a_blank_label_modal_and_clears_the_picker() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_picker = Some(LabelPicker {
+          anchor: None,
+          mail_id: 7,
+        });
+
+        let _ = update_labels(&mut state, Message::LabelModalOpened, &db);
+
+        assert_eq!(state.label_modal, Some(LabelDraft::blank()));
+        assert!(state.label_picker.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_closes_the_label_modal() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+
+        let _ = update_labels(&mut state, Message::LabelModalClosed, &db);
+
+        assert!(state.label_modal.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_truncates_the_label_name_to_the_max_length() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+        let oversized = "x".repeat(labels::NAME_MAX_CHARS + 10);
+
+        let _ = update_labels(&mut state, Message::LabelNameChanged(oversized), &db);
+
+        let name = state.label_modal.as_ref().map(|d| d.name.clone()).unwrap();
+        assert_eq!(name.chars().count(), labels::NAME_MAX_CHARS);
+      }
+
+      #[tokio::test]
+      async fn it_ignores_a_name_change_with_no_open_modal() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelNameChanged("Fleet".to_owned()), &db);
+
+        assert!(state.label_modal.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_records_a_picked_label_color() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+
+        let _ = update_labels(&mut state, Message::LabelColorPicked("#ff6600".to_owned()), &db);
+
+        assert_eq!(
+          state.label_modal.as_ref().map(|d| d.color.clone()),
+          Some("#ff6600".to_owned())
+        );
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_submission_for_an_uncreatable_draft() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+
+        let _ = update_labels(&mut state, Message::LabelModalSubmitted, &db);
+
+        assert!(state.label_modal.is_some());
+      }
+
+      #[tokio::test]
+      async fn it_closes_the_modal_when_submitting_a_creatable_draft() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft {
+          color: "#ff6600".to_owned(),
+          name: "Fleet".to_owned(),
+        });
+
+        let _ = update_labels(&mut state, Message::LabelModalSubmitted, &db);
+
+        assert!(state.label_modal.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_submission_with_no_open_modal() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelModalSubmitted, &db);
+
+        assert!(state.label_modal.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_opens_an_unanchored_label_picker() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+        state.snooze_menu = SnoozeMenu::Presets;
+
+        let _ = update_labels(&mut state, Message::LabelPickerOpened(7), &db);
+
+        assert!(state.label_modal.is_none());
+        assert_eq!(state.snooze_menu, SnoozeMenu::Closed);
+        assert_eq!(
+          state.label_picker,
+          Some(LabelPicker {
+            anchor: None,
+            mail_id: 7,
+          })
+        );
+      }
+
+      #[tokio::test]
+      async fn it_opens_a_cursor_anchored_label_picker_from_a_row_menu() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.cursor = Some(Point::new(12.0, 34.0));
+        state.label_modal = Some(LabelDraft::blank());
+
+        let _ = update_labels(&mut state, Message::LabelRowMenuOpened(7), &db);
+
+        assert_eq!(state.selected, Some(7));
+        assert!(state.label_modal.is_none());
+        assert_eq!(
+          state.label_picker,
+          Some(LabelPicker {
+            anchor: Some(Point::new(12.0, 34.0)),
+            mail_id: 7,
+          })
+        );
+      }
+
+      #[tokio::test]
+      async fn it_closes_the_label_picker() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_picker = Some(LabelPicker {
+          anchor: None,
+          mail_id: 7,
+        });
+
+        let _ = update_labels(&mut state, Message::LabelPickerClosed, &db);
+
+        assert!(state.label_picker.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_toggles_a_label_for_a_known_mail() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.messages = vec![list_row(7, 42, true)];
+
+        let _ = update_labels(&mut state, Message::LabelToggled(7, 8), &db);
+      }
+
+      #[tokio::test]
+      async fn it_records_a_pending_label_deletion() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelDeleteRequested(8), &db);
+
+        assert_eq!(state.pending_label_delete, Some(8));
+      }
+
+      #[tokio::test]
+      async fn it_cancels_a_pending_label_deletion() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.pending_label_delete = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDeleteCancelled, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_ignores_a_delete_confirmation_with_nothing_pending() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_consumes_the_pending_label_on_a_delete_confirmation() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.pending_label_delete = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_tracks_the_cursor_during_a_label_drag() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        let point = Point::new(5.0, 6.0);
+
+        let _ = update_labels(&mut state, Message::LabelDragMoved(point), &db);
+
+        assert_eq!(state.cursor, Some(point));
+      }
+
+      #[tokio::test]
+      async fn it_marks_a_drop_target_only_while_dragging() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
+        assert!(state.drop_target.is_none());
+
+        state.dragging_mail = Some(7);
+        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
+        assert_eq!(state.drop_target, Some(8));
+      }
+
+      #[tokio::test]
+      async fn it_clears_only_the_matching_drop_target_on_leave() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.drop_target = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(9), &db);
+        assert_eq!(state.drop_target, Some(8));
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(8), &db);
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_clears_drag_state_when_releasing_with_no_target() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.dragging_mail = Some(7);
+        state.drop_target = None;
+
+        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
+
+        assert!(state.dragging_mail.is_none());
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_assigns_the_label_when_releasing_onto_a_target() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.messages = vec![list_row(7, 42, true)];
+        state.dragging_mail = Some(7);
+        state.drop_target = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
+
+        assert!(state.dragging_mail.is_none());
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_reloads_after_a_label_write() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelsWritten, &db);
+      }
+    }
   }
 
   fn sample_render() -> crate::store::model::character_mail_view::MailRender {

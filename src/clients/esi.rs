@@ -126,6 +126,11 @@ impl Client {
     format!("{}/{}", self.base_url.trim_end_matches('/'), path)
   }
 
+  #[allow(dead_code)]
+  pub async fn delete_empty(&self, url: &str, token: &str) -> Result<(), clients::Error> {
+    self.http.delete_empty(url, token, Some(COMPATIBILITY_DATE)).await
+  }
+
   pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, clients::Error> {
     self.http.get_json(url, token, Some(COMPATIBILITY_DATE)).await
   }

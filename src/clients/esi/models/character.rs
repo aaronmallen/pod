@@ -191,6 +191,14 @@ pub struct Contract {
   pub volume: Option<f64>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Serialize)]
+pub struct CreateMailLabelRequest {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub color: Option<String>,
+  pub name: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct JumpClone {
   #[serde(default)]
@@ -232,6 +240,27 @@ pub struct MailHeader {
   pub subject: Option<String>,
   #[serde(default)]
   pub timestamp: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct MailLabel {
+  #[serde(default)]
+  pub color: Option<String>,
+  pub label_id: i64,
+  #[serde(default)]
+  pub name: Option<String>,
+  #[serde(default)]
+  pub unread_count: Option<i64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct MailLabels {
+  #[serde(default)]
+  pub labels: Vec<MailLabel>,
+  #[serde(default)]
+  pub total_unread_count: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

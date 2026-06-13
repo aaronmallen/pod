@@ -58,8 +58,12 @@ impl Client {
   }
 
   #[allow(dead_code)]
-  pub async fn delete_empty(&self, url: &str, token: &str) -> Result<(), Error> {
-    let resp = send_logged("DELETE", url, self.inner.delete(url).bearer_auth(token), &self.budgets).await?;
+  pub async fn delete_empty(&self, url: &str, token: &str, compat_date: Option<&str>) -> Result<(), Error> {
+    let mut req = self.inner.delete(url).bearer_auth(token);
+    if let Some(date) = compat_date {
+      req = req.header(COMPATIBILITY_DATE_HEADER, date);
+    }
+    let resp = send_logged("DELETE", url, req, &self.budgets).await?;
     handle_status(resp).await
   }
 
@@ -633,7 +637,7 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result = client
-          .delete_empty(&format!("{}/things/1", server.uri()), "token")
+          .delete_empty(&format!("{}/things/1", server.uri()), "token", None)
           .await;
 
         assert!(matches!(result, Err(Error::Http(_))));
@@ -650,7 +654,7 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result = client
-          .delete_empty(&format!("{}/things/1", server.uri()), "token")
+          .delete_empty(&format!("{}/things/1", server.uri()), "token", None)
           .await;
 
         assert!(result.is_ok());
@@ -667,7 +671,7 @@ mod tests {
         let (client, _db) = make_test_client().await;
 
         let result = client
-          .delete_empty(&format!("{}/things/1", server.uri()), "token")
+          .delete_empty(&format!("{}/things/1", server.uri()), "token", None)
           .await;
 
         assert!(matches!(

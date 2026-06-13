@@ -6,9 +6,9 @@ use crate::clients::{
       assets::AssetName,
       character::{
         Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
-        Clones, Contact, ContactLabel, Contract, Location, MailBody, MailHeader, MarkReadRequest, MarketOrder,
-        Notification, Online, RecentKillmail, RespondRequest, SendMailRequest, Ship, SkillQueueEntry, Standing,
-        WalletJournalEntry, WalletTransaction,
+        Clones, Contact, ContactLabel, Contract, CreateMailLabelRequest, Location, MailBody, MailHeader, MailLabels,
+        MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, RespondRequest, SendMailRequest, Ship,
+        SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
       },
     },
   },
@@ -135,6 +135,23 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
+  #[allow(dead_code)]
+  pub async fn create_mail_label(&self, request: &CreateMailLabelRequest) -> Result<i64, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/mail/labels/", self.grant.character_id()));
+    self.esi.post_json(&url, request, self.grant.access_token()).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn delete_mail_label(&self, label_id: i64) -> Result<(), clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/mail/labels/{label_id}/",
+      self.grant.character_id()
+    ));
+    self.esi.delete_empty(&url, self.grant.access_token()).await
+  }
+
   pub async fn implants(&self) -> Result<Vec<i64>, clients::Error> {
     let url = self
       .esi
@@ -158,6 +175,14 @@ impl<'a> AuthenticatedClient<'a> {
     let url = self
       .esi
       .url(&format!("characters/{}/mail/{mail_id}/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn mail_labels(&self) -> Result<MailLabels, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/mail/labels/", self.grant.character_id()));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
@@ -784,6 +809,73 @@ mod tests {
       }
     }
 
+    mod create_mail_label {
+      use pretty_assertions::assert_eq;
+      use serde_json::{Value, json};
+      use wiremock::matchers::body_json;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_posts_the_label_and_returns_the_server_assigned_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/mail/labels/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(body_json(json!({"color": "#660066", "name": "PINK"})))
+          .respond_with(ResponseTemplate::new(201).set_body_raw("128", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+        let request = CreateMailLabelRequest {
+          color: Some("#660066".to_string()),
+          name: "PINK".to_string(),
+        };
+
+        let label_id = esi
+          .character_authenticated(&grant)
+          .create_mail_label(&request)
+          .await
+          .unwrap();
+
+        assert_eq!(label_id, 128);
+      }
+
+      #[tokio::test]
+      async fn it_omits_the_color_when_unset() {
+        let request = CreateMailLabelRequest {
+          color: None,
+          name: "PLAIN".to_string(),
+        };
+
+        let serialized: Value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(serialized, json!({"name": "PLAIN"}));
+      }
+    }
+
+    mod delete_mail_label {
+      use super::*;
+
+      #[tokio::test]
+      async fn it_deletes_the_label_at_its_path_with_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+          .and(path("/characters/42/mail/labels/16/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let result = esi.character_authenticated(&grant).delete_mail_label(16).await;
+
+        assert!(result.is_ok());
+      }
+    }
+
     mod implants {
       use pretty_assertions::assert_eq;
 
@@ -912,6 +1004,58 @@ mod tests {
         let mail = esi.character_authenticated(&grant).mail_body(7).await.unwrap();
 
         assert_eq!(mail.body, "<p>Greetings, capsuleer.</p>");
+      }
+    }
+
+    mod mail_labels {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_label_definitions() {
+        let server = MockServer::start().await;
+        let body = r##"{"labels":[{"color":"#660066","label_id":16,"name":"PINK","unread_count":4},{"color":"#ffffff","label_id":17,"name":"WHITE","unread_count":1}],"total_unread_count":5}"##;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/mail/labels/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let labels = esi.character_authenticated(&grant).mail_labels().await.unwrap();
+
+        assert_eq!(labels.total_unread_count, Some(5));
+        assert_eq!(labels.labels.len(), 2);
+        assert_eq!(labels.labels[0].label_id, 16);
+        assert_eq!(labels.labels[0].color.as_deref(), Some("#660066"));
+        assert_eq!(labels.labels[0].name.as_deref(), Some("PINK"));
+        assert_eq!(labels.labels[0].unread_count, Some(4));
+        assert_eq!(labels.labels[1].label_id, 17);
+      }
+
+      #[tokio::test]
+      async fn it_defaults_optional_fields_for_a_sparse_label() {
+        let server = MockServer::start().await;
+        let body = r#"{"labels":[{"label_id":1}]}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/mail/labels/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let labels = esi.character_authenticated(&grant).mail_labels().await.unwrap();
+
+        assert_eq!(labels.labels.len(), 1);
+        assert_eq!(labels.labels[0].label_id, 1);
+        assert!(labels.labels[0].color.is_none());
+        assert!(labels.labels[0].name.is_none());
+        assert!(labels.labels[0].unread_count.is_none());
+        assert!(labels.total_unread_count.is_none());
       }
     }
 

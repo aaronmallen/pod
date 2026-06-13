@@ -68,7 +68,14 @@ impl ParsedQuery {
 }
 
 pub fn parse(input: &str) -> ParsedQuery {
-  let tokens = tokenize(input.trim()).iter().map(|raw| parse_raw_token(raw)).collect();
+  parse_with_keys(input, RECOGNIZED_KEYS)
+}
+
+pub fn parse_with_keys(input: &str, recognized_keys: &[&str]) -> ParsedQuery {
+  let tokens = tokenize(input.trim())
+    .iter()
+    .map(|raw| parse_raw_token(raw, recognized_keys))
+    .collect();
   ParsedQuery {
     tokens,
   }
@@ -99,8 +106,8 @@ fn free_text(negated: bool, rest: &str) -> FilterToken {
   }
 }
 
-fn is_recognized_key(key: &str) -> bool {
-  RECOGNIZED_KEYS.contains(&key.to_lowercase().as_str())
+fn is_recognized_key(key: &str, recognized_keys: &[&str]) -> bool {
+  recognized_keys.contains(&key.to_lowercase().as_str())
 }
 
 fn normalize_key(key: &str) -> String {
@@ -111,8 +118,8 @@ fn normalize_key(key: &str) -> String {
   }
 }
 
-fn parse_key_value(negated: bool, key_part: &str, value_part: &str) -> Option<FilterToken> {
-  if !is_recognized_key(key_part) {
+fn parse_key_value(negated: bool, key_part: &str, value_part: &str, recognized_keys: &[&str]) -> Option<FilterToken> {
+  if !is_recognized_key(key_part, recognized_keys) {
     return None;
   }
 
@@ -132,14 +139,14 @@ fn parse_key_value(negated: bool, key_part: &str, value_part: &str) -> Option<Fi
   })
 }
 
-fn parse_raw_token(raw: &str) -> FilterToken {
+fn parse_raw_token(raw: &str, recognized_keys: &[&str]) -> FilterToken {
   let (negated, rest) = match raw.strip_prefix('-') {
     Some(stripped) => (true, stripped),
     None => (false, raw),
   };
 
   if let Some(colon) = rest.find(':')
-    && let Some(token) = parse_key_value(negated, &rest[..colon], &rest[colon + 1..])
+    && let Some(token) = parse_key_value(negated, &rest[..colon], &rest[colon + 1..], recognized_keys)
   {
     return token;
   }

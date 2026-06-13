@@ -4,10 +4,10 @@ use super::outbox::{HandlerFuture, KindHandler, OutboxKind, Registry};
 use crate::{
   clients::{
     self, esi,
-    esi::models::character::{MarkReadRequest, SendMailRecipient, SendMailRequest},
+    esi::models::character::{CreateMailLabelRequest, MarkReadRequest, SendMailRecipient, SendMailRequest},
     eve_sso::Grant,
   },
-  store::{Database, repo::mail},
+  store::{Database, model::CharacterMailLabel, repo::mail},
 };
 
 struct SendHandler;
@@ -79,6 +79,7 @@ impl KindHandler for SendHandler {
 
   fn execute<'a>(
     &'a self,
+    _db: &'a Database,
     esi: &'a esi::Client,
     grant: &'a Grant,
     payload: &'a str,
@@ -142,6 +143,7 @@ impl KindHandler for SetReadHandler {
 
   fn execute<'a>(
     &'a self,
+    _db: &'a Database,
     esi: &'a esi::Client,
     grant: &'a Grant,
     payload: &'a str,
@@ -178,8 +180,194 @@ impl SetReadPayload {
   }
 }
 
+struct CreateLabelHandler;
+
+impl KindHandler for CreateLabelHandler {
+  fn kind(&self) -> OutboxKind {
+    OutboxKind::MailCreateLabel
+  }
+
+  fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = CreateLabelPayload::parse(payload)?;
+      let label = CharacterMailLabel {
+        character_id: p.character_id,
+        color: p.color,
+        label_id: p.label_id,
+        name: p.name,
+      };
+      mail::insert_label(db, &label).await?;
+      Ok(())
+    })
+  }
+
+  fn execute<'a>(
+    &'a self,
+    db: &'a Database,
+    esi: &'a esi::Client,
+    grant: &'a Grant,
+    payload: &'a str,
+  ) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = CreateLabelPayload::parse(payload)?;
+      let request = CreateMailLabelRequest {
+        color: p.color,
+        name: p.name,
+      };
+      let server_label_id = esi.character_authenticated(grant).create_mail_label(&request).await?;
+      mail::remap_label_id(db, p.character_id, p.label_id, server_label_id).await?;
+      Ok(())
+    })
+  }
+
+  fn compensate<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = CreateLabelPayload::parse(payload)?;
+      mail::delete_label(db, p.character_id, p.label_id).await?;
+      Ok(())
+    })
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLabelPayload {
+  character_id: i64,
+  #[serde(default)]
+  color: Option<String>,
+  label_id: i64,
+  name: String,
+}
+
+impl CreateLabelPayload {
+  fn parse(payload: &str) -> Result<Self, clients::Error> {
+    Ok(serde_json::from_str(payload)?)
+  }
+}
+
+struct DeleteLabelHandler;
+
+impl KindHandler for DeleteLabelHandler {
+  fn kind(&self) -> OutboxKind {
+    OutboxKind::MailDeleteLabel
+  }
+
+  fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = DeleteLabelPayload::parse(payload)?;
+      mail::delete_label(db, p.character_id, p.label_id).await?;
+      Ok(())
+    })
+  }
+
+  fn execute<'a>(
+    &'a self,
+    _db: &'a Database,
+    esi: &'a esi::Client,
+    grant: &'a Grant,
+    payload: &'a str,
+  ) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = DeleteLabelPayload::parse(payload)?;
+      esi.character_authenticated(grant).delete_mail_label(p.label_id).await
+    })
+  }
+
+  fn compensate<'a>(&'a self, _db: &'a Database, _payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move { Ok(()) })
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteLabelPayload {
+  character_id: i64,
+  label_id: i64,
+}
+
+impl DeleteLabelPayload {
+  fn parse(payload: &str) -> Result<Self, clients::Error> {
+    Ok(serde_json::from_str(payload)?)
+  }
+}
+
+struct SetLabelsHandler;
+
+impl SetLabelsHandler {
+  async fn write_membership(db: &Database, p: &SetLabelsPayload, labels: &[i64]) -> Result<(), clients::Error> {
+    let current = mail::membership(db, p.character_id, p.mail_id).await?;
+
+    for label_id in &current {
+      if !labels.contains(label_id) {
+        mail::remove_membership(db, p.character_id, p.mail_id, *label_id).await?;
+      }
+    }
+
+    for label_id in labels {
+      if !current.contains(label_id) {
+        mail::add_membership(db, p.character_id, p.mail_id, *label_id).await?;
+      }
+    }
+
+    Ok(())
+  }
+}
+
+impl KindHandler for SetLabelsHandler {
+  fn kind(&self) -> OutboxKind {
+    OutboxKind::MailSetLabels
+  }
+
+  fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SetLabelsPayload::parse(payload)?;
+      Self::write_membership(db, &p, &p.labels).await
+    })
+  }
+
+  fn execute<'a>(
+    &'a self,
+    _db: &'a Database,
+    esi: &'a esi::Client,
+    grant: &'a Grant,
+    payload: &'a str,
+  ) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SetLabelsPayload::parse(payload)?;
+      let request = MarkReadRequest {
+        labels: Some(p.labels),
+        read: None,
+      };
+      esi.character_authenticated(grant).mark_read(p.mail_id, &request).await
+    })
+  }
+
+  fn compensate<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SetLabelsPayload::parse(payload)?;
+      Self::write_membership(db, &p, &p.previous).await
+    })
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct SetLabelsPayload {
+  character_id: i64,
+  labels: Vec<i64>,
+  mail_id: i64,
+  #[serde(default)]
+  previous: Vec<i64>,
+}
+
+impl SetLabelsPayload {
+  fn parse(payload: &str) -> Result<Self, clients::Error> {
+    Ok(serde_json::from_str(payload)?)
+  }
+}
+
 pub(super) fn registry() -> Registry {
   Registry::new()
+    .with(Box::new(CreateLabelHandler))
+    .with(Box::new(DeleteLabelHandler))
+    .with(Box::new(SetLabelsHandler))
     .with(Box::new(SetReadHandler))
     .with(Box::new(SendHandler))
 }
@@ -302,6 +490,382 @@ mod tests {
     let result = SetReadHandler.apply(&db, "not json").await;
 
     assert!(matches!(result, Err(clients::Error::Json(_))));
+  }
+
+  mod create_label {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::{esi, http};
+
+    async fn esi_client(server: &MockServer) -> esi::Client {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      esi::Client::with_base_url(http, server.uri())
+    }
+
+    fn payload(character_id: i64, label_id: i64, name: &str, color: &str) -> String {
+      format!("{{\"character_id\":{character_id},\"label_id\":{label_id},\"name\":\"{name}\",\"color\":\"{color}\"}}")
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailCreateLabel).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailCreateLabel);
+    }
+
+    #[tokio::test]
+    async fn it_inserts_the_optimistic_label_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      CreateLabelHandler
+        .apply(&db, &payload(42, -1, "Bills", "#ffffcd"))
+        .await
+        .unwrap();
+
+      let labels = mail::labels(&db, 42).await.unwrap();
+      assert_eq!(labels.len(), 1);
+      assert_eq!(labels[0].label_id(), -1);
+      assert_eq!(labels[0].name(), "Bills");
+      assert_eq!(labels[0].color().as_deref(), Some("#ffffcd"));
+    }
+
+    #[tokio::test]
+    async fn it_reconciles_the_temp_id_to_the_server_id_on_execute() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      CreateLabelHandler
+        .apply(&db, &payload(42, -1, "Bills", "#ffffcd"))
+        .await
+        .unwrap();
+      mail::add_membership(&db, 42, 7, -1).await.unwrap();
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/characters/42/mail/labels/"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(17))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      CreateLabelHandler
+        .execute(&db, &esi, &grant, &payload(42, -1, "Bills", "#ffffcd"))
+        .await
+        .unwrap();
+
+      let labels = mail::labels(&db, 42).await.unwrap();
+      assert_eq!(labels.iter().map(|l| l.label_id()).collect::<Vec<_>>(), [17]);
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [17]);
+    }
+
+    #[tokio::test]
+    async fn it_removes_the_optimistic_label_on_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      CreateLabelHandler
+        .apply(&db, &payload(42, -1, "Bills", "#ffffcd"))
+        .await
+        .unwrap();
+
+      CreateLabelHandler
+        .compensate(&db, &payload(42, -1, "Bills", "#ffffcd"))
+        .await
+        .unwrap();
+
+      assert!(mail::labels(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_an_esi_rejection_for_the_drainer_to_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/characters/42/mail/labels/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      let result = CreateLabelHandler
+        .execute(&db, &esi, &grant, &payload(42, -1, "Bills", "#ffffcd"))
+        .await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
+
+      let result = CreateLabelHandler.apply(&db, "not json").await;
+
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+  }
+
+  mod delete_label {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::{esi, http};
+
+    async fn esi_client(server: &MockServer) -> esi::Client {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      esi::Client::with_base_url(http, server.uri())
+    }
+
+    async fn seed_label(db: &Database, character_id: i64, label_id: i64) {
+      let label = CharacterMailLabel {
+        character_id,
+        color: Some("#ffffcd".to_owned()),
+        label_id,
+        name: "Bills".to_owned(),
+      };
+      mail::insert_label(db, &label).await.unwrap();
+    }
+
+    fn payload(character_id: i64, label_id: i64) -> String {
+      format!("{{\"character_id\":{character_id},\"label_id\":{label_id}}}")
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailDeleteLabel).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailDeleteLabel);
+    }
+
+    #[tokio::test]
+    async fn it_deletes_the_label_and_its_membership_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 17).await;
+      mail::add_membership(&db, 42, 7, 17).await.unwrap();
+
+      DeleteLabelHandler.apply(&db, &payload(42, 17)).await.unwrap();
+
+      assert!(mail::labels(&db, 42).await.unwrap().is_empty());
+      assert!(mail::membership(&db, 42, 7).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_deletes_at_esi_on_execute() {
+      let db = store::open_test().await.unwrap();
+      let server = MockServer::start().await;
+      Mock::given(method("DELETE"))
+        .and(path("/characters/42/mail/labels/17/"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      DeleteLabelHandler
+        .execute(&db, &esi, &grant, &payload(42, 17))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_an_esi_rejection_for_the_drainer() {
+      let db = store::open_test().await.unwrap();
+      let server = MockServer::start().await;
+      Mock::given(method("DELETE"))
+        .and(path("/characters/42/mail/labels/17/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      let result = DeleteLabelHandler.execute(&db, &esi, &grant, &payload(42, 17)).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn it_compensates_as_a_no_op() {
+      let db = store::open_test().await.unwrap();
+
+      DeleteLabelHandler.compensate(&db, &payload(42, 17)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
+
+      let result = DeleteLabelHandler.apply(&db, "not json").await;
+
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+  }
+
+  mod set_labels {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::{esi, http};
+
+    async fn esi_client(server: &MockServer) -> esi::Client {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      esi::Client::with_base_url(http, server.uri())
+    }
+
+    async fn seed_label(db: &Database, character_id: i64, label_id: i64) {
+      let label = CharacterMailLabel {
+        character_id,
+        color: Some("#ffffcd".to_owned()),
+        label_id,
+        name: format!("Label {label_id}"),
+      };
+      mail::insert_label(db, &label).await.unwrap();
+    }
+
+    fn payload(character_id: i64, mail_id: i64, labels: &[i64], previous: &[i64]) -> String {
+      let render = |ids: &[i64]| ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+      format!(
+        "{{\"character_id\":{character_id},\"mail_id\":{mail_id},\"labels\":[{}],\"previous\":[{}]}}",
+        render(labels),
+        render(previous)
+      )
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailSetLabels).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailSetLabels);
+    }
+
+    #[tokio::test]
+    async fn it_adds_one_label_while_preserving_the_rest_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 10).await;
+      seed_label(&db, 42, 20).await;
+      mail::add_membership(&db, 42, 7, 10).await.unwrap();
+
+      SetLabelsHandler
+        .apply(&db, &payload(42, 7, &[10, 20], &[10]))
+        .await
+        .unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [10, 20]);
+    }
+
+    #[tokio::test]
+    async fn it_removes_one_label_while_preserving_the_rest_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 10).await;
+      seed_label(&db, 42, 20).await;
+      mail::add_membership(&db, 42, 7, 10).await.unwrap();
+      mail::add_membership(&db, 42, 7, 20).await.unwrap();
+
+      SetLabelsHandler
+        .apply(&db, &payload(42, 7, &[10], &[10, 20]))
+        .await
+        .unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [10]);
+    }
+
+    #[tokio::test]
+    async fn it_puts_the_full_set_to_esi_on_execute() {
+      let db = store::open_test().await.unwrap();
+      let server = MockServer::start().await;
+      Mock::given(method("PUT"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      SetLabelsHandler
+        .execute(&db, &esi, &grant, &payload(42, 7, &[10, 20], &[10]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_restores_the_previous_set_on_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 10).await;
+      seed_label(&db, 42, 20).await;
+      mail::add_membership(&db, 42, 7, 10).await.unwrap();
+      SetLabelsHandler
+        .apply(&db, &payload(42, 7, &[10, 20], &[10]))
+        .await
+        .unwrap();
+
+      SetLabelsHandler
+        .compensate(&db, &payload(42, 7, &[10, 20], &[10]))
+        .await
+        .unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [10]);
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_an_esi_rejection_for_the_drainer_to_compensate() {
+      let db = store::open_test().await.unwrap();
+      let server = MockServer::start().await;
+      Mock::given(method("PUT"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      let result = SetLabelsHandler
+        .execute(&db, &esi, &grant, &payload(42, 7, &[10, 20], &[10]))
+        .await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
+
+      let result = SetLabelsHandler.apply(&db, "not json").await;
+
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
   }
 
   mod resolve_recipients {

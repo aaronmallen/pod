@@ -14,6 +14,7 @@ pub trait KindHandler: Send + Sync {
 
   fn execute<'a>(
     &'a self,
+    db: &'a Database,
     esi: &'a esi::Client,
     grant: &'a Grant,
     payload: &'a str,
@@ -26,7 +27,9 @@ pub trait KindHandler: Send + Sync {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OutboxKind {
   CalendarRespond,
+  MailCreateLabel,
   MailDelete,
+  MailDeleteLabel,
   MailSend,
   MailSetLabels,
   MailSetRead,
@@ -37,6 +40,8 @@ impl OutboxKind {
     OutboxKind::MailSend,
     OutboxKind::MailSetRead,
     OutboxKind::MailSetLabels,
+    OutboxKind::MailCreateLabel,
+    OutboxKind::MailDeleteLabel,
     OutboxKind::MailDelete,
     OutboxKind::CalendarRespond,
   ];
@@ -44,7 +49,9 @@ impl OutboxKind {
   pub fn as_str(self) -> &'static str {
     match self {
       Self::CalendarRespond => "calendar.respond",
+      Self::MailCreateLabel => "mail.create_label",
       Self::MailDelete => "mail.delete",
+      Self::MailDeleteLabel => "mail.delete_label",
       Self::MailSend => "mail.send",
       Self::MailSetLabels => "mail.set_labels",
       Self::MailSetRead => "mail.set_read",
@@ -68,7 +75,9 @@ impl FromStr for OutboxKind {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
       "calendar.respond" => Ok(Self::CalendarRespond),
+      "mail.create_label" => Ok(Self::MailCreateLabel),
       "mail.delete" => Ok(Self::MailDelete),
+      "mail.delete_label" => Ok(Self::MailDeleteLabel),
       "mail.send" => Ok(Self::MailSend),
       "mail.set_labels" => Ok(Self::MailSetLabels),
       "mail.set_read" => Ok(Self::MailSetRead),
@@ -203,6 +212,7 @@ pub mod test_support {
 
     fn execute<'a>(
       &'a self,
+      _db: &'a Database,
       _esi: &'a esi::Client,
       _grant: &'a Grant,
       payload: &'a str,
@@ -246,6 +256,8 @@ mod tests {
           "mail.send",
           "mail.set_read",
           "mail.set_labels",
+          "mail.create_label",
+          "mail.delete_label",
           "mail.delete",
           "calendar.respond"
         ]
@@ -389,7 +401,7 @@ mod tests {
       registry
         .handler(OutboxKind::MailSend)
         .unwrap()
-        .execute(&esi, &grant, "{}")
+        .execute(&db, &esi, &grant, "{}")
         .await
         .unwrap();
 
@@ -412,7 +424,7 @@ mod tests {
       let error = registry
         .handler(OutboxKind::MailSend)
         .unwrap()
-        .execute(&esi, &grant, "{}")
+        .execute(&db, &esi, &grant, "{}")
         .await
         .expect_err("primed to fail");
 

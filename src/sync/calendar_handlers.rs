@@ -23,6 +23,7 @@ impl KindHandler for RespondHandler {
 
   fn execute<'a>(
     &'a self,
+    _db: &'a Database,
     esi: &'a esi::Client,
     grant: &'a Grant,
     payload: &'a str,
@@ -200,11 +201,12 @@ mod tests {
         .expect(1)
         .mount(&server)
         .await;
+      let db = store::open_test().await.unwrap();
       let esi = esi_client(&server).await;
       let grant = Grant::new_test("tok", 42);
 
       RespondHandler
-        .execute(&esi, &grant, &payload(42, 7, "accepted", "not_responded"))
+        .execute(&db, &esi, &grant, &payload(42, 7, "accepted", "not_responded"))
         .await
         .unwrap();
     }
@@ -217,11 +219,12 @@ mod tests {
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
+      let db = store::open_test().await.unwrap();
       let esi = esi_client(&server).await;
       let grant = Grant::new_test("tok", 42);
 
       let result = RespondHandler
-        .execute(&esi, &grant, &payload(42, 7, "accepted", "not_responded"))
+        .execute(&db, &esi, &grant, &payload(42, 7, "accepted", "not_responded"))
         .await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));

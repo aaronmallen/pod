@@ -103,7 +103,7 @@ async fn drain_row(
     }
   };
 
-  match handler.execute(esi, &grant, row.payload()).await {
+  match handler.execute(db, esi, &grant, row.payload()).await {
     Ok(()) => match infra::mark_done(db, row.id()).await {
       Ok(()) => {
         emit(Event::OutboxDone {

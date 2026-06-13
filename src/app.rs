@@ -222,6 +222,8 @@ enum Message {
   #[cfg(target_os = "macos")]
   Menu(menu::MenuAction),
   Nav(rail::Destination),
+  // Only constructed by the macOS native menu; the About window has no other entry point yet.
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
   OpenAbout,
   PeriodicPull,
   PeriodicPush,

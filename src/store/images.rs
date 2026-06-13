@@ -43,12 +43,8 @@ pub enum IconResolution {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ImageKind {
-  // AllianceLogo and CorporationLogo are constructed by feature adoptions that land separately; until then they are
-  // resolved/matched but not yet built in a non-test path.
-  #[allow(dead_code)]
   AllianceLogo,
   CharacterPortrait,
-  #[allow(dead_code)]
   CorporationLogo,
 }
 

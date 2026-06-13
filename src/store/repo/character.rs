@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
-  Database, Error,
+  Database, Error, images,
   model::{
     Alliance, Bloodline, Character, CharacterAttributes, CharacterClone, CharacterCloneImplant, CharacterContact,
     CharacterContactLabel, CharacterImplant, CharacterJumpClone, CharacterKillEntry, CharacterNotification,
@@ -1140,10 +1140,7 @@ pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterConta
   .fetch_all(&db.0)
   .await?;
 
-  Ok(CharacterContacts {
-    contacts,
-    labels,
-  })
+  Ok(CharacterContacts::resolved(&images::default_store(), contacts, labels))
 }
 
 pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Result<(), Error> {

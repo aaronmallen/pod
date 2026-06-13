@@ -12,9 +12,13 @@ use super::{
   shared,
 };
 use crate::{
-  store::model::{CharacterContact, character_contacts_view::CharacterContacts},
+  store::{
+    images::ImageState,
+    model::{CharacterContact, character_contacts_view::CharacterContacts},
+  },
   ui::{
     components::{
+      avatar::avatar,
       card,
       empty_state::{LoadStateView, load_state_view},
       eyebrow::eyebrow_text,
@@ -25,6 +29,7 @@ use crate::{
   },
 };
 
+const AVATAR_SIZE: f32 = 30.0;
 const STANDING_WIDTH: f32 = 70.0;
 const TYPE_WIDTH: f32 = 90.0;
 const WATCHLIST_WIDTH: f32 = 80.0;
@@ -198,7 +203,8 @@ pub(in crate::features::character_detail) fn body(
     let shown = visible.min(rows.len());
     let mut card_rows: Vec<Element<'_, Message>> = vec![column_header(sort)];
     for (index, contact) in rows.iter().take(shown).enumerate() {
-      card_rows.push(contact_row(contact, &labels, index == shown - 1));
+      let image = loaded.image(contact.contact_id());
+      card_rows.push(contact_row(contact, image, &labels, index == shown - 1));
     }
     card::panel(Column::with_children(card_rows).width(Length::Fill), false)
   };
@@ -338,16 +344,33 @@ fn column_header<'a>(sort: ContactSort) -> Element<'a, Message> {
     .into()
 }
 
-fn contact_row<'a>(contact: &'a CharacterContact, labels: &HashMap<i64, &'a str>, last: bool) -> Element<'a, Message> {
+fn contact_row<'a>(
+  contact: &'a CharacterContact,
+  image: Option<&ImageState>,
+  labels: &HashMap<i64, &'a str>,
+  last: bool,
+) -> Element<'a, Message> {
   let standing = contact.standing();
   let standing_color = shared::standing_color(standing);
 
-  let entity = text(contact.contact_name().clone())
+  let portrait = avatar(
+    contact.contact_id(),
+    contact.contact_name(),
+    Length::Fixed(AVATAR_SIZE),
+    AVATAR_SIZE,
+    image.and_then(ImageState::path),
+  );
+
+  let name = text(contact.contact_name().clone())
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {
       color: Some(color::text::PRIMARY),
-    })
+    });
+
+  let entity = Row::with_children(vec![portrait, name.into()])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
     .width(Length::Fill);
 
   let kind = text(contact.contact_type().to_uppercase())
@@ -480,14 +503,15 @@ mod tests {
   }
 
   fn loaded() -> CharacterContacts {
-    CharacterContacts {
-      contacts: vec![
+    CharacterContacts::resolved(
+      &crate::store::images::Store::new(std::path::PathBuf::from("/data/images")),
+      vec![
         contact(100, "character", 8.5, true, "[1,2]", "Wingmate"),
         contact(200, "corporation", -5.0, false, "[]", "Hostile Corp"),
         contact(300, "alliance", 0.0, false, "[99]", "Neutral Alliance"),
       ],
-      labels: vec![label(1, "Fleet"), label(2, "Trusted")],
-    }
+      vec![label(1, "Fleet"), label(2, "Trusted")],
+    )
   }
 
   mod body {

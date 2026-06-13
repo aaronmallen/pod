@@ -1,13 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
   clients::{
     Error,
-    esi::models::{character::MailHeader, universe::NameRecord},
+    esi::models::{
+      character::{MailHeader, MailLabels},
+      universe::NameRecord,
+    },
   },
   store::{
     images,
-    model::{CharacterMail, CharacterMailBody, CharacterMailRecipient},
+    model::{
+      CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership, CharacterMailRecipient,
+    },
     repo::{character, mail},
   },
   sync::{job::JobCtx, jobs::names::resolve_names, outcome::Outcome, subject::Subject},
@@ -18,6 +23,8 @@ const CATEGORY_CHARACTER: &str = "character";
 const CATEGORY_CORPORATION: &str = "corporation";
 
 const SYSTEM_ID_CEILING: i64 = 10_000_000;
+
+const SYSTEM_LABELS: [(i64, &str); 4] = [(1, "Inbox"), (2, "Sent"), (4, "Corp"), (8, "Alliance")];
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let Subject::Character(character_id) = ctx.key.subject else {
@@ -34,6 +41,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let authenticated = ctx.esi.character_authenticated(grant);
 
   let headers = authenticated.mail().await?;
+  let label_definitions = authenticated.mail_labels().await?;
 
   let resolver_ids = collect_resolver_ids(&headers);
   let resolved = resolve_names(ctx, &resolver_ids).await?;
@@ -41,6 +49,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   ensure_sender_portraits(ctx, &headers, &resolved).await;
 
   let mut synced = 0usize;
+  let mut persisted = HashSet::new();
   for header in &headers {
     let Some(timestamp) = header.timestamp.clone() else {
       continue;
@@ -82,10 +91,83 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     };
 
     mail::upsert_complete(ctx.db, &mail, &body, &recipients).await?;
+    persisted.insert(header.mail_id);
     synced += 1;
   }
 
+  let labels = build_labels(character_id, &label_definitions, &headers, &persisted);
+  mail::replace_labels_for_character(ctx.db, character_id, &labels).await?;
+
+  let memberships = build_memberships(character_id, &headers, &persisted);
+  mail::replace_membership_for_character(ctx.db, character_id, &memberships).await?;
+
   Ok(Outcome::from_rows(synced))
+}
+
+fn build_labels(
+  character_id: i64,
+  definitions: &MailLabels,
+  headers: &[MailHeader],
+  persisted: &HashSet<i64>,
+) -> Vec<CharacterMailLabel> {
+  let mut by_id = BTreeMap::new();
+  for label in &definitions.labels {
+    by_id.insert(
+      label.label_id,
+      CharacterMailLabel {
+        character_id,
+        color: label.color.clone(),
+        label_id: label.label_id,
+        name: label.name.clone().unwrap_or_else(|| label_name(label.label_id)),
+      },
+    );
+  }
+
+  // ESI's mail/labels endpoint omits system labels (ids 1/2/4/8), but message headers still reference
+  // them and the membership table has a FK to the labels table, so any header-only id must be synthesized.
+  for header in headers {
+    if !persisted.contains(&header.mail_id) {
+      continue;
+    }
+    for &label_id in &header.labels {
+      by_id.entry(label_id).or_insert_with(|| CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id,
+        name: label_name(label_id),
+      });
+    }
+  }
+
+  by_id.into_values().collect()
+}
+
+fn build_memberships(
+  character_id: i64,
+  headers: &[MailHeader],
+  persisted: &HashSet<i64>,
+) -> Vec<CharacterMailLabelMembership> {
+  let mut rows = Vec::new();
+  for header in headers {
+    if !persisted.contains(&header.mail_id) {
+      continue;
+    }
+    for &label_id in &header.labels {
+      rows.push(CharacterMailLabelMembership {
+        character_id,
+        label_id,
+        mail_id: header.mail_id,
+      });
+    }
+  }
+  rows
+}
+
+fn label_name(label_id: i64) -> String {
+  SYSTEM_LABELS
+    .iter()
+    .find(|(id, _)| *id == label_id)
+    .map_or_else(|| format!("Label {label_id}"), |(_, name)| (*name).to_owned())
 }
 
 async fn ensure_sender_portraits(ctx: &JobCtx<'_>, headers: &[MailHeader], resolved: &HashMap<i64, NameRecord>) {
@@ -194,6 +276,14 @@ mod tests {
   async fn mount_json(server: &MockServer, route: &str, body: serde_json::Value) {
     Mock::given(method("GET"))
       .and(path(route))
+      .respond_with(ResponseTemplate::new(200).set_body_json(body))
+      .mount(server)
+      .await;
+  }
+
+  async fn mount_labels(server: &MockServer, body: serde_json::Value) {
+    Mock::given(method("GET"))
+      .and(path("/characters/42/mail/labels/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -311,6 +401,11 @@ mod tests {
         ]),
       )
       .await;
+      mount_labels(
+        &server,
+        serde_json::json!({ "labels": [{ "label_id": 1, "name": "Inbox", "color": "#ffffff" }] }),
+      )
+      .await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
@@ -332,6 +427,13 @@ mod tests {
           .collect::<Vec<_>>(),
         ["Recipient", "Mailing List (9009)"]
       );
+
+      let labels = mail::labels(&fx.db, 42).await.unwrap();
+      assert_eq!(labels.len(), 1);
+      assert_eq!(labels[0].label_id(), 1);
+      assert_eq!(labels[0].name(), "Inbox");
+      assert_eq!(labels[0].color().as_deref(), Some("#ffffff"));
+      assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [1]);
     }
 
     #[tokio::test]
@@ -360,6 +462,7 @@ mod tests {
         ]),
       )
       .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
@@ -401,6 +504,7 @@ mod tests {
         serde_json::json!([{ "category": "character", "id": 42, "name": "Pilot" }]),
       )
       .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
@@ -441,6 +545,7 @@ mod tests {
         serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
       )
       .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
@@ -481,6 +586,7 @@ mod tests {
         serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
       )
       .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
       mail::upsert_complete(
@@ -553,6 +659,208 @@ mod tests {
 
       assert!(result.is_err());
       assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_persists_label_definitions_with_color_and_synthesizes_system_labels_from_headers() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/42/mail/",
+        serde_json::json!([
+          { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+            "labels": [1, 16],
+            "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/mail/7/",
+        serde_json::json!({ "body": "<p>Hello</p>" }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Sender" },
+          { "category": "character", "id": 42, "name": "Pilot" },
+        ]),
+      )
+      .await;
+      mount_labels(
+        &server,
+        serde_json::json!({ "labels": [{ "label_id": 16, "name": "Custom", "color": "#660066" }] }),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let labels = mail::labels(&fx.db, 42).await.unwrap();
+      let custom = labels.iter().find(|l| l.label_id() == 16).unwrap();
+      assert_eq!(custom.name(), "Custom");
+      assert_eq!(custom.color().as_deref(), Some("#660066"));
+      let inbox = labels.iter().find(|l| l.label_id() == 1).unwrap();
+      assert_eq!(inbox.name(), "Inbox");
+      assert!(inbox.color().is_none());
+
+      assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [1, 16]);
+    }
+
+    #[tokio::test]
+    async fn it_reconciles_a_removed_label_and_membership_on_resync() {
+      struct Sequenced {
+        first: serde_json::Value,
+        rest: serde_json::Value,
+        calls: Arc<AtomicUsize>,
+      }
+      impl Respond for Sequenced {
+        fn respond(&self, _: &Request) -> ResponseTemplate {
+          let body = if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            &self.first
+          } else {
+            &self.rest
+          };
+          ResponseTemplate::new(200).set_body_json(body)
+        }
+      }
+
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/"))
+        .respond_with(Sequenced {
+          first: serde_json::json!([
+            { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+              "labels": [16, 17],
+              "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+          ]),
+          rest: serde_json::json!([
+            { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+              "labels": [16],
+              "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+          ]),
+          calls: Arc::new(AtomicUsize::new(0)),
+        })
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/labels/"))
+        .respond_with(Sequenced {
+          first: serde_json::json!({ "labels": [
+            { "label_id": 16, "name": "Keep", "color": "#660066" },
+            { "label_id": 17, "name": "Drop", "color": "#ffffff" },
+          ] }),
+          rest: serde_json::json!({ "labels": [{ "label_id": 16, "name": "Keep", "color": "#660066" }] }),
+          calls: Arc::new(AtomicUsize::new(0)),
+        })
+        .mount(&server)
+        .await;
+      mount_json(
+        &server,
+        "/characters/42/mail/7/",
+        serde_json::json!({ "body": "<p>Hello</p>" }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Sender" },
+          { "category": "character", "id": 42, "name": "Pilot" },
+        ]),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(
+        mail::labels(&fx.db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [16, 17]
+      );
+      assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [16, 17]);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(
+        mail::labels(&fx.db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [16]
+      );
+      assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [16]);
+    }
+
+    #[tokio::test]
+    async fn it_preserves_an_optimistic_negative_id_label_through_a_sync() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/42/mail/",
+        serde_json::json!([
+          { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+            "labels": [16],
+            "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/mail/7/",
+        serde_json::json!({ "body": "<p>Hello</p>" }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Sender" },
+          { "category": "character", "id": 42, "name": "Pilot" },
+        ]),
+      )
+      .await;
+      mount_labels(
+        &server,
+        serde_json::json!({ "labels": [{ "label_id": 16, "name": "Keep", "color": "#660066" }] }),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      mail::insert_label(
+        &fx.db,
+        &CharacterMailLabel {
+          character_id: 42,
+          color: Some("#ff0000".to_owned()),
+          label_id: -1,
+          name: "Pending".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(
+        mail::labels(&fx.db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [-1, 16]
+      );
     }
   }
 }

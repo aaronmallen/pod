@@ -164,7 +164,8 @@ pub async fn replace_labels_for_character(
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  sqlx::query("DELETE FROM character_mail_labels WHERE character_id = ?")
+  // label_id < 0 are optimistic rows for pending create-label outbox ops; preserve them across server replaces.
+  sqlx::query("DELETE FROM character_mail_labels WHERE character_id = ? AND label_id >= 0")
     .bind(character_id)
     .execute(&mut *tx)
     .await?;
@@ -200,7 +201,8 @@ pub async fn replace_membership_for_character(
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  sqlx::query("DELETE FROM character_mail_label_membership WHERE character_id = ?")
+  // label_id < 0 are optimistic rows for pending create-label outbox ops; preserve them across server replaces.
+  sqlx::query("DELETE FROM character_mail_label_membership WHERE character_id = ? AND label_id >= 0")
     .bind(character_id)
     .execute(&mut *tx)
     .await?;
@@ -1054,6 +1056,40 @@ mod core_tests {
       super::replace_labels_for_character(&db, 42, &[]).await.unwrap();
 
       assert!(super::membership(&db, 42, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_preserves_optimistic_negative_id_labels_and_membership_across_a_server_replace() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, -1, "Pending", Some("#ff0000")))
+        .await
+        .unwrap();
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "x", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+      super::add_membership(&db, 42, 1, -1).await.unwrap();
+
+      super::replace_labels_for_character(&db, 42, &[label(42, 5, "Inbox", None)])
+        .await
+        .unwrap();
+      super::replace_membership_for_character(&db, 42, &[]).await.unwrap();
+
+      assert_eq!(
+        super::labels(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [-1, 5]
+      );
+      assert_eq!(super::membership(&db, 42, 1).await.unwrap(), [-1]);
     }
   }
 

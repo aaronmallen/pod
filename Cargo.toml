@@ -23,6 +23,22 @@ identifier = "dev.aaronmallen.pod"
 product-name = "Pod"
 resources = ["assets"]
 
+# Force-bundle the GL/EGL/Vulkan *loaders* into the AppImage so wgpu can initialize a backend on
+# Wayland (linuxdeploy excludes these by default). Loaders only — the host supplies the matching
+# driver/ICD (Mesa llvmpipe/lavapipe as the software floor); bundling host drivers is the AppImage
+# footgun ADR-0022 forbids.
+[package.metadata.packager.appimage]
+libs = [
+  "libEGL.so.1",
+  "libGL.so.1",
+  "libGLESv2.so.2",
+  "libGLX.so.0",
+  "libGLdispatch.so.0",
+  "libOpenGL.so.0",
+  "libgbm.so.1",
+  "libvulkan.so.1",
+]
+
 [[package.metadata.packager.deep-link-protocols]]
 schemes = ["eveauth-pod"]
 

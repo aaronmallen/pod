@@ -20,5 +20,11 @@ runs:
       run: |-
         sudo apt-get update -q
         sudo apt-get install -y libgtk-3-dev libxdo-dev
+        # GL/EGL/Vulkan loaders (bundled into the AppImage so wgpu can initialize on Wayland) plus the
+        # Mesa software-GL/Vulkan drivers (llvmpipe/lavapipe) the host provides at runtime. ADR-0022:
+        # ship the loaders, never host-specific GPU drivers/ICDs.
+        sudo apt-get install -y \
+          libgl1 libglx0 libopengl0 libegl1 libgles2 libglvnd0 libgbm1 libvulkan1 \
+          libgl1-mesa-dri libglx-mesa0 libegl-mesa0 mesa-vulkan-drivers
         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
         rustup component add --toolchain nightly-x86_64-unknown-linux-gnu clippy

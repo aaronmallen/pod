@@ -129,6 +129,7 @@ pub enum Message {
   Reloaded(Box<Reloaded>),
   StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
   StandingsClearSearch,
+  StandingsFilterChanged(tabs::standings::StandingsFilter),
   StandingsInsertQuery(String),
   StandingsResults(Box<StandingsResult>),
   StandingsScrolled(f32),
@@ -221,6 +222,7 @@ pub struct State {
   roster: Vec<PickerPilot>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
+  standings_filter: tabs::standings::StandingsFilter,
   standings_generation: u64,
   standings_has_more: bool,
   standings_help_open: bool,
@@ -254,6 +256,7 @@ impl State {
       roster: Vec::new(),
       standings: LoadState::Loading,
       standings_agent_cursor: None,
+      standings_filter: tabs::standings::StandingsFilter::All,
       standings_generation: 0,
       standings_has_more: false,
       standings_help_open: false,
@@ -412,6 +415,10 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         trigger_standings_search(state, db),
         operation::focus(STANDINGS_SEARCH_INPUT_ID),
       ])
+    }
+    Message::StandingsFilterChanged(filter) => {
+      state.standings_filter = filter;
+      Task::none()
     }
     Message::StandingsInsertQuery(fragment) => {
       append_standings_query(state, &fragment);
@@ -1605,6 +1612,22 @@ mod tests {
 
       assert_eq!(state.standings_query, "faction:caldari corp:navy");
       assert!(!state.standings_help_open);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_facet_filter_without_reloading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Corps),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Corps);
+      assert_eq!(state.standings_generation, before, "filtering is in-memory only");
     }
 
     #[tokio::test]

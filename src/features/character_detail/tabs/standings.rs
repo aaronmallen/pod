@@ -19,6 +19,7 @@ use crate::{
       eyebrow::eyebrow,
       meter, rule,
       section_header::section_header,
+      segmented::segment_button_style,
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -53,13 +54,45 @@ const SEARCH_ICON_SIZE: f32 = 14.0;
 const STANDING_BAR_HEIGHT: f32 = 6.0;
 const STANDING_BAR_WIDTH: f32 = 160.0;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StandingsFilter {
+  Agents,
+  #[default]
+  All,
+  Corps,
+  Factions,
+  Other,
+}
+
+impl StandingsFilter {
+  const SEGMENTS: [(StandingsFilter, &'static str); 5] = [
+    (StandingsFilter::All, "All"),
+    (StandingsFilter::Factions, "Factions"),
+    (StandingsFilter::Corps, "Corps"),
+    (StandingsFilter::Agents, "Agents"),
+    (StandingsFilter::Other, "Other"),
+  ];
+
+  fn matches(self, row: &StandingsRow) -> bool {
+    match self {
+      StandingsFilter::Agents => row.kind == StandingKind::Agent && !is_other(row),
+      StandingsFilter::All => true,
+      StandingsFilter::Corps => row.kind == StandingKind::Corporation && !is_other(row),
+      StandingsFilter::Factions => row.kind == StandingKind::Faction,
+      StandingsFilter::Other => is_other(row),
+    }
+  }
+}
+
 pub(crate) fn body<'a>(
   catalog: &'a LoadState<Vec<StandingsRow>>,
   query: &'a str,
+  filter: StandingsFilter,
   has_filters: bool,
 ) -> Element<'a, Message> {
   let bar = search_bar(query, has_filters);
   let preview = query_preview(query);
+  let facets = segmented(filter);
 
   let rows = match catalog {
     LoadState::Loaded(rows) => rows,
@@ -67,16 +100,17 @@ pub(crate) fn body<'a>(
       return stacked(
         bar,
         preview,
+        facets,
         load_state_view(LoadStateView::Loading("Loading standings\u{2026}")),
       );
     }
     LoadState::Error(error) => {
-      return stacked(bar, preview, load_state_view(LoadStateView::Error(error)));
+      return stacked(bar, preview, facets, load_state_view(LoadStateView::Error(error)));
     }
   };
 
   if rows.is_empty() {
-    return stacked(bar, preview, no_results(has_filters));
+    return stacked(bar, preview, facets, no_results(has_filters));
   }
 
   let mut sections: Vec<Element<'a, Message>> = Vec::new();
@@ -85,14 +119,17 @@ pub(crate) fn body<'a>(
     (StandingKind::Corporation, "Corporations"),
     (StandingKind::Agent, "Agents"),
   ] {
-    let group: Vec<&StandingsRow> = rows.iter().filter(|row| row.kind == kind && !is_other(row)).collect();
+    let group: Vec<&StandingsRow> = rows
+      .iter()
+      .filter(|row| row.kind == kind && !is_other(row) && filter.matches(row))
+      .collect();
     if group.is_empty() {
       continue;
     }
     sections.push(section(label, &group, has_filters));
   }
 
-  let other: Vec<&StandingsRow> = rows.iter().filter(|row| is_other(row)).collect();
+  let other: Vec<&StandingsRow> = rows.iter().filter(|row| is_other(row) && filter.matches(row)).collect();
   if !other.is_empty() {
     sections.push(section("Other", &other, has_filters));
   }
@@ -101,7 +138,7 @@ pub(crate) fn body<'a>(
     .spacing(spacing::SPACE_6)
     .width(Length::Fill);
 
-  stacked(bar, preview, groups.into())
+  stacked(bar, preview, facets, groups.into())
 }
 
 pub(crate) fn help_popover<'a>() -> Element<'a, Message> {
@@ -608,6 +645,50 @@ fn search_bar<'a>(query: &str, has_filters: bool) -> Element<'a, Message> {
     .into()
 }
 
+fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
+  let mut buttons: Vec<Element<'a, Message>> = Vec::with_capacity(StandingsFilter::SEGMENTS.len());
+  for (filter, label) in StandingsFilter::SEGMENTS {
+    let selected = filter == active;
+    let label_color = if selected {
+      color::accent::PLASMA
+    } else {
+      color::text::secondary()
+    };
+    buttons.push(
+      button(
+        text(label)
+          .font(typography::body::MEDIUM)
+          .size(typography::size::SM)
+          .style(move |_| text::Style {
+            color: Some(label_color),
+          }),
+      )
+      .padding(Padding {
+        top: spacing::UNIT + 1.0,
+        right: spacing::SPACE_3,
+        bottom: spacing::UNIT + 1.0,
+        left: spacing::SPACE_3,
+      })
+      .on_press(Message::StandingsFilterChanged(filter))
+      .style(move |_, status| segment_button_style(selected, status))
+      .into(),
+    );
+  }
+
+  container(Row::with_children(buttons).spacing(2.0))
+    .padding(2.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.08),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
 fn section<'a>(label: &'a str, rows: &[&'a StandingsRow], has_filters: bool) -> Element<'a, Message> {
   let suffix = if has_filters { "matched" } else { "tracked" };
   let header = section_header(label, Some(&format!("{} {suffix}", rows.len())));
@@ -631,12 +712,14 @@ fn section_label<'a>(label: &str) -> Element<'a, Message> {
 fn stacked<'a>(
   bar: Element<'a, Message>,
   preview: Option<Element<'a, Message>>,
+  facets: Element<'a, Message>,
   content: Element<'a, Message>,
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![bar];
   if let Some(preview) = preview {
     children.push(preview);
   }
+  children.push(facets);
   children.push(content);
 
   Column::with_children(children)
@@ -704,7 +787,7 @@ mod tests {
       ];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, "", false);
+      let _el: Element<'_, Message> = body(&catalog, "", StandingsFilter::All, false);
     }
 
     #[test]
@@ -712,7 +795,28 @@ mod tests {
       let rows = vec![agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true))];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, "level:4", true);
+      let _el: Element<'_, Message> = body(&catalog, "level:4", StandingsFilter::All, true);
+    }
+
+    #[test]
+    fn it_renders_each_facet_filter() {
+      let rows = vec![
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
+        agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
+      ];
+      let catalog = LoadState::Loaded(rows);
+
+      for filter in [
+        StandingsFilter::All,
+        StandingsFilter::Factions,
+        StandingsFilter::Corps,
+        StandingsFilter::Agents,
+        StandingsFilter::Other,
+      ] {
+        let _el: Element<'_, Message> = body(&catalog, "", filter, false);
+      }
     }
 
     #[test]
@@ -721,9 +825,64 @@ mod tests {
       let error: LoadState<Vec<StandingsRow>> = LoadState::Error("boom".to_owned());
       let empty = LoadState::Loaded(Vec::new());
 
-      let _loading: Element<'_, Message> = body(&loading, "", false);
-      let _error: Element<'_, Message> = body(&error, "", false);
-      let _empty: Element<'_, Message> = body(&empty, "faction:none", true);
+      let _loading: Element<'_, Message> = body(&loading, "", StandingsFilter::All, false);
+      let _error: Element<'_, Message> = body(&error, "", StandingsFilter::All, false);
+      let _empty: Element<'_, Message> = body(&empty, "faction:none", StandingsFilter::All, true);
+    }
+  }
+
+  mod filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn catalog() -> Vec<StandingsRow> {
+      vec![
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
+        agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
+        agent(3_000_002, "Rogue Agent", None, Some(false)),
+      ]
+    }
+
+    fn matched(filter: StandingsFilter) -> usize {
+      catalog().iter().filter(|row| filter.matches(row)).count()
+    }
+
+    #[test]
+    fn it_passes_everything_for_all() {
+      assert_eq!(matched(StandingsFilter::All), 5);
+    }
+
+    #[test]
+    fn it_keeps_only_factions() {
+      assert_eq!(matched(StandingsFilter::Factions), 1);
+    }
+
+    #[test]
+    fn it_keeps_factioned_corps_but_not_factionless_ones() {
+      assert_eq!(matched(StandingsFilter::Corps), 1);
+
+      assert!(StandingsFilter::Corps.matches(&row(1, StandingKind::Corporation, "Navy", Some(500_001), 0.0)));
+      assert!(!StandingsFilter::Corps.matches(&row(2, StandingKind::Corporation, "Doomheim", None, 0.0)));
+    }
+
+    #[test]
+    fn it_keeps_factioned_agents_but_not_factionless_ones() {
+      assert_eq!(matched(StandingsFilter::Agents), 1);
+
+      assert!(StandingsFilter::Agents.matches(&agent(1, "A", Some(500_001), None)));
+      assert!(!StandingsFilter::Agents.matches(&agent(2, "B", None, None)));
+    }
+
+    #[test]
+    fn it_keeps_only_the_other_bucket() {
+      assert_eq!(matched(StandingsFilter::Other), 2);
+
+      assert!(StandingsFilter::Other.matches(&row(1, StandingKind::Corporation, "Doomheim", None, 0.0)));
+      assert!(StandingsFilter::Other.matches(&agent(2, "Rogue", None, None)));
+      assert!(!StandingsFilter::Other.matches(&row(3, StandingKind::Faction, "Caldari State", Some(500_001), 0.0)));
     }
   }
 

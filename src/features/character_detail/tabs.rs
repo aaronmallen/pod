@@ -120,7 +120,12 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
       ),
       Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
       Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
-      Tab::Standings => standings::body(&state.standings, state.standings_query(), state.standings_has_filters()),
+      Tab::Standings => standings::body(
+        &state.standings,
+        state.standings_query(),
+        state.standings_filter,
+        state.standings_has_filters(),
+      ),
     }
   } else {
     forbidden::forbidden(

@@ -3,37 +3,26 @@ pub(super) mod contacts;
 pub(super) mod killlog;
 pub(super) mod notifications;
 mod shared;
+pub(crate) mod standings;
 
 use iced::{
   Element, Length, Padding,
-  alignment::Vertical,
-  widget::{Column, Row, container, scrollable, text},
+  widget::{Column, container, scrollable},
 };
 
-use super::{LoadState, Message, State};
+use super::{Message, State};
 use crate::{
   config::Feature,
   features::registry,
-  store::model::CharacterStanding,
   ui::{
     components::{
-      card,
-      empty_state::{LoadStateView, empty_state, load_state_view},
-      forbidden, meter, rule,
-      section_header::section_header,
+      forbidden, rule,
       tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
     },
-    style::{color, spacing, typography},
+    style::spacing,
   },
 };
 
-const GROUPS: [(&str, &str); 3] = [
-  ("faction", "Factions"),
-  ("npc_corp", "Corporations"),
-  ("agent", "Agents"),
-];
-const STANDING_BAR_HEIGHT: f32 = 6.0;
-const STANDING_BAR_WIDTH: f32 = 160.0;
 const TAB_BODY_PADDING: f32 = 28.0;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
 
@@ -126,7 +115,7 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
       Tab::Contacts => contacts::body(&state.contacts, state.contact_filter, state.contact_sort),
       Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
       Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
-      Tab::Standings => standings_body(&state.standings),
+      Tab::Standings => standings::body(&state.standings, state.standings_query(), state.standings_has_filters()),
     }
   } else {
     forbidden::forbidden(
@@ -149,111 +138,10 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   .into()
 }
 
-fn standings_body(standings: &LoadState<Vec<CharacterStanding>>) -> Element<'_, Message> {
-  let rows = match standings {
-    LoadState::Loaded(rows) => rows,
-    LoadState::Loading => return load_state_view(LoadStateView::Loading("Loading standings\u{2026}")),
-    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
-  };
-  if rows.is_empty() {
-    return load_state_view(LoadStateView::Empty(empty_state("No standings recorded")));
-  }
-
-  let mut sections: Vec<Element<'_, Message>> = Vec::new();
-  for (key, label) in GROUPS {
-    let group: Vec<&CharacterStanding> = rows.iter().filter(|row| row.from_type() == key).collect();
-    if group.is_empty() {
-      continue;
-    }
-    sections.push(standings_section(label, &group));
-  }
-  let other: Vec<&CharacterStanding> = rows
-    .iter()
-    .filter(|row| !GROUPS.iter().any(|(key, _)| *key == row.from_type()))
-    .collect();
-  if !other.is_empty() {
-    sections.push(standings_section("Other", &other));
-  }
-
-  Column::with_children(sections)
-    .spacing(spacing::SPACE_6)
-    .width(Length::Fill)
-    .into()
-}
-
-fn standings_section<'a>(label: &'a str, rows: &[&'a CharacterStanding]) -> Element<'a, Message> {
-  let eyebrow = section_header(label, Some(&format!("{} tracked", rows.len())));
-
-  let mut card_rows: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len());
-  for (index, row) in rows.iter().enumerate() {
-    card_rows.push(standing_row(row, index == rows.len() - 1));
-  }
-  let card = card::panel(Column::with_children(card_rows).width(Length::Fill), false);
-
-  Column::with_children(vec![eyebrow, card])
-    .spacing(spacing::SPACE_2_5)
-    .width(Length::Fill)
-    .into()
-}
-
-fn standing_row<'a>(row: &CharacterStanding, last: bool) -> Element<'a, Message> {
-  let value = row.standing();
-  let accent = shared::standing_color(value);
-
-  let name = text(row.from_name().clone())
-    .font(typography::body::REGULAR)
-    .size(typography::size::MD)
-    .style(|_| text::Style {
-      color: Some(color::text::PRIMARY),
-    })
-    .width(Length::Fill);
-
-  let signed = text(format!("{}{:.2}", if value >= 0.0 { "+" } else { "" }, value))
-    .font(typography::mono::MEDIUM)
-    .size(typography::size::MD)
-    .style(move |_| text::Style {
-      color: Some(accent),
-    });
-
-  let bar = meter::diverging(
-    value,
-    shared::STANDING_MAX,
-    accent,
-    STANDING_BAR_WIDTH,
-    STANDING_BAR_HEIGHT,
-  );
-  let inner = Row::with_children(vec![name.into(), signed.into(), bar])
-    .spacing(spacing::SPACE_3)
-    .align_y(Vertical::Center)
-    .width(Length::Fill);
-
-  let border_bottom = if last { 0.0 } else { 1.0 };
-  container(inner)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_2_5,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_2_5,
-      left: spacing::SPACE_3_5,
-    })
-    .style(move |_| shared::row_rule_style(border_bottom))
-    .into()
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
   use crate::clients::esi::scopes;
-
-  fn standing(from_id: i64, from_type: &str, value: f64) -> CharacterStanding {
-    CharacterStanding {
-      character_id: 42,
-      from_id,
-      from_name: format!("Entity {from_id}"),
-      from_type: from_type.to_owned(),
-      standing: value,
-    }
-  }
 
   mod enabled_tabs {
     use pretty_assertions::assert_eq;
@@ -363,33 +251,6 @@ mod tests {
         Tab::Standings.required_scopes()
       ));
       let _el: Element<'_, Message> = tab_body(&state);
-    }
-  }
-
-  mod standings_body {
-    use super::*;
-
-    #[test]
-    fn it_renders_grouped_standings() {
-      let loaded = LoadState::Loaded(vec![
-        standing(500_001, "faction", 6.0),
-        standing(1_000_125, "npc_corp", -3.0),
-        standing(3_000_100, "agent", 1.2),
-        standing(9_999, "unknown_type", 0.0),
-      ]);
-
-      let _el: Element<'_, Message> = standings_body(&loaded);
-    }
-
-    #[test]
-    fn it_renders_the_empty_and_error_states() {
-      let empty = LoadState::Loaded(Vec::new());
-      let loading: LoadState<Vec<CharacterStanding>> = LoadState::Loading;
-      let error: LoadState<Vec<CharacterStanding>> = LoadState::Error("boom".to_owned());
-
-      let _empty: Element<'_, Message> = standings_body(&empty);
-      let _loading: Element<'_, Message> = standings_body(&loading);
-      let _error: Element<'_, Message> = standings_body(&error);
     }
   }
 }

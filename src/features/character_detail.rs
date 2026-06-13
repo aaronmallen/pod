@@ -1,10 +1,12 @@
 mod header;
 mod tabs;
 
+use std::time::Duration;
+
 use iced::{
   Element, Length, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Stack, container, text},
+  widget::{Column, Stack, container, operation, text},
 };
 
 pub use self::tabs::Tab;
@@ -12,26 +14,36 @@ use self::tabs::{
   killlog::{KillLogEntry, KilllogFilter},
   notifications::NotificationsFilter,
 };
+pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   config::Feature,
   store::{
     Database, images,
     model::{
-      CharacterNotification, CharacterStanding, CharacterState, OwnerType, character_clone_view::CharacterClones,
+      CharacterNotification, CharacterState, OwnerType, character_clone_view::CharacterClones,
       character_contacts_view::CharacterContacts,
     },
-    repo::{character, infra, org, sde},
+    repo::{character, infra, org, sde, standings},
   },
   sync::JobKind,
   ui::{
-    components::{backdrop, positioned_dropdown::positioned_dropdown},
+    components::{
+      backdrop,
+      positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
+    },
     style::{color, spacing, typography},
   },
 };
 
+pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "standings-search-input";
+
 const HEADER_SIDE_PADDING: f32 = 28.0;
-const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
+const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
+const SEARCH_DEBOUNCE_MS: u64 = 200;
+const STANDINGS_CATALOG_LIMIT: i64 = 500;
+const STANDINGS_HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + TAB_STRIP_OVERLAY_OFFSET;
+const TAB_STRIP_OVERLAY_OFFSET: f32 = 96.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DetailDataType {
@@ -87,7 +99,6 @@ pub struct Loaded {
   pub killlog: LoadState<Vec<KillLogEntry>>,
   pub notifications: LoadState<Vec<CharacterNotification>>,
   pub roster: Vec<PickerPilot>,
-  pub standings: LoadState<Vec<CharacterStanding>>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +121,11 @@ pub enum Message {
   #[allow(dead_code)]
   ReauthRequested(i64),
   Reloaded(Box<Reloaded>),
+  StandingsClearSearch,
+  StandingsInsertQuery(String),
+  StandingsResults(Box<StandingsResult>),
+  StandingsSearchChanged(String),
+  StandingsToggleHelp,
   TabChanged(Tab),
 }
 
@@ -130,7 +146,34 @@ pub enum Reloaded {
   Contacts(LoadState<CharacterContacts>),
   Killlog(LoadState<Vec<KillLogEntry>>),
   Notifications(LoadState<Vec<CharacterNotification>>),
-  Standings(LoadState<Vec<CharacterStanding>>),
+  /// Payload-less, unlike the other variants: a standings reload re-runs the catalog query (preserving the active
+  /// search) rather than carrying rows.
+  Standings,
+}
+
+#[derive(Clone, Debug)]
+pub struct StandingsRow {
+  pub accessible: Option<bool>,
+  pub agent_type: Option<String>,
+  pub division: Option<String>,
+  pub effective: f64,
+  pub faction_id: Option<i64>,
+  pub id: i64,
+  pub image: images::ImageState,
+  pub kind: StandingKind,
+  pub level: Option<i64>,
+  pub name: String,
+  pub raw: f64,
+  pub region: Option<String>,
+  pub system: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StandingsResult {
+  /// Snapshot of `State::standings_generation` at dispatch; results whose generation no longer matches are stale
+  /// (superseded by a newer debounced search) and discarded.
+  generation: u64,
+  result: Result<Vec<StandingsRow>, String>,
 }
 
 #[derive(Debug)]
@@ -150,7 +193,10 @@ pub struct State {
   notifications_filter: NotificationsFilter,
   picker_open: bool,
   roster: Vec<PickerPilot>,
-  standings: LoadState<Vec<CharacterStanding>>,
+  standings: LoadState<Vec<StandingsRow>>,
+  standings_generation: u64,
+  standings_help_open: bool,
+  standings_query: String,
 }
 
 impl State {
@@ -174,6 +220,9 @@ impl State {
       picker_open: false,
       roster: Vec::new(),
       standings: LoadState::Loading,
+      standings_generation: 0,
+      standings_help_open: false,
+      standings_query: String::new(),
     }
   }
 
@@ -187,11 +236,15 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    self
+    let mut keys: Vec<(images::ImageKind, i64)> = self
       .roster
       .iter()
       .filter_map(|pilot| pilot.portrait.stale_key())
-      .collect()
+      .collect();
+    if let LoadState::Loaded(rows) = &self.standings {
+      keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
+    }
+    keys
   }
 
   pub fn sync_features(&mut self, features: &[Feature]) {
@@ -211,6 +264,14 @@ impl State {
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
     self.granted_scopes.as_deref()
+  }
+
+  pub(super) fn standings_has_filters(&self) -> bool {
+    !self.standings_query.trim().is_empty()
+  }
+
+  pub(super) fn standings_query(&self) -> &str {
+    &self.standings_query
   }
 }
 
@@ -262,7 +323,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         killlog,
         notifications,
         roster,
-        standings,
       } = *loaded;
       state.clones = clones;
       state.contacts = contacts;
@@ -271,28 +331,142 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.killlog = killlog;
       state.notifications = notifications;
       state.roster = roster;
-      state.standings = standings;
-      Task::none()
+      trigger_standings_search(state, db)
     }
-    Message::Reloaded(reloaded) => {
-      match *reloaded {
-        Reloaded::Clones(clones) => state.clones = clones,
-        Reloaded::Contacts(contacts) => state.contacts = contacts,
-        Reloaded::Killlog(killlog) => state.killlog = killlog,
-        Reloaded::Notifications(notifications) => state.notifications = notifications,
-        Reloaded::Standings(standings) => state.standings = standings,
+    Message::Reloaded(reloaded) => match *reloaded {
+      Reloaded::Clones(clones) => {
+        state.clones = clones;
+        Task::none()
       }
-      Task::none()
-    }
+      Reloaded::Contacts(contacts) => {
+        state.contacts = contacts;
+        Task::none()
+      }
+      Reloaded::Killlog(killlog) => {
+        state.killlog = killlog;
+        Task::none()
+      }
+      Reloaded::Notifications(notifications) => {
+        state.notifications = notifications;
+        Task::none()
+      }
+      Reloaded::Standings => trigger_standings_search(state, db),
+    },
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
     }
     Message::ReauthRequested(_) => Task::none(),
+    Message::StandingsClearSearch => {
+      state.standings_query.clear();
+      Task::batch([
+        trigger_standings_search(state, db),
+        operation::focus(STANDINGS_SEARCH_INPUT_ID),
+      ])
+    }
+    Message::StandingsInsertQuery(fragment) => {
+      append_standings_query(state, &fragment);
+      state.standings_help_open = false;
+      Task::batch([
+        trigger_standings_search(state, db),
+        operation::focus(STANDINGS_SEARCH_INPUT_ID),
+      ])
+    }
+    Message::StandingsResults(results) => {
+      let StandingsResult {
+        generation,
+        result,
+      } = *results;
+      if generation == state.standings_generation {
+        state.standings = match result {
+          Ok(rows) => LoadState::Loaded(rows),
+          Err(error) => LoadState::Error(error),
+        };
+      }
+      Task::none()
+    }
+    Message::StandingsSearchChanged(query) => {
+      state.standings_query = query;
+      trigger_standings_search(state, db)
+    }
+    Message::StandingsToggleHelp => {
+      state.standings_help_open = !state.standings_help_open;
+      Task::none()
+    }
     Message::TabChanged(tab) => {
       state.active_tab = tab;
       Task::none()
     }
+  }
+}
+
+fn append_standings_query(state: &mut State, fragment: &str) {
+  let trimmed = state.standings_query.trim_end();
+  state.standings_query = if trimmed.is_empty() {
+    fragment.to_owned()
+  } else {
+    format!("{trimmed} {fragment}")
+  };
+}
+
+fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
+  state.standings_generation = state.standings_generation.wrapping_add(1);
+  state.standings = LoadState::Loading;
+  run_standings_search(
+    db.clone(),
+    state.active,
+    state.standings_query.clone(),
+    state.standings_generation,
+  )
+}
+
+fn run_standings_search(db: Database, character_id: i64, query: String, generation: u64) -> Task<Message> {
+  Task::perform(
+    async move {
+      tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+      load_standings_catalog(&db, character_id, &query).await
+    },
+    move |result| {
+      Message::StandingsResults(Box::new(StandingsResult {
+        generation,
+        result,
+      }))
+    },
+  )
+}
+
+async fn load_standings_catalog(db: &Database, character_id: i64, query: &str) -> Result<Vec<StandingsRow>, String> {
+  let parsed = standings::parse(query);
+  let rows = standings::catalog(db, character_id, &parsed, Some(STANDINGS_CATALOG_LIMIT))
+    .await
+    .map_err(|error| error.to_string())?;
+
+  let store = images::default_store();
+  Ok(rows.into_iter().map(|row| standings_row(&store, row)).collect())
+}
+
+fn standings_row(store: &images::Store, row: standings::CatalogRow) -> StandingsRow {
+  let (image_kind, image_id) = match row.kind {
+    StandingKind::Agent => (images::ImageKind::CharacterPortrait, row.id),
+    StandingKind::Corporation => (images::ImageKind::CorporationLogo, row.id),
+    // A faction has no logo of its own; use its corporation's, falling back to the faction id.
+    StandingKind::Faction => (images::ImageKind::CorporationLogo, row.corporation_id.unwrap_or(row.id)),
+  };
+
+  StandingsRow {
+    accessible: row.accessible,
+    agent_type: row.agent_type,
+    division: row.division,
+    effective: row.effective_standing,
+    faction_id: row.faction_id,
+    id: row.id,
+    image: images::resolve(store, image_kind, image_id),
+    kind: row.kind,
+    level: row.level,
+    name: row.name,
+    raw: row.raw_standing,
+    region: row.region_name,
+    system: row.system_name,
   }
 }
 
@@ -330,6 +504,23 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .into();
   }
 
+  if state.standings_help_open && state.active_tab == Tab::Standings {
+    let popover = positioned_dropdown_right(
+      tabs::standings::help_popover(),
+      STANDINGS_HELP_OVERLAY_TOP,
+      HEADER_SIDE_PADDING,
+    );
+
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::click_catcher(Message::StandingsToggleHelp),
+      popover,
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
   base.into()
 }
 
@@ -358,10 +549,6 @@ async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded
   };
   let killlog = load_killlog(&db, character_id).await;
   let notifications = load_notifications(&db, character_id).await;
-  let standings = match character::standings(&db, character_id).await {
-    Ok(rows) => LoadState::Loaded(rows),
-    Err(error) => LoadState::Error(error.to_string()),
-  };
   let granted_scopes = load_granted_scopes(&db, character_id).await;
 
   Loaded {
@@ -372,7 +559,6 @@ async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded
     killlog,
     notifications,
     roster,
-    standings,
   }
 }
 
@@ -469,10 +655,7 @@ async fn reload_type(db: Database, character_id: i64, data_type: DetailDataType)
     }),
     DetailDataType::Killlog => Reloaded::Killlog(load_killlog(&db, character_id).await),
     DetailDataType::Notifications => Reloaded::Notifications(load_notifications(&db, character_id).await),
-    DetailDataType::Standings => Reloaded::Standings(match character::standings(&db, character_id).await {
-      Ok(rows) => LoadState::Loaded(rows),
-      Err(error) => LoadState::Error(error.to_string()),
-    }),
+    DetailDataType::Standings => Reloaded::Standings,
   }
 }
 
@@ -702,13 +885,24 @@ mod tests {
     }
   }
 
-  fn standing(from_id: i64, from_type: &str, value: f64) -> CharacterStanding {
-    CharacterStanding {
-      character_id: 42,
-      from_id,
-      from_name: format!("Entity {from_id}"),
-      from_type: from_type.to_owned(),
-      standing: value,
+  fn standings_row_fixture(id: i64, kind: StandingKind, value: f64) -> StandingsRow {
+    StandingsRow {
+      accessible: None,
+      agent_type: None,
+      division: None,
+      effective: value,
+      faction_id: Some(500_001),
+      id,
+      image: images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      },
+      kind,
+      level: None,
+      name: format!("Entity {id}"),
+      raw: value,
+      region: None,
+      system: None,
     }
   }
 
@@ -729,8 +923,8 @@ mod tests {
     state.granted_scopes = Some(all_character_scopes());
     state.roster = vec![pilot(active, "Test Pilot"), pilot(7, "Wingmate")];
     state.standings = LoadState::Loaded(vec![
-      standing(500_001, "faction", 5.0),
-      standing(1_000_125, "npc_corp", -2.5),
+      standings_row_fixture(500_001, StandingKind::Faction, 5.0),
+      standings_row_fixture(1_000_125, StandingKind::Corporation, -2.5),
     ]);
     state.head = HeadStats {
       docked: true,
@@ -910,6 +1104,117 @@ mod tests {
     }
   }
 
+  mod standings_search {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_records_the_query_and_advances_the_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::StandingsSearchChanged("faction:caldari".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.standings_query, "faction:caldari");
+      assert_eq!(state.standings_generation, 1);
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_query_and_re_runs_the_default_catalog() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let _ = update(&mut state, Message::StandingsSearchChanged("corp:navy".to_owned()), &db);
+
+      let _ = update(&mut state, Message::StandingsClearSearch, &db);
+
+      assert!(state.standings_query.is_empty());
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_appends_an_inserted_fragment_and_closes_the_help() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      state.standings_help_open = true;
+      state.standings_query = "faction:caldari".to_owned();
+
+      let _ = update(&mut state, Message::StandingsInsertQuery("corp:navy".to_owned()), &db);
+
+      assert_eq!(state.standings_query, "faction:caldari corp:navy");
+      assert!(!state.standings_help_open);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_help_popover() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
+      assert!(state.standings_help_open);
+
+      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
+      assert!(!state.standings_help_open);
+    }
+
+    #[tokio::test]
+    async fn it_applies_results_only_for_the_current_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      state.standings_generation = 5;
+
+      let stale = StandingsResult {
+        generation: 4,
+        result: Ok(Vec::new()),
+      };
+      let _ = update(&mut state, Message::StandingsResults(Box::new(stale)), &db);
+      assert!(matches!(state.standings, LoadState::Loading), "stale result is dropped");
+
+      let fresh = StandingsResult {
+        generation: 5,
+        result: Ok(vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)]),
+      };
+      let _ = update(&mut state, Message::StandingsResults(Box::new(fresh)), &db);
+
+      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 1));
+    }
+  }
+
+  mod load_standings_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_faction(db: &Database) {
+      sqlx::query(
+        "INSERT INTO factions (id, corporation_id, description, is_unique, name, size_factor, station_count, \
+        station_system_count) VALUES (500001, 1000099, '', 1, 'Caldari State', 1.0, 0, 0)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_maps_a_faction_to_a_corporation_logo_of_its_corporation_id() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_faction(&db).await;
+
+      let rows = load_standings_catalog(&db, 42, "").await.unwrap();
+      let faction = rows.iter().find(|row| row.name == "Caldari State").unwrap();
+
+      assert_eq!(faction.kind, StandingKind::Faction);
+      let resolved = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, 1_000_099);
+      assert_eq!(faction.image.stale_key(), resolved.stale_key());
+      assert_eq!(faction.image.path(), resolved.path());
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -1082,20 +1387,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_replaces_a_standings_reload() {
+    async fn it_retriggers_the_standings_catalog_on_a_standings_reload() {
       let db = store::open_test().await.unwrap();
       let mut state = loaded_state(42);
+      let before = state.standings_generation;
 
-      let _ = update(
-        &mut state,
-        Message::Reloaded(Box::new(Reloaded::Standings(LoadState::Loaded(Vec::new())))),
-        &db,
-      );
+      let _ = update(&mut state, Message::Reloaded(Box::new(Reloaded::Standings)), &db);
 
       assert!(
-        matches!(state.standings, LoadState::Loaded(ref rows) if rows.is_empty()),
-        "standings replaced"
+        matches!(state.standings, LoadState::Loading),
+        "a standings reload re-runs the catalog query"
       );
+      assert_eq!(state.standings_generation, before + 1);
     }
   }
 
@@ -1219,7 +1522,6 @@ mod tests {
         killlog: LoadState::Loaded(Vec::new()),
         notifications: LoadState::Loaded(Vec::new()),
         roster: vec![pilot(42, "Pilot")],
-        standings: LoadState::Loaded(Vec::new()),
       };
 
       let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
@@ -1227,6 +1529,10 @@ mod tests {
       assert_eq!(state.roster.len(), 1);
       assert_eq!(state.head.total_sp, Some(1_000));
       assert!(matches!(state.clones, LoadState::Loaded(None)));
+      assert!(
+        matches!(state.standings, LoadState::Loading),
+        "a full load kicks off the standings catalog query"
+      );
     }
   }
 
@@ -1396,7 +1702,6 @@ mod tests {
       assert!(matches!(loaded.contacts, LoadState::Loaded(_)));
       assert!(matches!(loaded.killlog, LoadState::Loaded(ref rows) if rows.len() == 1));
       assert!(matches!(loaded.notifications, LoadState::Loaded(_)));
-      assert!(matches!(loaded.standings, LoadState::Loaded(_)));
     }
 
     #[tokio::test]
@@ -1477,7 +1782,7 @@ mod tests {
       ));
       assert!(matches!(
         reload_type(db.clone(), 42, DetailDataType::Standings).await,
-        Reloaded::Standings(LoadState::Loaded(_))
+        Reloaded::Standings
       ));
     }
   }

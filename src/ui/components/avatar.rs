@@ -138,12 +138,14 @@ fn portrait_image<'a, M>(path: PathBuf, width: Length, height: f32) -> Element<'
 where
   M: 'a,
 {
-  container(
+  container(super::clip::clip_layer(
     image(image::Handle::from_path(path))
       .width(Length::Fill)
       .height(Length::Fill)
       .content_fit(ContentFit::Cover),
-  )
+    Length::Fill,
+    Length::Fill,
+  ))
   .width(width)
   .height(Length::Fixed(height))
   .clip(true)

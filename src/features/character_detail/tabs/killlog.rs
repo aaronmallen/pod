@@ -16,6 +16,7 @@ use crate::{
     components::{
       badge::badge,
       card,
+      clip::clip_layer,
       empty_state::{LoadStateView, empty_state, load_state_view},
       eyebrow::eyebrow_text,
       icon_tile::icon_tile,
@@ -389,10 +390,14 @@ fn color_bar<'a>(accent: iced::Color) -> Element<'a, Message> {
 fn ship_icon<'a>(ship_type_id: i64) -> Element<'a, Message> {
   match images::default_store().resolve_type_icon(ship_type_id, None, SHIP_ICON_SIZE) {
     IconResolution::Found(path) => icon_tile(
-      image(image::Handle::from_path(path))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .content_fit(ContentFit::Cover),
+      clip_layer(
+        image(image::Handle::from_path(path))
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .content_fit(ContentFit::Cover),
+        Length::Fill,
+        Length::Fill,
+      ),
       SHIP_ICON_BOX,
     ),
     IconResolution::Missing => icon_tile(Space::new(), SHIP_ICON_BOX),

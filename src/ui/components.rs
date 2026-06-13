@@ -3,6 +3,7 @@ pub mod backdrop;
 pub mod badge;
 pub mod card;
 pub mod chip;
+pub mod clip;
 pub mod color_picker;
 pub mod confirm_modal;
 pub mod context_menu;

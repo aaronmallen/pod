@@ -1,3 +1,4 @@
+mod graphics;
 mod snooze_scheduler;
 mod windows;
 
@@ -59,10 +60,10 @@ const FILE_FILTER: &str = "warn,\
   hyper=warn,\
   reqwest=warn,\
   iced=warn,\
-  iced_wgpu=warn,\
+  iced_wgpu=info,\
   iced_winit=warn,\
   wgpu=warn,\
-  wgpu_core=warn,\
+  wgpu_core=info,\
   wgpu_hal=warn,\
   sqlx=warn,\
   sqlx::query=warn";
@@ -454,6 +455,7 @@ pub fn run() -> iced::Result {
 
   let _log_guard = init_tracing(&log_dir);
   install_panic_hook();
+  graphics::probe();
 
   iced::daemon(boot, update, view)
     .title(title)

@@ -1,11 +1,11 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding, Point, Shadow, Vector,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, button, container, text, text_input},
 };
 
 use crate::ui::{
-  components::text_input as text_input_component,
+  components::{icon::Icon, text_input as text_input_component},
   style::{color, spacing, typography},
 };
 
@@ -14,12 +14,26 @@ const GRID_GAP: f32 = 6.0;
 const HEX_PREVIEW_RADIUS: f32 = 4.0;
 const HEX_PREVIEW_SIZE: f32 = 18.0;
 const HEX_WELL_RADIUS: f32 = 6.0;
+const LABEL_CHECK_SIZE: f32 = 15.0;
+const LABEL_GRID_COLUMNS: usize = 9;
+const LABEL_GRID_GAP: f32 = 8.0;
+/// Perceptual luminance threshold equivalent to 150/255 mapped onto the 0.0–1.0 component scale.
+const LABEL_LUMINANCE_THRESHOLD: f32 = 0.588;
+const LABEL_SWATCH_HEIGHT: f32 = 26.0;
+const LABEL_SWATCH_RADIUS: f32 = 6.0;
 const POPOVER_RADIUS: f32 = 10.0;
 const POPOVER_WIDTH: f32 = 256.0;
 const PRESET_RADIUS: f32 = 5.0;
 const RING_ALPHA: f32 = 0.30;
 const SWATCH_RADIUS: f32 = 7.0;
 const SWATCH_SIZE: f32 = 28.0;
+
+/// The exact color enum permitted by the ESI mail-label endpoints; ESI rejects any hex value outside this fixed set.
+#[allow(dead_code)]
+pub const LABEL_COLORS: [&str; 18] = [
+  "#0000fe", "#006634", "#0099ff", "#00ff33", "#01ffff", "#349800", "#660066", "#666666", "#999999", "#99ffff",
+  "#9a0000", "#ccff9a", "#e6e6e6", "#fe0000", "#ff6600", "#ffff01", "#ffffcd", "#ffffff",
+];
 
 pub struct Preset {
   pub hex: &'static str,
@@ -174,6 +188,45 @@ where
     .into()
 }
 
+/// Renders the constrained ESI label color picker; selection is limited to `LABEL_COLORS` with no free-form hex entry.
+#[allow(dead_code)]
+pub fn label_color_grid<'a, M>(current: &str, on_select: impl Fn(String) -> M + 'a) -> Element<'a, M>
+where
+  M: Clone + 'static,
+{
+  let rows: Vec<Element<'a, M>> = LABEL_COLORS
+    .chunks(LABEL_GRID_COLUMNS)
+    .map(|chunk| {
+      let mut cells: Vec<Element<'a, M>> = chunk.iter().map(|hex| label_swatch(hex, current, &on_select)).collect();
+      while cells.len() < LABEL_GRID_COLUMNS {
+        cells.push(Space::new().width(Length::Fill).into());
+      }
+      Row::with_children(cells)
+        .spacing(LABEL_GRID_GAP)
+        .width(Length::Fill)
+        .into()
+    })
+    .collect();
+
+  let footer = text(format!("{} colors permitted by ESI", LABEL_COLORS.len()))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(|_| text::Style {
+      color: Some(color::text::tertiary()),
+    });
+
+  Column::with_children(vec![
+    Column::with_children(rows)
+      .spacing(LABEL_GRID_GAP)
+      .width(Length::Fill)
+      .into(),
+    footer.into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .width(Length::Fill)
+  .into()
+}
+
 pub fn normalize_hex(raw: &str) -> Option<String> {
   let trimmed = raw.trim().trim_start_matches('#');
   let expanded = match trimmed.len() {
@@ -315,6 +368,69 @@ fn hex_to_color(hex: &str) -> Option<Color> {
   Some(Color::from_rgb8(r, g, b))
 }
 
+fn is_light_hex(hex: &str) -> bool {
+  match hex_to_color(hex) {
+    Some(color) => 0.299 * color.r + 0.587 * color.g + 0.114 * color.b > LABEL_LUMINANCE_THRESHOLD,
+    None => false,
+  }
+}
+
+fn label_swatch<'a, M>(hex: &str, current: &str, on_select: &impl Fn(String) -> M) -> Element<'a, M>
+where
+  M: Clone + 'static,
+{
+  let fill = hex_to_color(hex).unwrap_or(Color::TRANSPARENT);
+  let selected = current.eq_ignore_ascii_case(hex);
+  let border_color = if selected {
+    color::text::PRIMARY
+  } else {
+    color::with_alpha(Color::BLACK, 0.35)
+  };
+  let ring = if selected {
+    Shadow {
+      color: color::with_alpha(color::accent::PLASMA, RING_ALPHA),
+      offset: Vector::ZERO,
+      blur_radius: 2.0,
+    }
+  } else {
+    Shadow::default()
+  };
+
+  let check: Element<'a, M> = if selected {
+    let tint = if is_light_hex(hex) {
+      color::surface::BASE
+    } else {
+      color::text::PRIMARY
+    };
+    Icon::check().size(LABEL_CHECK_SIZE).color(tint).render()
+  } else {
+    Space::new().into()
+  };
+
+  button(
+    container(check)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(LABEL_SWATCH_HEIGHT))
+  .padding(Padding::ZERO)
+  .on_press(on_select(hex.to_string()))
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(fill)),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: LABEL_SWATCH_RADIUS.into(),
+    },
+    shadow: ring,
+    ..button::Style::default()
+  })
+  .into()
+}
+
 fn popover_header<'a, M>() -> Element<'a, M>
 where
   M: 'a,
@@ -421,6 +537,35 @@ where
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod label_colors {
+    use std::collections::BTreeSet;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_holds_exactly_eighteen_unique_values_matching_the_esi_enum() {
+      let expected = [
+        "#0000fe", "#006634", "#0099ff", "#00ff33", "#01ffff", "#349800", "#660066", "#666666", "#999999", "#99ffff",
+        "#9a0000", "#ccff9a", "#e6e6e6", "#fe0000", "#ff6600", "#ffff01", "#ffffcd", "#ffffff",
+      ];
+
+      assert_eq!(LABEL_COLORS.len(), 18);
+      assert_eq!(LABEL_COLORS, expected);
+
+      let unique: BTreeSet<&str> = LABEL_COLORS.iter().copied().collect();
+      assert_eq!(unique.len(), 18);
+    }
+
+    #[test]
+    fn it_parses_every_label_color() {
+      for hex in LABEL_COLORS {
+        assert!(hex_to_color(hex).is_some(), "label color {hex} should parse");
+      }
+    }
+  }
 
   mod normalize_hex {
     use pretty_assertions::assert_eq;
@@ -533,6 +678,22 @@ mod tests {
         !tree.children.is_empty(),
         "the clear-variant popover should build a non-empty widget tree"
       );
+    }
+
+    #[test]
+    fn it_renders_the_label_color_grid_with_a_selected_swatch() {
+      let el: Element<'_, ()> = label_color_grid("#ffff01", |_| ());
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+      assert!(
+        !tree.children.is_empty(),
+        "the label color grid should build a non-empty widget tree"
+      );
+    }
+
+    #[test]
+    fn it_renders_the_label_color_grid_with_no_selection() {
+      let _el: Element<'_, ()> = label_color_grid("", |_| ());
     }
 
     #[test]

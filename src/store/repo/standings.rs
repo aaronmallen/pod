@@ -79,6 +79,14 @@ const RECOGNIZED_KEYS: &[&str] = &[
 // Confirmed against live EVE agent access thresholds; correctable as constants without schema change.
 const REQUIRED_STANDING_BY_LEVEL: &[(i64, f64)] = &[(1, -2.0), (2, 1.0), (3, 3.0), (4, 5.0), (5, 7.0)];
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentPage {
+  /// Keyset cursor `(name, agent_id)` of the last raw SQL row when the page filled, used to seek the next page.
+  /// `None` once the agent rows are exhausted (the page came back shorter than the requested limit).
+  pub next_cursor: Option<(String, i64)>,
+  pub rows: Vec<CatalogRow>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CatalogKind {
   Agent,
@@ -203,11 +211,50 @@ pub async fn catalog(
   rows.extend(corporation_rows(db, &raw, skills).await?);
   if facets.surfaces_agents() {
     let bound = limit.unwrap_or(DEFAULT_LIMIT);
-    rows.extend(agent_rows(db, &facets, &names, &raw, skills, bound).await?);
+    rows.extend(agent_rows(db, &facets, &names, &raw, skills, None, bound).await?);
   }
 
   rows.retain(|row| facets.keeps(row, &names));
   Ok(rows)
+}
+
+/// Fetches a single keyset page of agent rows for the standings catalog, seeking past `after`.
+///
+/// Factions and corporations are never paginated (the full set is small and always loaded by [`catalog`]); this
+/// path bounds only the agent rows. Returns no rows when the query does not surface agents.
+pub async fn agent_page(
+  db: &Database,
+  character_id: i64,
+  query: &ParsedQuery,
+  after: Option<(String, i64)>,
+  limit: i64,
+) -> Result<AgentPage, Error> {
+  let mut facets = Facets::from_query(query);
+  if !facets.surfaces_agents() {
+    return Ok(AgentPage {
+      next_cursor: None,
+      rows: Vec::new(),
+    });
+  }
+  if facets.near_me {
+    facets.near_systems = Some(near_me_systems(db, character_id).await?);
+  }
+  let skills = social_skills(db, character_id).await?;
+  let raw = raw_standings(db, character_id).await?;
+  let names = NameIndex::load(db).await?;
+
+  let mut rows = agent_rows(db, &facets, &names, &raw, skills, after.as_ref(), limit).await?;
+  // The raw page count (pre-`keeps`) drives exhaustion; the cursor seeks past the last raw row so a
+  // fully-filtered page still advances. `keeps` then drops rows the SQL predicates could not express.
+  let next_cursor = (rows.len() as i64 == limit)
+    .then(|| rows.last().map(|row| (row.name.clone(), row.id)))
+    .flatten();
+  rows.retain(|row| facets.keeps(row, &names));
+
+  Ok(AgentPage {
+    next_cursor,
+    rows,
+  })
 }
 
 fn classify_faction(faction_id: Option<i64>) -> FactionClass {
@@ -224,6 +271,7 @@ async fn agent_rows(
   names: &NameIndex,
   raw: &RawStandings,
   skills: SocialSkills,
+  after: Option<&(String, i64)>,
   limit: i64,
 ) -> Result<Vec<CatalogRow>, Error> {
   let mut builder = QueryBuilder::<Sqlite>::new(
@@ -363,7 +411,18 @@ async fn agent_rows(
     }
   }
 
-  builder.push(" ORDER BY a.name LIMIT ");
+  if let Some((name, agent_id)) = after {
+    push_clause(&mut builder, &mut first);
+    builder.push("(a.name > ");
+    builder.push_bind(name.clone());
+    builder.push(" OR (a.name = ");
+    builder.push_bind(name.clone());
+    builder.push(" AND a.id > ");
+    builder.push_bind(*agent_id);
+    builder.push("))");
+  }
+
+  builder.push(" ORDER BY a.name, a.id LIMIT ");
   builder.push_bind(limit);
 
   let sql_rows = builder.build_query_as::<AgentSql>().fetch_all(&db.0).await?;
@@ -1478,6 +1537,93 @@ mod tests {
 
       assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
       assert!(of_kind(&rows, CatalogKind::Faction).is_empty());
+    }
+
+    mod agent_page {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      fn page_names(page: &AgentPage) -> Vec<&str> {
+        page.rows.iter().map(|row| row.name.as_str()).collect()
+      }
+
+      #[tokio::test]
+      async fn it_returns_no_rows_when_the_query_does_not_surface_agents() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let page = agent_page(&db, CHARACTER, &parse(""), None, 100).await.unwrap();
+
+        assert!(page.rows.is_empty());
+        assert_eq!(page.next_cursor, None);
+      }
+
+      #[tokio::test]
+      async fn it_orders_agents_by_name_then_id() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let page = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 100)
+          .await
+          .unwrap();
+
+        assert_eq!(
+          page_names(&page),
+          vec!["Angel Dist Agent", "Navy Researcher", "Navy Sec Agent", "Sisters Agent"]
+        );
+      }
+
+      #[tokio::test]
+      async fn it_pages_through_agents_without_overlap_via_the_cursor() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let first = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 2)
+          .await
+          .unwrap();
+        assert_eq!(page_names(&first), vec!["Angel Dist Agent", "Navy Researcher"]);
+        assert_eq!(first.next_cursor, Some(("Navy Researcher".to_owned(), 3_000_004)));
+
+        let second = agent_page(
+          &db,
+          CHARACTER,
+          &parse("region:\"The Forge\""),
+          first.next_cursor.clone(),
+          2,
+        )
+        .await
+        .unwrap();
+        assert_eq!(page_names(&second), vec!["Navy Sec Agent", "Sisters Agent"]);
+        // A full page always carries a cursor; the next seek confirms exhaustion with an empty page.
+        assert_eq!(second.next_cursor, Some(("Sisters Agent".to_owned(), 3_000_003)));
+
+        let third = agent_page(
+          &db,
+          CHARACTER,
+          &parse("region:\"The Forge\""),
+          second.next_cursor.clone(),
+          2,
+        )
+        .await
+        .unwrap();
+
+        assert!(third.rows.is_empty());
+        assert_eq!(third.next_cursor, None);
+      }
+
+      #[tokio::test]
+      async fn it_exhausts_the_cursor_on_a_short_final_page() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let only = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), None, 10)
+          .await
+          .unwrap();
+
+        assert_eq!(only.rows.len(), 4);
+        assert_eq!(only.next_cursor, None);
+      }
     }
   }
 

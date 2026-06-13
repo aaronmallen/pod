@@ -151,6 +151,7 @@ pub(in crate::features::character_detail) fn body(
   contacts: &LoadState<CharacterContacts>,
   filter: ContactFilter,
   sort: ContactSort,
+  visible: usize,
 ) -> Element<'_, Message> {
   let loaded = match contacts {
     LoadState::Loaded(loaded) => loaded,
@@ -194,9 +195,10 @@ pub(in crate::features::character_detail) fn body(
       false,
     )
   } else {
+    let shown = visible.min(rows.len());
     let mut card_rows: Vec<Element<'_, Message>> = vec![column_header(sort)];
-    for (index, contact) in rows.iter().enumerate() {
-      card_rows.push(contact_row(contact, &labels, index == rows.len() - 1));
+    for (index, contact) in rows.iter().take(shown).enumerate() {
+      card_rows.push(contact_row(contact, &labels, index == shown - 1));
     }
     card::panel(Column::with_children(card_rows).width(Length::Fill), false)
   };
@@ -501,7 +503,7 @@ mod tests {
         ContactFilter::Corp,
         ContactFilter::Alliance,
       ] {
-        let _el: Element<'_, Message> = body(&state, filter, ContactSort::default());
+        let _el: Element<'_, Message> = body(&state, filter, ContactSort::default(), usize::MAX);
       }
     }
 
@@ -518,6 +520,7 @@ mod tests {
               column,
               direction,
             },
+            usize::MAX,
           );
         }
       }
@@ -528,8 +531,8 @@ mod tests {
       let loading: LoadState<CharacterContacts> = LoadState::Loading;
       let error: LoadState<CharacterContacts> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactFilter::All, ContactSort::default());
-      let _error: Element<'_, Message> = body(&error, ContactFilter::All, ContactSort::default());
+      let _loading: Element<'_, Message> = body(&loading, ContactFilter::All, ContactSort::default(), usize::MAX);
+      let _error: Element<'_, Message> = body(&error, ContactFilter::All, ContactSort::default(), usize::MAX);
     }
   }
 

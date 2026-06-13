@@ -37,11 +37,14 @@ use crate::{
 
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "standings-search-input";
 
+const CONTACTS_PAGE_SIZE: usize = 100;
 const HEADER_SIDE_PADDING: f32 = 28.0;
+const KILLLOG_PAGE_SIZE: i64 = 100;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
+const SCROLL_THRESHOLD: f32 = 0.85;
 const SEARCH_DEBOUNCE_MS: u64 = 200;
-const STANDINGS_CATALOG_LIMIT: i64 = 500;
+const STANDINGS_PAGE_SIZE: i64 = 100;
 const STANDINGS_HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + TAB_STRIP_OVERLAY_OFFSET;
 const TAB_STRIP_OVERLAY_OFFSET: f32 = 96.0;
 
@@ -113,7 +116,10 @@ pub enum Message {
   CharacterChanged(i64),
   ContactFilterChanged(tabs::contacts::ContactFilter),
   ContactSortChanged(tabs::contacts::ContactSort),
+  ContactsScrolled(f32),
   KilllogFilterChanged(KilllogFilter),
+  KilllogPageLoaded(Vec<KillLogEntry>),
+  KilllogScrolled(f32),
   Loaded(Box<Loaded>),
   NotificationRead(i64),
   NotificationsFilterChanged(NotificationsFilter),
@@ -121,9 +127,11 @@ pub enum Message {
   #[allow(dead_code)]
   ReauthRequested(i64),
   Reloaded(Box<Reloaded>),
+  StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
   StandingsClearSearch,
   StandingsInsertQuery(String),
   StandingsResults(Box<StandingsResult>),
+  StandingsScrolled(f32),
   StandingsSearchChanged(String),
   StandingsToggleHelp,
   TabChanged(Tab),
@@ -169,11 +177,25 @@ pub struct StandingsRow {
 }
 
 #[derive(Clone, Debug)]
+pub struct StandingsAgentsPage {
+  generation: u64,
+  next_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
+}
+
+#[derive(Clone, Debug)]
 pub struct StandingsResult {
   /// Snapshot of `State::standings_generation` at dispatch; results whose generation no longer matches are stale
   /// (superseded by a newer debounced search) and discarded.
   generation: u64,
-  result: Result<Vec<StandingsRow>, String>,
+  result: Result<StandingsCatalog, String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StandingsCatalog {
+  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
+  agent_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
 }
 
 #[derive(Debug)]
@@ -184,18 +206,25 @@ pub struct State {
   contacts: LoadState<CharacterContacts>,
   contact_filter: tabs::contacts::ContactFilter,
   contact_sort: tabs::contacts::ContactSort,
+  contacts_visible: usize,
   enabled_tabs: Vec<Tab>,
   granted_scopes: Option<String>,
   head: HeadStats,
   killlog: LoadState<Vec<KillLogEntry>>,
+  killlog_cursor: Option<(String, i64)>,
   killlog_filter: KilllogFilter,
+  killlog_has_more: bool,
+  killlog_loading_more: bool,
   notifications: LoadState<Vec<CharacterNotification>>,
   notifications_filter: NotificationsFilter,
   picker_open: bool,
   roster: Vec<PickerPilot>,
   standings: LoadState<Vec<StandingsRow>>,
+  standings_agent_cursor: Option<(String, i64)>,
   standings_generation: u64,
+  standings_has_more: bool,
   standings_help_open: bool,
+  standings_loading_more: bool,
   standings_query: String,
 }
 
@@ -210,18 +239,25 @@ impl State {
       contacts: LoadState::Loading,
       contact_filter: tabs::contacts::ContactFilter::All,
       contact_sort: tabs::contacts::ContactSort::default(),
+      contacts_visible: CONTACTS_PAGE_SIZE,
       enabled_tabs,
       granted_scopes: None,
       head: HeadStats::default(),
       killlog: LoadState::Loading,
+      killlog_cursor: None,
       killlog_filter: KilllogFilter::All,
+      killlog_has_more: false,
+      killlog_loading_more: false,
       notifications: LoadState::Loading,
       notifications_filter: NotificationsFilter::All,
       picker_open: false,
       roster: Vec::new(),
       standings: LoadState::Loading,
+      standings_agent_cursor: None,
       standings_generation: 0,
+      standings_has_more: false,
       standings_help_open: false,
+      standings_loading_more: false,
       standings_query: String::new(),
     }
   }
@@ -262,6 +298,10 @@ impl State {
       .map_or("", |pilot| pilot.name.as_str())
   }
 
+  pub(super) fn contacts_visible(&self) -> usize {
+    self.contacts_visible
+  }
+
   pub(super) fn granted_scopes(&self) -> Option<&str> {
     self.granted_scopes.as_deref()
   }
@@ -296,12 +336,18 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::ContactFilterChanged(filter) => {
       state.contact_filter = filter;
+      state.contacts_visible = CONTACTS_PAGE_SIZE;
       Task::none()
     }
     Message::ContactSortChanged(sort) => {
       state.contact_sort = sort;
       Task::none()
     }
+    Message::ContactsScrolled(_)
+    | Message::KilllogPageLoaded(_)
+    | Message::KilllogScrolled(_)
+    | Message::StandingsAgentsPageLoaded(_)
+    | Message::StandingsScrolled(_) => update_pagination(state, message, db),
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
       Task::none()
@@ -326,9 +372,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       } = *loaded;
       state.clones = clones;
       state.contacts = contacts;
+      state.contacts_visible = CONTACTS_PAGE_SIZE;
       state.granted_scopes = granted_scopes;
       state.head = head;
       state.killlog = killlog;
+      reset_killlog_pagination(state);
       state.notifications = notifications;
       state.roster = roster;
       trigger_standings_search(state, db)
@@ -344,6 +392,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       Reloaded::Killlog(killlog) => {
         state.killlog = killlog;
+        reset_killlog_pagination(state);
         Task::none()
       }
       Reloaded::Notifications(notifications) => {
@@ -379,8 +428,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       } = *results;
       if generation == state.standings_generation {
         state.standings = match result {
-          Ok(rows) => LoadState::Loaded(rows),
-          Err(error) => LoadState::Error(error),
+          Ok(catalog) => {
+            state.standings_has_more = catalog.agent_cursor.is_some();
+            state.standings_agent_cursor = catalog.agent_cursor;
+            LoadState::Loaded(catalog.rows)
+          }
+          Err(error) => {
+            state.standings_has_more = false;
+            state.standings_agent_cursor = None;
+            LoadState::Error(error)
+          }
         };
       }
       Task::none()
@@ -400,6 +457,89 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
   }
 }
 
+fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::ContactsScrolled(offset) => {
+      if offset >= SCROLL_THRESHOLD && state.active_tab == Tab::Contacts {
+        state.contacts_visible = state.contacts_visible.saturating_add(CONTACTS_PAGE_SIZE);
+      }
+      Task::none()
+    }
+    Message::KilllogPageLoaded(entries) => {
+      state.killlog_loading_more = false;
+      state.killlog_has_more = entries.len() as i64 == KILLLOG_PAGE_SIZE;
+      state.killlog_cursor = entries.last().map(killlog_cursor);
+      if let LoadState::Loaded(existing) = &mut state.killlog {
+        existing.extend(entries);
+      }
+      Task::none()
+    }
+    Message::KilllogScrolled(offset) => {
+      if offset < SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
+        return Task::none();
+      }
+      let Some(cursor) = state.killlog_cursor.clone() else {
+        return Task::none();
+      };
+      state.killlog_loading_more = true;
+      Task::perform(
+        load_killlog_page(db.clone(), state.active, Some(cursor)),
+        Message::KilllogPageLoaded,
+      )
+    }
+    Message::StandingsAgentsPageLoaded(page) => {
+      let StandingsAgentsPage {
+        generation,
+        next_cursor,
+        rows,
+      } = *page;
+      state.standings_loading_more = false;
+      if generation != state.standings_generation {
+        return Task::none();
+      }
+      state.standings_has_more = next_cursor.is_some();
+      state.standings_agent_cursor = next_cursor;
+      if let LoadState::Loaded(existing) = &mut state.standings {
+        existing.extend(rows);
+      }
+      Task::none()
+    }
+    Message::StandingsScrolled(offset) => {
+      if offset < SCROLL_THRESHOLD || !state.standings_has_more || state.standings_loading_more {
+        return Task::none();
+      }
+      let Some(cursor) = state.standings_agent_cursor.clone() else {
+        return Task::none();
+      };
+      state.standings_loading_more = true;
+      run_standings_agent_page(
+        db.clone(),
+        state.active,
+        state.standings_query.clone(),
+        cursor,
+        state.standings_generation,
+      )
+    }
+    _ => Task::none(),
+  }
+}
+
+fn killlog_cursor(entry: &KillLogEntry) -> (String, i64) {
+  (entry.kill_time.clone(), entry.killmail_id)
+}
+
+fn reset_killlog_pagination(state: &mut State) {
+  state.killlog_loading_more = false;
+  state.killlog_cursor = match &state.killlog {
+    LoadState::Loaded(entries) => entries.last().map(killlog_cursor),
+    _ => None,
+  };
+  state.killlog_has_more = match &state.killlog {
+    LoadState::Loaded(entries) => entries.len() as i64 == KILLLOG_PAGE_SIZE,
+    _ => false,
+  };
+}
+
 fn append_standings_query(state: &mut State, fragment: &str) {
   let trimmed = state.standings_query.trim_end();
   state.standings_query = if trimmed.is_empty() {
@@ -412,6 +552,9 @@ fn append_standings_query(state: &mut State, fragment: &str) {
 fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
   state.standings_generation = state.standings_generation.wrapping_add(1);
   state.standings = LoadState::Loading;
+  state.standings_has_more = false;
+  state.standings_agent_cursor = None;
+  state.standings_loading_more = false;
   run_standings_search(
     db.clone(),
     state.active,
@@ -435,14 +578,60 @@ fn run_standings_search(db: Database, character_id: i64, query: String, generati
   )
 }
 
-async fn load_standings_catalog(db: &Database, character_id: i64, query: &str) -> Result<Vec<StandingsRow>, String> {
+fn run_standings_agent_page(
+  db: Database,
+  character_id: i64,
+  query: String,
+  cursor: (String, i64),
+  generation: u64,
+) -> Task<Message> {
+  Task::perform(
+    async move { load_standings_agent_page(&db, character_id, &query, cursor).await },
+    move |page| {
+      let (next_cursor, rows) = page.unwrap_or((None, Vec::new()));
+      Message::StandingsAgentsPageLoaded(Box::new(StandingsAgentsPage {
+        generation,
+        next_cursor,
+        rows,
+      }))
+    },
+  )
+}
+
+async fn load_standings_agent_page(
+  db: &Database,
+  character_id: i64,
+  query: &str,
+  cursor: (String, i64),
+) -> Result<(Option<(String, i64)>, Vec<StandingsRow>), String> {
   let parsed = standings::parse(query);
-  let rows = standings::catalog(db, character_id, &parsed, Some(STANDINGS_CATALOG_LIMIT))
+  let page = standings::agent_page(db, character_id, &parsed, Some(cursor), STANDINGS_PAGE_SIZE)
     .await
     .map_err(|error| error.to_string())?;
 
   let store = images::default_store();
-  Ok(rows.into_iter().map(|row| standings_row(&store, row)).collect())
+  let rows = page.rows.into_iter().map(|row| standings_row(&store, row)).collect();
+  Ok((page.next_cursor, rows))
+}
+
+// Factions and corporations are loaded in full (limit 0 suppresses the catalog's own agent page); agents come from
+// the first keyset page so the result carries a cursor for infinite scroll.
+async fn load_standings_catalog(db: &Database, character_id: i64, query: &str) -> Result<StandingsCatalog, String> {
+  let parsed = standings::parse(query);
+  let context = standings::catalog(db, character_id, &parsed, Some(0))
+    .await
+    .map_err(|error| error.to_string())?;
+  let agents = standings::agent_page(db, character_id, &parsed, None, STANDINGS_PAGE_SIZE)
+    .await
+    .map_err(|error| error.to_string())?;
+
+  let store = images::default_store();
+  let mut rows: Vec<StandingsRow> = context.into_iter().map(|row| standings_row(&store, row)).collect();
+  rows.extend(agents.rows.into_iter().map(|row| standings_row(&store, row)));
+  Ok(StandingsCatalog {
+    agent_cursor: agents.next_cursor,
+    rows,
+  })
 }
 
 fn standings_row(store: &images::Store, row: standings::CatalogRow) -> StandingsRow {
@@ -571,11 +760,27 @@ async fn load_granted_scopes(db: &Database, character_id: i64) -> Option<String>
 }
 
 async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLogEntry>> {
-  let rows = match character::killmails(db, character_id).await {
+  let rows = match character::killmails_page(db, character_id, None, KILLLOG_PAGE_SIZE).await {
     Ok(rows) => rows,
     Err(error) => return LoadState::Error(error.to_string()),
   };
 
+  LoadState::Loaded(resolve_killlog_entries(db, rows).await)
+}
+
+async fn load_killlog_page(db: Database, character_id: i64, after: Option<(String, i64)>) -> Vec<KillLogEntry> {
+  let rows = match character::killmails_page(&db, character_id, after, KILLLOG_PAGE_SIZE).await {
+    Ok(rows) => rows,
+    Err(_) => return Vec::new(),
+  };
+
+  resolve_killlog_entries(&db, rows).await
+}
+
+async fn resolve_killlog_entries(
+  db: &Database,
+  rows: Vec<crate::store::model::CharacterKillEntry>,
+) -> Vec<KillLogEntry> {
   let mut entries = Vec::with_capacity(rows.len());
   for row in rows {
     let ship_name = sde::get_item_type(db, row.ship_type_id())
@@ -626,7 +831,7 @@ async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLog
     });
   }
 
-  LoadState::Loaded(entries)
+  entries
 }
 
 async fn load_notifications(db: &Database, character_id: i64) -> LoadState<Vec<CharacterNotification>> {
@@ -1104,6 +1309,258 @@ mod tests {
     }
   }
 
+  mod pagination {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{CharacterContact, character_contacts_view::CharacterContacts};
+
+    fn killlog_entry(killmail_id: i64, kill_time: &str) -> KillLogEntry {
+      KillLogEntry {
+        attacker_count: 1,
+        final_blow: true,
+        is_kill: true,
+        kill_time: kill_time.to_owned(),
+        killmail_id,
+        ship_name: "Rifter".to_owned(),
+        ship_type_id: 587,
+        system_name: Some("Jita".to_owned()),
+        system_security: 0.9,
+        value_destroyed_isk: 0.0,
+        value_isk: 0.0,
+        victim_corp: String::new(),
+        victim_name: "Unknown".to_owned(),
+      }
+    }
+
+    fn contact(contact_id: i64) -> CharacterContact {
+      CharacterContact {
+        character_id: 42,
+        contact_id,
+        contact_name: format!("Contact {contact_id}"),
+        contact_type: "character".to_owned(),
+        is_blocked: false,
+        is_watched: false,
+        label_ids: String::new(),
+        standing: 0.0,
+      }
+    }
+
+    fn killlog_page(count: i64) -> Vec<KillLogEntry> {
+      (0..count)
+        .map(|n| killlog_entry(1000 + n, "2024-01-01T00:00:00Z"))
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(&mut state, Message::StandingsScrolled(0.5), &db);
+
+      assert!(!state.standings_loading_more, "a sub-threshold scroll is a no-op");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = false;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+
+      assert!(!state.standings_loading_more, "exhausted agents do not fetch");
+    }
+
+    #[tokio::test]
+    async fn it_marks_loading_and_clears_the_cursor_guard_on_a_standings_page_fetch() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+
+      assert!(state.standings_loading_more, "a qualifying scroll starts a load");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_while_already_loading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_loading_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+
+      assert!(state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_standings_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let before = match &state.standings {
+        LoadState::Loaded(rows) => rows.len(),
+        _ => 0,
+      };
+      state.standings_loading_more = true;
+
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: Some(("Next".to_owned(), 9)),
+        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_loading_more);
+      assert!(state.standings_has_more, "a carried cursor means more pages remain");
+      assert_eq!(state.standings_agent_cursor, Some(("Next".to_owned(), 9)));
+      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before + 1));
+    }
+
+    #[tokio::test]
+    async fn it_exhausts_standings_when_a_page_carries_no_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_loading_more = true;
+
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: None,
+        rows: Vec::new(),
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_has_more);
+      assert_eq!(state.standings_agent_cursor, None);
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_stale_standings_page_from_an_old_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_generation = 5;
+      state.standings_loading_more = true;
+      let before = match &state.standings {
+        LoadState::Loaded(rows) => rows.len(),
+        _ => 0,
+      };
+
+      let page = StandingsAgentsPage {
+        generation: 4,
+        next_cursor: Some(("Next".to_owned(), 9)),
+        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_loading_more, "loading clears even for a stale page");
+      assert!(
+        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before),
+        "a stale generation does not append rows"
+      );
+      assert!(
+        state.standings_agent_cursor.is_none(),
+        "the stale cursor is not adopted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_killlog_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(&mut state, Message::KilllogScrolled(0.5), &db);
+
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_killlog_scroll_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(3));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(&mut state, Message::KilllogScrolled(0.95), &db);
+
+      assert!(!state.killlog_has_more, "a short page is the last page");
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_marks_loading_on_a_qualifying_killlog_scroll() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(&mut state, Message::KilllogScrolled(0.95), &db);
+
+      assert!(state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_killlog_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      state.killlog_loading_more = true;
+
+      let _ = update(&mut state, Message::KilllogPageLoaded(killlog_page(3)), &db);
+
+      assert!(!state.killlog_loading_more);
+      assert!(!state.killlog_has_more, "a short appended page exhausts the log");
+      assert!(matches!(state.killlog, LoadState::Loaded(ref rows) if rows.len() == KILLLOG_PAGE_SIZE as usize + 3));
+    }
+
+    #[tokio::test]
+    async fn it_grows_the_contacts_window_on_scroll_and_resets_on_a_filter_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(CharacterContacts {
+        contacts: (0..CONTACTS_PAGE_SIZE as i64 * 3).map(contact).collect(),
+        labels: Vec::new(),
+      });
+
+      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE);
+
+      let _ = update(&mut state, Message::ContactsScrolled(0.9), &db);
+      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE * 2);
+
+      let _ = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+      assert_eq!(
+        state.contacts_visible(),
+        CONTACTS_PAGE_SIZE,
+        "switching filters resets the virtual window"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_contacts_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+
+      let _ = update(&mut state, Message::ContactsScrolled(0.5), &db);
+
+      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE);
+    }
+  }
+
   mod standings_search {
     use pretty_assertions::assert_eq;
 
@@ -1170,14 +1627,20 @@ mod tests {
 
       let stale = StandingsResult {
         generation: 4,
-        result: Ok(Vec::new()),
+        result: Ok(StandingsCatalog {
+          agent_cursor: None,
+          rows: Vec::new(),
+        }),
       };
       let _ = update(&mut state, Message::StandingsResults(Box::new(stale)), &db);
       assert!(matches!(state.standings, LoadState::Loading), "stale result is dropped");
 
       let fresh = StandingsResult {
         generation: 5,
-        result: Ok(vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)]),
+        result: Ok(StandingsCatalog {
+          agent_cursor: None,
+          rows: vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)],
+        }),
       };
       let _ = update(&mut state, Message::StandingsResults(Box::new(fresh)), &db);
 
@@ -1205,8 +1668,8 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       seed_faction(&db).await;
 
-      let rows = load_standings_catalog(&db, 42, "").await.unwrap();
-      let faction = rows.iter().find(|row| row.name == "Caldari State").unwrap();
+      let catalog = load_standings_catalog(&db, 42, "").await.unwrap();
+      let faction = catalog.rows.iter().find(|row| row.name == "Caldari State").unwrap();
 
       assert_eq!(faction.kind, StandingKind::Faction);
       let resolved = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, 1_000_099);

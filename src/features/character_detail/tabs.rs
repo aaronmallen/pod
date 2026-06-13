@@ -112,7 +112,12 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   let inner: Element<'_, Message> = if missing.is_empty() {
     match state.active_tab {
       Tab::Clones => clones::body(&state.clones),
-      Tab::Contacts => contacts::body(&state.contacts, state.contact_filter, state.contact_sort),
+      Tab::Contacts => contacts::body(
+        &state.contacts,
+        state.contact_filter,
+        state.contact_sort,
+        state.contacts_visible(),
+      ),
       Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
       Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
       Tab::Standings => standings::body(&state.standings, state.standings_query(), state.standings_has_filters()),
@@ -126,6 +131,9 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
     )
   };
 
+  // The detail view shares one scrollbar across every tab; route its scroll offset to the active tab's
+  // pagination message so each list grows independently as the user nears the bottom.
+  let active_tab = state.active_tab;
   scrollable(container(inner).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_6,
     right: TAB_BODY_PADDING,
@@ -135,7 +143,17 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   .style(crate::ui::style::control::scrollbar)
   .width(Length::Fill)
   .height(Length::Fill)
+  .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y))
   .into()
+}
+
+fn scroll_message(tab: Tab, offset: f32) -> Message {
+  match tab {
+    Tab::Contacts => Message::ContactsScrolled(offset),
+    Tab::Killlog => Message::KilllogScrolled(offset),
+    Tab::Standings => Message::StandingsScrolled(offset),
+    Tab::Clones | Tab::Notifications => Message::ContactsScrolled(offset),
+  }
 }
 
 #[cfg(test)]
@@ -221,6 +239,26 @@ mod tests {
           tab.label()
         );
       }
+    }
+  }
+
+  mod scroll_message {
+    use super::*;
+
+    #[test]
+    fn it_routes_each_paginated_tab_to_its_scroll_message() {
+      assert!(matches!(
+        scroll_message(Tab::Contacts, 0.9),
+        Message::ContactsScrolled(0.9)
+      ));
+      assert!(matches!(
+        scroll_message(Tab::Killlog, 0.9),
+        Message::KilllogScrolled(0.9)
+      ));
+      assert!(matches!(
+        scroll_message(Tab::Standings, 0.9),
+        Message::StandingsScrolled(0.9)
+      ));
     }
   }
 

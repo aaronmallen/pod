@@ -10,6 +10,7 @@ pub enum Event {
   OutboxFailed { id: i64, reason: String },
   OutboxInflight { id: i64 },
   OutboxRetrying { id: i64, retry_secs: u64 },
+  Restarted { attempt: u32 },
   Scheduled { key: JobKey, next_in_secs: u64 },
   Started { key: JobKey },
 }

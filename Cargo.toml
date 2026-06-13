@@ -62,6 +62,7 @@ cargo-packager-updater = "0.2.3"
 chrono = "0.4"
 dir_spec = "0.5.2"
 figment = { features = ["toml"], version = "0.10.19" }
+futures-util = "0.3"
 gethostname = "1.1.0"
 getset = "0.1"
 interprocess = "2.4.2"
@@ -97,4 +98,5 @@ winresource = "0.1"
 
 [dev-dependencies]
 pretty_assertions = "1"
+tokio = { features = ["test-util"], version = "1" }
 wiremock = "0.6"

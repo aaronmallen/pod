@@ -108,6 +108,10 @@ struct App {
   character_manager: Option<character_manager::State>,
   coalescer: WriteCoalescer,
   compare: Option<(window::Id, skills_compare::State)>,
+  /// Whether the data-loss confirmation gate is open. `true` means the first "Take over" click has
+  /// been received but the share has not yet been claimed — the forceful claim fires only on the
+  /// second explicit confirmation.
+  confirm_force_takeover: bool,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
   esi_connected: bool,
@@ -136,9 +140,6 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
-  /// Frozen "X ago" string set at take-over attempt time; `None` until a take-over is refused.
-  /// Not a live ticker — recomputed only on each new retry.
-  take_over_refused: Option<String>,
   ui_state: UiState,
   updater: Option<updater::Handle>,
   updater_state: updater::State,
@@ -191,7 +192,6 @@ enum SyncNowOutcome {
 enum TakeOverOutcome {
   Claimed,
   Failed,
-  StillHeld(HolderInfo),
 }
 
 impl From<store::lease::Outcome> for Option<HolderInfo> {
@@ -234,11 +234,13 @@ enum Message {
   Auth(auth::Message),
   Calendar(calendar::Message),
   CalendarAttentionCounted(i64),
+  CancelTakeOver,
   CharacterDetail(character_detail::Message),
   CharacterManager(character_manager::Message),
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
+  ConfirmTakeOver,
   EngineStopped {
     reason: Option<String>,
   },
@@ -325,8 +327,10 @@ impl Message {
 
   fn lifecycle_variant_name(&self) -> Option<&'static str> {
     Some(match self {
+      Message::CancelTakeOver => "CancelTakeOver",
       Message::ClockTick => "ClockTick",
       Message::CloseSyncPopover => "CloseSyncPopover",
+      Message::ConfirmTakeOver => "ConfirmTakeOver",
       Message::EngineStopped {
         ..
       } => "EngineStopped",
@@ -690,6 +694,7 @@ fn boot() -> (App, Task<Message>) {
     character_manager: None,
     coalescer: WriteCoalescer::new(),
     compare: None,
+    confirm_force_takeover: false,
     editor: None,
     engine_state: EngineState::default(),
     esi_connected: true,
@@ -718,7 +723,6 @@ fn boot() -> (App, Task<Message>) {
     sync_popover_open: false,
     sync_session: None,
     sync_tick: false,
-    take_over_refused: None,
     ui_state: window_state::load(),
     updater: updater.clone(),
     updater_state: updater::State::default(),
@@ -1566,7 +1570,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     column_children.push(banner);
   }
   if let Some(holder) = &app.read_only {
-    column_children.push(read_only_banner(holder, app.take_over_refused.as_deref()));
+    column_children.push(read_only_banner(holder, app.confirm_force_takeover, app.now));
   }
   if app.sde_stale {
     column_children.push(sde_stale_banner());
@@ -1635,26 +1639,52 @@ fn sde_stale_banner<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn read_only_banner(holder: &HolderInfo, refused_since: Option<&str>) -> Element<'static, Message> {
-  let label = text(read_only_banner_label(&holder.hostname, refused_since))
+fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -> Element<'static, Message> {
+  let (message, actions): (String, Element<'static, Message>) = if confirming {
+    let last_active = status::format_since((now - holder.last_active).num_seconds().max(0) as u64);
+    let confirm = button(
+      text("Take over anyway")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM),
+    )
+    .padding(control::padding())
+    .on_press(Message::ConfirmTakeOver)
+    .style(control::danger_button);
+    let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
+      .padding(control::padding())
+      .on_press(Message::CancelTakeOver)
+      .style(control::ghost_button);
+    (
+      read_only_confirm_label(&holder.hostname, &last_active),
+      Row::new()
+        .push(cancel)
+        .push(confirm)
+        .align_y(Vertical::Center)
+        .spacing(spacing::SPACE_2)
+        .into(),
+    )
+  } else {
+    let action = button(
+      text("Take over")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM),
+    )
+    .padding(control::padding())
+    .on_press(Message::TakeOver)
+    .style(control::primary_button);
+    (read_only_banner_label(&holder.hostname), action.into())
+  };
+
+  let label = text(message)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
       color: Some(color::status::WARNING),
     });
 
-  let action = button(
-    text("Take over")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(control::padding())
-  .on_press(Message::TakeOver)
-  .style(control::primary_button);
-
   let row = Row::new()
     .push(container(label).width(Length::Fill).align_y(Vertical::Center))
-    .push(action)
+    .push(actions)
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_3);
 
@@ -1673,11 +1703,16 @@ fn read_only_banner(holder: &HolderInfo, refused_since: Option<&str>) -> Element
     .into()
 }
 
-fn read_only_banner_label(hostname: &str, refused_since: Option<&str>) -> String {
-  match refused_since {
-    Some(since) => format!("Still open on {hostname} (last active {since}) \u{2014} close it there first."),
-    None => format!("Open on {hostname} \u{2014} close it there, or take over."),
-  }
+fn read_only_banner_label(hostname: &str) -> String {
+  format!("Open on {hostname} \u{2014} close it there, or take over.")
+}
+
+/// Data-loss warning shown before a forceful take-over: surfaces how recently the holder was seen so
+/// the user can judge whether it is plausibly dead before clobbering its in-flight work on the share.
+fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
+  format!(
+    "{hostname} was last active {last_active}. Taking over overwrites any unsaved changes it still has open. Continue?"
+  )
 }
 
 fn route_view(app: &App) -> Element<'_, Message> {
@@ -2518,6 +2553,8 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::StorageMigrated => Task::none(),
     Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::SyncPulse => handle_sync_pulse(app),
+    Message::CancelTakeOver => handle_cancel_take_over(app),
+    Message::ConfirmTakeOver => handle_confirm_take_over(app),
     Message::TakeOver => handle_take_over(app),
     Message::TakeOverResolved(outcome) => handle_take_over_resolved(app, outcome),
     other => dispatch_window_lifecycle(app, other),
@@ -2915,7 +2952,6 @@ fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {
   app.sync_session = ready.sync_session.clone();
   app.read_only = ready.lease.clone();
   app.engine_state = read_only_engine_state(app.read_only.clone());
-  app.take_over_refused = None;
   app.last_push = app
     .sync_session
     .as_ref()
@@ -3076,8 +3112,9 @@ fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
 }
 
 /// Polls for lease re-acquisition on each `REACQUIRE_INTERVAL` tick while this instance is parked.
-/// A `HeldBy` response (foreign holder still fresh) maps to `TakeOverOutcome::Failed` — a no-op
-/// in the resolver — rather than surfacing a "refused" banner that would fire on every poll tick.
+/// This automatic path stays stale-aware: a `HeldBy` response (foreign holder still fresh) maps to
+/// `TakeOverOutcome::Failed` — a silent no-op in the resolver — so only the explicit user-confirmed
+/// take-over ever overrides lease freshness.
 fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   if !parked(app) {
     return Task::none();
@@ -3108,33 +3145,32 @@ fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   })
 }
 
-fn handle_take_over(app: &mut App) -> Task<Message> {
+fn handle_cancel_take_over(app: &mut App) -> Task<Message> {
+  app.confirm_force_takeover = false;
+  Task::none()
+}
+
+/// Performs the explicit, user-confirmed forceful take-over. Unlike the stale-aware automatic
+/// re-acquire, this displaces even a still-live foreign holder — the confirmation gate is the only
+/// path that overrides lease freshness — so the share is clobbered unconditionally on success.
+fn handle_confirm_take_over(app: &mut App) -> Task<Message> {
+  app.confirm_force_takeover = false;
   if app.read_only.is_none() {
     return Task::none();
   }
   let Some(session) = app.sync_session.clone() else {
     return Task::none();
   };
+  let displaced = app.read_only.as_ref().map(|holder| holder.hostname.clone());
   Task::future(async move {
-    let outcome = match session.take_over(Utc::now()) {
-      Ok(store::lease::Outcome::Acquired) => {
-        tracing::info!(target: "pod::lifecycle", "took over the storage lease");
+    let hostname = displaced.as_deref().unwrap_or("an unknown host");
+    let outcome = match session.force_take_over(Utc::now()) {
+      Ok(_) => {
+        tracing::info!(target: "pod::lifecycle", %hostname, "force-took over the storage lease");
         TakeOverOutcome::Claimed
       }
-      Ok(store::lease::Outcome::HeldBy {
-        hostname,
-        last_seen,
-        machine_id,
-      }) => {
-        tracing::info!(target: "pod::lifecycle", %hostname, "take over declined; the share is still held");
-        TakeOverOutcome::StillHeld(HolderInfo {
-          hostname,
-          last_active: last_seen,
-          machine_id,
-        })
-      }
       Err(error) => {
-        tracing::warn!(target: "pod::lifecycle", %error, "taking over the storage lease failed");
+        tracing::warn!(target: "pod::lifecycle", %hostname, %error, "force-taking over the storage lease failed");
         TakeOverOutcome::Failed
       }
     };
@@ -3142,14 +3178,25 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
   })
 }
 
+/// Opens the data-loss confirmation gate rather than claiming immediately. The forceful claim is
+/// deferred to [`handle_confirm_take_over`] so the user first sees the holder's last-active age and
+/// the clobber warning; a still-live writer is never displaced on a single accidental click.
+fn handle_take_over(app: &mut App) -> Task<Message> {
+  if app.read_only.is_none() || app.sync_session.is_none() {
+    return Task::none();
+  }
+  app.confirm_force_takeover = true;
+  Task::none()
+}
+
 /// Applies a resolved take-over. A claim rebuilds the runtime from the parked `store_ready`: the
 /// database must reopen so the connection picks up the freshly pulled working copy (swapping the
 /// file under a live connection would corrupt it) and the real sync engine replaces the inert one.
 fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Message> {
+  app.confirm_force_takeover = false;
   match outcome {
     TakeOverOutcome::Claimed => {
       app.read_only = None;
-      app.take_over_refused = None;
       app.last_push = app
         .sync_session
         .as_ref()
@@ -3161,14 +3208,6 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
       app.store_ready = Some(ready.clone());
       app.engine_state = EngineState::Running;
       build_runtime(ready)
-    }
-    TakeOverOutcome::StillHeld(holder) => {
-      let elapsed = (Utc::now() - holder.last_active).num_seconds().max(0) as u64;
-      app.take_over_refused = Some(status::format_since(elapsed));
-      app.read_only = Some(holder.clone());
-      app.engine_state = read_only_engine_state(Some(holder));
-      refresh_storage_status(app);
-      Task::none()
     }
     TakeOverOutcome::Failed => Task::none(),
   }
@@ -3930,6 +3969,7 @@ mod tests {
       character_manager: None,
       coalescer: WriteCoalescer::new(),
       compare: None,
+      confirm_force_takeover: false,
       editor: None,
       engine_state: EngineState::default(),
       esi_connected: true,
@@ -3958,7 +3998,6 @@ mod tests {
       sync_popover_open: false,
       sync_session: None,
       sync_tick: false,
-      take_over_refused: None,
       ui_state: UiState::default(),
       updater: None,
       updater_state: updater::State::default(),
@@ -5743,6 +5782,72 @@ mod tests {
         app.read_only.is_some(),
         "with no sync session the request short-circuits and the banner stays"
       );
+      assert!(
+        !app.confirm_force_takeover,
+        "with no sync session there is nothing to confirm"
+      );
+    }
+
+    #[test]
+    fn pressing_take_over_opens_the_confirmation_without_claiming() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(app.confirm_force_takeover, "the data-loss confirmation is shown");
+      assert!(app.read_only.is_some(), "the share is not claimed on the first press");
+    }
+
+    #[test]
+    fn cancelling_the_confirmation_leaves_the_instance_read_only() {
+      let mut app = test_app();
+      app.confirm_force_takeover = true;
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_cancel_take_over(&mut app);
+
+      assert!(!app.confirm_force_takeover, "cancelling closes the confirmation");
+      assert!(app.read_only.is_some(), "cancelling leaves the instance read-only");
+    }
+
+    #[test]
+    fn confirming_closes_the_gate_even_when_it_short_circuits() {
+      let mut app = test_app();
+      app.confirm_force_takeover = true;
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_confirm_take_over(&mut app);
+
+      assert!(!app.confirm_force_takeover, "confirming always closes the gate");
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the forceful claim short-circuits and the banner stays"
+      );
+    }
+
+    #[test]
+    fn the_force_takeover_confirmation_warns_of_data_loss_and_names_the_last_active_age() {
+      let label = read_only_confirm_label("studio-mac", "12s ago");
+
+      assert_eq!(
+        label,
+        "studio-mac was last active 12s ago. Taking over overwrites any unsaved changes it still has open. Continue?"
+      );
     }
 
     #[test]
@@ -5760,55 +5865,10 @@ mod tests {
     }
 
     #[test]
-    fn a_still_held_take_over_keeps_the_named_banner() {
-      let mut app = test_app();
-      let last_active = Utc::now() - chrono::Duration::seconds(4);
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_take_over_resolved(
-        &mut app,
-        TakeOverOutcome::StillHeld(HolderInfo {
-          hostname: "studio-linux".to_owned(),
-          last_active,
-          machine_id: "machine-c".to_owned(),
-        }),
-      );
-
-      assert_eq!(
-        app.read_only,
-        Some(HolderInfo {
-          hostname: "studio-linux".to_owned(),
-          last_active,
-          machine_id: "machine-c".to_owned(),
-        }),
-        "a still-fresh holder is refused and the banner updates to the current holder"
-      );
-      assert_eq!(
-        app.take_over_refused,
-        Some("4s ago".to_owned()),
-        "the refusal freezes how long ago the holder was last active"
-      );
-    }
-
-    #[test]
     fn the_initial_read_only_banner_invites_a_take_over() {
-      let label = read_only_banner_label("studio-mac", None);
+      let label = read_only_banner_label("studio-mac");
 
       assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
-    }
-
-    #[test]
-    fn a_refused_take_over_banner_names_the_holder_and_how_long_ago_it_was_active() {
-      let label = read_only_banner_label("studio-mac", Some("4s ago"));
-
-      assert_eq!(
-        label,
-        "Still open on studio-mac (last active 4s ago) \u{2014} close it there first."
-      );
     }
 
     #[test]
@@ -6704,6 +6764,8 @@ mod tests {
       assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
       assert_eq!(Message::SyncPulse.variant_name(), "SyncPulse");
       assert_eq!(Message::TakeOver.variant_name(), "TakeOver");
+      assert_eq!(Message::CancelTakeOver.variant_name(), "CancelTakeOver");
+      assert_eq!(Message::ConfirmTakeOver.variant_name(), "ConfirmTakeOver");
       assert_eq!(
         Message::TakeOverResolved(TakeOverOutcome::Failed).variant_name(),
         "TakeOverResolved"
@@ -6880,8 +6942,10 @@ mod tests {
       let mut app = featured_app();
 
       let messages = vec![
+        Message::CancelTakeOver,
         Message::ClockTick,
         Message::CloseSyncPopover,
+        Message::ConfirmTakeOver,
         Message::FocusMainWindow,
         Message::ImageReady {
           id: 1,

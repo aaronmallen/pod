@@ -68,7 +68,6 @@ impl SyncSession {
   /// and declines a still-live foreign writer, this method writes the lease immediately without
   /// checking the staleness threshold. Use only when the caller has already confirmed that the
   /// foreign holder must be displaced (e.g. an explicit user-initiated force-claim).
-  #[allow(dead_code)]
   pub fn force_take_over(&self, now: DateTime<Utc>) -> Result<Outcome, sync_copy::Error> {
     self.lease.take_over(&self.share, now)?;
     self.engine.pull_if_newer()?;

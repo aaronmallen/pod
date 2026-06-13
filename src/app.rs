@@ -81,6 +81,7 @@ const PERIODIC_PULL_INTERVAL: Duration = Duration::from_secs(60);
 const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
+const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
 const SCALE_MAX: u8 = 150;
 const SCALE_MIN: u8 = 85;
@@ -263,6 +264,7 @@ enum Message {
   PeriodicPush,
   Pulled(bool),
   Pushed(Option<SystemTime>),
+  ReacquireLease,
   Ready(Runtime),
   ReauthCharacter(i64),
   RestartSync,
@@ -334,11 +336,13 @@ impl Message {
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
       Message::LeaseHeartbeat => "LeaseHeartbeat",
+      Message::LockReleased => "LockReleased",
       Message::OpenAbout => "OpenAbout",
       Message::PeriodicPull => "PeriodicPull",
       Message::PeriodicPush => "PeriodicPush",
       Message::Pulled(_) => "Pulled",
       Message::Pushed(_) => "Pushed",
+      Message::ReacquireLease => "ReacquireLease",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
       Message::RestartSync => "RestartSync",
@@ -2156,6 +2160,9 @@ fn subscription(app: &App) -> Subscription<Message> {
     subs.push(iced::time::every(PERIODIC_PULL_INTERVAL).map(|_| Message::PeriodicPull));
     subs.push(iced::time::every(PERIODIC_PUSH_INTERVAL).map(|_| Message::PeriodicPush));
   }
+  if parked(app) {
+    subs.push(iced::time::every(REACQUIRE_INTERVAL).map(|_| Message::ReacquireLease));
+  }
   if app.sync_popover_open {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       matches!(
@@ -2501,6 +2508,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::SyncNowResolved(outcome) => handle_sync_now_resolved(app, outcome),
     Message::Pulled(pulled) => handle_pulled(app, pulled),
     Message::Pushed(mark) => handle_pushed(app, mark),
+    Message::ReacquireLease => handle_reacquire_lease(app),
     Message::Ready(runtime) => handle_ready(app, runtime),
     Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
     Message::RestartSync => handle_restart_sync(app),
@@ -2951,6 +2959,12 @@ fn holding_lease(app: &App) -> bool {
   app.sync_session.is_some() && app.read_only.is_none()
 }
 
+/// Symmetric inverse of `holding_lease`: exactly one of the two is true whenever a sync session is
+/// active. The `sync_session` guard ensures this returns `false` outside of networked-share mode.
+fn parked(app: &App) -> bool {
+  app.sync_session.is_some() && app.read_only.is_some()
+}
+
 fn handle_lease_heartbeat(app: &mut App) -> Task<Message> {
   if !holding_lease(app) {
     return Task::none();
@@ -3058,6 +3072,39 @@ fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
         Message::Pushed(None)
       }
     }
+  })
+}
+
+/// Polls for lease re-acquisition on each `REACQUIRE_INTERVAL` tick while this instance is parked.
+/// A `HeldBy` response (foreign holder still fresh) maps to `TakeOverOutcome::Failed` — a no-op
+/// in the resolver — rather than surfacing a "refused" banner that would fire on every poll tick.
+fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
+  if !parked(app) {
+    return Task::none();
+  }
+  let Some(session) = app.sync_session.clone() else {
+    return Task::none();
+  };
+  let released_by = app.read_only.as_ref().map(|holder| holder.hostname.clone());
+  Task::future(async move {
+    let outcome = match session.take_over(Utc::now()) {
+      Ok(store::lease::Outcome::Acquired) => {
+        let hostname = released_by.as_deref().unwrap_or("an unknown host");
+        tracing::info!(target: "pod::lifecycle", %hostname, "auto-promoted to read-write after the share was released");
+        TakeOverOutcome::Claimed
+      }
+      Ok(store::lease::Outcome::HeldBy {
+        hostname, ..
+      }) => {
+        tracing::trace!(target: "pod::lifecycle", %hostname, "auto re-acquire declined; the share is still held");
+        TakeOverOutcome::Failed
+      }
+      Err(error) => {
+        tracing::warn!(target: "pod::lifecycle", %error, "auto re-acquiring the storage lease failed");
+        TakeOverOutcome::Failed
+      }
+    };
+    Message::TakeOverResolved(outcome)
   })
 }
 
@@ -5776,6 +5823,91 @@ mod tests {
       let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed);
 
       assert!(app.read_only.is_some(), "a failed take-over leaves the app read-only");
+    }
+
+    #[test]
+    fn parked_is_the_symmetric_inverse_of_holding_the_lease() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(parked(&app), "a read-only opener with a session is parked");
+      assert!(!holding_lease(&app), "a parked opener does not hold the lease");
+
+      app.read_only = None;
+
+      assert!(!parked(&app), "clearing read-only ends the parked state");
+      assert!(holding_lease(&app), "a writable opener holds the lease");
+    }
+
+    #[test]
+    fn direct_mode_is_neither_parked_nor_holding_the_lease() {
+      let app = test_app();
+
+      assert!(!parked(&app), "with no sync session there is nothing parked");
+      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
+    }
+
+    #[test]
+    fn re_acquire_is_a_no_op_when_the_app_is_writable() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+
+      let _ = handle_reacquire_lease(&mut app);
+
+      assert!(app.read_only.is_none(), "a writable app is never re-acquired");
+    }
+
+    #[test]
+    fn re_acquire_without_a_sync_session_short_circuits() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_reacquire_lease(&mut app);
+
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the re-acquire short-circuits and the parked banner stays"
+      );
+    }
+
+    #[test]
+    fn a_declined_re_acquire_poll_writes_nothing_to_the_lease() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      let now = Utc::now();
+      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, now)
+        .unwrap();
+      let lease_path = store::lease::LeaseManager::lease_path(&share);
+      let before = std::fs::read(&lease_path).unwrap();
+
+      let outcome = session.take_over(now).unwrap();
+      let after = std::fs::read(&lease_path).unwrap();
+
+      assert_eq!(
+        outcome,
+        store::lease::Outcome::HeldBy {
+          hostname: "studio-mac".to_owned(),
+          last_seen: store::share_meta::Lease::read(&lease_path).unwrap().heartbeat,
+          machine_id: "machine-holder".to_owned(),
+        },
+        "a still-fresh holder is reported, not displaced"
+      );
+      assert_eq!(
+        before, after,
+        "a declined poll heartbeats nothing and never overwrites the foreign lease"
+      );
     }
 
     #[test]

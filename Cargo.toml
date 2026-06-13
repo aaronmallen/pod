@@ -75,6 +75,9 @@ version = "0.14"
 features = ["migrate", "runtime-tokio", "sqlite", "sqlite-bundled"]
 version = "0.9"
 
+[build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 pretty_assertions = "1"
 wiremock = "0.6"

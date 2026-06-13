@@ -15,8 +15,16 @@ fn main() {
   let build_date = build_date();
   println!("cargo:rustc-env=POD_BUILD_DATE={build_date}");
 
+  if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    winresource::WindowsResource::new()
+      .set_icon("assets/images/identity/icon.ico")
+      .compile()
+      .unwrap();
+  }
+
   println!("cargo:rerun-if-changed=.git/HEAD");
   println!("cargo:rerun-if-changed=build.rs");
+  println!("cargo:rerun-if-changed=assets/images/identity/icon.ico");
 }
 
 fn build_date() -> String {

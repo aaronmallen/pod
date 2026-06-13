@@ -3,7 +3,7 @@ mod windows;
 
 use std::{
   collections::HashSet,
-  sync::Arc,
+  sync::{Arc, OnceLock},
   time::{Duration, Instant, SystemTime},
 };
 
@@ -574,6 +574,22 @@ fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
   );
 }
 
+fn app_icon() -> Option<window::Icon> {
+  static ICON: OnceLock<Option<window::Icon>> = OnceLock::new();
+  ICON
+    .get_or_init(|| {
+      const DATA: &[u8] = include_bytes!("../assets/images/identity/256x256.png");
+      match window::icon::from_file_data(DATA, None) {
+        Ok(icon) => Some(icon),
+        Err(error) => {
+          tracing::warn!(%error, "failed to load application window icon");
+          None
+        }
+      }
+    })
+    .clone()
+}
+
 fn blank<'a>() -> Element<'a, Message> {
   container(Space::new().width(Length::Fill).height(Length::Fill))
     .width(Length::Fill)
@@ -597,6 +613,7 @@ fn boot() -> (App, Task<Message>) {
     resizable: false,
     transparent: true,
     position: window::Position::Centered,
+    icon: app_icon(),
     ..window::Settings::default()
   };
   let (id, open_task) = window::open(settings);
@@ -2097,6 +2114,7 @@ fn transition_to_main(app: &mut App) -> Task<Message> {
   let settings = window::Settings {
     size,
     position,
+    icon: app_icon(),
     ..window::Settings::default()
   };
   let (id, open_task) = window::open(settings);
@@ -2134,6 +2152,7 @@ fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
     position,
     decorations: true,
     resizable: true,
+    icon: app_icon(),
     ..window::Settings::default()
   };
   let (id, open_task) = window::open(settings);
@@ -2179,6 +2198,7 @@ fn open_editor_window(app: &mut App, character_id: i64, seed: skill_plan_editor:
     position,
     decorations: true,
     resizable: true,
+    icon: app_icon(),
     ..window::Settings::default()
   };
   let (id, open_task) = window::open(settings);
@@ -2232,6 +2252,7 @@ fn open_about_window(app: &mut App) -> Task<Message> {
     size: Size::new(ABOUT_WINDOW_WIDTH, ABOUT_WINDOW_HEIGHT),
     position: window::Position::Centered,
     resizable: false,
+    icon: app_icon(),
     ..window::Settings::default()
   };
   let (id, open_task) = window::open(settings);

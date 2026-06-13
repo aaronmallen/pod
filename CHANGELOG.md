@@ -7,6 +7,11 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, the Pod logo now reliably appears in the taskbar and window title bars, and on the `pod.exe` file
+  itself in File Explorer, instead of a blank or default icon.
+
 ## [0.5.6]
 
 ### Changed

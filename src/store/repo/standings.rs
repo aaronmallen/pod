@@ -637,65 +637,81 @@ impl Facets {
 
   fn absorb(&mut self, key: &str, negated: bool, values: &[String]) {
     match normalize_facet_key(key) {
-      "faction" => {
-        if negated {
-          self.faction_negatives.extend(values.iter().cloned());
-        } else {
-          self.faction_positives.extend(values.iter().cloned());
-          self.has_positive_type = true;
-        }
-      }
-      "corp" => {
-        if negated {
-          self.corp_negatives.extend(values.iter().cloned());
-        } else {
-          self.corp_positives.extend(values.iter().cloned());
-          self.has_positive_type = true;
-        }
-      }
-      "agent" => {
-        self.agent_names.extend(values.iter().cloned());
-        self.has_positive_type = true;
-      }
+      "faction" => self.absorb_faction(negated, values),
+      "corp" => self.absorb_corp(negated, values),
+      "agent" => self.absorb_agent(values),
       "name" => self.names.extend(values.iter().cloned()),
-      "level" => {
-        let levels: Vec<i64> = values.iter().filter_map(|value| value.parse().ok()).collect();
-        if !levels.is_empty() {
-          self.levels.push(levels);
-        }
-      }
+      "level" => self.absorb_level(values),
       "type" => self.agent_types.push(values.to_vec()),
       "division" => self.divisions.push(values.to_vec()),
       "field" => self.fields.push(values.to_vec()),
       "system" => self.systems.push(values.to_vec()),
       "region" => self.regions.push(values.to_vec()),
-      "sec" => {
-        for value in values {
-          if let Some(class) = parse_security_class(value) {
-            self.security_classes.push(class);
-          }
-        }
-      }
-      "near" => {
-        self.near_me = self.near_me || values.iter().any(|value| value == "me");
-      }
-      "accessible" => {
-        let wants = values
-          .iter()
-          .any(|value| matches!(value.as_str(), "true" | "yes" | "1"));
-        let denies = values
-          .iter()
-          .any(|value| matches!(value.as_str(), "false" | "no" | "0"));
-        self.accessible = Some(if denies { false } else { wants || !negated });
-      }
-      "standing" => {
-        for value in values {
-          if let Some(threshold) = parse_standing_threshold(value) {
-            self.standing_thresholds.push(threshold);
-          }
-        }
-      }
+      "sec" => self.absorb_sec(values),
+      "near" => self.absorb_near(values),
+      "accessible" => self.absorb_accessible(negated, values),
+      "standing" => self.absorb_standing(values),
       _ => {}
+    }
+  }
+
+  fn absorb_faction(&mut self, negated: bool, values: &[String]) {
+    if negated {
+      self.faction_negatives.extend(values.iter().cloned());
+    } else {
+      self.faction_positives.extend(values.iter().cloned());
+      self.has_positive_type = true;
+    }
+  }
+
+  fn absorb_corp(&mut self, negated: bool, values: &[String]) {
+    if negated {
+      self.corp_negatives.extend(values.iter().cloned());
+    } else {
+      self.corp_positives.extend(values.iter().cloned());
+      self.has_positive_type = true;
+    }
+  }
+
+  fn absorb_agent(&mut self, values: &[String]) {
+    self.agent_names.extend(values.iter().cloned());
+    self.has_positive_type = true;
+  }
+
+  fn absorb_level(&mut self, values: &[String]) {
+    let levels: Vec<i64> = values.iter().filter_map(|value| value.parse().ok()).collect();
+    if !levels.is_empty() {
+      self.levels.push(levels);
+    }
+  }
+
+  fn absorb_sec(&mut self, values: &[String]) {
+    for value in values {
+      if let Some(class) = parse_security_class(value) {
+        self.security_classes.push(class);
+      }
+    }
+  }
+
+  fn absorb_near(&mut self, values: &[String]) {
+    self.near_me = self.near_me || values.iter().any(|value| value == "me");
+  }
+
+  fn absorb_accessible(&mut self, negated: bool, values: &[String]) {
+    let wants = values
+      .iter()
+      .any(|value| matches!(value.as_str(), "true" | "yes" | "1"));
+    let denies = values
+      .iter()
+      .any(|value| matches!(value.as_str(), "false" | "no" | "0"));
+    self.accessible = Some(if denies { false } else { wants || !negated });
+  }
+
+  fn absorb_standing(&mut self, values: &[String]) {
+    for value in values {
+      if let Some(threshold) = parse_standing_threshold(value) {
+        self.standing_thresholds.push(threshold);
+      }
     }
   }
 
@@ -1462,6 +1478,216 @@ mod tests {
 
       assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
       assert!(of_kind(&rows, CatalogKind::Faction).is_empty());
+    }
+  }
+
+  mod facets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn vals(items: &[&str]) -> Vec<String> {
+      items.iter().map(|item| (*item).to_string()).collect()
+    }
+
+    #[test]
+    fn it_collects_positive_faction_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("faction", false, &vals(&["Caldari"]));
+
+      assert_eq!(facets.faction_positives, vec!["Caldari".to_string()]);
+      assert!(facets.faction_negatives.is_empty());
+      assert!(facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_negative_faction_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("faction", true, &vals(&["Gallente"]));
+
+      assert_eq!(facets.faction_negatives, vec!["Gallente".to_string()]);
+      assert!(facets.faction_positives.is_empty());
+      assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_positive_corp_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("corp", false, &vals(&["Navy"]));
+
+      assert_eq!(facets.corp_positives, vec!["Navy".to_string()]);
+      assert!(facets.corp_negatives.is_empty());
+      assert!(facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_negative_corp_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("corp", true, &vals(&["Navy"]));
+
+      assert_eq!(facets.corp_negatives, vec!["Navy".to_string()]);
+      assert!(facets.corp_positives.is_empty());
+      assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_agent_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("agent", false, &vals(&["Researcher"]));
+
+      assert_eq!(facets.agent_names, vec!["Researcher".to_string()]);
+      assert!(facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_name_facets_without_marking_positive_type() {
+      let mut facets = Facets::default();
+      facets.absorb("name", false, &vals(&["Kaalakiota"]));
+
+      assert_eq!(facets.names, vec!["Kaalakiota".to_string()]);
+      assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_parses_numeric_levels_and_drops_invalid_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("level", false, &vals(&["3", "x", "4"]));
+
+      assert_eq!(facets.levels, vec![vec![3, 4]]);
+    }
+
+    #[test]
+    fn it_ignores_a_level_facet_with_no_valid_values() {
+      let mut facets = Facets::default();
+      facets.absorb("level", false, &vals(&["abc"]));
+
+      assert!(facets.levels.is_empty());
+    }
+
+    #[test]
+    fn it_collects_type_division_field_system_and_region_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("type", false, &vals(&["Security"]));
+      facets.absorb("division", false, &vals(&["Marketing"]));
+      facets.absorb("field", false, &vals(&["Hydromagnetic"]));
+      facets.absorb("system", false, &vals(&["Jita"]));
+      facets.absorb("region", false, &vals(&["The Forge"]));
+
+      assert_eq!(facets.agent_types, vec![vec!["Security".to_string()]]);
+      assert_eq!(facets.divisions, vec![vec!["Marketing".to_string()]]);
+      assert_eq!(facets.fields, vec![vec!["Hydromagnetic".to_string()]]);
+      assert_eq!(facets.systems, vec![vec!["Jita".to_string()]]);
+      assert_eq!(facets.regions, vec![vec!["The Forge".to_string()]]);
+    }
+
+    #[test]
+    fn it_parses_security_classes_and_drops_unknown_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("sec", false, &vals(&["high", "bogus", "null"]));
+
+      assert_eq!(facets.security_classes, vec![SecurityClass::High, SecurityClass::Null]);
+    }
+
+    #[test]
+    fn it_sets_near_me_only_for_the_me_value() {
+      let mut facets = Facets::default();
+      facets.absorb("near", false, &vals(&["jita"]));
+      assert!(!facets.near_me);
+
+      facets.absorb("near", false, &vals(&["me"]));
+      assert!(facets.near_me);
+    }
+
+    #[test]
+    fn it_resolves_accessible_true_yes_one() {
+      for value in ["true", "yes", "1"] {
+        let mut facets = Facets::default();
+        facets.absorb("accessible", false, &vals(&[value]));
+        assert_eq!(facets.accessible, Some(true));
+      }
+    }
+
+    #[test]
+    fn it_resolves_accessible_false_no_zero() {
+      for value in ["false", "no", "0"] {
+        let mut facets = Facets::default();
+        facets.absorb("accessible", false, &vals(&[value]));
+        assert_eq!(facets.accessible, Some(false));
+      }
+    }
+
+    #[test]
+    fn it_defaults_a_bare_accessible_facet_to_true_when_not_negated() {
+      let mut facets = Facets::default();
+      facets.absorb("accessible", false, &vals(&["maybe"]));
+      assert_eq!(facets.accessible, Some(true));
+    }
+
+    #[test]
+    fn it_defaults_a_negated_accessible_facet_to_false() {
+      let mut facets = Facets::default();
+      facets.absorb("accessible", true, &vals(&["maybe"]));
+      assert_eq!(facets.accessible, Some(false));
+    }
+
+    #[test]
+    fn it_parses_standing_thresholds_and_drops_unparseable_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("standing", false, &vals(&[">=5", "nonsense"]));
+
+      assert_eq!(facets.standing_thresholds.len(), 1);
+      assert_eq!(facets.standing_thresholds[0].0, StandingComparison::AtLeast);
+      assert!((facets.standing_thresholds[0].1 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_ignores_an_unknown_facet_key() {
+      let mut facets = Facets::default();
+      facets.absorb("bogus", false, &vals(&["whatever"]));
+
+      assert!(facets.names.is_empty());
+      assert!(facets.free_text.is_empty());
+      assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_normalizes_aliases_through_absorb() {
+      let mut facets = Facets::default();
+      facets.absorb("fac", false, &vals(&["Caldari"]));
+      facets.absorb("corporation", true, &vals(&["Navy"]));
+      facets.absorb("agents", false, &vals(&["Researcher"]));
+      facets.absorb("datacore", false, &vals(&["Hydromagnetic"]));
+
+      assert_eq!(facets.faction_positives, vec!["Caldari".to_string()]);
+      assert_eq!(facets.corp_negatives, vec!["Navy".to_string()]);
+      assert_eq!(facets.agent_names, vec!["Researcher".to_string()]);
+      assert_eq!(facets.fields, vec![vec!["Hydromagnetic".to_string()]]);
+    }
+
+    #[test]
+    fn it_builds_facets_from_a_parsed_query() {
+      let query = parse("reachable name:Kaalakiota faction:Caldari -corp:Navy level:4");
+      let facets = Facets::from_query(&query);
+
+      assert_eq!(facets.accessible, Some(true));
+      assert_eq!(facets.names, vec!["kaalakiota".to_string()]);
+      assert_eq!(facets.faction_positives, vec!["caldari".to_string()]);
+      assert_eq!(facets.corp_negatives, vec!["navy".to_string()]);
+      assert_eq!(facets.levels, vec![vec![4]]);
+    }
+
+    #[test]
+    fn it_maps_locked_free_text_to_inaccessible() {
+      let query = parse("locked");
+      let facets = Facets::from_query(&query);
+      assert_eq!(facets.accessible, Some(false));
+    }
+
+    #[test]
+    fn it_keeps_unrecognized_free_text() {
+      let query = parse("zephyr");
+      let facets = Facets::from_query(&query);
+      assert_eq!(facets.free_text, vec!["zephyr".to_string()]);
     }
   }
 }

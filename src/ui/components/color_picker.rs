@@ -17,8 +17,6 @@ const HEX_WELL_RADIUS: f32 = 6.0;
 const LABEL_CHECK_SIZE: f32 = 15.0;
 const LABEL_GRID_COLUMNS: usize = 9;
 const LABEL_GRID_GAP: f32 = 8.0;
-/// Perceptual luminance threshold equivalent to 150/255 mapped onto the 0.0–1.0 component scale.
-const LABEL_LUMINANCE_THRESHOLD: f32 = 0.588;
 const LABEL_SWATCH_HEIGHT: f32 = 26.0;
 const LABEL_SWATCH_RADIUS: f32 = 6.0;
 const POPOVER_RADIUS: f32 = 10.0;
@@ -360,19 +358,7 @@ where
 }
 
 fn hex_to_color(hex: &str) -> Option<Color> {
-  let normalized = normalize_hex(hex)?;
-  let digits = normalized.trim_start_matches('#');
-  let r = u8::from_str_radix(&digits[0..2], 16).ok()?;
-  let g = u8::from_str_radix(&digits[2..4], 16).ok()?;
-  let b = u8::from_str_radix(&digits[4..6], 16).ok()?;
-  Some(Color::from_rgb8(r, g, b))
-}
-
-fn is_light_hex(hex: &str) -> bool {
-  match hex_to_color(hex) {
-    Some(color) => 0.299 * color.r + 0.587 * color.g + 0.114 * color.b > LABEL_LUMINANCE_THRESHOLD,
-    None => false,
-  }
+  color::from_hex(hex)
 }
 
 fn label_swatch<'a, M>(hex: &str, current: &str, on_select: &impl Fn(String) -> M) -> Element<'a, M>
@@ -397,11 +383,7 @@ where
   };
 
   let check: Element<'a, M> = if selected {
-    let tint = if is_light_hex(hex) {
-      color::surface::BASE
-    } else {
-      color::text::PRIMARY
-    };
+    let tint = color::from_hex(hex).map_or(color::text::PRIMARY, color::on_fill);
     Icon::check().size(LABEL_CHECK_SIZE).color(tint).render()
   } else {
     Space::new().into()

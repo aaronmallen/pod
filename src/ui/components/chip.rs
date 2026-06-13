@@ -1,13 +1,16 @@
 use iced::{
-  Background, Border, Color, Element,
+  Background, Border, Color, Element, Length,
   alignment::Vertical,
-  widget::{Row, button, container, text},
+  widget::{Row, Space, button, container, text},
 };
 
 use crate::ui::style::{color, spacing, typography};
 
 const CHIP_RADIUS: f32 = 999.0;
 const HAIRLINE: f32 = 1.0;
+const LABEL_CHIP_RADIUS: f32 = 3.0;
+const LABEL_DOT_RADIUS: f32 = 2.0;
+const LABEL_DOT_SIZE: f32 = 8.0;
 const REMOVE_GLYPH: &str = "\u{00D7}";
 
 pub struct Chip<'a, M> {
@@ -120,6 +123,59 @@ where
   Chip::new(label, color).view()
 }
 
+/// Renders a neutral pill with an uppercased label; the colored dot is omitted when `hex` is `None` or unparseable.
+pub fn label_chip<'a, M>(name: &str, hex: Option<&str>) -> Element<'a, M>
+where
+  M: 'a,
+{
+  let swatch = hex.and_then(color::from_hex);
+
+  let mut children: Vec<Element<'a, M>> = Vec::with_capacity(2);
+  if let Some(fill) = swatch {
+    children.push(
+      container(Space::new())
+        .width(Length::Fixed(LABEL_DOT_SIZE))
+        .height(Length::Fixed(LABEL_DOT_SIZE))
+        .style(move |_| container::Style {
+          background: Some(Background::Color(fill)),
+          border: Border {
+            color: color::with_alpha(Color::BLACK, 0.35),
+            width: HAIRLINE,
+            radius: LABEL_DOT_RADIUS.into(),
+          },
+          ..container::Style::default()
+        })
+        .into(),
+    );
+  }
+  children.push(
+    text(name.to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+  );
+
+  container(
+    Row::with_children(children)
+      .spacing(spacing::UNIT + 1.0)
+      .align_y(Vertical::Center),
+  )
+  .padding([spacing::UNIT / 2.0, spacing::UNIT + 2.0])
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
+    border: Border {
+      color: color::rule(),
+      width: HAIRLINE,
+      radius: LABEL_CHIP_RADIUS.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
 fn remove_affordance<'a, M>(fill: Color, message: M) -> Element<'a, M>
 where
   M: Clone + 'a,
@@ -183,6 +239,25 @@ mod tests {
     #[test]
     fn it_renders_a_selected_variant() {
       let _selected: Element<'_, i32> = Chip::new("Lowsec", None).selected(true).on_press(3).view();
+    }
+  }
+
+  mod label_chip {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_colored_label_chip_from_a_hex() {
+      let el: Element<'_, ()> = super::super::label_chip("Fleet", Some("#ff6600"));
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+
+      assert!(!tree.children.is_empty());
+    }
+
+    #[test]
+    fn it_renders_a_dotless_chip_when_the_hex_is_missing_or_malformed() {
+      let _none: Element<'_, ()> = super::super::label_chip("Trade", None);
+      let _bad: Element<'_, ()> = super::super::label_chip("Trade", Some("not-a-color"));
     }
   }
 }

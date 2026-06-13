@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use iced::{Element, Task, widget::text_editor};
 
 pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot, search_recipients};
-use self::message_list::MessageRow;
+use self::{loaders::MessageLabel, message_list::MessageRow};
 use crate::{
   store::{
     Database, images,
@@ -90,6 +90,7 @@ pub struct Loaded {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadingRender {
   is_starred: bool,
+  labels: Vec<MessageLabel>,
   mail: MailRender,
   sender_portrait: images::ImageState,
 }
@@ -414,8 +415,10 @@ async fn load_render(db: Database, character_id: i64, mail_id: i64) -> Option<Re
     .map(|overlay| overlay.is_starred)
     .unwrap_or(false);
   let sender_portrait = loaders::resolve_sender_portrait(mail.header.from_id());
+  let labels = loaders::resolve_message_labels(&db, character_id, &mail.label_ids).await;
   Some(ReadingRender {
     is_starred,
+    labels,
     mail,
     sender_portrait,
   })
@@ -1086,6 +1089,7 @@ mod tests {
       state.messages = vec![message_row(7, 95_000_001)];
       state.render = Some(ReadingRender {
         is_starred: false,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_002,
@@ -1151,6 +1155,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let render = ReadingRender {
         is_starred: true,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1183,6 +1188,7 @@ mod tests {
       state.active = Scope::Character(42);
       state.folder_data = FolderPaneData {
         labels: vec![loaders::FolderLabel {
+          color: None,
           label_id: 99,
           name: "Sentinel".to_owned(),
           unread: 7,
@@ -1235,6 +1241,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       state.render = Some(ReadingRender {
         is_starred: false,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1294,6 +1301,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       state.render = Some(ReadingRender {
         is_starred: false,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1313,6 +1321,7 @@ mod tests {
       state.active = Scope::Character(42);
       state.render = Some(ReadingRender {
         is_starred: false,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1502,6 +1511,7 @@ mod tests {
       state.selected = Some(7);
       state.render = Some(ReadingRender {
         is_starred: false,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1599,6 +1609,7 @@ mod tests {
       ];
       state.folder_data = FolderPaneData {
         labels: vec![loaders::FolderLabel {
+          color: Some("#ff6600".to_owned()),
           label_id: 99,
           name: "Fleet".to_owned(),
           unread: 2,
@@ -1626,6 +1637,7 @@ mod tests {
       };
       state.render = Some(ReadingRender {
         is_starred: true,
+        labels: Vec::new(),
         mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
@@ -1654,7 +1666,13 @@ mod tests {
         has_attachment: false,
         important: false,
         sender_kind: SenderKind::Character,
-        labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+        labels: labels
+          .iter()
+          .map(|name| MessageLabel {
+            color: None,
+            name: (*name).to_owned(),
+          })
+          .collect(),
         mail_id,
         sender: "Vex Voronova".to_owned(),
         sender_id: 95_000_001,

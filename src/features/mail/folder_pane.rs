@@ -221,18 +221,10 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
   } else {
     for label in labels {
       let folder = Folder::Label(label.label_id);
-      let chip = container(
-        text(label.name.clone())
-          .size(typography::size::MD)
-          .style(|_| text::Style {
-            color: Some(color::text::secondary()),
-          }),
-      )
-      .width(Length::Fill)
-      .padding(Padding {
+      let chip = container(label_entry(label)).width(Length::Fill).padding(Padding {
         top: spacing::SPACE_2 - 1.0,
         bottom: spacing::SPACE_2 - 1.0,
-        left: spacing::SPACE_2 + 18.0,
+        left: spacing::SPACE_2 + 2.0,
         right: spacing::SPACE_2_5,
       });
       column = column.push(mouse_area(chip).on_press(Message::FolderSelected(folder)));
@@ -247,6 +239,42 @@ fn labels_section(labels: &[FolderLabel]) -> Element<'_, Message> {
       left: SIDE_PADDING,
       right: SIDE_PADDING,
     })
+    .into()
+}
+
+const LABEL_DOT_RADIUS: f32 = 3.0;
+const LABEL_DOT_SIZE: f32 = 10.0;
+
+fn label_entry(label: &FolderLabel) -> Element<'_, Message> {
+  let fill = label
+    .color
+    .as_deref()
+    .and_then(color::from_hex)
+    .unwrap_or_else(|| color::with_alpha(color::text::PRIMARY, 0.3));
+
+  let dot = container(Space::new())
+    .width(Length::Fixed(LABEL_DOT_SIZE))
+    .height(Length::Fixed(LABEL_DOT_SIZE))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(fill)),
+      border: Border {
+        color: color::with_alpha(iced::Color::BLACK, 0.35),
+        radius: LABEL_DOT_RADIUS.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    });
+
+  let name = text(label.name.clone())
+    .size(typography::size::MD)
+    .width(Length::Fill)
+    .style(|_| text::Style {
+      color: Some(color::text::secondary()),
+    });
+
+  Row::with_children(vec![dot.into(), name.into()])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center)
     .into()
 }
 

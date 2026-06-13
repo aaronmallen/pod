@@ -197,6 +197,8 @@ pub mod text {
   }
 }
 
+/// Perceptual luminance cutoff (≈ 150/255) above which a fill is considered light.
+const ON_FILL_LUMINANCE_THRESHOLD: f32 = 0.588;
 const RULE_HC_ALPHA: f32 = 0.22;
 const RULE_OFF_ALPHA: f32 = 0.10;
 const RULE_STRONG_HC_ALPHA: f32 = 0.34;
@@ -244,6 +246,30 @@ pub fn rule_strong_off_alpha() -> f32 {
 
 pub fn set_high_contrast(enabled: bool) {
   HIGH_CONTRAST.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Parses `#RGB`, `#RRGGBB`, or either form without the leading `#`.
+pub fn from_hex(hex: &str) -> Option<iced::Color> {
+  let trimmed = hex.trim().trim_start_matches('#');
+  let expanded = match trimmed.len() {
+    3 => trimmed.chars().flat_map(|c| [c, c]).collect::<String>(),
+    6 => trimmed.to_owned(),
+    _ => return None,
+  };
+  let r = u8::from_str_radix(&expanded[0..2], 16).ok()?;
+  let g = u8::from_str_radix(&expanded[2..4], 16).ok()?;
+  let b = u8::from_str_radix(&expanded[4..6], 16).ok()?;
+  Some(iced::Color::from_rgb8(r, g, b))
+}
+
+/// Returns a legible foreground (dark or light) for a given fill based on perceptual luminance.
+pub fn on_fill(fill: iced::Color) -> iced::Color {
+  let luminance = 0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b;
+  if luminance > ON_FILL_LUMINANCE_THRESHOLD {
+    surface::BASE
+  } else {
+    text::PRIMARY
+  }
 }
 
 pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
@@ -366,6 +392,48 @@ mod tests {
       set_high_contrast(false);
       assert_eq!(text::secondary_off(), SECONDARY_OFF);
       assert_eq!(text::secondary_hc(), SECONDARY_HC);
+    }
+  }
+
+  mod from_hex {
+    use pretty_assertions::assert_eq;
+
+    use super::super::from_hex;
+
+    #[test]
+    fn it_parses_six_digit_hex_with_and_without_a_hash() {
+      assert_eq!(from_hex("#ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
+      assert_eq!(from_hex("ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
+    }
+
+    #[test]
+    fn it_expands_three_digit_shorthand() {
+      assert_eq!(from_hex("#abc"), Some(iced::Color::from_rgb8(170, 187, 204)));
+    }
+
+    #[test]
+    fn it_rejects_malformed_input() {
+      assert_eq!(from_hex(""), None);
+      assert_eq!(from_hex("#12345"), None);
+      assert_eq!(from_hex("zzzzzz"), None);
+    }
+  }
+
+  mod on_fill {
+    use pretty_assertions::assert_eq;
+
+    use super::super::{on_fill, surface, text};
+
+    #[test]
+    fn it_picks_dark_foreground_over_a_light_fill() {
+      assert_eq!(on_fill(iced::Color::from_rgb8(255, 255, 255)), surface::BASE);
+      assert_eq!(on_fill(iced::Color::from_rgb8(255, 255, 205)), surface::BASE);
+    }
+
+    #[test]
+    fn it_picks_light_foreground_over_a_dark_fill() {
+      assert_eq!(on_fill(iced::Color::from_rgb8(0, 0, 254)), text::PRIMARY);
+      assert_eq!(on_fill(iced::Color::from_rgb8(102, 0, 102)), text::PRIMARY);
     }
   }
 

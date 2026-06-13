@@ -4,11 +4,11 @@ use iced::{
   widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
-use super::{Message, ReadingRender};
+use super::{Message, ReadingRender, loaders::MessageLabel};
 use crate::{
   store::model::character_mail_view::MailRender,
   ui::{
-    components::{avatar::Avatar, chip::chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule},
+    components::{avatar::Avatar, chip::label_chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -202,7 +202,7 @@ fn scroll_body(render: &ReadingRender) -> Element<'_, Message> {
   let mail = &render.mail;
   let mut column = Column::new().width(Length::Fill).max_width(BODY_MAX_WIDTH);
 
-  if let Some(chips) = label_chips(&mail.label_ids) {
+  if let Some(chips) = label_chips(&render.labels) {
     column = column.push(chips);
   }
   column = column.push(subject(mail));
@@ -223,13 +223,13 @@ fn scroll_body(render: &ReadingRender) -> Element<'_, Message> {
     .into()
 }
 
-fn label_chips(label_ids: &[i64]) -> Option<Element<'_, Message>> {
-  if label_ids.is_empty() {
+fn label_chips(labels: &[MessageLabel]) -> Option<Element<'_, Message>> {
+  if labels.is_empty() {
     return None;
   }
   let mut chips = Row::new().spacing(spacing::SPACE_2 - 2.0);
-  for id in label_ids {
-    chips = chips.push(label_chip(id.to_string()));
+  for label in labels {
+    chips = chips.push(label_chip::<Message>(&label.name, label.color.as_deref()));
   }
   Some(
     container(chips)
@@ -241,10 +241,6 @@ fn label_chips(label_ids: &[i64]) -> Option<Element<'_, Message>> {
       })
       .into(),
   )
-}
-
-fn label_chip<'a>(label: String) -> Element<'a, Message> {
-  chip(label.to_uppercase(), None)
 }
 
 fn subject(mail: &MailRender) -> Element<'_, Message> {
@@ -470,6 +466,10 @@ mod tests {
     fn render(from_id: i64, recipient_type: &str, recipients_display: &str, is_starred: bool) -> ReadingRender {
       ReadingRender {
         is_starred,
+        labels: vec![MessageLabel {
+          color: Some("#ff6600".to_owned()),
+          name: "Fleet".to_owned(),
+        }],
         mail: MailRender {
           body: CharacterMailBody {
             body: "<p>Form up at Jita.</p><p>Bring tackle.</p>".to_owned(),

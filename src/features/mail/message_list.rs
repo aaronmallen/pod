@@ -5,12 +5,15 @@ use iced::{
   widget::{Column, Row, Space, container, mouse_area, scrollable, text},
 };
 
-use super::{Folder, Message, Scope, StandardFolder, State, loaders::strip_html_snippet};
+use super::{
+  Folder, Message, Scope, StandardFolder, State,
+  loaders::{MessageLabel, strip_html_snippet},
+};
 use crate::{
   store::{Database, images, repo::mail},
   ui::{
     components::{
-      avatar::Avatar, chip::chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule,
+      avatar::Avatar, chip::label_chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule,
       section_header::section_header, text_input::TextInput,
     },
     style::{color, radius, spacing, typography},
@@ -26,7 +29,7 @@ pub struct MessageRow {
   pub is_pinned: bool,
   pub is_read: bool,
   pub is_starred: bool,
-  pub labels: Vec<String>,
+  pub labels: Vec<MessageLabel>,
   pub mail_id: i64,
   pub sender: String,
   pub sender_id: i64,
@@ -151,7 +154,7 @@ async fn key_to_row(db: &Database, key: MailKey, now: DateTime<Utc>) -> MessageR
   let label_ids = mail::membership(db, key.character_id, key.mail_id)
     .await
     .unwrap_or_default();
-  let labels = resolve_label_names(db, key.character_id, &label_ids).await;
+  let labels = super::loaders::resolve_message_labels(db, key.character_id, &label_ids).await;
   let snippet = snippet_preview(&strip_html_snippet(
     &mail::body(db, key.character_id, key.mail_id)
       .await
@@ -315,22 +318,6 @@ async fn overlay_folder_ids(db: &Database, character_id: i64, standard_folder: S
       .collect(),
     StandardFolder::Inbox | StandardFolder::Sent | StandardFolder::Drafts => Vec::new(),
   }
-}
-
-async fn resolve_label_names(db: &Database, character_id: i64, label_ids: &[i64]) -> Vec<String> {
-  if label_ids.is_empty() {
-    return Vec::new();
-  }
-  let catalog = mail::labels(db, character_id).await.unwrap_or_default();
-  label_ids
-    .iter()
-    .filter_map(|id| {
-      catalog
-        .iter()
-        .find(|l| l.label_id() == *id)
-        .map(|l| l.name().to_owned())
-    })
-    .collect()
 }
 
 fn subject_or_no_subject(subject: &str) -> String {
@@ -530,7 +517,7 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
   if !row.labels.is_empty() {
     let mut chips = Row::new().spacing(spacing::SPACE_2 / 2.0);
     for label in &row.labels {
-      chips = chips.push(label_chip(label));
+      chips = chips.push(label_chip::<Message>(&label.name, label.color.as_deref()));
     }
     content = content.push(container(chips).padding(Padding {
       top: spacing::SPACE_2,
@@ -604,10 +591,6 @@ fn unread_avatar(row: &MessageRow) -> Element<'_, Message> {
   } else {
     avatar
   }
-}
-
-fn label_chip(label: &str) -> Element<'_, Message> {
-  chip(label.to_uppercase(), None)
 }
 
 fn glyph(symbol: &str) -> Element<'_, Message> {
@@ -744,7 +727,13 @@ mod tests {
         is_pinned,
         is_read,
         is_starred,
-        labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+        labels: labels
+          .iter()
+          .map(|name| MessageLabel {
+            color: Some("#ff6600".to_owned()),
+            name: (*name).to_owned(),
+          })
+          .collect(),
         mail_id,
         sender: "Vex Voronova".to_owned(),
         sender_id: 95_000_001,
@@ -1040,7 +1029,13 @@ mod tests {
       let rows = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
 
       assert_eq!(ids(&rows), vec![5]);
-      assert_eq!(rows.first().unwrap().labels, vec!["Fleet".to_owned()]);
+      assert_eq!(
+        rows.first().unwrap().labels,
+        vec![MessageLabel {
+          color: Some("#fff".to_owned()),
+          name: "Fleet".to_owned(),
+        }]
+      );
     }
 
     #[tokio::test]

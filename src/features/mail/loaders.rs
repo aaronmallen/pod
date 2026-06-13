@@ -167,9 +167,35 @@ pub(super) async fn load_unified_unread(db: &Database) -> i64 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FolderLabel {
+  pub color: Option<String>,
   pub label_id: i64,
   pub name: String,
   pub unread: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageLabel {
+  pub color: Option<String>,
+  pub name: String,
+}
+
+pub(super) async fn resolve_message_labels(db: &Database, character_id: i64, label_ids: &[i64]) -> Vec<MessageLabel> {
+  if label_ids.is_empty() {
+    return Vec::new();
+  }
+  let catalog = mail::labels(db, character_id).await.unwrap_or_default();
+  label_ids
+    .iter()
+    .filter_map(|id| {
+      catalog
+        .iter()
+        .find(|label| label.label_id() == *id)
+        .map(|label| MessageLabel {
+          color: label.color().clone(),
+          name: label.name().to_owned(),
+        })
+    })
+    .collect()
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -216,6 +242,7 @@ pub(super) async fn load_folder_pane(db: &Database, character_id: i64) -> Folder
   let labels = catalog
     .iter()
     .map(|label: &CharacterMailLabel| FolderLabel {
+      color: label.color().clone(),
       label_id: label.label_id(),
       name: label.name().to_owned(),
       unread: unread_by_label.get(&label.label_id()).copied().unwrap_or(0),
@@ -479,7 +506,7 @@ mod tests {
       CHAR,
       &[CharacterMailLabel {
         character_id: CHAR,
-        color: None,
+        color: Some("#ff6600".to_owned()),
         label_id: 7000,
         name: "Fleet".to_owned(),
       }],
@@ -502,6 +529,7 @@ mod tests {
 
     assert_eq!(data.labels.len(), 1);
     assert_eq!(data.labels[0].name, "Fleet");
+    assert_eq!(data.labels[0].color, Some("#ff6600".to_owned()));
     assert_eq!(data.labels[0].unread, 1);
     assert_eq!(data.standard_counts.starred, 1);
     assert_eq!(data.standard_counts.archive, 1);
@@ -509,6 +537,49 @@ mod tests {
     use crate::features::mail::StandardFolder;
     assert_eq!(data.standard_counts.unread_for(StandardFolder::Starred), 1);
     assert_eq!(data.standard_counts.unread_for(StandardFolder::Sent), 0);
+  }
+
+  #[tokio::test]
+  async fn it_resolves_membership_ids_to_named_colored_labels_and_drops_unknown_ids() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    mail::replace_labels_for_character(
+      &db,
+      CHAR,
+      &[
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: Some("#ff6600".to_owned()),
+          label_id: 7000,
+          name: "Fleet".to_owned(),
+        },
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: None,
+          label_id: 7001,
+          name: "Trade".to_owned(),
+        },
+      ],
+    )
+    .await
+    .unwrap();
+
+    let resolved = resolve_message_labels(&db, CHAR, &[7000, 7001, 9999]).await;
+
+    assert_eq!(
+      resolved,
+      vec![
+        MessageLabel {
+          color: Some("#ff6600".to_owned()),
+          name: "Fleet".to_owned(),
+        },
+        MessageLabel {
+          color: None,
+          name: "Trade".to_owned(),
+        },
+      ]
+    );
+    assert!(resolve_message_labels(&db, CHAR, &[]).await.is_empty());
   }
 
   #[tokio::test]

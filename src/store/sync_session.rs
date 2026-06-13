@@ -62,6 +62,20 @@ impl SyncSession {
     self.engine.checkpoint_and_push().await
   }
 
+  /// Claims the share unconditionally, clobbering any holder regardless of freshness.
+  ///
+  /// Unlike [`SyncSession::take_over`], which routes through the stale-aware [`SyncSession::acquire`]
+  /// and declines a still-live foreign writer, this method writes the lease immediately without
+  /// checking the staleness threshold. Use only when the caller has already confirmed that the
+  /// foreign holder must be displaced (e.g. an explicit user-initiated force-claim).
+  #[allow(dead_code)]
+  pub fn force_take_over(&self, now: DateTime<Utc>) -> Result<Outcome, sync_copy::Error> {
+    self.lease.take_over(&self.share, now)?;
+    self.engine.pull_if_newer()?;
+
+    Ok(Outcome::Acquired)
+  }
+
   pub fn has_unsynced_changes(&self) -> bool {
     read_generation(&self.marker) > read_generation(&self.sidecar)
   }
@@ -399,6 +413,49 @@ mod tests {
 
       assert_eq!(pulled, false);
       assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"local data");
+    }
+  }
+
+  mod force_take_over {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_claims_regardless_of_a_fresh_foreign_lease() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now)
+        .unwrap();
+
+      let outcome = fixture.session.force_take_over(now).unwrap();
+
+      assert_eq!(outcome, Outcome::Acquired);
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-a"
+      );
+    }
+
+    #[test]
+    fn it_pulls_the_newer_canonical_copy_when_claiming() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now)
+        .unwrap();
+      fs::write(&fixture.canonical, b"newer canonical").unwrap();
+      write_generation(&fixture.sidecar, 9).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      let outcome = fixture.session.force_take_over(now).unwrap();
+
+      assert_eq!(outcome, Outcome::Acquired);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"newer canonical");
+      assert_eq!(read_generation(&fixture.marker), 9);
     }
   }
 

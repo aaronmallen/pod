@@ -18,6 +18,8 @@ use iced::{
 };
 use windows::{Window, Windows};
 
+#[cfg(target_os = "macos")]
+use crate::services::menu;
 use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
@@ -25,7 +27,7 @@ use crate::{
     about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, mail, registry,
     settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
-  services::{menu, updater},
+  services::updater,
   store,
   sync::{self, JobKey, JobKind, Phase, Subject},
   ui::{
@@ -217,6 +219,7 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
+  #[cfg(target_os = "macos")]
   Menu(menu::MenuAction),
   Nav(rail::Destination),
   OpenAbout,
@@ -268,6 +271,7 @@ impl Message {
       Message::Compare(_) => "Compare",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
+      #[cfg(target_os = "macos")]
       Message::Menu(_) => "Menu",
       Message::Nav(_) => "Nav",
       Message::Settings(_) => "Settings",
@@ -585,6 +589,7 @@ fn boot() -> (App, Task<Message>) {
   store::images::init_root(image_root);
 
   auth::install();
+  #[cfg(target_os = "macos")]
   menu::init();
   let settings = window::Settings {
     size: Size::new(spacing::layout::SPLASH_WIDTH, spacing::layout::SPLASH_HEIGHT),
@@ -1993,6 +1998,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   }
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
+  #[cfg(target_os = "macos")]
   subs.push(menu::subscription().map(Message::Menu));
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
@@ -2207,6 +2213,7 @@ fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([window::close(id), reload])
 }
 
+#[cfg(target_os = "macos")]
 fn handle_menu(app: &mut App, action: menu::MenuAction) -> Task<Message> {
   match action {
     menu::MenuAction::About => Task::done(Message::OpenAbout),
@@ -2283,6 +2290,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Compare(msg) => handle_compare(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
+    #[cfg(target_os = "macos")]
     Message::Menu(action) => handle_menu(app, action),
     Message::Nav(destination) => handle_nav(app, destination),
     Message::Settings(msg) => handle_settings(app, msg),
@@ -4544,6 +4552,7 @@ mod tests {
       let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::Character(7)));
     }
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn it_dispatches_each_native_menu_action() {
       let mut app = test_app();

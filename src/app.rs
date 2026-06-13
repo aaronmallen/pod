@@ -1484,10 +1484,6 @@ fn main_view(app: &App) -> Element<'_, Message> {
     layers.push(toast);
   }
 
-  if layers.len() == 1 {
-    return layers.pop().expect("base layer present");
-  }
-
   Stack::with_children(layers)
     .width(Length::Fill)
     .height(Length::Fill)

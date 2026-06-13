@@ -20,6 +20,7 @@ const LIST_MAX_HEIGHT: f32 = 360.0;
 const PROGRESS_WIDTH: f32 = 96.0;
 const PULSE_OFF: f32 = 0.4;
 const QUEUED_OPACITY: f32 = 0.5;
+const ROW_HEIGHT: f32 = 50.0;
 const SCROLLBAR_WIDTH: f32 = 6.0;
 const SYNCING_FILL: f32 = 0.45;
 const TRACK_HEIGHT: f32 = 3.0;
@@ -291,6 +292,12 @@ where
 
   let content = Column::with_children(rows).width(Length::Fill);
 
+  // The scrollable's clip sub-layer leaves accumulating "ghost" pixels on Wayland/wgpu, so it is
+  // used only when the rows actually overflow; a plain column avoids the artifact when they fit.
+  if !needs_scroll(model.rows.len()) {
+    return content.into();
+  }
+
   let list = scrollable(content)
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
@@ -302,6 +309,10 @@ where
     ));
 
   container(list).max_height(LIST_MAX_HEIGHT).into()
+}
+
+fn needs_scroll(rows: usize) -> bool {
+  (rows as f32) * ROW_HEIGHT > LIST_MAX_HEIGHT
 }
 
 fn row_countdown<'a, M>(row: &JobRow) -> Element<'a, M>
@@ -515,6 +526,24 @@ where
 mod tests {
   use super::*;
 
+  mod needs_scroll {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_does_not_scroll_when_rows_fit_within_the_max_height() {
+      assert_eq!(needs_scroll(0), false);
+      assert_eq!(needs_scroll(7), false);
+    }
+
+    #[test]
+    fn it_scrolls_when_rows_overflow_the_max_height() {
+      assert_eq!(needs_scroll(8), true);
+      assert_eq!(needs_scroll(20), true);
+    }
+  }
+
   mod render {
     use super::*;
 
@@ -574,6 +603,20 @@ mod tests {
         total: 0,
       };
       let _empty: Element<'_, ()> = sync_popover(&empty, ());
+
+      let overflowing = Model {
+        done: 0,
+        errors: 0,
+        header: Header::Syncing {
+          active: 8,
+          percent: 0,
+          queued: 0,
+        },
+        pulse_on: true,
+        rows: (0..8).map(|_| row("Profile", RowState::Syncing, None)).collect(),
+        total: 8,
+      };
+      let _overflowing: Element<'_, ()> = sync_popover(&overflowing, ());
     }
   }
 }

@@ -12,12 +12,23 @@ use crate::ui::{
 const BAR_HEIGHT: f32 = 2.0;
 const BAR_WIDTH: f32 = 200.0;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum Lifecycle {
+  #[default]
+  Active,
+  ReadOnly {
+    hostname: Option<String>,
+  },
+  Stopped,
+}
+
+#[derive(Clone, Debug)]
 pub struct State {
   pub attention: usize,
   pub done: usize,
   pub errors: usize,
   pub last_synced_secs: Option<u64>,
+  pub lifecycle: Lifecycle,
   pub percent: u8,
   pub pulse_on: bool,
   pub syncing: bool,
@@ -28,28 +39,12 @@ pub fn sync_chip<'a, M>(state: State) -> Element<'a, M>
 where
   M: 'a,
 {
-  let dot_color = if state.syncing {
-    if state.pulse_on {
-      color::accent::PLASMA
-    } else {
-      color::accent::PLASMA_MUTED
-    }
-  } else if state.errors > 0 {
-    color::status::DANGER
-  } else if state.attention > 0 {
-    color::status::WARNING
-  } else {
-    color::status::ONLINE
-  };
-
-  let label = if state.syncing {
-    syncing_label(state.done, state.total, state.percent)
-  } else if state.errors > 0 {
-    error_label(state.errors)
-  } else if state.attention > 0 {
-    attention_label(state.attention)
-  } else {
-    idle_label(state.last_synced_secs)
+  let (dot_color, label) = match &state.lifecycle {
+    Lifecycle::ReadOnly {
+      hostname,
+    } => (color::status::WARNING, read_only_label(hostname.as_deref())),
+    Lifecycle::Stopped => (color::status::DANGER, stopped_label()),
+    Lifecycle::Active => (active_dot_color(&state), active_label(&state)),
   };
 
   container(
@@ -67,6 +62,37 @@ where
   .height(Length::Fill)
   .align_y(Vertical::Center)
   .into()
+}
+
+fn active_dot_color(state: &State) -> Color {
+  if state.syncing {
+    if state.pulse_on {
+      color::accent::PLASMA
+    } else {
+      color::accent::PLASMA_MUTED
+    }
+  } else if state.errors > 0 {
+    color::status::DANGER
+  } else if state.attention > 0 {
+    color::status::WARNING
+  } else {
+    color::status::ONLINE
+  }
+}
+
+fn active_label<'a, M>(state: &State) -> Element<'a, M>
+where
+  M: 'a,
+{
+  if state.syncing {
+    syncing_label(state.done, state.total, state.percent)
+  } else if state.errors > 0 {
+    error_label(state.errors)
+  } else if state.attention > 0 {
+    attention_label(state.attention)
+  } else {
+    idle_label(state.last_synced_secs)
+  }
 }
 
 fn attention_label<'a, M>(attention: usize) -> Element<'a, M>
@@ -162,6 +188,24 @@ where
     .into()
 }
 
+fn read_only_label<'a, M>(hostname: Option<&str>) -> Element<'a, M>
+where
+  M: 'a,
+{
+  let content = match hostname {
+    Some(hostname) => format!("Read-only \u{2014} open on {hostname}"),
+    None => "Read-only".to_owned(),
+  };
+  mono_text(content, color::status::WARNING)
+}
+
+fn stopped_label<'a, M>() -> Element<'a, M>
+where
+  M: 'a,
+{
+  mono_text("Sync stopped", color::status::DANGER)
+}
+
 fn syncing_label<'a, M>(done: usize, total: usize, percent: u8) -> Element<'a, M>
 where
   M: 'a,
@@ -193,6 +237,7 @@ mod tests {
         errors: 0,
         attention: 0,
         last_synced_secs: None,
+        lifecycle: Lifecycle::Active,
         pulse_on: true,
       };
       let _syncing: Element<'_, ()> = sync_chip(syncing);
@@ -205,6 +250,7 @@ mod tests {
         errors: 0,
         attention: 0,
         last_synced_secs: Some(125),
+        lifecycle: Lifecycle::Active,
         pulse_on: false,
       };
       let _idle: Element<'_, ()> = sync_chip(idle);
@@ -217,6 +263,7 @@ mod tests {
         errors: 2,
         attention: 0,
         last_synced_secs: None,
+        lifecycle: Lifecycle::Active,
         pulse_on: false,
       };
       let _errored: Element<'_, ()> = sync_chip(errored);
@@ -229,9 +276,41 @@ mod tests {
         errors: 0,
         attention: 2,
         last_synced_secs: None,
+        lifecycle: Lifecycle::Active,
         pulse_on: false,
       };
       let _attention: Element<'_, ()> = sync_chip(attention);
+    }
+
+    #[test]
+    fn it_renders_stopped_and_read_only_lifecycle_states() {
+      let stopped = State {
+        syncing: false,
+        done: 3,
+        total: 10,
+        percent: 30,
+        errors: 0,
+        attention: 0,
+        last_synced_secs: Some(42),
+        lifecycle: Lifecycle::Stopped,
+        pulse_on: false,
+      };
+      let _stopped: Element<'_, ()> = sync_chip(stopped);
+
+      let read_only = State {
+        syncing: false,
+        done: 0,
+        total: 10,
+        percent: 0,
+        errors: 0,
+        attention: 0,
+        last_synced_secs: None,
+        lifecycle: Lifecycle::ReadOnly {
+          hostname: Some("nebula".to_owned()),
+        },
+        pulse_on: false,
+      };
+      let _read_only: Element<'_, ()> = sync_chip(read_only);
     }
   }
 }

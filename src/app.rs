@@ -108,6 +108,7 @@ struct App {
   coalescer: WriteCoalescer,
   compare: Option<(window::Id, skills_compare::State)>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
+  engine_state: EngineState,
   esi_connected: bool,
   industry: Option<industry::State>,
   init_error: Option<String>,
@@ -143,6 +144,33 @@ struct App {
   updater_toast_dismissed: bool,
   wallet: Option<wallet::State>,
   windows: Windows,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum EngineState {
+  Idle,
+  ReadOnly {
+    held_by: Option<HolderInfo>,
+  },
+  #[default]
+  Running,
+  Stopped {
+    reason: Option<String>,
+  },
+}
+
+impl EngineState {
+  fn is_read_only(&self) -> bool {
+    matches!(self, EngineState::ReadOnly { .. })
+  }
+
+  fn is_stopped(&self) -> bool {
+    matches!(self, EngineState::Stopped { .. })
+  }
+
+  fn settled(&self) -> bool {
+    self.is_stopped() || self.is_read_only()
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -210,6 +238,9 @@ enum Message {
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
+  EngineStopped {
+    reason: Option<String>,
+  },
   FocusMainWindow,
   ImageReady {
     id: i64,
@@ -234,6 +265,7 @@ enum Message {
   Pushed(Option<SystemTime>),
   Ready(Runtime),
   ReauthCharacter(i64),
+  RestartSync,
   SeedProgress(splash::seed::Progress),
   Settings(settings::Message),
   SkillPlanEditor(skill_plan_editor::Message),
@@ -293,6 +325,9 @@ impl Message {
     Some(match self {
       Message::ClockTick => "ClockTick",
       Message::CloseSyncPopover => "CloseSyncPopover",
+      Message::EngineStopped {
+        ..
+      } => "EngineStopped",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::ImageReady {
         ..
@@ -306,6 +341,7 @@ impl Message {
       Message::Pushed(_) => "Pushed",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
+      Message::RestartSync => "RestartSync",
       Message::SeedProgress(_) => "SeedProgress",
       Message::SnoozesWoken(_) => "SnoozesWoken",
       Message::Splash(_) => "Splash",
@@ -651,6 +687,7 @@ fn boot() -> (App, Task<Message>) {
     coalescer: WriteCoalescer::new(),
     compare: None,
     editor: None,
+    engine_state: EngineState::default(),
     esi_connected: true,
     industry: None,
     init_error: None,
@@ -808,9 +845,16 @@ async fn run_build_runtime(ready: StoreReady, mut tx: Tx) {
 async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event>, mut tx: Tx) {
   while let Some(event) = events.recv().await {
     if tx.send(Message::Sync(event)).await.is_err() {
-      break;
+      return;
     }
   }
+  // The sync event channel closing means the engine task itself ended; emit once here so the
+  // app's lifecycle channel (which outlives any single engine) reflects the real Stopped state.
+  let _ = tx
+    .send(Message::EngineStopped {
+      reason: None,
+    })
+    .await;
 }
 
 fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc::Receiver<sync::Event>), String> {
@@ -872,6 +916,12 @@ fn inert_sync() -> (sync::Handle, tokio::sync::mpsc::Receiver<sync::Event>) {
   let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
   let (_events_tx, events) = tokio::sync::mpsc::channel(1);
   (sync::Handle::new(commands), events)
+}
+
+fn read_only_engine_state(held_by: Option<HolderInfo>) -> EngineState {
+  EngineState::ReadOnly {
+    held_by,
+  }
 }
 
 fn enabled_features(app: &App) -> Vec<config::Feature> {
@@ -1829,6 +1879,14 @@ fn expected_job_stats(app: &App) -> JobStats {
   stats
 }
 
+fn engine_syncing(app: &App) -> bool {
+  syncing_with(&app.engine_state, &expected_job_stats(app))
+}
+
+fn syncing_with(engine_state: &EngineState, stats: &JobStats) -> bool {
+  !engine_state.settled() && stats.in_progress()
+}
+
 fn resolve_skills_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> Option<i64> {
   if let Some(id) = last_selected
     && roster.iter().any(|pilot| pilot.id == id)
@@ -1838,17 +1896,55 @@ fn resolve_skills_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> O
   roster.first().map(|pilot| pilot.id)
 }
 
+fn chip_lifecycle(app: &App) -> sync_chip::Lifecycle {
+  match &app.engine_state {
+    EngineState::Stopped {
+      ..
+    } => sync_chip::Lifecycle::Stopped,
+    EngineState::ReadOnly {
+      held_by,
+    } => sync_chip::Lifecycle::ReadOnly {
+      hostname: held_by.as_ref().map(|holder| holder.hostname.clone()),
+    },
+    EngineState::Idle | EngineState::Running => sync_chip::Lifecycle::Active,
+  }
+}
+
+fn status_affordance(state: &EngineState) -> Option<Element<'static, Message>> {
+  let (label, message) = match state {
+    EngineState::Stopped {
+      ..
+    } => ("Restart sync", Message::RestartSync),
+    EngineState::ReadOnly {
+      ..
+    } => ("Take over", Message::TakeOver),
+    EngineState::Idle | EngineState::Running => return None,
+  };
+  let action = button(text(label).font(typography::body::MEDIUM).size(typography::size::XS))
+    .padding(control::padding())
+    .on_press(message)
+    .style(control::primary_button);
+  Some(
+    container(action)
+      .padding(region_padding())
+      .height(Length::Fill)
+      .align_y(Vertical::Center)
+      .into(),
+  )
+}
+
 fn status_bar_view(app: &App) -> Element<'_, Message> {
   let stats = expected_job_stats(app);
   let percent = (stats.done * 100).checked_div(stats.total).unwrap_or(100) as u8;
   let chip = sync_chip::State {
-    syncing: stats.in_progress(),
+    syncing: engine_syncing(app),
     done: stats.done,
     total: stats.total,
     percent,
     errors: stats.errors,
     attention: stats.attention,
     last_synced_secs: app.last_synced.map(|at| (app.now - at).num_seconds().max(0) as u64),
+    lifecycle: chip_lifecycle(app),
     pulse_on: app.sync_tick,
   };
 
@@ -1868,6 +1964,10 @@ fn status_bar_view(app: &App) -> Element<'_, Message> {
   let chip = mouse_area(chip).on_press(Message::ToggleSyncPopover);
 
   let mut children = vec![eve.into(), separator(), chip.into()];
+  if let Some(affordance) = status_affordance(&app.engine_state) {
+    children.push(affordance);
+    children.push(separator());
+  }
   if let Some(outbox) = outbox_indicator(&app.outbox) {
     children.push(separator());
     children.push(outbox);
@@ -2046,7 +2146,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   if app.splash.is_some() {
     subs.push(iced::time::every(Duration::from_millis(16)).map(|_| Message::Splash(splash::Message::Tick)));
   }
-  if expected_job_stats(app).in_progress() {
+  if engine_syncing(app) {
     subs.push(iced::time::every(PULSE_INTERVAL).map(|_| Message::SyncPulse));
   }
   if holding_lease(app) {
@@ -2383,6 +2483,9 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
 fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::ClockTick => handle_clock_tick(app),
+    Message::EngineStopped {
+      reason,
+    } => handle_engine_stopped(app, reason),
     Message::ImageReady {
       id,
       kind,
@@ -2398,6 +2501,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Pushed(mark) => handle_pushed(app, mark),
     Message::Ready(runtime) => handle_ready(app, runtime),
     Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
+    Message::RestartSync => handle_restart_sync(app),
     Message::SeedProgress(progress) => on_seed_progress(app, progress),
     Message::SnoozesWoken(woken) => handle_snoozes_woken(app, woken),
     Message::Splash(msg) => update_splash(app, msg),
@@ -2800,6 +2904,7 @@ fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
 fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {
   app.sync_session = ready.sync_session.clone();
   app.read_only = ready.lease.clone();
+  app.engine_state = read_only_engine_state(app.read_only.clone());
   app.take_over_refused = None;
   app.last_push = app
     .sync_session
@@ -3005,12 +3110,14 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
       };
       ready.lease = None;
       app.store_ready = Some(ready.clone());
+      app.engine_state = EngineState::Running;
       build_runtime(ready)
     }
     TakeOverOutcome::StillHeld(holder) => {
       let elapsed = (Utc::now() - holder.last_active).num_seconds().max(0) as u64;
       app.take_over_refused = Some(status::format_since(elapsed));
-      app.read_only = Some(holder);
+      app.read_only = Some(holder.clone());
+      app.engine_state = read_only_engine_state(Some(holder));
       refresh_storage_status(app);
       Task::none()
     }
@@ -3313,6 +3420,11 @@ fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   let load_tags = settings::load(&settings_state).map(Message::Settings);
   app.settings = Some(settings_state);
   app.runtime = Some(runtime);
+  app.engine_state = if app.read_only.is_some() {
+    read_only_engine_state(app.read_only.clone())
+  } else {
+    EngineState::Running
+  };
   refresh_storage_status(app);
   Task::batch([
     load_roster.map(Message::CharacterManager),
@@ -3474,9 +3586,57 @@ fn handle_skill_plan_editor(app: &mut App, msg: skill_plan_editor::Message) -> T
   }
 }
 
+fn handle_engine_stopped(app: &mut App, reason: Option<String>) -> Task<Message> {
+  // A parked (read-only) instance's inert event stream closes immediately; ignore that close so it
+  // doesn't overwrite ReadOnly with Stopped.
+  if app.engine_state.is_read_only() {
+    return Task::none();
+  }
+  tracing::warn!(
+    target: "pod::lifecycle",
+    reason = reason.as_deref().unwrap_or("unknown"),
+    "the sync engine task stopped"
+  );
+  app.engine_state = EngineState::Stopped {
+    reason,
+  };
+  Task::none()
+}
+
+fn refresh_running_engine_state(app: &mut App) {
+  if app.engine_state.settled() {
+    return;
+  }
+  app.engine_state = if expected_job_stats(app).in_progress() {
+    EngineState::Running
+  } else {
+    EngineState::Idle
+  };
+}
+
+fn handle_restart_sync(app: &mut App) -> Task<Message> {
+  if !app.engine_state.is_stopped() {
+    return Task::none();
+  }
+  // A respawn needs the parked StoreReady, which the boot path consumes once seeding completes.
+  // When it is gone, this honest placeholder leaves the chip in Stopped rather than faking a
+  // restart; full supervision and respawn live in the engine-supervision sibling spec.
+  let Some(ready) = app.store_ready.clone() else {
+    tracing::warn!(
+      target: "pod::lifecycle",
+      "restart requested but the runtime handle is unavailable; leaving sync stopped"
+    );
+    return Task::none();
+  };
+  tracing::info!(target: "pod::lifecycle", "restarting the sync engine on request");
+  app.engine_state = EngineState::Running;
+  build_runtime(ready)
+}
+
 fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
   app.status.apply(&event);
   app.outbox.apply(&event);
+  refresh_running_engine_state(app);
   let sync::Event::Finished {
     key, ..
   } = event
@@ -3691,6 +3851,7 @@ mod tests {
       coalescer: WriteCoalescer::new(),
       compare: None,
       editor: None,
+      engine_state: EngineState::default(),
       esi_connected: true,
       industry: None,
       init_error: None,
@@ -6067,6 +6228,139 @@ mod tests {
     }
   }
 
+  mod engine_lifecycle {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn holder() -> HolderInfo {
+      HolderInfo {
+        hostname: "nebula".to_owned(),
+        last_active: DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp"),
+        machine_id: "machine-other".to_owned(),
+      }
+    }
+
+    fn in_progress_stats() -> JobStats {
+      JobStats {
+        active: 1,
+        attention: 0,
+        done: 0,
+        errors: 0,
+        total: 3,
+      }
+    }
+
+    #[test]
+    fn it_keeps_a_parked_engine_read_only_when_the_inert_stream_closes() {
+      let mut app = test_app();
+      app.engine_state = read_only_engine_state(Some(holder()));
+
+      let _ = update(
+        &mut app,
+        Message::EngineStopped {
+          reason: None,
+        },
+      );
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::ReadOnly {
+          held_by: Some(holder()),
+        }
+      );
+    }
+
+    #[test]
+    fn it_reports_syncing_while_the_engine_runs_with_active_jobs() {
+      let stats = in_progress_stats();
+
+      assert!(super::syncing_with(&EngineState::Running, &stats));
+    }
+
+    #[test]
+    fn it_rests_at_idle_when_the_engine_is_alive_and_jobs_are_settled() {
+      let settled = JobStats {
+        active: 0,
+        attention: 0,
+        done: 3,
+        errors: 0,
+        total: 3,
+      };
+
+      assert!(!super::syncing_with(&EngineState::Running, &settled));
+    }
+
+    #[test]
+    fn it_settles_a_running_engine_to_idle_when_jobs_finish() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      app.engine_state = EngineState::Running;
+
+      let event = sync::Event::Finished {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+        outcome: sync::Outcome::synced(),
+      };
+      let _ = update(&mut app, Message::Sync(event));
+
+      assert_eq!(app.engine_state, EngineState::Idle);
+      assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Active);
+    }
+
+    #[test]
+    fn it_stops_reporting_syncing_once_the_engine_terminates() {
+      let mut app = test_app();
+      app.engine_state = EngineState::Running;
+
+      let _ = update(
+        &mut app,
+        Message::EngineStopped {
+          reason: Some("the channel closed".to_owned()),
+        },
+      );
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::Stopped {
+          reason: Some("the channel closed".to_owned()),
+        }
+      );
+      assert!(!super::syncing_with(&app.engine_state, &in_progress_stats()));
+      assert_eq!(super::chip_lifecycle(&app), sync_chip::Lifecycle::Stopped);
+    }
+
+    #[tokio::test]
+    async fn it_yields_a_read_only_chip_at_a_parked_boot() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      let ready = StoreReady {
+        db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db.clone())).build(),
+        lease: Some(holder()),
+        settings: config::Settings::default(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db,
+        sync_session: None,
+      };
+
+      let _ = handle_store_opened(&mut app, ready);
+
+      assert_eq!(
+        app.engine_state,
+        EngineState::ReadOnly {
+          held_by: Some(holder()),
+        }
+      );
+      assert!(!super::syncing_with(&app.engine_state, &in_progress_stats()));
+      assert_eq!(
+        super::chip_lifecycle(&app),
+        sync_chip::Lifecycle::ReadOnly {
+          hostname: Some("nebula".to_owned()),
+        }
+      );
+    }
+  }
+
   mod variant_name {
     use pretty_assertions::assert_eq;
 
@@ -6083,6 +6377,13 @@ mod tests {
     fn it_names_lifecycle_messages() {
       assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
       assert_eq!(Message::CloseSyncPopover.variant_name(), "CloseSyncPopover");
+      assert_eq!(
+        Message::EngineStopped {
+          reason: None,
+        }
+        .variant_name(),
+        "EngineStopped"
+      );
       assert_eq!(Message::FocusMainWindow.variant_name(), "FocusMainWindow");
       assert_eq!(
         Message::ImageReady {
@@ -6110,6 +6411,7 @@ mod tests {
         "SyncNowResolved"
       );
       assert_eq!(Message::ReauthCharacter(1).variant_name(), "ReauthCharacter");
+      assert_eq!(Message::RestartSync.variant_name(), "RestartSync");
       assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
       assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
       assert_eq!(Message::SyncPulse.variant_name(), "SyncPulse");

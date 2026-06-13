@@ -28,6 +28,16 @@ const PICKER_MAX_HEIGHT: f32 = 240.0;
 const SWATCH_RADIUS: f32 = 3.0;
 const SWATCH_SIZE: f32 = 11.0;
 
+/// EVE system label ids (Inbox/Sent/Corp/Alliance). These are synthesized into
+/// `character_mail_labels` during sync to satisfy the membership FK, but must
+/// never be shown as user labels in the folder pane or as row/reading chips.
+pub(crate) const SYSTEM_LABEL_IDS: [i64; 4] = [1, 2, 4, 8];
+
+/// Whether `id` is an EVE system label that should be hidden from the label UI.
+pub(crate) fn is_system_label(id: i64) -> bool {
+  SYSTEM_LABEL_IDS.contains(&id)
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LabelDraft {
   pub color: String,
@@ -589,6 +599,27 @@ mod tests {
     #[test]
     fn it_is_always_negative() {
       assert!(temp_label_id() < 0);
+    }
+  }
+
+  mod is_system_label {
+    use super::*;
+
+    #[test]
+    fn it_flags_the_four_eve_system_label_ids() {
+      for id in SYSTEM_LABEL_IDS {
+        assert!(is_system_label(id));
+      }
+    }
+
+    #[test]
+    fn it_treats_user_label_ids_as_non_system() {
+      assert!(!is_system_label(7000));
+      assert!(!is_system_label(0));
+      assert!(!is_system_label(-1));
+      // EVE system label bits are exactly 1/2/4/8 — other small ids are user labels.
+      assert!(!is_system_label(3));
+      assert!(!is_system_label(16));
     }
   }
 

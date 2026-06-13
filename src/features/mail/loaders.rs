@@ -186,6 +186,7 @@ pub(super) async fn resolve_message_labels(db: &Database, character_id: i64, lab
   let catalog = mail::labels(db, character_id).await.unwrap_or_default();
   label_ids
     .iter()
+    .filter(|id| !super::labels::is_system_label(**id))
     .filter_map(|id| {
       catalog
         .iter()
@@ -241,6 +242,7 @@ pub(super) async fn load_folder_pane(db: &Database, character_id: i64) -> Folder
     .collect();
   let labels = catalog
     .iter()
+    .filter(|label| !super::labels::is_system_label(label.label_id()))
     .map(|label: &CharacterMailLabel| FolderLabel {
       color: label.color().clone(),
       label_id: label.label_id(),
@@ -580,6 +582,56 @@ mod tests {
       ]
     );
     assert!(resolve_message_labels(&db, CHAR, &[]).await.is_empty());
+  }
+
+  #[tokio::test]
+  async fn it_hides_system_labels_from_the_folder_pane_and_chips() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    store_mail(&db, 1, 95_000_001, false).await;
+    // Mirror sync: synthesized system labels live alongside a real user label.
+    mail::replace_labels_for_character(
+      &db,
+      CHAR,
+      &[
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: None,
+          label_id: 1,
+          name: "Inbox".to_owned(),
+        },
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: None,
+          label_id: 8,
+          name: "Alliance".to_owned(),
+        },
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: Some("#ff6600".to_owned()),
+          label_id: 7000,
+          name: "Fleet".to_owned(),
+        },
+      ],
+    )
+    .await
+    .unwrap();
+
+    let data = load_folder_pane(&db, CHAR).await;
+    assert_eq!(
+      data.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+      vec!["Fleet"]
+    );
+
+    // A mail tagged with both a system label and a user label only shows the user chip.
+    let resolved = resolve_message_labels(&db, CHAR, &[1, 8, 7000]).await;
+    assert_eq!(
+      resolved,
+      vec![MessageLabel {
+        color: Some("#ff6600".to_owned()),
+        name: "Fleet".to_owned(),
+      }]
+    );
   }
 
   #[tokio::test]

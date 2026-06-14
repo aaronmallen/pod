@@ -20,8 +20,9 @@ accumulated row, with its icon handle, multi-cell `Row`, and word-wrapping `Tabl
 tree and re-laid-out and redrawn on every frame. We introduce **a single shared `VirtualList` windowing helper** that
 materializes only the rows in (and just around) the visible viewport, with leading and trailing spacer widgets
 preserving scrollbar geometry, so per-frame layout/draw cost is bounded regardless of how many rows are loaded. Because
-the just-shipped wrap/no-truncation fidelity makes row heights variable, the helper uses an **estimated-height-plus-overscan**
-model (viewport size from `iced::widget::responsive`, a per-surface nominal row height for offset→index math, and a
+the just-shipped wrap/no-truncation fidelity makes row heights variable, the helper uses an
+**estimated-height-plus-overscan** model (viewport size from `iced::widget::responsive`, a per-surface nominal row
+height for offset→index math, and a
 generous overscan buffer) rather than fixed row heights. Alongside windowing, the in-memory `take(n)` surfaces
 (abyssals, wallet, contacts) move to **real cursor-based DB pagination** to match the existing Assets-inventory pattern,
 and Mail — which today fetches the entire mailbox unbounded — gains a bounded `LIMIT`/cursor fetch. The hoisted

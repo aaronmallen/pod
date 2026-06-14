@@ -33,7 +33,7 @@ pub enum Message {
   Completed(Result<SignedIn, String>),
   CorporationCompleted(Result<CorporationAdded, String>),
   Start(Vec<Feature>),
-  StartAddCorporation,
+  StartAddCorporation(Vec<Feature>),
 }
 
 #[derive(Debug, Default)]
@@ -128,9 +128,9 @@ pub fn update(
       start_flow(state, sso, Kind::SignIn, &scopes, features);
       (Task::none(), None)
     }
-    Message::StartAddCorporation => {
-      let scopes = corp_scopes_for(&Feature::ALL);
-      start_flow(state, sso, Kind::AddCorporation, &scopes, Vec::new());
+    Message::StartAddCorporation(features) => {
+      let scopes = corp_scopes_for(&features);
+      start_flow(state, sso, Kind::AddCorporation, &scopes, features);
       (Task::none(), None)
     }
     Message::CallbackReceived(url) => {
@@ -241,7 +241,7 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
   }
 
   let retry = match flow.kind {
-    Kind::AddCorporation => Message::StartAddCorporation,
+    Kind::AddCorporation => Message::StartAddCorporation(flow.features.clone()),
     Kind::SignIn => Message::Start(flow.features.clone()),
   };
   let mut actions: Vec<Element<'_, Message>> = Vec::new();
@@ -547,6 +547,27 @@ mod tests {
 
   mod update {
     use super::*;
+
+    #[tokio::test]
+    async fn start_add_corporation_records_the_supplied_features() {
+      let mut state = State::default();
+      let sso = dummy_sso().await;
+      let esi = dummy_esi().await;
+      let db = crate::store::open_test().await.unwrap();
+
+      let (_task, event) = update(
+        &mut state,
+        Message::StartAddCorporation(vec![Feature::Industry]),
+        &sso,
+        &esi,
+        &db,
+      );
+
+      let flow = state.flow.as_ref().expect("a corp flow should be active");
+      assert_eq!(flow.kind, Kind::AddCorporation);
+      assert_eq!(flow.features, vec![Feature::Industry]);
+      assert!(event.is_none());
+    }
 
     #[tokio::test]
     async fn cancel_clears_the_flow() {

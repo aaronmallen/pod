@@ -3397,9 +3397,10 @@ fn handle_character_manager(app: &mut App, msg: character_manager::Message) -> T
     character_manager::Message::AddCharacterRequested => {
       update(app, Message::Auth(auth::Message::Start(enabled_features(app))))
     }
-    character_manager::Message::AddCorporationRequested => {
-      update(app, Message::Auth(auth::Message::StartAddCorporation))
-    }
+    character_manager::Message::AddCorporationRequested => update(
+      app,
+      Message::Auth(auth::Message::StartAddCorporation(enabled_features(app))),
+    ),
     character_manager::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
     character_manager::Message::TrainingSkillClicked(character_id) => {
       let owned = owned_pilot_ids(app);

@@ -314,6 +314,16 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+  pub const ALL: [LogLevel; 3] = [LogLevel::Quiet, LogLevel::Normal, LogLevel::Verbose];
+
+  pub fn label(self) -> &'static str {
+    match self {
+      LogLevel::Normal => "Normal",
+      LogLevel::Quiet => "Quiet",
+      LogLevel::Verbose => "Verbose",
+    }
+  }
+
   fn is_default(&self) -> bool {
     *self == LogLevel::default()
   }

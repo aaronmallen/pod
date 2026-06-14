@@ -526,6 +526,17 @@ pub fn run() -> iced::Result {
     .run()
 }
 
+fn apply_log_level(level: config::LogLevel) {
+  let filter = file_filter(level);
+  // Handle is absent before init_tracing runs or in no-logfile sessions — silently skip.
+  let Some(handle) = file_filter_reload_handle().get() else {
+    return;
+  };
+  if let Err(error) = handle.reload(tracing_subscriber::EnvFilter::new(&filter)) {
+    tracing::warn!(target: "pod::lifecycle", %error, "could not apply the new log level live");
+  }
+}
+
 fn file_filter(level: config::LogLevel) -> String {
   let pod = match level {
     config::LogLevel::Normal => "debug",
@@ -2785,6 +2796,10 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       };
       let log_dir = storage.resolved_log_dir();
       return Task::batch(vec![task, export_logs(log_dir, start, end, diagnostics)]);
+    }
+    settings::Outcome::SetLogLevel(level) => {
+      apply_log_level(level);
+      return task;
     }
     _ => {}
   }
@@ -7341,6 +7356,75 @@ mod tests {
       assert!(
         captured(tracing::Level::WARN),
         "sqlx::query WARN must pass (filter pins WARN-or-higher)"
+      );
+    }
+
+    // Routes the events emitted by `emit` through the real file filter for `log_level` and reports
+    // whether any survived. Mirrors the live wiring: the file layer that ships to disk wraps exactly
+    // `file_filter(log_level)`. The `tracing` macros bake their target into a static callsite, so the
+    // caller passes a closure that emits at a literal target rather than a runtime `&str`.
+    fn passes_file_filter(log_level: config::LogLevel, emit: impl FnOnce()) -> bool {
+      let layer = CaptureLayer::default();
+      let messages = layer.messages.clone();
+      let filtered = layer.with_filter(EnvFilter::new(file_filter(log_level)));
+      tracing::subscriber::with_default(registry().with(filtered), emit);
+      !messages.lock().expect("capture buffer").is_empty()
+    }
+
+    #[test]
+    fn it_filters_pod_debug_out_at_quiet() {
+      assert!(
+        !passes_file_filter(config::LogLevel::Quiet, || {
+          tracing::debug!(target: "pod::sync::engine", "event")
+        }),
+        "Quiet pins pod to INFO, so pod DEBUG must be filtered out"
+      );
+
+      assert!(
+        passes_file_filter(config::LogLevel::Quiet, || {
+          tracing::info!(target: "pod::sync::engine", "event")
+        }),
+        "Quiet must still admit pod INFO"
+      );
+    }
+
+    #[test]
+    fn it_hides_the_demoted_resolve_site_until_verbose() {
+      // The chronically noisy resolve cache-hit site was demoted to TRACE so it only surfaces at
+      // Verbose; its target is the module path it logs from.
+      let emit = || tracing::trace!(target: "pod::sync::jobs::resolve", "resolved item type from db");
+
+      assert!(
+        !passes_file_filter(config::LogLevel::Quiet, emit),
+        "the resolve cache-hit site must be silent at Quiet"
+      );
+      assert!(
+        !passes_file_filter(config::LogLevel::Normal, emit),
+        "the resolve cache-hit site must stay silent at Normal so the demotion keeps real signal afloat"
+      );
+      assert!(
+        passes_file_filter(config::LogLevel::Verbose, emit),
+        "the resolve cache-hit site must surface at Verbose for a deep-dive repro"
+      );
+    }
+
+    #[test]
+    fn it_hides_the_demoted_http_site_until_verbose() {
+      // The chronically noisy http per-request site was demoted to TRACE so it only surfaces at
+      // Verbose; it logs under the dedicated `pod::http` target.
+      let emit = || tracing::trace!(target: "pod::http", "request completed");
+
+      assert!(
+        !passes_file_filter(config::LogLevel::Quiet, emit),
+        "the http per-request site must be silent at Quiet"
+      );
+      assert!(
+        !passes_file_filter(config::LogLevel::Normal, emit),
+        "the http per-request site must stay silent at Normal so the demotion keeps real signal afloat"
+      );
+      assert!(
+        passes_file_filter(config::LogLevel::Verbose, emit),
+        "the http per-request site must surface at Verbose for a deep-dive repro"
       );
     }
   }

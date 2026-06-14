@@ -74,6 +74,7 @@ pub enum Outcome {
   None,
   Persist,
   ReleaseLock,
+  SetLogLevel(config::LogLevel),
   SyncNow,
 }
 
@@ -162,7 +163,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       (outcome, Task::none())
     }
   };
-  if matches!(outcome, Outcome::AccessibilityChanged | Outcome::Persist) {
+  if matches!(
+    outcome,
+    Outcome::AccessibilityChanged | Outcome::Persist | Outcome::SetLogLevel(_)
+  ) {
     config::save(&state.settings);
   }
   (outcome, task)

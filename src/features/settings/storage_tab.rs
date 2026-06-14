@@ -16,7 +16,7 @@ use super::{
   log_export::{self, RangePreset},
 };
 use crate::{
-  config::{Settings, StorageConfig, StorageMode},
+  config::{LogLevel, Settings, StorageConfig, StorageMode},
   ui::{
     components::{modal_overlay::modal_overlay, rule, status},
     style::{color, control, radius, shadow, spacing, typography},
@@ -36,6 +36,7 @@ pub enum Message {
   DismissError,
   ExportFinished(Result<Option<PathBuf>, String>),
   ExportLogs(RangePreset),
+  LogLevelChanged(LogLevel),
   PathEdited(PathKind, String),
   PathSubmitted(PathKind),
   ReleaseLock,
@@ -373,6 +374,14 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
         start,
       }
     }
+    Message::LogLevelChanged(level) => {
+      state.error = None;
+      if settings.storage().log_level() == &level {
+        return Outcome::None;
+      }
+      settings.storage_mut().set_log_level(level);
+      Outcome::SetLogLevel(level)
+    }
     Message::PathEdited(kind, value) => {
       state.drafts.insert(kind, value);
       Outcome::None
@@ -668,6 +677,8 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2);
 
+  let log_level_row: Option<Element<'_, Message>> =
+    (kind == PathKind::Log).then(|| log_level_row(*settings.storage().log_level()));
   let export_row: Option<Element<'_, Message>> = (kind == PathKind::Log).then(|| log_export_row(state));
 
   let footnote = Row::with_children(vec![
@@ -686,6 +697,9 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   .align_y(Vertical::Center);
 
   let mut cell_children: Vec<Element<'_, Message>> = vec![header.into(), description.into(), controls.into()];
+  if let Some(log_level_row) = log_level_row {
+    cell_children.push(log_level_row);
+  }
   if let Some(export_row) = export_row {
     cell_children.push(export_row);
   }
@@ -747,6 +761,67 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
         .style(typography::colored(color::text::tertiary()))
         .into(),
     );
+  }
+
+  Row::with_children(children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2)
+    .into()
+}
+
+fn log_level_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Message> {
+  let label_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.82)
+  };
+
+  let cell = container(
+    text(level.label())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(label_color)),
+  )
+  .padding(control::padding())
+  .style(move |_| container::Style {
+    background: Some(Background::Color(if active {
+      color::with_alpha(color::accent::PLASMA, 0.1)
+    } else {
+      color::surface::SUNKEN
+    })),
+    border: Border {
+      color: if active {
+        color::accent::PLASMA
+      } else {
+        color::with_alpha(color::text::PRIMARY, 0.1)
+      },
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    ..container::Style::default()
+  });
+
+  button(cell)
+    .padding(0)
+    .on_press(Message::LogLevelChanged(level))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn log_level_row<'a>(active: LogLevel) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = vec![
+    text("Verbosity")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ];
+
+  for level in LogLevel::ALL {
+    children.push(log_level_cell(level, level == active));
   }
 
   Row::with_children(children)
@@ -1339,6 +1414,32 @@ mod tests {
 
       assert!(!description.contains("wal"), "WAL framing must be gone");
       assert!(!description.contains("journal"), "journal-mode framing must be gone");
+    }
+  }
+
+  mod log_level {
+    use super::*;
+
+    #[test]
+    fn changing_the_level_records_it_and_routes_the_outcome() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::Verbose), &mut settings);
+
+      assert_eq!(outcome, Outcome::SetLogLevel(LogLevel::Verbose));
+      assert_eq!(settings.storage().log_level(), &LogLevel::Verbose);
+    }
+
+    #[test]
+    fn reselecting_the_active_level_is_a_no_op() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::default()), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(settings.storage().log_level(), &LogLevel::default());
     }
   }
 

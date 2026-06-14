@@ -6,6 +6,14 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemValue {
+  pub destroyed: f64,
+  pub dropped: f64,
+  /// Full stack value for this line (destroyed + dropped), not destroyed-only.
+  pub value_isk: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocalValue {
   pub destroyed: f64,
   pub destroyed_and_dropped: f64,
@@ -58,17 +66,38 @@ impl ValueSource {
   }
 }
 
+/// Prices each item at its unit price and returns one [`ItemValue`] per input item in slice order.
+///
+/// The ordering guarantee is load-bearing: callers pair each result with the stored killmail item
+/// by index. Summing `value_isk` across all items and adding the hull price reconciles with
+/// [`LocalValue::destroyed_and_dropped`].
+pub fn item_values(items: &[Item], prices: &PriceTable) -> Vec<ItemValue> {
+  items
+    .iter()
+    .map(|item| {
+      let unit = prices.unit_price(item.type_id);
+      let destroyed = unit * item.quantity_destroyed.unwrap_or(0).max(0) as f64;
+      let dropped = unit * item.quantity_dropped.unwrap_or(0).max(0) as f64;
+      ItemValue {
+        destroyed,
+        dropped,
+        value_isk: destroyed + dropped,
+      }
+    })
+    .collect()
+}
+
 /// Computes destroyed-only and destroyed+dropped totals using the same item basis as zKill's
 /// `totalValue` (hull + destroyed + dropped), so that replacing the local fallback with a zKill
 /// value causes no visible discontinuity in the displayed figure.
 pub fn local_value(items: &[Item], ship_type_id: i64, prices: &PriceTable) -> LocalValue {
-  let mut destroyed = prices.unit_price(ship_type_id);
-  let mut dropped = 0.0;
+  let hull = prices.unit_price(ship_type_id);
 
-  for item in items {
-    let unit = prices.unit_price(item.type_id);
-    destroyed += unit * item.quantity_destroyed.unwrap_or(0).max(0) as f64;
-    dropped += unit * item.quantity_dropped.unwrap_or(0).max(0) as f64;
+  let mut destroyed = hull;
+  let mut dropped = 0.0;
+  for value in item_values(items, prices) {
+    destroyed += value.destroyed;
+    dropped += value.dropped;
   }
 
   LocalValue {
@@ -131,6 +160,82 @@ mod tests {
         type_id: 2488,
       },
     ])
+  }
+
+  mod item_values {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_emits_one_value_per_item_in_slice_order() {
+      let items = [item(34, Some(3), None), item(2488, None, Some(1))];
+
+      let values = super::item_values(&items, &prices());
+
+      assert_eq!(
+        values,
+        vec![
+          ItemValue {
+            destroyed: 150.0,
+            dropped: 0.0,
+            value_isk: 150.0,
+          },
+          ItemValue {
+            destroyed: 0.0,
+            dropped: 200.0,
+            value_isk: 200.0,
+          },
+        ]
+      );
+    }
+
+    #[test]
+    fn it_prices_a_stack_destroyed_and_dropped_from_the_same_unit_price() {
+      let items = [item(34, Some(3), Some(2))];
+
+      let values = super::item_values(&items, &prices());
+
+      assert_eq!(
+        values[0],
+        ItemValue {
+          destroyed: 150.0,
+          dropped: 100.0,
+          value_isk: 250.0,
+        }
+      );
+    }
+
+    #[test]
+    fn it_reconciles_the_per_item_sum_plus_hull_with_the_total() {
+      let items = [item(34, Some(3), None), item(2488, None, Some(1))];
+      let prices = prices();
+
+      let per_item: f64 = super::item_values(&items, &prices)
+        .iter()
+        .map(|value| value.value_isk)
+        .sum();
+      let hull = prices.unit_price(587);
+      let total = super::local_value(&items, 587, &prices);
+
+      assert_eq!(per_item + hull, total.destroyed_and_dropped);
+    }
+
+    #[test]
+    fn it_treats_an_unpriced_type_as_zero() {
+      let items = [item(77, Some(5), Some(2))];
+
+      let values = super::item_values(&items, &prices());
+
+      assert_eq!(
+        values[0],
+        ItemValue {
+          destroyed: 0.0,
+          dropped: 0.0,
+          value_isk: 0.0,
+        }
+      );
+    }
   }
 
   mod local_value {

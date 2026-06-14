@@ -19,7 +19,7 @@ use crate::{
       meter, rule,
       section_header::section_header,
       segmented::segment_button_style,
-      virtual_list::{self, VirtualList, VirtualListConfig},
+      virtual_list::{VirtualList, VirtualListConfig},
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -117,11 +117,12 @@ pub(crate) fn header<'a>(query: &'a str, filter: StandingsFilter, has_filters: b
 
 /// The windowed body for the Standings tab: the grouped Factions / Corporations / Agents / Other sections flattened
 /// into a single index space and windowed, so the keyset-paginated Agents catalog renders only the viewport's rows.
-/// Designed to be the sole content of the tab's scrollable so `responsive` reads the real viewport height.
+/// The caller wraps this in the tab's scrollable inside `responsive`, supplying the real `viewport_height`.
 pub(crate) fn body<'a>(
   catalog: &'a LoadState<Vec<StandingsRow>>,
   filter: StandingsFilter,
   has_filters: bool,
+  viewport_height: f32,
   scroll_offset: f32,
 ) -> Element<'a, Message> {
   let rows = match catalog {
@@ -141,23 +142,21 @@ pub(crate) fn body<'a>(
     return no_results(has_filters);
   }
 
-  virtual_list::responsive_window(move |viewport_height| {
-    let config = VirtualListConfig::new(items.len(), ESTIMATED_ROW_HEIGHT)
-      .viewport_height(viewport_height)
-      .scroll_offset(scroll_offset);
-    VirtualList::new(config, |index| match &items[index] {
-      FlatItem::Header {
-        count,
-        label,
-      } => section_heading(label, *count, has_filters),
-      FlatItem::Row {
-        last,
-        row,
-      } => row_view(row, *last),
-    })
-    .spacing(spacing::SPACE_2_5)
-    .view()
+  let config = VirtualListConfig::new(items.len(), ESTIMATED_ROW_HEIGHT)
+    .viewport_height(viewport_height)
+    .scroll_offset(scroll_offset);
+  VirtualList::new(config, move |index| match &items[index] {
+    FlatItem::Header {
+      count,
+      label,
+    } => section_heading(label, *count, has_filters),
+    FlatItem::Row {
+      last,
+      row,
+    } => row_view(row, *last),
   })
+  .spacing(spacing::SPACE_2_5)
+  .view()
 }
 
 /// Flattens the visible standings rows into the windowed index space: a header pseudo-row introduces each
@@ -823,7 +822,7 @@ mod tests {
       ];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, false, 0.0);
+      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, false, 600.0, 0.0);
     }
 
     #[test]
@@ -831,7 +830,7 @@ mod tests {
       let rows = vec![agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true))];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, true, 0.0);
+      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, true, 600.0, 0.0);
     }
 
     #[test]
@@ -851,7 +850,7 @@ mod tests {
         StandingsFilter::Agents,
         StandingsFilter::Other,
       ] {
-        let _el: Element<'_, Message> = body(&catalog, filter, false, 0.0);
+        let _el: Element<'_, Message> = body(&catalog, filter, false, 600.0, 0.0);
       }
     }
 
@@ -861,9 +860,9 @@ mod tests {
       let error: LoadState<Vec<StandingsRow>> = LoadState::Error("boom".to_owned());
       let empty = LoadState::Loaded(Vec::new());
 
-      let _loading: Element<'_, Message> = body(&loading, StandingsFilter::All, false, 0.0);
-      let _error: Element<'_, Message> = body(&error, StandingsFilter::All, false, 0.0);
-      let _empty: Element<'_, Message> = body(&empty, StandingsFilter::All, true, 0.0);
+      let _loading: Element<'_, Message> = body(&loading, StandingsFilter::All, false, 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, StandingsFilter::All, false, 600.0, 0.0);
+      let _empty: Element<'_, Message> = body(&empty, StandingsFilter::All, true, 600.0, 0.0);
     }
   }
 

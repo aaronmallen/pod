@@ -22,7 +22,7 @@ use crate::{
       icon_tile::icon_tile,
       section_header::section_header,
       segmented::segment_button_style,
-      virtual_list::{self, VirtualList, VirtualListConfig},
+      virtual_list::{VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
@@ -144,6 +144,7 @@ pub(in crate::features::character_detail) fn header(
 pub(in crate::features::character_detail) fn body(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
+  viewport_height: f32,
   scroll_offset: f32,
 ) -> Element<'_, Message> {
   let entries = match killlog {
@@ -158,7 +159,7 @@ pub(in crate::features::character_detail) fn body(
   }
 
   let visible: Vec<&KillLogEntry> = entries.iter().filter(|entry| filter.matches(entry)).collect();
-  entries_card(visible, scroll_offset)
+  entries_card(visible, viewport_height, scroll_offset)
 }
 
 fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
@@ -269,7 +270,7 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
     .into()
 }
 
-fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, scroll_offset: f32) -> Element<'a, Message> {
+fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, viewport_height: f32, scroll_offset: f32) -> Element<'a, Message> {
   if visible.is_empty() {
     let empty = container(
       text("No entries match this filter")
@@ -289,15 +290,11 @@ fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, scroll_offset: f32) -> Eleme
 
   // Window the (filtered) entries so a multi-page kill log renders only the viewport's rows; the column header
   // stays mounted above the windowed list.
-  let body = virtual_list::responsive_window(move |viewport_height| {
-    let config = VirtualListConfig::new(visible.len(), ESTIMATED_ROW_HEIGHT)
-      .viewport_height(viewport_height)
-      .scroll_offset(scroll_offset);
-    let list = VirtualList::new(config, |index| kill_row(visible[index], index == visible.len() - 1)).view();
-    Column::with_children(vec![header_row(), list])
-      .width(Length::Fill)
-      .into()
-  });
+  let config = VirtualListConfig::new(visible.len(), ESTIMATED_ROW_HEIGHT)
+    .viewport_height(viewport_height)
+    .scroll_offset(scroll_offset);
+  let list = VirtualList::new(config, |index| kill_row(visible[index], index == visible.len() - 1)).view();
+  let body = Column::with_children(vec![header_row(), list]).width(Length::Fill);
 
   card::panel(body, false)
 }
@@ -629,7 +626,7 @@ mod tests {
       let loaded = LoadState::Loaded(vec![entry(1, true, 1_000_000.0), entry(2, false, 2_000_000.0)]);
 
       for filter in [KilllogFilter::All, KilllogFilter::Kills, KilllogFilter::Losses] {
-        let _el: Element<'_, Message> = body(&loaded, filter, 0.0);
+        let _el: Element<'_, Message> = body(&loaded, filter, 600.0, 0.0);
       }
     }
 
@@ -639,9 +636,9 @@ mod tests {
       let loading: LoadState<Vec<KillLogEntry>> = LoadState::Loading;
       let error: LoadState<Vec<KillLogEntry>> = LoadState::Error("boom".to_owned());
 
-      let _empty: Element<'_, Message> = body(&empty, KilllogFilter::All, 0.0);
-      let _loading: Element<'_, Message> = body(&loading, KilllogFilter::All, 0.0);
-      let _error: Element<'_, Message> = body(&error, KilllogFilter::All, 0.0);
+      let _empty: Element<'_, Message> = body(&empty, KilllogFilter::All, 600.0, 0.0);
+      let _loading: Element<'_, Message> = body(&loading, KilllogFilter::All, 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, KilllogFilter::All, 600.0, 0.0);
     }
   }
 

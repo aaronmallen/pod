@@ -21,7 +21,7 @@ use crate::{
       eyebrow::eyebrow_text,
       section_header::section_header,
       segmented::segment_button_style,
-      virtual_list::{self, VirtualList, VirtualListConfig},
+      virtual_list::{VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
@@ -164,11 +164,12 @@ pub(in crate::features::character_detail) fn header(
 }
 
 /// The windowed body for the Contacts tab: the column header plus the keyset page of rows, windowed so only the
-/// viewport's rows (plus overscan) are materialized regardless of how many pages have loaded. Designed to be the
-/// sole content of the tab's scrollable so `responsive` reads the real viewport height.
+/// viewport's rows (plus overscan) are materialized regardless of how many pages have loaded. The caller wraps this
+/// in the tab's scrollable inside `responsive`, supplying the real `viewport_height`.
 pub(in crate::features::character_detail) fn body<'a>(
   contacts: &'a LoadState<ContactsPage>,
   sort: ContactSort,
+  viewport_height: f32,
   scroll_offset: f32,
 ) -> Element<'a, Message> {
   let page = match contacts {
@@ -204,19 +205,15 @@ pub(in crate::features::character_detail) fn body<'a>(
 
   // Window the rows so a multi-thousand-contact address book renders the same handful of widgets. The column
   // header rides inside the windowed column so it scrolls with the rows under the hoisted address-book header.
-  let body = virtual_list::responsive_window(move |viewport_height| {
-    let config = VirtualListConfig::new(rows.len(), ESTIMATED_ROW_HEIGHT)
-      .viewport_height(viewport_height)
-      .scroll_offset(scroll_offset);
-    let list = VirtualList::new(config, |index| {
-      let row = &rows[index];
-      contact_row(&row.contact, Some(&row.image), &labels, index == rows.len() - 1)
-    })
-    .view();
-    Column::with_children(vec![column_header(sort), list])
-      .width(Length::Fill)
-      .into()
-  });
+  let config = VirtualListConfig::new(rows.len(), ESTIMATED_ROW_HEIGHT)
+    .viewport_height(viewport_height)
+    .scroll_offset(scroll_offset);
+  let list = VirtualList::new(config, |index| {
+    let row = &rows[index];
+    contact_row(&row.contact, Some(&row.image), &labels, index == rows.len() - 1)
+  })
+  .view();
+  let body = Column::with_children(vec![column_header(sort), list]).width(Length::Fill);
 
   card::panel(body, false)
 }
@@ -620,6 +617,7 @@ mod tests {
               column,
               direction,
             },
+            600.0,
             0.0,
           );
         }
@@ -631,15 +629,15 @@ mod tests {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
       let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 0.0);
-      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 0.0);
+      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 600.0, 0.0);
     }
 
     #[test]
     fn it_renders_an_empty_page_as_a_no_match_panel() {
       let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
 
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 0.0);
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 600.0, 0.0);
     }
   }
 

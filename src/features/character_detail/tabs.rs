@@ -7,7 +7,7 @@ pub(crate) mod standings;
 
 use iced::{
   Element, Length, Padding,
-  widget::{Column, container, scrollable},
+  widget::{Column, container, responsive, scrollable},
 };
 
 use super::{Message, State};
@@ -132,12 +132,26 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
     Tab::Contacts => windowed_tab(
       Tab::Contacts,
       Some(contacts::header(&state.contacts, state.contact_filter)),
-      contacts::body(&state.contacts, state.contact_sort, state.contacts_scroll_offset()),
+      move |viewport_height| {
+        contacts::body(
+          &state.contacts,
+          state.contact_sort,
+          viewport_height,
+          state.contacts_scroll_offset(),
+        )
+      },
     ),
     Tab::Killlog => windowed_tab(
       Tab::Killlog,
       killlog::header(&state.killlog, state.killlog_filter),
-      killlog::body(&state.killlog, state.killlog_filter, state.killlog_scroll_offset()),
+      move |viewport_height| {
+        killlog::body(
+          &state.killlog,
+          state.killlog_filter,
+          viewport_height,
+          state.killlog_scroll_offset(),
+        )
+      },
     ),
     Tab::Standings => windowed_tab(
       Tab::Standings,
@@ -146,12 +160,15 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
         state.standings_filter,
         state.standings_has_filters(),
       )),
-      standings::body(
-        &state.standings,
-        state.standings_filter,
-        state.standings_has_filters(),
-        state.standings_scroll_offset(),
-      ),
+      move |viewport_height| {
+        standings::body(
+          &state.standings,
+          state.standings_filter,
+          state.standings_has_filters(),
+          viewport_height,
+          state.standings_scroll_offset(),
+        )
+      },
     ),
   }
 }
@@ -173,11 +190,13 @@ fn plain_scroll(active_tab: Tab, inner: Element<'_, Message>) -> Element<'_, Mes
 }
 
 /// Lays out a windowed tab: a hoisted, non-scrolling `header` above a height-filling scrollable whose sole content
-/// is the virtualized `body`. The scrollbar's offset drives both the pagination threshold and the virtual window.
+/// is the virtualized body. The scrollable is nested inside `responsive` so the body builder receives the real
+/// viewport height (which reaches the virtual window) rather than the unbounded height a wrapping scrollable would
+/// impose. The scrollbar's offset still drives both the pagination threshold and the virtual window.
 fn windowed_tab<'a>(
   active_tab: Tab,
   header: Option<Element<'a, Message>>,
-  body: Element<'a, Message>,
+  body_builder: impl Fn(f32) -> Element<'a, Message> + 'a,
 ) -> Element<'a, Message> {
   let side = Padding {
     top: 0.0,
@@ -186,16 +205,23 @@ fn windowed_tab<'a>(
     left: TAB_BODY_PADDING,
   };
 
-  let scroll = scrollable(container(body).width(Length::Fill).padding(Padding {
-    top: 0.0,
-    right: TAB_BODY_PADDING,
-    bottom: spacing::SPACE_6,
-    left: TAB_BODY_PADDING,
-  }))
-  .style(crate::ui::style::control::scrollbar)
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y, viewport.absolute_offset().y));
+  let scroll = responsive(move |size| {
+    scrollable(
+      container(body_builder(size.height))
+        .width(Length::Fill)
+        .padding(Padding {
+          top: 0.0,
+          right: TAB_BODY_PADDING,
+          bottom: spacing::SPACE_6,
+          left: TAB_BODY_PADDING,
+        }),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y, viewport.absolute_offset().y))
+    .into()
+  });
 
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if let Some(header) = header {

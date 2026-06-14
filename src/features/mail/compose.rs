@@ -13,12 +13,16 @@ use crate::{
     repo::infra,
   },
   ui::{
-    components::{avatar::Avatar, chip::Chip, eyebrow::eyebrow_text, picker::TriggerPortrait, rule},
+    components::{
+      avatar::Avatar,
+      entity_search::{EntityKind, EntityRef, EntitySearch, MultiSelect},
+      eyebrow::eyebrow_text,
+      picker::TriggerPortrait,
+      rule,
+    },
     style::{color, radius, spacing, typography},
   },
 };
-
-const MAX_SUGGESTIONS: usize = 6;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Kind {
@@ -50,19 +54,23 @@ pub struct Recipient {
 }
 
 impl Recipient {
-  pub(super) fn typed(name: impl Into<String>) -> Self {
-    Recipient {
-      id: None,
-      name: name.into(),
-      recipient_type: None,
-    }
-  }
-
   pub(super) fn character(name: impl Into<String>, id: i64) -> Self {
     Recipient {
       id: Some(id),
       name: name.into(),
       recipient_type: Some("character".to_owned()),
+    }
+  }
+
+  pub(super) fn from_entity(entity: EntityRef) -> Self {
+    Recipient::character(entity.name, entity.id)
+  }
+
+  pub(super) fn typed(name: impl Into<String>) -> Self {
+    Recipient {
+      id: None,
+      name: name.into(),
+      recipient_type: None,
     }
   }
 }
@@ -71,9 +79,8 @@ impl Recipient {
 pub struct Draft {
   pub body: text_editor::Content,
   pub cc: Vec<Recipient>,
-  pub cc_input: String,
-  pub cc_searching: bool,
-  pub cc_suggestions: Vec<(i64, String)>,
+  pub cc_chips: Vec<EntityRef>,
+  pub cc_search: EntitySearch,
   pub error: Option<String>,
   pub expanded: bool,
   pub from_character_id: i64,
@@ -84,9 +91,9 @@ pub struct Draft {
   pub show_cc: bool,
   pub subject: String,
   pub to: Vec<Recipient>,
-  pub to_input: String,
-  pub to_searching: bool,
-  pub to_suggestions: Vec<(i64, String)>,
+  /// Parallel to `to`; owned storage for `MultiSelect` which borrows `&[EntityRef]`. Keep in sync via `push_to`/`remove_to`.
+  pub to_chips: Vec<EntityRef>,
+  pub to_search: EntitySearch,
 }
 
 impl Draft {
@@ -94,9 +101,8 @@ impl Draft {
     Draft {
       body: text_editor::Content::new(),
       cc: Vec::new(),
-      cc_input: String::new(),
-      cc_searching: false,
-      cc_suggestions: Vec::new(),
+      cc_chips: Vec::new(),
+      cc_search: EntitySearch::default(),
       error: None,
       expanded: false,
       from_character_id,
@@ -107,9 +113,8 @@ impl Draft {
       show_cc: false,
       subject: String::new(),
       to: Vec::new(),
-      to_input: String::new(),
-      to_searching: false,
-      to_suggestions: Vec::new(),
+      to_chips: Vec::new(),
+      to_search: EntitySearch::default(),
     }
   }
 
@@ -125,7 +130,7 @@ impl Draft {
     };
 
     if matches!(kind, Kind::Reply | Kind::ReplyAll) {
-      draft.to.push(Recipient::character(
+      draft.push_to(Recipient::character(
         mail.header.from_name().clone(),
         mail.header.from_id(),
       ));
@@ -135,7 +140,7 @@ impl Draft {
         if r.recipient_id() == mail.header.from_id() || r.recipient_id() == from_character_id {
           continue;
         }
-        draft.cc.push(Recipient {
+        draft.push_cc(Recipient {
           id: Some(r.recipient_id()),
           name: r.recipient_name().to_owned(),
           recipient_type: Some(r.recipient_type().to_owned()),
@@ -153,6 +158,30 @@ impl Draft {
 
   pub(super) fn can_send(&self) -> bool {
     !self.to.is_empty() && !self.subject.trim().is_empty()
+  }
+
+  pub(super) fn push_cc(&mut self, recipient: Recipient) {
+    self.cc_chips.push(recipient_entity(&recipient));
+    self.cc.push(recipient);
+  }
+
+  pub(super) fn push_to(&mut self, recipient: Recipient) {
+    self.to_chips.push(recipient_entity(&recipient));
+    self.to.push(recipient);
+  }
+
+  pub(super) fn remove_cc(&mut self, index: usize) {
+    if index < self.cc.len() {
+      self.cc.remove(index);
+      self.cc_chips.remove(index);
+    }
+  }
+
+  pub(super) fn remove_to(&mut self, index: usize) {
+    if index < self.to.len() {
+      self.to.remove(index);
+      self.to_chips.remove(index);
+    }
   }
 }
 
@@ -309,163 +338,66 @@ fn header_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
 }
 
 fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
-  let mut chips = Row::new().spacing(spacing::UNIT + 2.0).align_y(Vertical::Center);
-  for (index, recipient) in draft.to.iter().enumerate() {
-    chips = chips.push(recipient_chip(&recipient.name, Message::ComposeToRemoved(index)));
-  }
+  let picker = MultiSelect::new(
+    draft.to_search.query(),
+    &draft.to_chips,
+    draft.to_search.results(),
+    Message::ComposeToInput,
+    Message::ComposeToPicked,
+    Message::ComposeToRemoved,
+  )
+  .placeholder("Add recipient\u{2026}")
+  .searching(draft.to_search.searching())
+  .on_submit(Message::ComposeToCommitted)
+  .view();
 
-  let input = text_input("Add recipient…", &draft.to_input)
-    .on_input(Message::ComposeToInput)
-    .on_submit(Message::ComposeToCommitted)
-    .padding(0.0)
-    .size(typography::size::MD)
-    .width(Length::Fill)
-    .style(transparent_input);
-
-  chips = chips.push(input);
-  if !draft.show_cc {
-    chips = chips.push(
+  let content: Element<'a, Message> = if draft.show_cc {
+    picker
+  } else {
+    Row::with_children(vec![
+      container(picker).width(Length::Fill).into(),
       mouse_area(text("Cc").size(typography::size::SM).style(|_| text::Style {
         color: Some(color::text::secondary()),
       }))
-      .on_press(Message::ComposeCcShown),
-    );
-  }
+      .on_press(Message::ComposeCcShown)
+      .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  };
 
-  with_suggestions(
-    field_row("To", chips.into()),
-    suggestions(&draft.to_suggestions, draft.to_searching, &draft.to, |id, name| {
-      Message::ComposeToPicked(id, name)
-    }),
-  )
+  field_row("To", content)
 }
 
 fn cc_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
   if !draft.show_cc {
     return Space::new().width(Length::Shrink).height(Length::Shrink).into();
   }
-  let mut chips = Row::new().spacing(spacing::UNIT + 2.0).align_y(Vertical::Center);
-  for (index, recipient) in draft.cc.iter().enumerate() {
-    chips = chips.push(recipient_chip(&recipient.name, Message::ComposeCcRemoved(index)));
-  }
-  let input = text_input("Add Cc recipient…", &draft.cc_input)
-    .on_input(Message::ComposeCcInput)
-    .on_submit(Message::ComposeCcCommitted)
-    .padding(0.0)
-    .size(typography::size::MD)
-    .width(Length::Fill)
-    .style(transparent_input);
-  chips = chips.push(input);
-
-  with_suggestions(
-    field_row("Cc", chips.into()),
-    suggestions(&draft.cc_suggestions, draft.cc_searching, &draft.cc, |id, name| {
-      Message::ComposeCcPicked(id, name)
-    }),
+  let picker = MultiSelect::new(
+    draft.cc_search.query(),
+    &draft.cc_chips,
+    draft.cc_search.results(),
+    Message::ComposeCcInput,
+    Message::ComposeCcPicked,
+    Message::ComposeCcRemoved,
   )
+  .placeholder("Add Cc recipient\u{2026}")
+  .searching(draft.cc_search.searching())
+  .on_submit(Message::ComposeCcCommitted)
+  .view();
+
+  field_row("Cc", picker)
 }
 
-fn with_suggestions<'a>(field: Element<'a, Message>, dropdown: Option<Element<'a, Message>>) -> Element<'a, Message> {
-  let dropdown = dropdown.unwrap_or_else(|| Space::new().width(Length::Shrink).height(Length::Shrink).into());
-  Column::with_children(vec![field, dropdown]).width(Length::Fill).into()
-}
-
-fn suggestions<'a>(
-  results: &'a [(i64, String)],
-  searching: bool,
-  chosen: &[Recipient],
-  make_msg: impl Fn(i64, String) -> Message + 'a,
-) -> Option<Element<'a, Message>> {
-  let matches: Vec<&(i64, String)> = results
-    .iter()
-    .filter(|(id, _)| !chosen.iter().any(|r| r.id == Some(*id)))
-    .take(MAX_SUGGESTIONS)
-    .collect();
-  if matches.is_empty() && !searching {
-    return None;
+fn recipient_entity(recipient: &Recipient) -> EntityRef {
+  let id = recipient.id.unwrap_or_default();
+  EntityRef {
+    id,
+    kind: EntityKind::Character,
+    name: recipient.name.clone(),
+    portrait: Some(images::default_store().image_path(images::ImageKind::CharacterPortrait, id)),
   }
-
-  let mut column = Column::new().width(Length::Fill);
-  if matches.is_empty() {
-    column = column.push(suggestion_status("Searching\u{2026}"));
-  } else {
-    for (id, name) in matches {
-      column = column.push(suggestion_row(*id, name, &make_msg));
-    }
-  }
-
-  Some(
-    container(
-      container(column)
-        .width(Length::Fill)
-        .padding(spacing::UNIT)
-        .style(|_| container::Style {
-          background: Some(Background::Color(color::surface::RAISED)),
-          border: Border {
-            color: color::with_alpha(color::text::PRIMARY, 0.16),
-            radius: radius::CARD.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        }),
-    )
-    .width(Length::Fill)
-    .padding(Padding {
-      top: 0.0,
-      bottom: spacing::SPACE_2,
-      left: spacing::SPACE_3_5,
-      right: spacing::SPACE_3_5,
-    })
-    .into(),
-  )
-}
-
-fn suggestion_status<'a>(label: &str) -> Element<'a, Message> {
-  container(
-    text(label.to_owned())
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      }),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_2_5,
-    right: spacing::SPACE_2_5,
-  })
-  .into()
-}
-
-fn suggestion_row<'a>(id: i64, name: &str, make_msg: &impl Fn(i64, String) -> Message) -> Element<'a, Message> {
-  let name = name.to_owned();
-  let portrait = images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id);
-
-  let swatch = Avatar::new(id, name.clone(), Length::Fixed(24.0), 24.0, portrait.path())
-    .radius(radius::SUBTLE)
-    .view::<Message>();
-
-  let row = Row::with_children(vec![
-    swatch,
-    text(name.clone())
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2_5)
-  .align_y(Vertical::Center);
-
-  mouse_area(container(row).width(Length::Fill).padding(Padding {
-    top: spacing::SPACE_2,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_2_5,
-    right: spacing::SPACE_2_5,
-  }))
-  .on_press(make_msg(id, name))
-  .into()
 }
 
 fn subject_field(draft: &Draft) -> Element<'_, Message> {
@@ -705,10 +637,6 @@ fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
   } else {
     button.into()
   }
-}
-
-fn recipient_chip<'a>(name: &str, on_remove: Message) -> Element<'a, Message> {
-  Chip::new(name.to_owned(), None).on_remove(on_remove).view()
 }
 
 fn field_row<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Message> {

@@ -61,12 +61,6 @@ impl<'a> Client<'a> {
     self.esi.get_json(&url, None).await
   }
 
-  pub async fn search(&self, query: &str, grant: &Grant) -> Result<SearchResult, clients::Error> {
-    self
-      .search_with_categories(query, &["character", "corporation", "alliance"], grant)
-      .await
-  }
-
   pub async fn search_with_categories(
     &self,
     query: &str,
@@ -361,7 +355,11 @@ mod tests {
       let esi = make_esi(&server.uri()).await;
       let grant = Grant::new_test("search-token", 42);
 
-      let result = esi.universe().search("Test", &grant).await.unwrap();
+      let result = esi
+        .universe()
+        .search_with_categories("Test", &["character", "corporation", "alliance"], &grant)
+        .await
+        .unwrap();
 
       assert_eq!(result.character.len(), 2);
       assert_eq!(result.corporation, vec![98356193]);
@@ -380,7 +378,11 @@ mod tests {
       let esi = make_esi(&server.uri()).await;
       let grant = Grant::new_test("search-token", 42);
 
-      let result = esi.universe().search("CCP Bartender", &grant).await.unwrap();
+      let result = esi
+        .universe()
+        .search_with_categories("CCP Bartender", &["character", "corporation", "alliance"], &grant)
+        .await
+        .unwrap();
 
       assert_eq!(result.character, vec![95465499]);
     }
@@ -396,7 +398,11 @@ mod tests {
       let esi = make_esi(&server.uri()).await;
       let grant = Grant::new_test("search-token", 42);
 
-      let result = esi.universe().search("Sol", &grant).await.unwrap();
+      let result = esi
+        .universe()
+        .search_with_categories("Sol", &["character", "corporation", "alliance"], &grant)
+        .await
+        .unwrap();
 
       assert_eq!(result.character, vec![1]);
       assert!(result.corporation.is_empty());

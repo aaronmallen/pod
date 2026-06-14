@@ -1,80 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use chrono::Utc;
 
-use crate::{
-  clients::{esi, eve_image, eve_sso},
-  store::{
-    Database, images,
-    model::{CharacterMailLabel, OwnerType, character_mail_view::UnifiedMail, mail_overlay_state::MailOverlayState},
-    repo::{character, infra, mail, org},
-  },
+use crate::store::{
+  Database, images,
+  model::{CharacterMailLabel, OwnerType, character_mail_view::UnifiedMail, mail_overlay_state::MailOverlayState},
+  repo::{character, infra, mail, org},
 };
-
-const MAX_RECIPIENT_RESULTS: usize = 20;
-
-pub async fn search_recipients(
-  db: Database,
-  esi: Arc<esi::Client>,
-  eve_image: Arc<eve_image::Client>,
-  sso: Arc<eve_sso::Client>,
-  owner_id: i64,
-  query: String,
-) -> Vec<(i64, String)> {
-  let grant = match crate::sync::token::fresh_token(&db, &sso, owner_id, OwnerType::Character).await {
-    Ok(Some(grant)) => grant,
-    Ok(None) => return Vec::new(),
-    Err(error) => {
-      tracing::warn!(target: "pod::mail", %error, "recipient search: no usable token");
-      return Vec::new();
-    }
-  };
-
-  let characters = resolve_recipient_characters(&esi, &grant, &query).await;
-  cache_recipient_portraits(&eve_image, characters.iter().map(|(id, _)| *id)).await;
-  characters
-}
-
-async fn resolve_recipient_characters(esi: &esi::Client, grant: &eve_sso::Grant, query: &str) -> Vec<(i64, String)> {
-  let result = match esi.universe().search(query, grant).await {
-    Ok(result) => result,
-    Err(error) => {
-      tracing::warn!(target: "pod::mail", %error, query = %query, "recipient search failed");
-      return Vec::new();
-    }
-  };
-
-  let ids: Vec<i64> = result.character.into_iter().take(MAX_RECIPIENT_RESULTS).collect();
-  if ids.is_empty() {
-    return Vec::new();
-  }
-
-  match esi.universe().names(&ids).await {
-    Ok(names) => names
-      .into_iter()
-      .filter(|record| record.category == "character")
-      .map(|record| (record.id, record.name))
-      .collect(),
-    Err(error) => {
-      tracing::warn!(target: "pod::mail", %error, "recipient name resolution failed");
-      Vec::new()
-    }
-  }
-}
-
-async fn cache_recipient_portraits(eve_image: &eve_image::Client, ids: impl Iterator<Item = i64>) {
-  let store = images::default_store();
-  for id in ids {
-    let path = store.character_portrait_path(id);
-    if images::is_fresh(&path, images::STALE_AFTER) {
-      continue;
-    }
-    let url = eve_image.character_portrait_url(id, images::PORTRAIT_SIZE);
-    if let Ok(bytes) = eve_image.fetch(&url).await {
-      let _ = store.write(&path, &bytes);
-    }
-  }
-}
 
 pub(super) fn resolve_sender_portrait(sender_id: i64) -> images::ImageState {
   images::resolve(
@@ -425,54 +357,6 @@ mod tests {
     assert_eq!(strip_html_snippet("<b>bold</b> text"), "bold text");
     assert_eq!(strip_html_snippet(""), "");
     assert_eq!(strip_html_snippet("<br/>"), "");
-  }
-
-  #[tokio::test]
-  async fn it_resolves_search_hits_to_character_id_name_pairs() {
-    use wiremock::{
-      Mock, MockServer, ResponseTemplate,
-      matchers::{method, path},
-    };
-
-    use crate::clients::{eve_sso::Grant, http};
-
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-      .and(path("/characters/42/search/"))
-      .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[95,96]}"#, "application/json"))
-      .mount(&server)
-      .await;
-    Mock::given(method("POST"))
-      .and(path("/universe/names/"))
-      .respond_with(ResponseTemplate::new(200).set_body_raw(
-        r#"[{"id":95,"name":"Vex","category":"character"},{"id":96,"name":"A Corp","category":"corporation"}]"#,
-        "application/json",
-      ))
-      .mount(&server)
-      .await;
-    let db = store::open_test().await.unwrap();
-    let http = http::Client::builder(http::Cache::new(db)).build();
-    let esi = esi::Client::with_base_url(http, server.uri());
-    let grant = Grant::new_test("tok", 42);
-
-    let results = resolve_recipient_characters(&esi, &grant, "Vex").await;
-
-    assert_eq!(results, vec![(95, "Vex".to_owned())]);
-  }
-
-  #[tokio::test]
-  async fn it_yields_no_recipients_when_the_sender_has_no_usable_token() {
-    use crate::clients::http;
-
-    let db = store::open_test().await.unwrap();
-    let http = http::Client::builder(http::Cache::new(db.clone())).build();
-    let esi = Arc::new(esi::Client::builder(http.clone()).user_agent("test").build().unwrap());
-    let eve_image = Arc::new(eve_image::Client::new(http.clone()));
-    let sso = Arc::new(eve_sso::Client::new(http, "test-client"));
-
-    let results = search_recipients(db, esi, eve_image, sso, 999, "Vex".to_owned()).await;
-
-    assert!(results.is_empty());
   }
 
   #[tokio::test]

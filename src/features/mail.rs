@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use iced::{Element, Point, Task, widget::text_editor};
 
-pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot, search_recipients};
+pub use self::loaders::{FolderPaneData, OutboxIndicator, RosterPilot};
 use self::{
   labels::LabelDraft,
   loaders::{FolderLabel, MessageLabel},
@@ -31,7 +31,10 @@ use crate::{
     },
     repo::mail,
   },
-  ui::components::resizable_pane::{self, PaneDrag},
+  ui::components::{
+    entity_search::EntityRef,
+    resizable_pane::{self, PaneDrag},
+  },
   window_state::{self, UiState},
 };
 
@@ -107,9 +110,12 @@ pub enum Message {
   ComposeBodyChanged(text_editor::Action),
   ComposeCcCommitted,
   ComposeCcInput(String),
-  ComposeCcPicked(i64, String),
+  ComposeCcPicked(EntityRef),
   ComposeCcRemoved(usize),
-  ComposeCcSearched(Vec<(i64, String)>),
+  ComposeCcSearched {
+    generation: u64,
+    results: Vec<EntityRef>,
+  },
   ComposeCcShown,
   ComposeClosed,
   ComposeExpandToggled,
@@ -122,9 +128,12 @@ pub enum Message {
   ComposeSubjectChanged(String),
   ComposeToCommitted,
   ComposeToInput(String),
-  ComposeToPicked(i64, String),
+  ComposeToPicked(EntityRef),
   ComposeToRemoved(usize),
-  ComposeToSearched(Vec<(i64, String)>),
+  ComposeToSearched {
+    generation: u64,
+    results: Vec<EntityRef>,
+  },
   FolderPaneDragEnd,
   FolderPaneDragStart,
   FolderPaneDragged(f32),
@@ -359,8 +368,18 @@ impl State {
     Some((id, pilot.name.as_str(), missing))
   }
 
-  pub fn compose_from_character(&self) -> Option<i64> {
-    self.compose.as_ref().map(|draft| draft.from_character_id)
+  pub fn compose_search_generation(&self, is_to: bool) -> u64 {
+    self
+      .compose
+      .as_ref()
+      .map(|draft| {
+        if is_to {
+          draft.to_search.generation()
+        } else {
+          draft.cc_search.generation()
+        }
+      })
+      .unwrap_or_default()
   }
 
   pub fn unified_unread(&self) -> i64 {
@@ -734,12 +753,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Forward(mail_id) => open_reply(state, mail_id, compose::Kind::Forward),
     Message::ComposeToInput(_)
     | Message::ComposeCcInput(_)
-    | Message::ComposeToSearched(_)
-    | Message::ComposeCcSearched(_)
+    | Message::ComposeToSearched {
+      ..
+    }
+    | Message::ComposeCcSearched {
+      ..
+    }
     | Message::ComposeToCommitted
     | Message::ComposeCcCommitted
-    | Message::ComposeToPicked(..)
-    | Message::ComposeCcPicked(..)
+    | Message::ComposeToPicked(_)
+    | Message::ComposeCcPicked(_)
     | Message::ComposeToRemoved(_)
     | Message::ComposeCcRemoved(_)
     | Message::ComposeCcShown
@@ -1103,66 +1126,50 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
   };
   match message {
     Message::ComposeToInput(value) => {
-      if value.trim().chars().count() < RECIPIENT_SEARCH_MIN_CHARS {
-        draft.to_suggestions.clear();
-        draft.to_searching = false;
-      } else {
-        draft.to_searching = true;
-      }
-      draft.to_input = value;
+      draft.to_search.set_query(value);
     }
     Message::ComposeCcInput(value) => {
-      if value.trim().chars().count() < RECIPIENT_SEARCH_MIN_CHARS {
-        draft.cc_suggestions.clear();
-        draft.cc_searching = false;
-      } else {
-        draft.cc_searching = true;
-      }
-      draft.cc_input = value;
+      draft.cc_search.set_query(value);
     }
-    Message::ComposeToSearched(results) => {
-      draft.to_suggestions = results;
-      draft.to_searching = false;
+    Message::ComposeToSearched {
+      generation,
+      results,
+    } => {
+      draft.to_search.accept_results(generation, results);
     }
-    Message::ComposeCcSearched(results) => {
-      draft.cc_suggestions = results;
-      draft.cc_searching = false;
+    Message::ComposeCcSearched {
+      generation,
+      results,
+    } => {
+      draft.cc_search.accept_results(generation, results);
     }
     Message::ComposeToCommitted => {
-      let name = draft.to_input.trim().to_owned();
+      let name = draft.to_search.query().trim().to_owned();
       if !name.is_empty() {
-        draft.to.push(compose::Recipient::typed(name));
-        draft.to_input.clear();
-        draft.to_suggestions.clear();
-        draft.to_searching = false;
+        draft.push_to(compose::Recipient::typed(name));
+        draft.to_search.clear();
       }
     }
     Message::ComposeCcCommitted => {
-      let name = draft.cc_input.trim().to_owned();
+      let name = draft.cc_search.query().trim().to_owned();
       if !name.is_empty() {
-        draft.cc.push(compose::Recipient::typed(name));
-        draft.cc_input.clear();
-        draft.cc_suggestions.clear();
-        draft.cc_searching = false;
+        draft.push_cc(compose::Recipient::typed(name));
+        draft.cc_search.clear();
       }
     }
-    Message::ComposeToPicked(id, name) => {
-      draft.to.push(compose::Recipient::character(name, id));
-      draft.to_input.clear();
-      draft.to_suggestions.clear();
-      draft.to_searching = false;
+    Message::ComposeToPicked(entity) => {
+      draft.push_to(compose::Recipient::from_entity(entity));
+      draft.to_search.clear();
     }
-    Message::ComposeCcPicked(id, name) => {
-      draft.cc.push(compose::Recipient::character(name, id));
-      draft.cc_input.clear();
-      draft.cc_suggestions.clear();
-      draft.cc_searching = false;
+    Message::ComposeCcPicked(entity) => {
+      draft.push_cc(compose::Recipient::from_entity(entity));
+      draft.cc_search.clear();
     }
-    Message::ComposeToRemoved(index) if index < draft.to.len() => {
-      draft.to.remove(index);
+    Message::ComposeToRemoved(index) => {
+      draft.remove_to(index);
     }
-    Message::ComposeCcRemoved(index) if index < draft.cc.len() => {
-      draft.cc.remove(index);
+    Message::ComposeCcRemoved(index) => {
+      draft.remove_cc(index);
     }
     Message::ComposeCcShown => draft.show_cc = true,
     Message::ComposeSubjectChanged(value) => draft.subject = value,
@@ -1580,6 +1587,16 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::ui::components::entity_search::EntityKind;
+
+    fn character_entity(id: i64, name: &str) -> EntityRef {
+      EntityRef {
+        id,
+        kind: EntityKind::Character,
+        name: name.to_owned(),
+        portrait: None,
+      }
+    }
 
     #[tokio::test]
     async fn it_records_a_scope_selection() {
@@ -1850,16 +1867,20 @@ mod tests {
       let _ = update(&mut state, Message::ComposeToInput("Vex Voronova".to_owned()), &db);
       let _ = update(
         &mut state,
-        Message::ComposeToPicked(95_000_001, "Vex Voronova".to_owned()),
+        Message::ComposeToPicked(character_entity(95_000_001, "Vex Voronova")),
         &db,
       );
       assert_eq!(state.compose().unwrap().to[0].id, Some(95_000_001));
-      assert!(state.compose().unwrap().to_input.is_empty());
+      assert!(state.compose().unwrap().to_search.query().is_empty());
       let _ = update(&mut state, Message::ComposeToRemoved(0), &db);
       let _ = update(&mut state, Message::ComposeToInput("Vex Voronova".to_owned()), &db);
       let _ = update(&mut state, Message::ComposeToCommitted, &db);
       let _ = update(&mut state, Message::ComposeCcShown, &db);
-      let _ = update(&mut state, Message::ComposeCcPicked(95_000_009, "Alt".to_owned()), &db);
+      let _ = update(
+        &mut state,
+        Message::ComposeCcPicked(character_entity(95_000_009, "Alt")),
+        &db,
+      );
       assert_eq!(state.compose().unwrap().cc[0].id, Some(95_000_009));
       let _ = update(&mut state, Message::ComposeCcRemoved(0), &db);
       let _ = update(&mut state, Message::ComposeCcInput("Alt".to_owned()), &db);
@@ -1889,6 +1910,44 @@ mod tests {
 
       let _ = update(&mut state, Message::ComposeClosed, &db);
       assert!(state.compose().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_commits_a_typed_recipient_name_without_an_id() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.compose = Some(compose::Draft::blank(42));
+
+      let _ = update(&mut state, Message::ComposeToInput("Typed Pilot".to_owned()), &db);
+      let _ = update(&mut state, Message::ComposeToCommitted, &db);
+
+      let draft = state.compose().unwrap();
+      assert_eq!(draft.to.len(), 1);
+      assert_eq!(draft.to[0].id, None);
+      assert_eq!(draft.to[0].name, "Typed Pilot");
+      assert!(draft.to_search.query().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_discards_recipient_results_from_a_superseded_search() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.compose = Some(compose::Draft::blank(42));
+
+      let _ = update(&mut state, Message::ComposeToInput("Vex".to_owned()), &db);
+      let stale = state.compose_search_generation(true);
+      let _ = update(&mut state, Message::ComposeToInput("Vexor".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::ComposeToSearched {
+          generation: stale,
+          results: vec![character_entity(1, "Stale")],
+        },
+        &db,
+      );
+
+      assert!(state.compose().unwrap().to_search.results().is_empty());
     }
 
     #[tokio::test]

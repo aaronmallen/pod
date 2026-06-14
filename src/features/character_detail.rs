@@ -1,4 +1,5 @@
 mod header;
+mod killmail_detail;
 mod tabs;
 
 use std::time::Duration;
@@ -162,6 +163,7 @@ pub enum LoadState<T> {
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
+  CloseKillmailDetail,
   ContactAddOpened,
   ContactDeleteCancelled,
   ContactDeleteConfirmed,
@@ -193,6 +195,8 @@ pub enum Message {
     absolute: f32,
     relative: f32,
   },
+  KillmailDetailLoaded(Box<Option<killmail_detail::KillmailDetail>>),
+  KillmailSelected(i64),
   Loaded(Box<Loaded>),
   NotificationRead(i64),
   NotificationsFilterChanged(NotificationsFilter),
@@ -302,6 +306,7 @@ pub struct State {
   notifications_filter: NotificationsFilter,
   picker_open: bool,
   roster: Vec<PickerPilot>,
+  selected_killmail: Option<killmail_detail::KillmailDetail>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
   standings_filter: tabs::standings::StandingsFilter,
@@ -344,6 +349,7 @@ impl State {
       notifications_filter: NotificationsFilter::All,
       picker_open: false,
       roster: Vec::new(),
+      selected_killmail: None,
       standings: LoadState::Loading,
       standings_agent_cursor: None,
       standings_filter: tabs::standings::StandingsFilter::All,
@@ -376,6 +382,9 @@ impl State {
     }
     if let LoadState::Loaded(page) = &self.contacts {
       keys.extend(page.rows.iter().filter_map(|row| row.image.stale_key()));
+    }
+    if let Some(detail) = &self.selected_killmail {
+      keys.extend(detail.stale_images());
     }
     keys
   }
@@ -511,6 +520,20 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     } => update_pagination(state, message, db),
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
+      Task::none()
+    }
+    Message::KillmailSelected(killmail_id) => {
+      let viewing = state.active;
+      Task::perform(load_killmail_detail(db.clone(), viewing, killmail_id), |detail| {
+        Message::KillmailDetailLoaded(Box::new(detail))
+      })
+    }
+    Message::KillmailDetailLoaded(detail) => {
+      state.selected_killmail = *detail;
+      Task::none()
+    }
+    Message::CloseKillmailDetail => {
+      state.selected_killmail = None;
       Task::none()
     }
     Message::NotificationsFilterChanged(filter) => {
@@ -1242,6 +1265,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  if let Some(detail) = state.selected_killmail.as_ref() {
+    return killmail_detail::overlay(base.into(), detail);
+  }
+
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
@@ -1295,6 +1322,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
   }
 
   base.into()
+}
+
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  if state.selected_killmail.is_none() {
+    return iced::Subscription::none();
+  }
+  iced::event::listen_with(|event, _status, _id| {
+    matches!(
+      event,
+      iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+        ..
+      })
+    )
+    .then_some(Message::CloseKillmailDetail)
+  })
 }
 
 async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {
@@ -1407,6 +1450,14 @@ async fn load_contacts_page(
     labels,
     rows,
   }
+}
+
+async fn load_killmail_detail(
+  db: Database,
+  character_id: i64,
+  killmail_id: i64,
+) -> Option<killmail_detail::KillmailDetail> {
+  killmail_detail::load(&db, character_id, killmail_id, character_id).await
 }
 
 async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLogEntry>> {
@@ -1993,6 +2044,47 @@ mod tests {
 
       let _ = update(&mut state, Message::PickerToggled, &db);
       assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_killmail_detail_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_killmail.is_some());
+
+      let _ = update(&mut state, Message::CloseKillmailDetail, &db);
+      assert!(state.selected_killmail.is_none());
+    }
+  }
+
+  fn killmail_detail_fixture() -> killmail_detail::KillmailDetail {
+    killmail_detail::KillmailDetail {
+      attackers: Vec::new(),
+      damage_taken: 0,
+      dropped_isk: 0.0,
+      is_kill: true,
+      kill_time: "2024-01-01T00:00:00Z".to_owned(),
+      killmail_id: 100,
+      ship_icon: images::IconResolution::Missing,
+      ship_name: "Rifter".to_owned(),
+      slots: Vec::new(),
+      system_name: Some("Jita".to_owned()),
+      system_security: 0.9,
+      value_destroyed_isk: 0.0,
+      value_isk: 1234.5,
+      victim_alliance: None,
+      victim_corp: None,
+      victim_name: "Target".to_owned(),
+      victim_portrait: images::ImageState::Stale {
+        id: 3,
+        kind: images::ImageKind::CharacterPortrait,
+      },
     }
   }
 
@@ -3513,6 +3605,96 @@ mod tests {
 
       assert!(loaded.roster.is_empty());
       assert!(matches!(loaded.clones, LoadState::Loaded(_)));
+    }
+  }
+
+  mod load_killmail_detail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{KillmailAttacker, KillmailItem};
+
+    fn attacker(killmail_id: i64, ordinal: i64, character_id: i64, damage: i64, final_blow: bool) -> KillmailAttacker {
+      KillmailAttacker {
+        alliance_id: None,
+        attacker_character_id: Some(character_id),
+        character_id: 42,
+        corporation_id: Some(6006),
+        damage_done: damage,
+        final_blow,
+        killmail_id,
+        ordinal,
+        ship_type_id: Some(670),
+      }
+    }
+
+    fn item(killmail_id: i64, ordinal: i64, flag: i64, dropped: bool) -> KillmailItem {
+      KillmailItem {
+        character_id: 42,
+        flag,
+        killmail_id,
+        ordinal,
+        quantity_destroyed: if dropped { 0 } else { 1 },
+        quantity_dropped: if dropped { 2 } else { 0 },
+        type_id: 2185,
+        value_isk: 4242.5,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_groups_items_by_slot_and_sorts_attackers_final_blow_then_share() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      let mut kill = kill_entry(42, 100, Some(9), None);
+      kill.value_isk = 100.0;
+      kill.value_destroyed_isk = 80.0;
+      kill.victim_damage_taken = 5000;
+      character::upsert_killmail(&db, &kill).await.unwrap();
+      // Two attackers: the higher-damage one (300) is NOT final blow; the lower-damage one (100) is.
+      let attackers = vec![attacker(100, 0, 7, 300, false), attacker(100, 1, 9, 100, true)];
+      // A high-power module (flag 27) and a cargo-hold item (flag 5).
+      let items = vec![item(100, 0, 27, false), item(100, 1, 5, true)];
+      character::upsert_killmail_detail(&db, 42, 100, &attackers, &items)
+        .await
+        .unwrap();
+
+      let detail = load_killmail_detail(db.clone(), 42, 100).await.expect("detail loads");
+
+      assert_eq!(detail.slots.len(), 2);
+      assert_eq!(detail.slots[0].label, "High power");
+      assert_eq!(detail.slots[1].label, "Cargo hold");
+      assert!(detail.slots[1].items[0].dropped);
+      assert_eq!(detail.slots[1].items[0].quantity, 2);
+
+      assert_eq!(detail.attackers.len(), 2);
+      assert!(detail.attackers[0].final_blow, "final blow sorts first");
+      assert_eq!(detail.attackers[0].damage_share, 0.25);
+      assert_eq!(detail.attackers[1].damage_share, 0.75);
+      assert_eq!(detail.dropped_isk, 20.0);
+    }
+
+    #[tokio::test]
+    async fn it_flags_the_viewing_character_among_the_attackers() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      character::upsert_killmail(&db, &kill_entry(42, 100, Some(9), None))
+        .await
+        .unwrap();
+      let attackers = vec![attacker(100, 0, 42, 100, true)];
+      character::upsert_killmail_detail(&db, 42, 100, &attackers, &[])
+        .await
+        .unwrap();
+
+      let detail = load_killmail_detail(db.clone(), 42, 100).await.expect("detail loads");
+
+      assert!(detail.attackers[0].is_self);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_killmail() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(load_killmail_detail(db.clone(), 42, 999).await.is_none());
     }
   }
 

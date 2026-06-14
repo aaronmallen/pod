@@ -1,5 +1,3 @@
-// Consumed by the killmail modal's fitting loader, which lands in a follow-up change.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SlotGroup {
   CargoHold,
@@ -13,7 +11,6 @@ pub enum SlotGroup {
   Subsystem,
 }
 
-#[allow(dead_code)]
 impl SlotGroup {
   // Render order matching the killmail modal's fitting grouping (high → med → low → rig →
   // subsystem → drone bay → cargo hold → implant), with the Other fallback bucket trailing.

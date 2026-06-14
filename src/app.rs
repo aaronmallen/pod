@@ -2307,6 +2307,9 @@ fn subscription(app: &App) -> Subscription<Message> {
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
+  if let Some(state) = &app.character_detail {
+    subs.push(character_detail::subscription(state).map(Message::CharacterDetail));
+  }
   if let Some(state) = &app.character_manager {
     subs.push(character_manager::subscription(state).map(Message::CharacterManager));
   }

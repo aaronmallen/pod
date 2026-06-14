@@ -2,7 +2,7 @@ use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   border::Radius,
-  widget::{Column, Row, Space, container, image, text},
+  widget::{Column, Row, Space, container, image, mouse_area, text},
 };
 
 use super::{
@@ -392,7 +392,7 @@ fn kill_row<'a>(entry: &'a KillLogEntry, last: bool) -> Element<'a, Message> {
   .width(Length::Fill);
 
   let border_bottom = if last { 0.0 } else { 1.0 };
-  container(inner)
+  let row = container(inner)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_2_5,
@@ -400,7 +400,11 @@ fn kill_row<'a>(entry: &'a KillLogEntry, last: bool) -> Element<'a, Message> {
       bottom: spacing::SPACE_2_5,
       left: 0.0,
     })
-    .style(move |_| shared::row_rule_style(border_bottom))
+    .style(move |_| shared::row_rule_style(border_bottom));
+
+  mouse_area(row)
+    .on_press(Message::KillmailSelected(entry.killmail_id))
+    .interaction(iced::mouse::Interaction::Pointer)
     .into()
 }
 

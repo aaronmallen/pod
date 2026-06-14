@@ -35,6 +35,11 @@ impl Cache {
     }
   }
 
+  #[allow(dead_code)]
+  pub(crate) fn db(&self) -> &store::Database {
+    &self.db
+  }
+
   async fn get(&self, url: &str) -> Result<Option<HttpCacheEntry>, store::Error> {
     infra::http_cache_get(&self.db, url).await
   }
@@ -182,6 +187,11 @@ impl Client {
     }
     let resp = send_logged("PUT", url, req, &self.budgets).await?;
     handle_status(resp).await
+  }
+
+  #[allow(dead_code)]
+  pub(crate) fn cache_db(&self) -> &store::Database {
+    self.cache.db()
   }
 
   async fn get_bytes_uncached_inner(&self, url: &str, timeout: Option<Duration>) -> Result<Vec<u8>, Error> {

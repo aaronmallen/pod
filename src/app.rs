@@ -872,6 +872,18 @@ async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event
     .await;
 }
 
+/// Builds a dedicated ESI client whose HTTP cache is backed by the sync pool, keeping sync
+/// cache reads/writes off the interactive pool and avoiding contention with UI queries.
+fn build_sync_esi(sync_db: store::Database) -> Result<Arc<esi::Client>, String> {
+  let sync_http = http::Client::builder(http::Cache::new(sync_db)).build();
+  Ok(Arc::new(
+    esi::Client::builder(sync_http)
+      .user_agent(clients::user_agent())
+      .build()
+      .map_err(|error| error.to_string())?,
+  ))
+}
+
 fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc::Receiver<sync::Event>), String> {
   let StoreReady {
     db,
@@ -897,10 +909,11 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     tracing::info!(target: "pod::lifecycle", "opened read-only; the sync engine stays parked");
     inert_sync()
   } else {
+    let sync_esi = build_sync_esi(sync_db.clone())?;
     let started = sync::spawn(
       sync_db,
       sync_housekeeping_db,
-      Arc::clone(&esi),
+      sync_esi,
       sso.clone(),
       Arc::clone(&eve_image),
       store::images::default_store(),
@@ -4111,6 +4124,46 @@ mod tests {
     let session = store::sync_session::SyncSession::from_config(&storage, "machine-test".to_owned())
       .expect("sync mode yields a session");
     (dir, session)
+  }
+
+  mod build_sync_esi {
+    use super::*;
+    use crate::store::{model::HttpCacheEntry, repo::infra};
+
+    #[tokio::test]
+    async fn it_backs_the_sync_clients_cache_with_the_supplied_sync_pool() {
+      let sync_db = store::open_test().await.unwrap();
+      let unrelated_db = store::open_test().await.unwrap();
+      let url = "https://esi.example/character/1/assets";
+      let entry = HttpCacheEntry::new(b"sync-pool".to_vec(), 0, url);
+      infra::http_cache_upsert(&sync_db, &entry).await.unwrap();
+
+      let sync_esi = build_sync_esi(sync_db).unwrap();
+      let cache_db = sync_esi.http().cache_db().clone();
+
+      assert!(
+        infra::http_cache_get(&cache_db, url).await.unwrap().is_some(),
+        "the sync client reads its cache from the supplied sync pool"
+      );
+      assert!(
+        infra::http_cache_get(&unrelated_db, url).await.unwrap().is_none(),
+        "an unrelated pool cannot see the sync pool's cache, proving the wiring is pool-specific"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_distinct_client_from_an_interactive_pool_client() {
+      let interactive_db = store::open_test().await.unwrap();
+      let ui_http = http::Client::builder(http::Cache::new(interactive_db.clone())).build();
+      let ui_esi = Arc::new(esi::Client::builder(ui_http).user_agent("test").build().unwrap());
+
+      let sync_esi = build_sync_esi(interactive_db).unwrap();
+
+      assert!(
+        !Arc::ptr_eq(&sync_esi.http(), &ui_esi.http()),
+        "the sync engine no longer shares the interactive-pool-backed HTTP client"
+      );
+    }
   }
 
   mod destination {

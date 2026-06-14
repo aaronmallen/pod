@@ -29,7 +29,11 @@ const HEADER_SIDE_PADDING: f32 = 28.0;
 pub const PAGE_SIZE: usize = 50;
 const RIGHT_RAIL_DEFAULT_WIDTH: f32 = 280.0;
 const RIGHT_RAIL_PANE_KEY: &str = "wallet.right_rail";
-const SCROLL_GROW_THRESHOLD: f32 = 0.8;
+
+/// Fraction of the ledger a scroll must reach before the next cursor page is
+/// fetched. The window only ever materializes the viewport's rows, so this only
+/// gates how early the next DB page starts streaming in behind the scroll.
+const SCROLL_LOAD_THRESHOLD: f32 = 0.8;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Scope {
@@ -204,7 +208,12 @@ pub enum Message {
   SearchChanged(String),
   SideFilterChanged(Side),
   SignFilterChanged(SignFilter),
-  TabScrolled(f32),
+  /// `relative` is the 0.0–1.0 scroll fraction that drives the cursor-pagination threshold;
+  /// `absolute` is the pixel offset stored to window the visible ledger.
+  TabScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   TabSelected(Tab),
   TimeframeSelected(Timeframe),
 }
@@ -234,8 +243,8 @@ pub struct State {
   sign_filter: SignFilter,
   tab: Tab,
   tab_exhausted: bool,
+  tab_scroll_offset: f32,
   timeframe: Timeframe,
-  visible_rows: usize,
 }
 
 impl State {
@@ -268,8 +277,8 @@ impl State {
       sign_filter: SignFilter::default(),
       tab: Tab::default(),
       tab_exhausted: false,
+      tab_scroll_offset: 0.0,
       timeframe: Timeframe::default(),
-      visible_rows: PAGE_SIZE,
     }
   }
 
@@ -330,12 +339,12 @@ impl State {
     keys
   }
 
-  pub fn timeframe(&self) -> Timeframe {
-    self.timeframe
+  pub fn tab_scroll_offset(&self) -> f32 {
+    self.tab_scroll_offset
   }
 
-  pub fn visible_rows(&self) -> usize {
-    self.visible_rows
+  pub fn timeframe(&self) -> Timeframe {
+    self.timeframe
   }
 
   fn corp_balance_total(&self) -> Option<f64> {
@@ -481,7 +490,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         return Task::none();
       }
       state.active_division = division;
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       reload(db, state.active, division)
     }
     Message::Loaded(loaded) => {
@@ -564,34 +573,37 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.active = scope;
       state.active_division = DEFAULT_DIVISION;
       state.corp_divisions = Vec::new();
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       reload(db, scope, state.active_division)
     }
     Message::SearchChanged(query) => {
       state.search = query;
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       Task::none()
     }
     Message::SideFilterChanged(side) => {
       state.side_filter = side;
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       Task::none()
     }
     Message::SignFilterChanged(filter) => {
       state.sign_filter = filter;
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       Task::none()
     }
-    Message::TabScrolled(relative_y) => {
-      if relative_y < SCROLL_GROW_THRESHOLD {
+    Message::TabScrolled {
+      absolute,
+      relative,
+    } => {
+      state.tab_scroll_offset = absolute;
+      if relative < SCROLL_LOAD_THRESHOLD {
         return Task::none();
       }
-      state.visible_rows = state.visible_rows.saturating_add(PAGE_SIZE);
       load_more(state, db)
     }
     Message::TabSelected(tab) => {
       state.tab = tab;
-      state.visible_rows = PAGE_SIZE;
+      state.tab_scroll_offset = 0.0;
       state.tab_exhausted = false;
       Task::none()
     }
@@ -1660,33 +1672,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_grows_the_visible_window_when_scrolled_near_the_bottom() {
+    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      assert_eq!(state.visible_rows(), PAGE_SIZE);
 
-      let _ = update(&mut state, Message::TabScrolled(0.9), &db);
-      assert_eq!(state.visible_rows(), PAGE_SIZE * 2);
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 1_234.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.tab_scroll_offset(),
+        1_234.0,
+        "the pixel offset is stored so the virtual list can window the ledger"
+      );
     }
 
     #[tokio::test]
-    async fn it_does_not_grow_the_window_for_a_shallow_scroll() {
+    async fn it_loads_the_next_page_when_scrolled_near_the_bottom() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
 
-      let _ = update(&mut state, Message::TabScrolled(0.2), &db);
-      assert_eq!(state.visible_rows(), PAGE_SIZE);
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 9_000.0,
+          relative: 0.9,
+        },
+        &db,
+      );
+
+      assert!(state.loading_more, "a deep scroll starts the next cursor page");
     }
 
     #[tokio::test]
-    async fn it_resets_the_visible_window_when_the_tab_changes() {
+    async fn it_does_not_load_a_page_for_a_shallow_scroll() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      let _ = update(&mut state, Message::TabScrolled(0.9), &db);
-      assert_eq!(state.visible_rows(), PAGE_SIZE * 2);
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 100.0,
+          relative: 0.2,
+        },
+        &db,
+      );
+
+      assert!(!state.loading_more, "a shallow scroll does not page");
+    }
+
+    #[tokio::test]
+    async fn it_resets_the_scroll_offset_when_the_tab_changes() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.tab_scroll_offset = 4_200.0;
 
       let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
-      assert_eq!(state.visible_rows(), PAGE_SIZE);
+      assert_eq!(state.tab_scroll_offset(), 0.0);
     }
 
     #[tokio::test]
@@ -1793,7 +1844,7 @@ mod tests {
       let _ = update(&mut state, Message::SideFilterChanged(Side::Buy), &db);
 
       assert_eq!(state.side_filter, Side::Buy);
-      assert_eq!(state.visible_rows(), PAGE_SIZE);
+      assert_eq!(state.tab_scroll_offset(), 0.0);
     }
 
     #[tokio::test]

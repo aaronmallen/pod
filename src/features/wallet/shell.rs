@@ -15,9 +15,20 @@ use crate::{
   store::images::{self, IconResolution},
   ui::{
     components::{
-      avatar::Avatar, backdrop, eyebrow::eyebrow_text, forbidden, glyph_badge::GlyphBadge, icon::Icon,
-      positioned_dropdown::positioned_dropdown, resizable_pane::pane_handle, rule, segmented::segment_button,
-      tab_select, table_cell::TableCell, text_input::TextInput,
+      avatar::Avatar,
+      backdrop,
+      eyebrow::eyebrow_text,
+      forbidden,
+      glyph_badge::GlyphBadge,
+      icon::Icon,
+      positioned_dropdown::positioned_dropdown,
+      resizable_pane::pane_handle,
+      rule,
+      segmented::segment_button,
+      tab_select,
+      table_cell::TableCell,
+      text_input::TextInput,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{
       color,
@@ -37,6 +48,13 @@ const TAB_STRIP_HEIGHT: f32 = 48.0;
 
 const JOURNAL_RIGHT_COL_WIDTH: f32 = 120.0;
 const RECENT_ACTIVITY_LIMIT: usize = 8;
+
+/// Nominal height of one ledger row, in pixels.
+///
+/// Ledger rows are content-driven (two-line party/amount cells, a 22px avatar),
+/// so this is only an estimate for [`VirtualList`] offset math; overscan absorbs
+/// the one- vs two-line variance so no visible gap can open.
+const ESTIMATED_ROW_HEIGHT: f32 = 60.0;
 
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let body = Column::with_children(vec![header::header(state, now), self::body(state, now)])
@@ -98,7 +116,10 @@ fn center(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
     .height(Length::Fill)
-    .on_scroll(|viewport| Message::TabScrolled(viewport.relative_offset().y));
+    .on_scroll(|viewport| Message::TabScrolled {
+      absolute: viewport.absolute_offset().y,
+      relative: viewport.relative_offset().y,
+    });
 
   let mut children: Vec<Element<'_, Message>> = vec![head.into()];
   if let Some(pinned_header) = pinned_header(state) {
@@ -310,16 +331,26 @@ fn journal_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     return empty_ledger("No journal entries match.");
   }
 
-  let visible = state.visible_rows();
-  let rows: Vec<Element<'_, Message>> = entries
-    .into_iter()
-    .take(visible)
-    .map(|entry| journal_row(state, entry, now))
-    .collect();
+  windowed_ledger(state, entries, move |entry| journal_row(state, entry, now))
+}
 
-  container(Column::with_children(rows).width(Length::Fill))
-    .width(Length::Fill)
-    .into()
+/// Window a flat list of filtered ledger entries: only the rows in and around
+/// the viewport are materialized, with spacers preserving scrollbar geometry.
+///
+/// The scroll offset comes from feature state; the next cursor page is fetched
+/// separately by the scroll handler, so the window always covers whatever subset
+/// of the loaded-and-filtered entries is currently on screen.
+fn windowed_ledger<'a, T, F>(state: &'a State, entries: Vec<&'a T>, render: F) -> Element<'a, Message>
+where
+  F: Fn(&'a T) -> Element<'a, Message> + 'a,
+{
+  let offset = state.tab_scroll_offset();
+  virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(entries.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(offset);
+    VirtualList::new(config, |index| render(entries[index])).view()
+  })
 }
 
 fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -404,16 +435,7 @@ fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     return empty_ledger("No market transactions match.");
   }
 
-  let visible = state.visible_rows();
-  let rows: Vec<Element<'_, Message>> = entries
-    .into_iter()
-    .take(visible)
-    .map(|entry| market_row(state, entry, now))
-    .collect();
-
-  container(Column::with_children(rows).width(Length::Fill))
-    .width(Length::Fill)
-    .into()
+  windowed_ledger(state, entries, move |entry| market_row(state, entry, now))
 }
 
 fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -551,16 +573,7 @@ fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     return empty_ledger("No contracts match.");
   }
 
-  let visible = state.visible_rows();
-  let rows: Vec<Element<'_, Message>> = entries
-    .into_iter()
-    .take(visible)
-    .map(|entry| contract_row(entry, now))
-    .collect();
-
-  container(Column::with_children(rows).width(Length::Fill))
-    .width(Length::Fill)
-    .into()
+  windowed_ledger(state, entries, move |entry| contract_row(entry, now))
 }
 
 fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -1195,6 +1208,22 @@ mod tests {
       state.journal = vec![journal_entry(None, "agent_mission_reward")];
 
       let _el: Element<'_, Message> = shell(&state, now());
+    }
+
+    #[test]
+    fn it_windows_a_large_ledger_with_a_scroll_offset_without_materializing_every_row() {
+      let mut state = state_on_journal();
+      state.journal = (0..2_000)
+        .map(|index| {
+          let mut entry = journal_entry(Some(index as f64), "bounty_prizes");
+          entry.id = index;
+          entry
+        })
+        .collect();
+      state.tab_scroll_offset = 30_000.0;
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
     }
   }
 

@@ -52,9 +52,19 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Notifications),
     },
     Feature::Industry => Descriptor {
-      jobs: &[JobKind::CharacterIndustryJobs, JobKind::CorporationIndustryJobs],
+      jobs: &[
+        JobKind::CharacterBlueprints,
+        JobKind::CharacterIndustryJobs,
+        JobKind::CorporationBlueprints,
+        JobKind::CorporationIndustryJobs,
+      ],
       rail: Some(Destination::Industry),
-      scopes: &[scopes::CHARACTER_INDUSTRY_JOBS, scopes::CORPORATION_INDUSTRY_JOBS],
+      scopes: &[
+        scopes::CHARACTER_BLUEPRINTS,
+        scopes::CHARACTER_INDUSTRY_JOBS,
+        scopes::CORPORATION_BLUEPRINTS,
+        scopes::CORPORATION_INDUSTRY_JOBS,
+      ],
       tab: None,
     },
     Feature::LocationTracking => Descriptor {

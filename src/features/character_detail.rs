@@ -71,6 +71,7 @@ impl DetailDataType {
       JobKind::CharacterStandings => Some(Self::Standings),
       JobKind::AssetSync
       | JobKind::CharacterAbyssals
+      | JobKind::CharacterBlueprints
       | JobKind::CharacterCalendar
       | JobKind::CharacterContracts
       | JobKind::CharacterIndustryJobs
@@ -80,6 +81,7 @@ impl DetailDataType {
       | JobKind::CharacterSkills
       | JobKind::CharacterTelemetry
       | JobKind::CharacterWallet
+      | JobKind::CorporationBlueprints
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationProfile
       | JobKind::CorporationWallet

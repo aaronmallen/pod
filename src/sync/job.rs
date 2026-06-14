@@ -11,6 +11,7 @@ use crate::{
 pub enum JobKind {
   AssetSync,
   CharacterAbyssals,
+  CharacterBlueprints,
   CharacterCalendar,
   CharacterClones,
   CharacterContacts,
@@ -25,6 +26,7 @@ pub enum JobKind {
   CharacterStandings,
   CharacterTelemetry,
   CharacterWallet,
+  CorporationBlueprints,
   CorporationIndustryJobs,
   CorporationProfile,
   CorporationWallet,
@@ -37,6 +39,7 @@ impl JobKind {
   pub const ALL: &'static [JobKind] = &[
     JobKind::AssetSync,
     JobKind::CharacterAbyssals,
+    JobKind::CharacterBlueprints,
     JobKind::CharacterCalendar,
     JobKind::CharacterClones,
     JobKind::CharacterContacts,
@@ -51,6 +54,7 @@ impl JobKind {
     JobKind::CharacterStandings,
     JobKind::CharacterTelemetry,
     JobKind::CharacterWallet,
+    JobKind::CorporationBlueprints,
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationProfile,
     JobKind::CorporationWallet,
@@ -112,6 +116,7 @@ impl JobKind {
     match (self, subject) {
       (Self::AssetSync, Subject::Corporation(_)) => Some(scopes::CORPORATION_ASSETS),
       (Self::AssetSync, Subject::Character(_)) => Some(scopes::CHARACTER_ASSETS),
+      (Self::CharacterBlueprints, _) => Some(scopes::CHARACTER_BLUEPRINTS),
       (Self::CharacterCalendar, _) => Some(scopes::CHARACTER_CALENDAR_READ),
       (Self::CharacterClones, _) => Some(scopes::CHARACTER_CLONES),
       (Self::CharacterContacts, _) => Some(scopes::CHARACTER_CONTACTS),
@@ -125,6 +130,7 @@ impl JobKind {
       (Self::CharacterStandings, _) => Some(scopes::CHARACTER_STANDINGS),
       (Self::CharacterTelemetry, _) => Some(scopes::CHARACTER_LOCATION),
       (Self::CharacterWallet, _) => Some(scopes::CHARACTER_WALLET),
+      (Self::CorporationBlueprints, _) => Some(scopes::CORPORATION_BLUEPRINTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
       (Self::CorporationWallet, _) => Some(scopes::CORPORATION_WALLET),
@@ -138,6 +144,7 @@ impl JobKind {
       (
         Self::AssetSync
           | Self::CharacterAbyssals
+          | Self::CharacterBlueprints
           | Self::CharacterCalendar
           | Self::CharacterClones
           | Self::CharacterContacts
@@ -154,7 +161,11 @@ impl JobKind {
           | Self::CharacterWallet,
         Subject::Character(_)
       ) | (
-        Self::AssetSync | Self::CorporationIndustryJobs | Self::CorporationProfile | Self::CorporationWallet,
+        Self::AssetSync
+          | Self::CorporationBlueprints
+          | Self::CorporationIndustryJobs
+          | Self::CorporationProfile
+          | Self::CorporationWallet,
         Subject::Corporation(_)
       )
     )
@@ -164,6 +175,7 @@ impl JobKind {
     match self {
       Self::AssetSync
       | Self::CharacterAbyssals
+      | Self::CharacterBlueprints
       | Self::CharacterClones
       | Self::CharacterContacts
       | Self::CharacterContracts
@@ -172,6 +184,7 @@ impl JobKind {
       | Self::CharacterProfile
       | Self::CharacterStandings
       | Self::CharacterWallet
+      | Self::CorporationBlueprints
       | Self::CorporationIndustryJobs
       | Self::CorporationProfile
       | Self::CorporationWallet => Duration::from_secs(3600),
@@ -190,6 +203,7 @@ impl JobKind {
     match self {
       Self::AssetSync => &[scopes::CHARACTER_ASSETS, scopes::CORPORATION_ASSETS],
       Self::CharacterAbyssals => &[],
+      Self::CharacterBlueprints => &[scopes::CHARACTER_BLUEPRINTS],
       Self::CharacterCalendar => &[scopes::CHARACTER_CALENDAR_READ],
       Self::CharacterClones => &[scopes::CHARACTER_CLONES, scopes::CHARACTER_IMPLANTS],
       Self::CharacterContacts => &[scopes::CHARACTER_CONTACTS],
@@ -212,6 +226,7 @@ impl JobKind {
       ],
       Self::CharacterStandings => &[scopes::CHARACTER_STANDINGS],
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
+      Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
       Self::CorporationWallet => &[
@@ -276,6 +291,7 @@ async fn run_character_job_a(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_character_job_a1(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
   Some(match ctx.key.kind {
     JobKind::CharacterAbyssals => super::jobs::abyssals::run(ctx).await,
+    JobKind::CharacterBlueprints => super::jobs::blueprints::run(ctx).await,
     JobKind::CharacterCalendar => super::jobs::character_calendar::run(ctx).await,
     JobKind::CharacterClones => super::jobs::character_clones::run(ctx).await,
     _ => return None,
@@ -315,6 +331,7 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
   match ctx.key.kind {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
+    JobKind::CorporationBlueprints => super::jobs::blueprints::run(ctx).await,
     JobKind::CorporationIndustryJobs => super::jobs::industry::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,

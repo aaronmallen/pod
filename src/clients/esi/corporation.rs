@@ -4,6 +4,7 @@ use crate::clients::{
     Client as EsiClient,
     models::{
       assets::AssetName,
+      blueprint::Blueprint,
       character::RecentKillmail,
       corporation::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationWalletBalance,
@@ -45,6 +46,12 @@ impl<'a> AuthenticatedClient<'a> {
       names.extend(page);
     }
     Ok(names)
+  }
+
+  #[allow(dead_code)]
+  pub async fn blueprints(&self, corporation_id: i64) -> Result<Vec<Blueprint>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/blueprints/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn divisions(&self, corporation_id: i64) -> Result<CorporationDivisions, clients::Error> {
@@ -238,6 +245,52 @@ mod tests {
           .unwrap();
 
         assert!(names.is_empty());
+      }
+    }
+
+    mod blueprints {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"item_id":1000000000001,"type_id":962,"location_id":60003760,"location_flag":"CorpSAG1","quantity":-1,"material_efficiency":10,"time_efficiency":20,"runs":-1}]"#;
+        let page_two = r#"[{"item_id":1000000000002,"type_id":963,"location_id":60003760,"location_flag":"CorpSAG1","quantity":1,"material_efficiency":2,"time_efficiency":4,"runs":150}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/blueprints/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/blueprints/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let blueprints = esi.corporation_authenticated(&grant).blueprints(2000).await.unwrap();
+
+        assert_eq!(blueprints.len(), 2);
+        assert_eq!(blueprints[0].item_id, 1000000000001);
+        assert_eq!(blueprints[0].runs, -1);
+        assert_eq!(blueprints[0].material_efficiency, 10);
+        assert_eq!(blueprints[1].item_id, 1000000000002);
+        assert_eq!(blueprints[1].runs, 150);
       }
     }
 

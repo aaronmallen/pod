@@ -4,6 +4,7 @@ use crate::clients::{
     Client as EsiClient,
     models::{
       assets::AssetName,
+      blueprint::Blueprint,
       character::{
         Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
         Clones, Contact, ContactLabel, Contract, CreateMailLabelRequest, Location, MailBody, MailHeader, MailLabels,
@@ -158,6 +159,14 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("characters/{}/implants/", self.grant.character_id()));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn blueprints(&self) -> Result<Vec<Blueprint>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/blueprints/", self.grant.character_id()));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   #[allow(dead_code)]
@@ -906,6 +915,52 @@ mod tests {
         let implants = esi.character_authenticated(&grant).implants().await.unwrap();
 
         assert_eq!(implants, vec![9899, 9941, 9942]);
+      }
+    }
+
+    mod blueprints {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"item_id":1000000000001,"type_id":962,"location_id":60003760,"location_flag":"Hangar","quantity":-1,"material_efficiency":10,"time_efficiency":20,"runs":-1}]"#;
+        let page_two = r#"[{"item_id":1000000000002,"type_id":963,"location_id":60003760,"location_flag":"Hangar","quantity":1,"material_efficiency":2,"time_efficiency":4,"runs":300}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/blueprints/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/blueprints/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let blueprints = esi.character_authenticated(&grant).blueprints().await.unwrap();
+
+        assert_eq!(blueprints.len(), 2);
+        assert_eq!(blueprints[0].item_id, 1000000000001);
+        assert_eq!(blueprints[0].runs, -1);
+        assert_eq!(blueprints[0].time_efficiency, 20);
+        assert_eq!(blueprints[1].item_id, 1000000000002);
+        assert_eq!(blueprints[1].runs, 300);
       }
     }
 

@@ -11,6 +11,7 @@ mod certificate_skill;
 mod character;
 mod character_asset;
 mod character_attributes;
+mod character_blueprint;
 mod character_calendar;
 mod character_calendar_attendee;
 pub mod character_calendar_view;
@@ -48,6 +49,7 @@ mod character_wallet_transaction;
 mod constellation;
 mod corporation;
 mod corporation_asset;
+mod corporation_blueprint;
 pub mod corporation_card;
 mod corporation_industry_job;
 mod corporation_member_role;
@@ -116,6 +118,8 @@ pub use character::{Gender, Model as Character};
 pub use character_asset::Model as CharacterAsset;
 pub use character_attributes::Model as CharacterAttributes;
 #[allow(unused_imports)]
+pub use character_blueprint::Model as CharacterBlueprint;
+#[allow(unused_imports)]
 pub use character_calendar::Model as CharacterCalendarEvent;
 #[allow(unused_imports)]
 pub use character_calendar_attendee::Model as CharacterCalendarAttendee;
@@ -165,6 +169,8 @@ pub use constellation::Model as Constellation;
 pub use corporation::Model as Corporation;
 #[allow(unused_imports)]
 pub use corporation_asset::Model as CorporationAsset;
+#[allow(unused_imports)]
+pub use corporation_blueprint::Model as CorporationBlueprint;
 #[allow(unused_imports)]
 pub use corporation_industry_job::Model as CorporationIndustryJob;
 #[allow(unused_imports)]

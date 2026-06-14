@@ -1,4 +1,7 @@
 pub mod assets;
+// Consumed by the Industry Blueprints sync + UI in a follow-up; the storage layer lands first.
+#[allow(dead_code)]
+pub mod blueprints;
 pub mod calendar;
 pub mod character;
 pub mod finance;

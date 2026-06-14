@@ -189,6 +189,8 @@ pub enum Message {
     absolute: f32,
     relative: f32,
   },
+  ContactsSearchChanged(String),
+  ContactsSearchCleared,
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
   KilllogScrolled {
@@ -292,6 +294,7 @@ pub struct State {
   contacts_cursor: Option<ContactCursor>,
   contacts_has_more: bool,
   contacts_loading_more: bool,
+  contacts_query: String,
   contacts_scroll_offset: f32,
   enabled_tabs: Vec<Tab>,
   granted_scopes: Option<String>,
@@ -335,6 +338,7 @@ impl State {
       contacts_cursor: None,
       contacts_has_more: false,
       contacts_loading_more: false,
+      contacts_query: String::new(),
       contacts_scroll_offset: 0.0,
       enabled_tabs,
       granted_scopes: None,
@@ -408,6 +412,15 @@ impl State {
     self.contact_delete.as_ref()
   }
 
+  /// The character's in-game contact labels, carried alongside the first loaded contacts page. Handed to the
+  /// add/edit modal so its label chips reflect the real ESI-synced labels rather than a fixed list.
+  pub(super) fn contact_label_catalog(&self) -> Vec<CharacterContactLabel> {
+    match &self.contacts {
+      LoadState::Loaded(page) => page.labels().to_vec(),
+      _ => Vec::new(),
+    }
+  }
+
   /// Names of already-loaded contacts, used to dedupe the add picker. Only the current keyset page is visible, so a
   /// duplicate add for an off-page contact still reconciles on the next sync.
   pub(super) fn contact_exclude_names(&self) -> Vec<String> {
@@ -423,6 +436,10 @@ impl State {
 
   pub fn contact_search_generation(&self) -> u64 {
     self.contact_search_generation
+  }
+
+  pub(super) fn contacts_query(&self) -> &str {
+    &self.contacts_query
   }
 
   pub(super) fn contacts_scroll_offset(&self) -> f32 {
@@ -487,6 +504,20 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::ContactSortChanged(sort) => {
       state.contact_sort = sort;
+      restart_contacts(state, db)
+    }
+    Message::ContactsSearchChanged(query) => {
+      if state.contacts_query == query {
+        return Task::none();
+      }
+      state.contacts_query = query;
+      restart_contacts(state, db)
+    }
+    Message::ContactsSearchCleared => {
+      if state.contacts_query.is_empty() {
+        return Task::none();
+      }
+      state.contacts_query.clear();
       restart_contacts(state, db)
     }
     Message::ContactAddOpened
@@ -694,9 +725,9 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
         return Task::none();
       };
       state.contacts_loading_more = true;
-      let (contact_type, sort, dir) = contact_query_params(state);
+      let (contact_type, query, sort, dir) = contact_query_params(state);
       Task::perform(
-        load_contacts_page(db.clone(), state.active, contact_type, sort, dir, Some(cursor)),
+        load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, Some(cursor)),
         |page| Message::ContactsPageLoaded(Box::new(page)),
       )
     }
@@ -780,11 +811,13 @@ fn update_contacts_modal(state: &mut State, message: Message, db: &Database) -> 
   match message {
     Message::ContactAddOpened => {
       let exclude = state.contact_exclude_names();
-      state.contact_modal = Some(ContactModal::add(exclude));
+      let catalog = state.contact_label_catalog();
+      state.contact_modal = Some(ContactModal::add(exclude, catalog));
       Task::none()
     }
     Message::ContactEditOpened(contact) => {
-      state.contact_modal = Some(ContactModal::edit(&contact));
+      let catalog = state.contact_label_catalog();
+      state.contact_modal = Some(ContactModal::edit(&contact, catalog));
       Task::none()
     }
     Message::ContactModalClosed => {
@@ -1011,11 +1044,17 @@ async fn enqueue_contact_remove(db: Database, character_id: i64, contact: Charac
     .map_err(|error| error.to_string())
 }
 
-/// Translates the active contact filter and sort header into the repo's page parameters.
-fn contact_query_params(state: &State) -> (Option<&'static str>, ContactSortColumn, ContactSortDir) {
+/// Translates the active contact filter, name search, and sort header into the repo's page parameters. The search
+/// term is pushed into SQL (rather than filtering an in-memory set) so keyset pagination keeps working over the
+/// filtered result.
+fn contact_query_params(state: &State) -> (Option<&'static str>, Option<String>, ContactSortColumn, ContactSortDir) {
   use tabs::contacts::{SortColumn, SortDirection};
 
   let contact_type = state.contact_filter.contact_type();
+  let query = {
+    let trimmed = state.contacts_query.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+  };
   let sort = match state.contact_sort.column {
     SortColumn::Entity => ContactSortColumn::Name,
     SortColumn::Standing => ContactSortColumn::Standing,
@@ -1025,7 +1064,7 @@ fn contact_query_params(state: &State) -> (Option<&'static str>, ContactSortColu
     SortDirection::Ascending => ContactSortDir::Asc,
     SortDirection::Descending => ContactSortDir::Desc,
   };
-  (contact_type, sort, dir)
+  (contact_type, query, sort, dir)
 }
 
 /// Derives the next keyset cursor from the last row of a page, matching the active sort column.
@@ -1041,7 +1080,7 @@ fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
 /// Re-derives the contacts pagination guards from whatever page is currently loaded. A short page (fewer rows than
 /// the page size) is the last page, so `has_more` is false and no further fetch is attempted.
 fn reset_contacts_pagination(state: &mut State) {
-  let (_, sort, _) = contact_query_params(state);
+  let (_, _, sort, _) = contact_query_params(state);
   state.contacts_loading_more = false;
   state.contacts_scroll_offset = 0.0;
   match &state.contacts {
@@ -1064,9 +1103,9 @@ fn restart_contacts(state: &mut State, db: &Database) -> Task<Message> {
   state.contacts_has_more = false;
   state.contacts_loading_more = true;
   state.contacts_scroll_offset = 0.0;
-  let (contact_type, sort, dir) = contact_query_params(state);
+  let (contact_type, query, sort, dir) = contact_query_params(state);
   Task::perform(
-    load_contacts_page(db.clone(), state.active, contact_type, sort, dir, None),
+    load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, None),
     |page| Message::ContactsPageLoaded(Box::new(page)),
   )
 }
@@ -1391,6 +1430,7 @@ async fn load_contacts(db: &Database, character_id: i64) -> LoadState<ContactsPa
       db.clone(),
       character_id,
       None,
+      None,
       ContactSortColumn::Standing,
       ContactSortDir::Desc,
       None,
@@ -1407,6 +1447,7 @@ async fn load_contacts_page(
   db: Database,
   character_id: i64,
   contact_type: Option<&'static str>,
+  query: Option<String>,
   sort: ContactSortColumn,
   dir: ContactSortDir,
   after: Option<ContactCursor>,
@@ -1421,6 +1462,7 @@ async fn load_contacts_page(
     &db,
     character_id,
     contact_type,
+    query.as_deref(),
     sort,
     dir,
     after.as_ref(),
@@ -2899,6 +2941,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_records_the_contact_search_query_and_clears_it() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::ContactsSearchChanged("vex".to_owned()), &db);
+      assert_eq!(state.contacts_query(), "vex");
+
+      let _ = update(&mut state, Message::ContactsSearchCleared, &db);
+      assert_eq!(state.contacts_query(), "");
+    }
+
+    #[tokio::test]
     async fn it_records_the_killlog_filter() {
       let db = store::open_test().await.unwrap();
       let mut state = State::new(42, &Feature::ALL);
@@ -3306,7 +3360,7 @@ mod tests {
     fn it_renders_the_open_add_modal_overlay() {
       let mut state = loaded_state(42);
       state.active_tab = Tab::Contacts;
-      state.contact_modal = Some(tabs::contact_modal::ContactModal::add(Vec::new()));
+      state.contact_modal = Some(tabs::contact_modal::ContactModal::add(Vec::new(), Vec::new()));
 
       let _el: Element<'_, Message> = view(&state);
     }
@@ -3475,6 +3529,7 @@ mod tests {
         db.clone(),
         42,
         Some("character"),
+        None,
         ContactSortColumn::Standing,
         ContactSortDir::Desc,
         None,

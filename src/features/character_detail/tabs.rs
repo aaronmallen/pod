@@ -146,7 +146,12 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
       let write_enabled = state.contacts_write_enabled();
       windowed_tab(
         Tab::Contacts,
-        Some(contacts::header(&state.contacts, state.contact_filter, write_enabled)),
+        Some(contacts::header(
+          &state.contacts,
+          state.contact_filter,
+          state.contacts_query(),
+          write_enabled,
+        )),
         move |viewport_height| {
           contacts::body(
             &state.contacts,

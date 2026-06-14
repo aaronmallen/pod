@@ -6,34 +6,22 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, button, container, slider, text},
 };
 
 use super::super::Message;
 use crate::{
-  store::model::CharacterContact,
+  store::model::{CharacterContact, CharacterContactLabel},
   ui::{
     components::{
       avatar::Avatar,
       entity_search::{EntityKind, EntityRef, EntitySearch, SingleSelect},
       icon::Icon,
+      toggle,
     },
     style::{color, radius, spacing, typography},
   },
 };
-
-pub const CONTACT_LABELS: [(i64, &str); 10] = [
-  (1, "Alt"),
-  (2, "Fleet"),
-  (3, "Corp"),
-  (4, "Allied"),
-  (5, "Blue"),
-  (6, "Trade"),
-  (7, "Hauler"),
-  (8, "Scout"),
-  (9, "War target"),
-  (10, "Hostile"),
-];
 
 /// The five discrete standing tiers; an arbitrary stored standing is snapped to the nearest of these.
 pub const CONTACT_STANDINGS: [(f64, &str); 5] = [
@@ -46,12 +34,11 @@ pub const CONTACT_STANDINGS: [(f64, &str); 5] = [
 
 const DIALOG_WIDTH: f32 = 480.0;
 const ENTITY_AVATAR: f32 = 36.0;
-const TOGGLE_KNOB: f32 = 16.0;
-const TOGGLE_TRACK_HEIGHT: f32 = 22.0;
-const TOGGLE_TRACK_WIDTH: f32 = 38.0;
 
 #[derive(Debug)]
 pub struct ContactModal {
+  /// The character's in-game contact labels, sourced from the contacts sync (never created here, only assigned).
+  catalog: Vec<CharacterContactLabel>,
   edit: bool,
   entity: Option<EntityRef>,
   exclude: Vec<String>,
@@ -62,8 +49,9 @@ pub struct ContactModal {
 }
 
 impl ContactModal {
-  pub fn add(exclude: Vec<String>) -> Self {
+  pub fn add(exclude: Vec<String>, catalog: Vec<CharacterContactLabel>) -> Self {
     ContactModal {
+      catalog,
       edit: false,
       entity: None,
       exclude,
@@ -74,9 +62,10 @@ impl ContactModal {
     }
   }
 
-  pub fn edit(contact: &CharacterContact) -> Self {
+  pub fn edit(contact: &CharacterContact, catalog: Vec<CharacterContactLabel>) -> Self {
     let kind = entity_kind(contact.contact_type());
     ContactModal {
+      catalog,
       edit: true,
       entity: Some(EntityRef {
         id: contact.contact_id(),
@@ -233,14 +222,15 @@ pub fn modal(state: &ContactModal) -> Element<'_, Message> {
     top: 16.0,
   });
 
-  let body = Column::with_children(vec![
-    entity_field(state),
-    standing_field(state),
-    labels_field(state),
-    watchlist_field(state),
-  ])
-  .spacing(spacing::SPACE_6 - 2.0)
-  .width(Length::Fill);
+  let mut fields = vec![entity_field(state), standing_field(state)];
+  if !state.catalog.is_empty() {
+    fields.push(labels_field(state));
+  }
+  fields.push(watchlist_field(state));
+
+  let body = Column::with_children(fields)
+    .spacing(spacing::SPACE_6 - 2.0)
+    .width(Length::Fill);
 
   let card = container(
     Column::with_children(vec![
@@ -318,9 +308,10 @@ fn labels_field(state: &ContactModal) -> Element<'_, Message> {
   let mut chips = Row::new().spacing(7.0).width(Length::Fill);
   let mut wrapped = Column::new().spacing(7.0).width(Length::Fill);
   let mut count = 0;
-  for (label_id, label_name) in CONTACT_LABELS {
+  for label in &state.catalog {
+    let label_id = label.label_id();
     let active = state.labels.contains(&label_id);
-    chips = chips.push(label_chip(label_id, label_name, active));
+    chips = chips.push(label_chip(label_id, label.label_name(), active));
     count += 1;
     if count % 4 == 0 {
       wrapped = wrapped.push(chips);
@@ -395,7 +386,9 @@ fn watchlist_field(state: &ContactModal) -> Element<'_, Message> {
   .spacing(3.0)
   .width(Length::Fill);
 
-  let row = Row::with_children(vec![icon, text_block.into(), toggle_dot(on, !is_char)])
+  let switch: Element<'_, Message> = toggle::toggle(on, Message::ContactWatchToggled);
+
+  let row = Row::with_children(vec![icon, text_block.into(), switch])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .width(Length::Fill);
@@ -601,51 +594,39 @@ fn standing_slider(value: f64) -> Element<'static, Message> {
     .into()
 }
 
+/// The standing slider, styled to match the shared scale slider (a tinted rail with a circular handle) and stepped
+/// to the five discrete ESI tiers so every value snaps onto a tick. Replaces the handle-less progress bar.
 fn standing_bar(value: f64) -> Element<'static, Message> {
   let tint = standing_color(value);
-  let fraction = (value.abs() / 10.0 * 0.5).min(0.5) as f32;
 
-  let fill = container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion((fraction * 1000.0) as u16 + 1))
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(tint)),
+  slider(-10.0..=10.0, value, |raw| {
+    Message::ContactStandingChanged(snap_standing(raw))
+  })
+  .step(5.0)
+  .height(6.0)
+  .style(move |_, _| slider::Style {
+    rail: slider::Rail {
+      backgrounds: (
+        Background::Color(tint),
+        Background::Color(color::with_alpha(color::text::PRIMARY, 0.1)),
+      ),
+      width: 6.0,
       border: Border {
         radius: 3.0.into(),
-        ..Border::default()
+        width: 0.0,
+        color: iced::Color::TRANSPARENT,
       },
-      ..container::Style::default()
-    });
-  let rest = Space::new()
-    .width(Length::FillPortion(((0.5 - fraction) * 1000.0) as u16 + 1))
-    .height(Length::Fill);
-
-  let bar = if value >= 0.0 {
-    Row::with_children(vec![
-      Space::new().width(Length::FillPortion(500)).height(Length::Fill).into(),
-      fill.into(),
-      rest.into(),
-    ])
-  } else {
-    Row::with_children(vec![
-      rest.into(),
-      fill.into(),
-      Space::new().width(Length::FillPortion(500)).height(Length::Fill).into(),
-    ])
-  };
-
-  container(bar)
-    .width(Length::Fill)
-    .height(Length::Fixed(6.0))
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
-      border: Border {
-        radius: 3.0.into(),
-        ..Border::default()
+    },
+    handle: slider::Handle {
+      shape: slider::HandleShape::Circle {
+        radius: 10.0,
       },
-      ..container::Style::default()
-    })
-    .into()
+      background: Background::Color(tint),
+      border_color: color::surface::BASE,
+      border_width: 3.0,
+    },
+  })
+  .into()
 }
 
 fn label_chip(label_id: i64, label_name: &str, active: bool) -> Element<'_, Message> {
@@ -751,62 +732,6 @@ fn entity_avatar(entity: &EntityRef) -> Element<'_, Message> {
   .view()
 }
 
-fn toggle_dot(on: bool, dim: bool) -> Element<'static, Message> {
-  let (track, border) = if on {
-    (
-      color::with_alpha(color::accent::PLASMA, 0.5),
-      color::with_alpha(color::accent::PLASMA, 0.6),
-    )
-  } else {
-    (color::with_alpha(color::text::PRIMARY, 0.1), color::rule())
-  };
-  let knob_color = if on {
-    color::accent::PLASMA
-  } else {
-    color::text::secondary()
-  };
-  let offset = if on {
-    TOGGLE_TRACK_WIDTH - TOGGLE_KNOB - 3.0
-  } else {
-    3.0
-  };
-
-  let knob = container(
-    container(Space::new().width(Length::Fill).height(Length::Fill))
-      .width(Length::Fixed(TOGGLE_KNOB))
-      .height(Length::Fixed(TOGGLE_KNOB))
-      .style(move |_| container::Style {
-        background: Some(Background::Color(knob_color)),
-        border: Border {
-          radius: 999.0.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      }),
-  )
-  .padding(Padding {
-    left: offset,
-    ..Padding::ZERO
-  })
-  .align_y(Vertical::Center)
-  .height(Length::Fill);
-
-  let opacity = if dim { 0.4 } else { 1.0 };
-  container(knob)
-    .width(Length::Fixed(TOGGLE_TRACK_WIDTH))
-    .height(Length::Fixed(TOGGLE_TRACK_HEIGHT))
-    .style(move |_| container::Style {
-      background: Some(Background::Color(color::with_alpha(track, opacity))),
-      border: Border {
-        color: color::with_alpha(border, opacity),
-        radius: 999.0.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    })
-    .into()
-}
-
 fn close_button() -> Element<'static, Message> {
   button(
     container(Icon::close().size(16.0).color(color::text::secondary()).render())
@@ -883,6 +808,21 @@ mod tests {
     }
   }
 
+  fn catalog() -> Vec<CharacterContactLabel> {
+    vec![
+      CharacterContactLabel {
+        character_id: 42,
+        label_id: 1,
+        label_name: "Fleet".to_owned(),
+      },
+      CharacterContactLabel {
+        character_id: 42,
+        label_id: 2,
+        label_name: "Trusted".to_owned(),
+      },
+    ]
+  }
+
   mod contact_modal {
     use pretty_assertions::assert_eq;
 
@@ -890,7 +830,7 @@ mod tests {
 
     #[test]
     fn it_seeds_an_edit_modal_from_a_contact_with_a_snapped_standing() {
-      let modal = ContactModal::edit(&contact("character", 8.5, true, "[1,2]"));
+      let modal = ContactModal::edit(&contact("character", 8.5, true, "[1,2]"), catalog());
 
       assert!(modal.is_edit());
       assert_eq!(modal.standing(), 10.0);
@@ -900,7 +840,7 @@ mod tests {
 
     #[test]
     fn it_forces_watch_off_for_a_non_character_entity() {
-      let mut modal = ContactModal::add(Vec::new());
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
       modal.set_entity(Some(corp_entity()));
 
       modal.toggle_watch();
@@ -911,7 +851,7 @@ mod tests {
 
     #[test]
     fn it_toggles_label_membership() {
-      let mut modal = ContactModal::add(Vec::new());
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
 
       modal.toggle_label(3);
       modal.toggle_label(5);
@@ -922,7 +862,8 @@ mod tests {
 
     #[test]
     fn it_only_submits_with_an_entity_selected() {
-      let mut modal = ContactModal::add(Vec::new());
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
+
       assert!(!modal.can_submit());
 
       modal.set_entity(Some(corp_entity()));
@@ -936,14 +877,14 @@ mod tests {
 
     #[test]
     fn it_renders_the_add_modal() {
-      let modal = ContactModal::add(vec!["Existing".to_owned()]);
+      let modal = ContactModal::add(vec!["Existing".to_owned()], catalog());
 
       let _el: Element<'_, Message> = super::super::modal(&modal);
     }
 
     #[test]
     fn it_renders_the_edit_modal_with_a_locked_corporation_entity() {
-      let modal = ContactModal::edit(&contact("corporation", -5.0, false, "[]"));
+      let modal = ContactModal::edit(&contact("corporation", -5.0, false, "[]"), catalog());
 
       let _el: Element<'_, Message> = super::super::modal(&modal);
     }

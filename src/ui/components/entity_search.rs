@@ -5,11 +5,16 @@ use std::path::PathBuf;
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text, text_input},
 };
 
 use crate::ui::{
-  components::{avatar::Avatar, chip::Chip, icon::Icon, text_input::TextInput},
+  components::{
+    avatar::Avatar,
+    chip::Chip,
+    icon::Icon,
+    text_input::{self as text_input_component, TextInput},
+  },
   style::{color, control, radius, spacing, typography},
 };
 
@@ -123,6 +128,7 @@ impl EntitySearch {
 pub struct MultiSelect<'a, M> {
   chips: &'a [EntityRef],
   exclude: &'a [String],
+  inline: bool,
   on_input: Box<dyn Fn(String) -> M + 'a>,
   on_pick: Box<dyn Fn(EntityRef) -> M + 'a>,
   on_remove: Box<dyn Fn(usize) -> M + 'a>,
@@ -145,6 +151,7 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
     Self {
       chips,
       exclude: &[],
+      inline: false,
       on_input: Box::new(on_input),
       on_pick: Box::new(on_pick),
       on_remove: Box::new(on_remove),
@@ -158,6 +165,13 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
 
   pub fn exclude(mut self, names: &'a [String]) -> Self {
     self.exclude = names;
+    self
+  }
+
+  /// Renders the chips and input bare (no bordered field box), for hosts that already supply their own field
+  /// chrome — e.g. the mail compose To/Cc rows, which place the recipient picker inline inside a labelled field row.
+  pub fn inline(mut self, inline: bool) -> Self {
+    self.inline = inline;
     self
   }
 
@@ -186,21 +200,47 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
       );
     }
 
-    let mut input = TextInput::new(self.placeholder, self.query, self.on_input)
-      .leading_icon(Icon::search())
-      .font_size(typography::size::MD)
-      .width(Length::Fill);
-    if let Some(message) = self.on_submit {
-      input = input.on_submit(message);
-    }
-    chips = chips.push(input.render());
+    let input: Element<'a, M> = if self.inline {
+      let mut input = text_input(self.placeholder, self.query)
+        .on_input(self.on_input)
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .padding(0.0)
+        .width(Length::Fill)
+        .style(text_input_component::inner_style());
+      if let Some(message) = self.on_submit {
+        input = input.on_submit(message);
+      }
+      input.into()
+    } else {
+      let mut input = TextInput::new(self.placeholder, self.query, self.on_input)
+        .leading_icon(Icon::search())
+        .font_size(typography::size::MD)
+        .width(Length::Fill);
+      if let Some(message) = self.on_submit {
+        input = input.on_submit(message);
+      }
+      input.render()
+    };
+    chips = chips.push(input);
 
     let chosen_names: Vec<&str> = self.chips.iter().map(|chip| chip.name.as_str()).collect();
-    let dropdown = dropdown(self.results, &chosen_names, self.exclude, self.searching, self.on_pick);
+    let dropdown = dropdown(
+      self.results,
+      &chosen_names,
+      self.exclude,
+      self.searching,
+      searchable(self.query),
+      self.on_pick,
+    );
 
-    Column::with_children(vec![field(chips.into(), false), dropdown])
-      .width(Length::Fill)
-      .into()
+    let field = if self.inline {
+      chips.into()
+    } else {
+      field(chips.into(), false)
+    };
+
+    Column::with_children(vec![field, dropdown]).width(Length::Fill).into()
   }
 }
 
@@ -268,9 +308,14 @@ impl<'a, M: Clone + 'static> SingleSelect<'a, M> {
       .width(Length::Fill);
 
     let dropdown = if self.open {
-      dropdown(self.results, &[], self.exclude, self.searching, move |entity| {
-        (self.on_change)(Some(entity))
-      })
+      dropdown(
+        self.results,
+        &[],
+        self.exclude,
+        self.searching,
+        searchable(self.query),
+        move |entity| (self.on_change)(Some(entity)),
+      )
     } else {
       Space::new().width(Length::Shrink).height(Length::Shrink).into()
     };
@@ -352,6 +397,7 @@ fn dropdown<'a, M: Clone + 'a>(
   chosen: &[&str],
   exclude: &[String],
   searching: bool,
+  searchable: bool,
   on_pick: impl Fn(EntityRef) -> M + 'a,
 ) -> Element<'a, M> {
   let matches: Vec<&'a EntityRef> = results
@@ -361,11 +407,16 @@ fn dropdown<'a, M: Clone + 'a>(
     .take(ROW_LIMIT)
     .collect();
 
-  if matches.is_empty() && searching {
-    return wrap_dropdown(status_row("Searching\u{2026}"));
-  }
   if matches.is_empty() {
-    return wrap_dropdown(no_matches());
+    if searching {
+      return wrap_dropdown(status_row("Searching\u{2026}"));
+    }
+    // Suppress the dropdown entirely until the query is long enough to search; only a real, completed search that
+    // returned nothing surfaces "No matches", so the resting/just-opened picker shows no stray empty panel.
+    if searchable {
+      return wrap_dropdown(no_matches());
+    }
+    return Space::new().width(Length::Shrink).height(Length::Shrink).into();
   }
 
   let mut column = Column::new().width(Length::Fill);
@@ -464,6 +515,13 @@ fn result_row<'a, M: Clone + 'a>(entity: &'a EntityRef, on_pick: &impl Fn(Entity
   }))
   .on_press(on_pick(entity.clone()))
   .into()
+}
+
+/// Whether `query` is long enough for a search to have run. Mirrors the `SEARCH_MIN_CHARS` gate in
+/// [`EntitySearch::set_query`] so the dropdown stays empty (rather than showing "No matches") until a real search
+/// could have produced results.
+fn searchable(query: &str) -> bool {
+  query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
 fn status_row<'a, M: 'a>(label: &str) -> Element<'a, M> {
@@ -621,6 +679,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_renders_a_resting_field_without_a_no_matches_panel() {
+      let chips: Vec<EntityRef> = Vec::new();
+      let results: Vec<EntityRef> = Vec::new();
+
+      let _el: Element<'_, Message> = MultiSelect::new(
+        "Ve",
+        &chips,
+        &results,
+        Message::Input,
+        Message::Picked,
+        Message::Removed,
+      )
+      .searching(false)
+      .view();
+    }
+
+    #[test]
     fn it_renders_an_empty_recipient_field() {
       let chips: Vec<EntityRef> = Vec::new();
       let results: Vec<EntityRef> = Vec::new();
@@ -664,6 +739,20 @@ mod tests {
     }
   }
 
+  mod searchable {
+    use super::*;
+
+    #[test]
+    fn it_is_false_until_the_query_reaches_the_minimum_length() {
+      assert!(!searchable(""));
+      assert!(!searchable("  "));
+      assert!(!searchable("Ve"));
+
+      assert!(searchable("Vex"));
+      assert!(searchable("  Vex  "));
+    }
+  }
+
   mod single_select {
     use super::*;
 
@@ -678,10 +767,19 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_no_matches_when_open_with_no_results() {
+    fn it_renders_no_matches_only_after_a_searchable_query_returns_nothing() {
       let results: Vec<EntityRef> = Vec::new();
 
       let _el: Element<'_, Message> = SingleSelect::new("Zzz", None, &results, Message::Input, Message::Changed)
+        .open(true)
+        .view();
+    }
+
+    #[test]
+    fn it_suppresses_the_dropdown_for_a_resting_short_query() {
+      let results: Vec<EntityRef> = Vec::new();
+
+      let _el: Element<'_, Message> = SingleSelect::new("Ve", None, &results, Message::Input, Message::Changed)
         .open(true)
         .view();
     }

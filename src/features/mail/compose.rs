@@ -346,6 +346,7 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeToPicked,
     Message::ComposeToRemoved,
   )
+  .inline(true)
   .placeholder("Add recipient\u{2026}")
   .searching(draft.to_search.searching())
   .on_submit(Message::ComposeToCommitted)
@@ -382,6 +383,7 @@ fn cc_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeCcPicked,
     Message::ComposeCcRemoved,
   )
+  .inline(true)
   .placeholder("Add Cc recipient\u{2026}")
   .searching(draft.cc_search.searching())
   .on_submit(Message::ComposeCcCommitted)

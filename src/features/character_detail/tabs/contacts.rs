@@ -22,6 +22,7 @@ use crate::{
       icon::Icon,
       section_header::section_header,
       segmented::segment_button_style,
+      text_input::TextInput,
       virtual_list::{VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
@@ -147,29 +148,80 @@ impl SortDirection {
 
 /// The non-scrolling header for the Contacts tab: the address-book title (with a loaded-so-far count) and the
 /// entity-type facet. Hoisted above the windowed list so it stays put while the list scrolls.
-pub(in crate::features::character_detail) fn header(
+pub(in crate::features::character_detail) fn header<'a>(
   contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
+  query: &'a str,
   write_enabled: bool,
-) -> Element<'_, Message> {
+) -> Element<'a, Message> {
   let (count, suffix) = match contacts {
     LoadState::Loaded(page) => (page.rows().len(), if page.has_more() { "+" } else { "" }),
     _ => (0, ""),
   };
 
-  let mut children: Vec<Element<'_, Message>> = vec![
-    section_header("Address book", Some(&format!("{count}{suffix} contacts"))),
-    segmented(filter),
-  ];
+  let mut controls: Vec<Element<'a, Message>> = vec![filter_bar(query), segmented(filter)];
   if write_enabled {
-    children.push(add_button());
+    controls.push(add_button());
   }
 
-  Row::with_children(children)
+  let controls = Row::with_children(controls)
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  let filtering = !query.trim().is_empty() || filter != ContactFilter::All;
+  let meta = if filtering {
+    format!("{count}{suffix} matching")
+  } else {
+    format!("{count}{suffix} contacts")
+  };
+
+  Column::with_children(vec![controls.into(), section_header("Address book", Some(&meta))])
+    .spacing(spacing::SPACE_3)
     .width(Length::Fill)
     .into()
+}
+
+/// The contacts name-search field: a bordered input with a leading search glyph and a clear button when a query is
+/// present, sat to the left of the type facet. The query is pushed into the paginated SQL load rather than filtering
+/// the loaded rows in memory.
+fn filter_bar<'a>(query: &'a str) -> Element<'a, Message> {
+  let mut field = TextInput::new("Filter by name\u{2026}", query, Message::ContactsSearchChanged)
+    .leading_icon(Icon::search())
+    .font_size(typography::size::SM)
+    .width(Length::Fill);
+
+  if !query.is_empty() {
+    field = field.trailing(clear_button());
+  }
+
+  container(field.render()).width(Length::Fill).into()
+}
+
+fn clear_button<'a>() -> Element<'a, Message> {
+  button(
+    container(Icon::close().size(13.0).color(color::text::secondary()).render())
+      .width(Length::Fixed(22.0))
+      .height(Length::Fixed(22.0))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .padding(0)
+  .on_press(Message::ContactsSearchCleared)
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hover.then_some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
+      border: Border {
+        color: iced::Color::TRANSPARENT,
+        radius: 999.0.into(),
+        width: 0.0,
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    }
+  })
+  .into()
 }
 
 fn add_button<'a>() -> Element<'a, Message> {
@@ -186,12 +238,17 @@ fn add_button<'a>() -> Element<'a, Message> {
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
 
-  button(container(label).padding(Padding {
-    top: 0.0,
-    right: spacing::SPACE_3_5,
-    bottom: 0.0,
-    left: spacing::SPACE_3_5,
-  }))
+  button(
+    container(label)
+      .height(Length::Fill)
+      .align_y(Vertical::Center)
+      .padding(Padding {
+        top: 0.0,
+        right: spacing::SPACE_3_5,
+        bottom: 0.0,
+        left: spacing::SPACE_3_5,
+      }),
+  )
   .height(Length::Fixed(36.0))
   .on_press(Message::ContactAddOpened)
   .style(|_, status| {
@@ -673,7 +730,7 @@ mod tests {
         ContactFilter::Corp,
         ContactFilter::Alliance,
       ] {
-        let _el: Element<'_, Message> = super::super::header(&state, filter, false);
+        let _el: Element<'_, Message> = super::super::header(&state, filter, "", false);
       }
     }
 
@@ -681,7 +738,14 @@ mod tests {
     fn it_renders_the_add_button_when_writes_are_enabled() {
       let state = LoadState::Loaded(loaded());
 
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, true);
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", true);
+    }
+
+    #[test]
+    fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
+      let state = LoadState::Loaded(loaded());
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing", false);
     }
 
     #[test]
@@ -693,14 +757,14 @@ mod tests {
       );
       let state = LoadState::Loaded(page);
 
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, false);
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", false);
     }
 
     #[test]
     fn it_renders_a_zero_count_in_the_loading_state() {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
 
-      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, false);
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "", false);
     }
   }
 

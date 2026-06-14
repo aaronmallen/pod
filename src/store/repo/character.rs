@@ -1217,10 +1217,12 @@ pub async fn contact_labels(db: &Database, character_id: i64) -> Result<Vec<Char
 /// Fetches one keyset page of contacts ordered by `sort`/`dir`, optionally filtered to a single `contact_type`
 /// (the address-book facet), starting after `cursor`. The keyset compares `(sort column, contact_id)` so the page
 /// is stable across loads; the caller derives the next cursor from the last returned row.
+#[allow(clippy::too_many_arguments)]
 pub async fn contacts_page(
   db: &Database,
   character_id: i64,
   contact_type: Option<&str>,
+  query: Option<&str>,
   sort: ContactSortColumn,
   dir: ContactSortDir,
   cursor: Option<&ContactCursor>,
@@ -1246,6 +1248,14 @@ pub async fn contacts_page(
   if let Some(kind) = contact_type {
     builder.push(" AND contact_type = ");
     builder.push_bind(kind.to_owned());
+  }
+  if let Some(term) = query {
+    let term = term.trim();
+    if !term.is_empty() {
+      builder.push(" AND contact_name LIKE ");
+      builder.push_bind(like_pattern(term));
+      builder.push(" ESCAPE '\\'");
+    }
   }
   if let Some(cursor) = cursor {
     builder.push(" AND (");
@@ -3764,9 +3774,18 @@ mod contact_tests {
       let db = store::open_test().await.unwrap();
       seed_three(&db).await;
 
-      let rows = super::contacts_page(&db, 42, None, ContactSortColumn::Name, ContactSortDir::Asc, None, 10)
-        .await
-        .unwrap();
+      let rows = super::contacts_page(
+        &db,
+        42,
+        None,
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        10,
+      )
+      .await
+      .unwrap();
 
       assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot", "Charlie Corp"]);
     }
@@ -3780,6 +3799,7 @@ mod contact_tests {
         &db,
         42,
         None,
+        None,
         ContactSortColumn::Standing,
         ContactSortDir::Desc,
         None,
@@ -3792,6 +3812,27 @@ mod contact_tests {
     }
 
     #[tokio::test]
+    async fn it_filters_by_a_name_query() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(
+        &db,
+        42,
+        None,
+        Some("pilot"),
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        10,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot"]);
+    }
+
+    #[tokio::test]
     async fn it_filters_by_contact_type() {
       let db = store::open_test().await.unwrap();
       seed_three(&db).await;
@@ -3800,6 +3841,7 @@ mod contact_tests {
         &db,
         42,
         Some("corporation"),
+        None,
         ContactSortColumn::Name,
         ContactSortDir::Asc,
         None,
@@ -3812,13 +3854,43 @@ mod contact_tests {
     }
 
     #[tokio::test]
+    async fn it_ignores_a_blank_name_query() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(
+        &db,
+        42,
+        None,
+        Some("   "),
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        10,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot", "Charlie Corp"]);
+    }
+
+    #[tokio::test]
     async fn it_walks_a_text_keyset_cursor_without_repeating_or_skipping() {
       let db = store::open_test().await.unwrap();
       seed_three(&db).await;
 
-      let first = super::contacts_page(&db, 42, None, ContactSortColumn::Name, ContactSortDir::Asc, None, 2)
-        .await
-        .unwrap();
+      let first = super::contacts_page(
+        &db,
+        42,
+        None,
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        2,
+      )
+      .await
+      .unwrap();
       assert_eq!(names(&first), ["Alpha Pilot", "Bravo Pilot"]);
 
       let last = first.last().unwrap();
@@ -3826,6 +3898,7 @@ mod contact_tests {
       let second = super::contacts_page(
         &db,
         42,
+        None,
         None,
         ContactSortColumn::Name,
         ContactSortDir::Asc,
@@ -3847,6 +3920,7 @@ mod contact_tests {
         &db,
         42,
         None,
+        None,
         ContactSortColumn::Standing,
         ContactSortDir::Desc,
         None,
@@ -3861,6 +3935,7 @@ mod contact_tests {
       let second = super::contacts_page(
         &db,
         42,
+        None,
         None,
         ContactSortColumn::Standing,
         ContactSortDir::Desc,

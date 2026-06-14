@@ -2,10 +2,24 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Attacker {
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub alliance_id: Option<i64>,
   #[serde(default)]
   pub character_id: Option<i64>,
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub corporation_id: Option<i64>,
+  /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub damage_done: i64,
   #[serde(default)]
   pub final_blow: bool,
+  /// Optional because NPC and structure attackers omit alliance/corporation/ship ids.
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub ship_type_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,10 +52,17 @@ pub struct Killmail {
 
 #[derive(Debug, Deserialize)]
 pub struct Victim {
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub alliance_id: Option<i64>,
   #[serde(default)]
   pub character_id: Option<i64>,
   #[serde(default)]
   pub corporation_id: Option<i64>,
+  /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
+  #[allow(dead_code)]
+  #[serde(default)]
+  pub damage_taken: i64,
   #[serde(default)]
   pub items: Vec<Item>,
   pub ship_type_id: i64,
@@ -50,6 +71,66 @@ pub struct Victim {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod killmail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_deserializes_full_detail_for_npc_and_player_attackers_and_the_victim() {
+      let body = r#"{
+        "killmail_id": 136076545,
+        "killmail_time": "2026-06-14T18:30:00Z",
+        "solar_system_id": 30002187,
+        "victim": {
+          "alliance_id": 99005338,
+          "character_id": 2002,
+          "corporation_id": 3003,
+          "damage_taken": 7821,
+          "ship_type_id": 29986
+        },
+        "attackers": [
+          {
+            "damage_done": 4500,
+            "final_blow": true,
+            "security_status": -1.2,
+            "alliance_id": 99003581,
+            "character_id": 9001,
+            "corporation_id": 8001,
+            "ship_type_id": 17738
+          },
+          {
+            "damage_done": 3321,
+            "final_blow": false,
+            "security_status": 0.0
+          }
+        ]
+      }"#;
+
+      let killmail: Killmail = serde_json::from_str(body).unwrap();
+
+      assert_eq!(killmail.victim.damage_taken, 7821);
+      assert_eq!(killmail.victim.alliance_id, Some(99005338));
+      assert_eq!(killmail.victim.corporation_id, Some(3003));
+
+      let player = &killmail.attackers[0];
+      assert_eq!(player.damage_done, 4500);
+      assert!(player.final_blow);
+      assert_eq!(player.alliance_id, Some(99003581));
+      assert_eq!(player.character_id, Some(9001));
+      assert_eq!(player.corporation_id, Some(8001));
+      assert_eq!(player.ship_type_id, Some(17738));
+
+      let npc = &killmail.attackers[1];
+      assert_eq!(npc.damage_done, 3321);
+      assert!(!npc.final_blow);
+      assert_eq!(npc.alliance_id, None);
+      assert_eq!(npc.character_id, None);
+      assert_eq!(npc.corporation_id, None);
+      assert_eq!(npc.ship_type_id, None);
+    }
+  }
 
   mod victim {
     use pretty_assertions::assert_eq;
@@ -62,6 +143,7 @@ mod tests {
         "character_id": 2002,
         "corporation_id": 3003,
         "ship_type_id": 29986,
+        "damage_taken": 7821,
         "items": [
           {"flag": 5, "item_type_id": 34, "quantity_destroyed": 3},
           {"flag": 27, "item_type_id": 2488, "quantity_dropped": 1},
@@ -75,6 +157,8 @@ mod tests {
 
       let victim: Victim = serde_json::from_str(body).unwrap();
 
+      assert_eq!(victim.damage_taken, 7821);
+      assert_eq!(victim.alliance_id, None);
       assert_eq!(victim.items.len(), 4);
       assert_eq!(victim.items[0].type_id, 34);
       assert_eq!(victim.items[0].quantity_destroyed, Some(3));
@@ -90,7 +174,7 @@ mod tests {
 
     #[test]
     fn it_defaults_items_to_an_empty_list_when_absent() {
-      let body = r#"{"ship_type_id": 35832}"#;
+      let body = r#"{"ship_type_id": 35832, "damage_taken": 142}"#;
 
       let victim: Victim = serde_json::from_str(body).unwrap();
 

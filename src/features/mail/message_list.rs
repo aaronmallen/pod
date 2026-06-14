@@ -493,23 +493,24 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
       let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
         .viewport_height(viewport_height)
         .scroll_offset(offset);
-      VirtualList::new(config, |index| match &flat[index] {
+      let windowed = VirtualList::new(config, |index| match &flat[index] {
         ListItem::Header(label) => day_header(label),
         ListItem::Row(row) => message_row(row, state.selected() == Some(row.mail_id)),
       })
-      .view()
+      .view();
+      scrollable(windowed)
+        .style(crate::ui::style::control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_scroll(|viewport| Message::ListScrolled {
+          absolute: viewport.absolute_offset().y,
+          relative: viewport.relative_offset().y,
+        })
+        .into()
     })
   };
 
-  let list = scrollable(body)
-    .style(crate::ui::style::control::scrollbar)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .on_scroll(|viewport| Message::ListScrolled {
-      absolute: viewport.absolute_offset().y,
-      relative: viewport.relative_offset().y,
-    });
-  let tracked = mouse_area(list).on_move(Message::LabelDragMoved);
+  let tracked = mouse_area(body).on_move(Message::LabelDragMoved);
 
   let column = Column::with_children(vec![search_box(state.search()), tracked.into()])
     .width(Length::Fill)

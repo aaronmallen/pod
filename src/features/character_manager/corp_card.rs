@@ -1,7 +1,7 @@
 use iced::{
-  Background, Color, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
+  widget::{Column, Row, Space, Stack, container, mouse_area, text},
 };
 
 use super::{Message, card::TagChip};
@@ -55,10 +55,8 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
   ];
 
-  if model.needs_reauth {
-    sections.push(reauth_affordance(model.corporation_id));
-  }
-
+  // Re-authorization is offered through the right-click context menu (see corp_context_menu_view),
+  // matching the character cards — the card itself carries no re-auth button.
   if let Some(indicator) = sync_failure_indicator(failure) {
     sections.push(indicator);
   }
@@ -240,38 +238,6 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
     .width(Length::Fill)
     .padding(spacing::SPACE_3)
     .into()
-}
-
-fn reauth_affordance<'a>(corporation_id: i64) -> Element<'a, Message> {
-  container(
-    button(
-      text("Re-authorize")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS),
-    )
-    .padding(0)
-    .on_press(Message::ReauthCorporationRequested(corporation_id))
-    .style(reauth_button),
-  )
-  .padding(Padding {
-    top: 0.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_3,
-    left: spacing::SPACE_3_5,
-  })
-  .into()
-}
-
-fn reauth_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
-  let text_color = match status {
-    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
-    _ => color::status::DANGER,
-  };
-  button::Style {
-    background: Some(Background::Color(Color::TRANSPARENT)),
-    text_color,
-    ..button::Style::default()
-  }
 }
 
 fn sync_failure_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {

@@ -10,11 +10,17 @@ use super::{
   loaders::{MessageLabel, strip_html_snippet},
 };
 use crate::{
-  store::{Database, images, repo::mail},
+  store::{self, Database, images, model::CharacterMail, repo::mail},
   ui::{
     components::{
-      avatar::Avatar, chip::label_chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule,
-      section_header::section_header, text_input::TextInput,
+      avatar::Avatar,
+      chip::label_chip,
+      empty_state::empty_state as shared_empty_state,
+      icon::Icon,
+      rule,
+      section_header::section_header,
+      text_input::TextInput,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
@@ -39,6 +45,9 @@ pub struct MessageRow {
   pub snippet: String,
   pub subject: String,
   pub time: String,
+  /// The raw RFC3339 send time, kept so the keyset paginator can build a cursor
+  /// from the last loaded row (`time` is only the formatted clock label).
+  pub timestamp: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,17 +99,60 @@ struct MailKey {
   timestamp: String,
 }
 
-pub(super) async fn load_messages(db: &Database, scope: Scope, folder: Folder) -> Vec<MessageRow> {
+/// Rows fetched per page when the inbox/label listing is keyset-paginated.
+///
+/// Large enough to overfill a tall viewport on the first load, small enough that
+/// the per-row body/label/overlay enrichment in [`key_to_row`] stays cheap.
+pub(super) const MESSAGE_PAGE_SIZE: i64 = 60;
+
+/// The first screen of a folder: the (small, unbounded) pinned head plus the
+/// first keyset page of the non-pinned tail.
+///
+/// Inbox and label folders are keyset-paginated — their backing queries are
+/// unbounded and a large mailbox is the worst offender — so only `MESSAGE_PAGE_SIZE`
+/// tail rows are materialized up front; the rest load on scroll. The other folders
+/// (sent/drafts/overlay-backed/unified) are inherently bounded and load in one
+/// shot with an empty pinned head and no further pages.
+pub(super) struct FirstPage {
+  pub has_more: bool,
+  pub pinned: Vec<MessageRow>,
+  pub tail: Vec<MessageRow>,
+}
+
+pub(super) async fn load_first_page(db: &Database, scope: Scope, folder: Folder) -> FirstPage {
   let now = Utc::now();
   let now_iso = now.to_rfc3339();
-
   let Scope::Character(id) = scope;
+
+  if let Some(label_id) = paginated_label(folder) {
+    let mut pinned_headers = mail::pinned_visible_headers(db, id, &now_iso, label_id).await;
+    let tail_headers = match label_id {
+      Some(label_id) => mail::visible_headers_for_label_page(db, id, label_id, &now_iso, None, MESSAGE_PAGE_SIZE).await,
+      None => {
+        // The inbox hides a character's own sent mail from both the pinned head and
+        // the tail (it lives in the Sent folder).
+        pinned_headers = filter_inbox_self_sent(pinned_headers, id);
+        let visible = mail::visible_headers_page(db, id, &now_iso, None, MESSAGE_PAGE_SIZE).await;
+        filter_inbox_self_sent(visible, id)
+      }
+    };
+    let pinned = headers_to_rows_owned(db, pinned_headers.unwrap_or_default(), now).await;
+    let tail_headers = tail_headers.unwrap_or_default();
+    let has_more = tail_headers.len() as i64 == MESSAGE_PAGE_SIZE;
+    let tail = headers_to_rows_owned(db, tail_headers, now).await;
+    return FirstPage {
+      has_more,
+      pinned,
+      tail,
+    };
+  }
+
+  // Bounded folders: a single fetch, pinned floated to the top in-Vec as before.
   let keys: Vec<MailKey> = if matches!(folder, Folder::Unified) {
     unified_keys(db, &now_iso).await
   } else {
     character_keys(db, id, folder, &now_iso).await
   };
-
   let mut rows = Vec::with_capacity(keys.len());
   for key in keys {
     if matches!(folder, Folder::Unified)
@@ -110,28 +162,135 @@ pub(super) async fn load_messages(db: &Database, scope: Scope, folder: Folder) -
     }
     rows.push(key_to_row(db, key, now).await);
   }
-
   rows.sort_by_key(|r| !r.is_pinned);
+  FirstPage {
+    has_more: false,
+    pinned: Vec::new(),
+    tail: rows,
+  }
+}
+
+/// One more keyset page of the inbox/label tail past `cursor`.
+pub(super) async fn load_messages_page(
+  db: &Database,
+  scope: Scope,
+  folder: Folder,
+  cursor: mail::MailCursor,
+) -> Vec<MessageRow> {
+  let now = Utc::now();
+  let now_iso = now.to_rfc3339();
+  let Scope::Character(id) = scope;
+  let Some(label_id) = paginated_label(folder) else {
+    return Vec::new();
+  };
+  let headers = match label_id {
+    Some(label_id) => {
+      mail::visible_headers_for_label_page(db, id, label_id, &now_iso, Some(&cursor), MESSAGE_PAGE_SIZE).await
+    }
+    None => {
+      let visible = mail::visible_headers_page(db, id, &now_iso, Some(&cursor), MESSAGE_PAGE_SIZE).await;
+      filter_inbox_self_sent(visible, id)
+    }
+  };
+  headers_to_rows_owned(db, headers.unwrap_or_default(), now).await
+}
+
+/// One keyset page of search hits (subject/sender match) past `cursor`.
+pub(super) async fn load_search_page(
+  db: &Database,
+  scope: Scope,
+  folder: Folder,
+  needle: &str,
+  cursor: Option<mail::MailCursor>,
+) -> Vec<MessageRow> {
+  let now = Utc::now();
+  let now_iso = now.to_rfc3339();
+  let Scope::Character(id) = scope;
+
+  // The unified folder searches the roster-wide view; a label folder scopes to that
+  // label; every other folder searches the active character's visible mailbox
+  // (matching the prior in-memory behaviour).
+  if matches!(folder, Folder::Unified) {
+    let hits = mail::search_visible_unified_page(db, &now_iso, needle, cursor.as_ref(), MESSAGE_PAGE_SIZE)
+      .await
+      .unwrap_or_default();
+    let keys = hits.into_iter().map(unified_to_key).collect::<Vec<_>>();
+    let mut rows = Vec::with_capacity(keys.len());
+    for key in keys {
+      rows.push(key_to_row(db, key, now).await);
+    }
+    return rows;
+  }
+
+  let label_id = match folder {
+    Folder::Label(label_id) => Some(label_id),
+    _ => None,
+  };
+  let headers =
+    mail::search_visible_headers_page(db, id, &now_iso, needle, label_id, cursor.as_ref(), MESSAGE_PAGE_SIZE)
+      .await
+      .unwrap_or_default();
+  headers_to_rows_owned(db, headers, now).await
+}
+
+fn unified_to_key(m: crate::store::model::character_mail_view::UnifiedMail) -> MailKey {
+  MailKey {
+    character_id: m.character_id,
+    has_attachment: m.has_attachment,
+    important: m.important,
+    is_read: m.is_read,
+    mail_id: m.mail_id,
+    sender: m.from_name,
+    sender_id: m.from_id,
+    sender_kind: SenderKind::from_flags(m.from_corp, m.from_system),
+    subject: m.subject.unwrap_or_default(),
+    timestamp: m.timestamp,
+  }
+}
+
+/// The label id to paginate by, or `None` for the inbox path. Returns `None`
+/// (i.e. "not a paginated folder") for the bounded folders.
+///
+/// Only the single-character inbox and label folders are keyset-paginated; the
+/// unified folder merges across the roster via a different view and stays a single
+/// bounded fetch, as do sent/drafts and the overlay-backed folders.
+fn paginated_label(folder: Folder) -> Option<Option<i64>> {
+  match folder {
+    Folder::Standard(StandardFolder::Inbox) => Some(None),
+    Folder::Label(label_id) => Some(Some(label_id)),
+    _ => None,
+  }
+}
+
+/// Inbox hides a character's own sent mail (it lives in the Sent folder instead).
+fn filter_inbox_self_sent(
+  visible: Result<Vec<CharacterMail>, store::Error>,
+  character_id: i64,
+) -> Result<Vec<CharacterMail>, store::Error> {
+  visible.map(|headers| headers.into_iter().filter(|h| h.from_id() != character_id).collect())
+}
+
+async fn headers_to_rows_owned(db: &Database, headers: Vec<CharacterMail>, now: DateTime<Utc>) -> Vec<MessageRow> {
+  let mut rows = Vec::with_capacity(headers.len());
+  for header in headers {
+    rows.push(key_to_row(db, header_to_key(header), now).await);
+  }
   rows
 }
 
-pub(super) async fn load_all_messages(db: &Database, scope: Scope, folder: Folder) -> Vec<MessageRow> {
-  let now = Utc::now();
-
-  let Scope::Character(id) = scope;
-  let keys: Vec<MailKey> = if matches!(folder, Folder::Unified) {
-    all_unified_keys(db).await
-  } else {
-    all_character_keys(db, id).await
-  };
-
-  let mut rows = Vec::with_capacity(keys.len());
-  for key in keys {
-    rows.push(key_to_row(db, key, now).await);
+fn header_to_key(h: CharacterMail) -> MailKey {
+  MailKey {
+    character_id: h.character_id(),
+    has_attachment: h.has_attachment(),
+    important: h.important(),
+    is_read: h.is_read(),
+    mail_id: h.mail_id(),
+    sender: h.from_name().clone(),
+    sender_id: h.from_id(),
+    sender_kind: SenderKind::from_flags(h.from_corp(), h.from_system()),
+    subject: h.subject().clone().unwrap_or_default(),
+    timestamp: h.timestamp().clone(),
   }
-
-  rows.sort_by_key(|r| !r.is_pinned);
-  rows
 }
 
 const SNIPPET_MAX_CHARS: usize = 120;
@@ -185,47 +344,8 @@ async fn key_to_row(db: &Database, key: MailKey, now: DateTime<Utc>) -> MessageR
     snippet,
     subject: subject_or_no_subject(&key.subject),
     time: time_label(&key.timestamp),
+    timestamp: key.timestamp,
   }
-}
-
-async fn all_unified_keys(db: &Database) -> Vec<MailKey> {
-  mail::unified(db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|m| MailKey {
-      character_id: m.character_id,
-      has_attachment: m.has_attachment,
-      important: m.important,
-      is_read: m.is_read,
-      mail_id: m.mail_id,
-      sender: m.from_name,
-      sender_id: m.from_id,
-      sender_kind: SenderKind::from_flags(m.from_corp, m.from_system),
-      subject: m.subject.unwrap_or_default(),
-      timestamp: m.timestamp,
-    })
-    .collect()
-}
-
-async fn all_character_keys(db: &Database, character_id: i64) -> Vec<MailKey> {
-  mail::headers(db, character_id)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|h| MailKey {
-      character_id: h.character_id(),
-      has_attachment: h.has_attachment(),
-      important: h.important(),
-      is_read: h.is_read(),
-      mail_id: h.mail_id(),
-      sender: h.from_name().clone(),
-      sender_id: h.from_id(),
-      sender_kind: SenderKind::from_flags(h.from_corp(), h.from_system()),
-      subject: h.subject().clone().unwrap_or_default(),
-      timestamp: h.timestamp().clone(),
-    })
-    .collect()
 }
 
 async fn unified_keys(db: &Database, now: &str) -> Vec<MailKey> {
@@ -233,18 +353,7 @@ async fn unified_keys(db: &Database, now: &str) -> Vec<MailKey> {
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|m| MailKey {
-      character_id: m.character_id,
-      has_attachment: m.has_attachment,
-      important: m.important,
-      is_read: m.is_read,
-      mail_id: m.mail_id,
-      sender: m.from_name,
-      sender_id: m.from_id,
-      sender_kind: SenderKind::from_flags(m.from_corp, m.from_system),
-      subject: m.subject.unwrap_or_default(),
-      timestamp: m.timestamp,
-    })
+    .map(unified_to_key)
     .collect()
 }
 
@@ -356,31 +465,50 @@ fn time_label(timestamp: &str) -> String {
   }
 }
 
-pub(super) fn pane<'a>(state: &'a State, rows: &'a [MessageRow], width: f32) -> Element<'a, Message> {
-  let query = state.search().to_lowercase();
-  let source: &[MessageRow] = if query.is_empty() { rows } else { state.all_messages() };
-  let filtered: Vec<&MessageRow> = source.iter().filter(|r| matches_query(r, &query)).collect();
+/// Nominal height of one message row, in pixels.
+///
+/// Mail rows are content-driven (a two-line subject, optional label chips), and the
+/// interleaved day-bucket headers are shorter, so this is only an estimate for the
+/// [`VirtualList`] offset math; overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 88.0;
 
-  let mut body = Column::new().width(Length::Fill);
-  if filtered.is_empty() {
-    body = body.push(empty_state(state.search()));
+const PINNED_LABEL: &str = "Pinned";
+
+/// One entry in the flattened, windowed message list. Section headers share the
+/// flat index space with the rows beneath them so the [`VirtualList`] windows over
+/// `[Header, Row, Row, Header, Row, …]` uniformly.
+enum ListItem<'a> {
+  Header(&'a str),
+  Row(&'a MessageRow),
+}
+
+pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
+  let flat = flatten(state);
+
+  let body: Element<'_, Message> = if flat.is_empty() {
+    empty_state(state.search())
   } else {
-    for bucket in [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier] {
-      let group: Vec<&MessageRow> = filtered.iter().copied().filter(|r| r.bucket == bucket).collect();
-      if group.is_empty() {
-        continue;
-      }
-      body = body.push(day_header(bucket.label()));
-      for row in group {
-        body = body.push(message_row(row, state.selected() == Some(row.mail_id)));
-      }
-    }
-  }
+    let offset = state.list_scroll_offset();
+    virtual_list::responsive_window(move |viewport_height| {
+      let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
+        .viewport_height(viewport_height)
+        .scroll_offset(offset);
+      VirtualList::new(config, |index| match &flat[index] {
+        ListItem::Header(label) => day_header(label),
+        ListItem::Row(row) => message_row(row, state.selected() == Some(row.mail_id)),
+      })
+      .view()
+    })
+  };
 
   let list = scrollable(body)
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .on_scroll(|viewport| Message::ListScrolled {
+      absolute: viewport.absolute_offset().y,
+      relative: viewport.relative_offset().y,
+    });
   let tracked = mouse_area(list).on_move(Message::LabelDragMoved);
 
   let column = Column::with_children(vec![search_box(state.search()), tracked.into()])
@@ -401,13 +529,47 @@ pub(super) fn pane<'a>(state: &'a State, rows: &'a [MessageRow], width: f32) -> 
     .into()
 }
 
-fn matches_query(row: &MessageRow, query: &str) -> bool {
-  if query.is_empty() {
-    return true;
+/// Flatten the current listing into the [`VirtualList`] index space.
+///
+/// When a search is active the source is the bounded search-results accumulator
+/// ([`State::all_messages`]) and there is no pinned head; otherwise the pinned head
+/// ([`State::pinned`]) precedes the day-bucketed non-pinned tail
+/// ([`State::messages`]). Day-bucket section headers are interleaved as ordinary
+/// indexable items so windowing places them at the right offsets.
+fn flatten(state: &State) -> Vec<ListItem<'_>> {
+  let searching = !state.search().trim().is_empty();
+  if searching {
+    flatten_rows(&[], state.all_messages())
+  } else {
+    flatten_rows(state.pinned(), state.messages())
   }
-  row.subject.to_lowercase().contains(query)
-    || row.sender.to_lowercase().contains(query)
-    || row.snippet.to_lowercase().contains(query)
+}
+
+/// Interleave the pinned head and the day-bucketed tail into the flat index space.
+///
+/// A `Pinned` section header precedes the head when it is non-empty, then each
+/// non-empty day bucket emits its header followed by its rows. Buckets are visited
+/// in fixed [`DayBucket`] order so the visual grouping matches the listing.
+fn flatten_rows<'a>(pinned: &'a [MessageRow], tail: &'a [MessageRow]) -> Vec<ListItem<'a>> {
+  let mut items = Vec::with_capacity(pinned.len() + tail.len() + 4);
+
+  if !pinned.is_empty() {
+    items.push(ListItem::Header(PINNED_LABEL));
+    items.extend(pinned.iter().map(ListItem::Row));
+  }
+
+  for bucket in [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier] {
+    let mut pushed_header = false;
+    for row in tail.iter().filter(|r| r.bucket == bucket) {
+      if !pushed_header {
+        items.push(ListItem::Header(bucket.label()));
+        pushed_header = true;
+      }
+      items.push(ListItem::Row(row));
+    }
+  }
+
+  items
 }
 
 fn search_box(query: &str) -> Element<'_, Message> {
@@ -679,6 +841,7 @@ mod tests {
       snippet: snippet.to_owned(),
       subject: subject.to_owned(),
       time: "10:00".to_owned(),
+      timestamp: "2026-06-01T10:00:00Z".to_owned(),
     }
   }
 
@@ -753,6 +916,7 @@ mod tests {
         snippet: "Form up at Jita.".to_owned(),
         subject: "CTA tonight".to_owned(),
         time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
       }
     }
 
@@ -800,22 +964,68 @@ mod tests {
     assert_eq!(time_label("2026-06-15T22:45:00Z"), "22:45");
   }
 
-  #[test]
-  fn it_matches_subject_sender_and_snippet_case_insensitively() {
-    let r = row(
-      1,
-      DayBucket::Today,
-      false,
-      "CTA tonight",
-      "Vex Voronova",
-      "form up at Jita",
-    );
+  mod flatten {
+    use pretty_assertions::assert_eq;
 
-    assert!(matches_query(&r, "cta"));
-    assert!(matches_query(&r, "voronova"));
-    assert!(matches_query(&r, "jita"));
-    assert!(matches_query(&r, ""));
-    assert!(!matches_query(&r, "wormhole"));
+    use super::*;
+
+    /// Describe a flat item for assertions: `"#Label"` for a header, the mail id
+    /// (as a string) for a row.
+    fn describe(item: &ListItem<'_>) -> String {
+      match item {
+        ListItem::Header(label) => format!("#{label}"),
+        ListItem::Row(row) => row.mail_id.to_string(),
+      }
+    }
+
+    fn shape(items: &[ListItem<'_>]) -> Vec<String> {
+      items.iter().map(describe).collect()
+    }
+
+    #[test]
+    fn it_emits_a_header_only_for_each_non_empty_day_bucket() {
+      let tail = vec![
+        row(1, DayBucket::Today, false, "a", "s", "x"),
+        row(2, DayBucket::Today, false, "b", "s", "x"),
+        row(3, DayBucket::Earlier, false, "c", "s", "x"),
+      ];
+
+      let flat = flatten_rows(&[], &tail);
+
+      assert_eq!(
+        shape(&flat),
+        ["#Today", "1", "2", "#Earlier this week", "3"],
+        "the empty Yesterday bucket contributes no header"
+      );
+    }
+
+    #[test]
+    fn it_puts_the_pinned_head_ahead_of_the_day_buckets() {
+      let pinned = vec![row(9, DayBucket::Earlier, true, "p", "s", "x")];
+      let tail = vec![row(1, DayBucket::Today, false, "a", "s", "x")];
+
+      let flat = flatten_rows(&pinned, &tail);
+
+      assert_eq!(
+        shape(&flat),
+        ["#Pinned", "9", "#Today", "1"],
+        "the pinned row keeps its own head and is not re-bucketed by its timestamp"
+      );
+    }
+
+    #[test]
+    fn it_omits_the_pinned_header_when_there_are_no_pins() {
+      let tail = vec![row(1, DayBucket::Today, false, "a", "s", "x")];
+
+      let flat = flatten_rows(&[], &tail);
+
+      assert_eq!(shape(&flat), ["#Today", "1"]);
+    }
+
+    #[test]
+    fn it_is_empty_for_an_empty_listing() {
+      assert!(flatten_rows(&[], &[]).is_empty());
+    }
   }
 
   #[test]
@@ -839,6 +1049,18 @@ mod tests {
 
     const CHAR: i64 = 42;
     const LABEL: i64 = 5000;
+
+    /// The full first-page listing as a flat, pinned-first Vec.
+    ///
+    /// In these small fixtures a page never overflows, so this reconstructs the
+    /// whole folder the way the UI sees it (pinned head ahead of the tail) and lets
+    /// the folder-derivation assertions stay focused on *which* mail is visible.
+    async fn load_messages(db: &Database, scope: Scope, folder: Folder) -> Vec<MessageRow> {
+      let page = load_first_page(db, scope, folder).await;
+      let mut rows = page.pinned;
+      rows.extend(page.tail);
+      rows
+    }
 
     async fn seed_character(db: &Database, id: i64) {
       let corp_id = 90_000_001;

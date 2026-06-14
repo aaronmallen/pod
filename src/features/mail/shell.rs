@@ -273,7 +273,7 @@ fn folder_pane(state: &State) -> Element<'_, Message> {
 }
 
 fn message_list_pane(state: &State) -> Element<'_, Message> {
-  message_list::pane(state, state.messages(), state.message_list_pane_width())
+  message_list::pane(state, state.message_list_pane_width())
 }
 
 fn reading_pane(state: &State) -> Element<'_, Message> {

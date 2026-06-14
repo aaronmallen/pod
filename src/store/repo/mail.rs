@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use sqlx::{QueryBuilder, Sqlite};
+
 use crate::store::{
   Database, Error,
   model::{
@@ -663,6 +665,234 @@ pub async fn visible_headers_for_label(
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+/// A keyset cursor into the visible-mail listing, ordered `(timestamp DESC, mail_id DESC)`.
+///
+/// Pagination seeks strictly past the last row of the previous page rather than
+/// using `OFFSET`, so inserts/deletes between page loads cannot duplicate or skip
+/// rows. Build one from the last row of a loaded page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MailCursor {
+  pub mail_id: i64,
+  pub timestamp: String,
+}
+
+impl MailCursor {
+  /// Cursor at the `(timestamp, mail_id)` position of an already-loaded row.
+  ///
+  /// The next page seeks strictly past this position, so pass the last row of the
+  /// page just loaded.
+  pub fn new(timestamp: String, mail_id: i64) -> Self {
+    Self {
+      mail_id,
+      timestamp,
+    }
+  }
+
+  /// Cursor pointing just before `header`'s position in the listing.
+  pub fn after(header: &CharacterMail) -> Self {
+    Self {
+      mail_id: header.mail_id,
+      timestamp: header.timestamp.clone(),
+    }
+  }
+}
+
+/// The visible-header column list, aliased to `m` (the `character_mail` table).
+const VISIBLE_HEADER_COLUMNS: &str = "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, \
+  m.important, m.from_corp, m.from_system, m.mail_id, m.subject, m.timestamp FROM character_mail m ";
+
+/// One bounded page of the inbox listing (visible, non-pinned), newest first.
+///
+/// This is the keyset-paginated replacement for the unbounded [`visible_headers`]
+/// fetch: it excludes pinned mail (those form a small unbounded head loaded by
+/// [`pinned_visible_headers`]) and seeks past `cursor` when one is supplied.
+pub async fn visible_headers_page(
+  db: &Database,
+  character_id: i64,
+  now: &str,
+  cursor: Option<&MailCursor>,
+  limit: i64,
+) -> Result<Vec<CharacterMail>, Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
+  builder.push("WHERE m.character_id = ").push_bind(character_id);
+  push_visible_tail_predicate(&mut builder, now, true);
+  push_keyset_seek(&mut builder, cursor);
+  push_order_and_limit(&mut builder, limit);
+  let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// One bounded page of a label folder's listing (visible, non-pinned), newest first.
+pub async fn visible_headers_for_label_page(
+  db: &Database,
+  character_id: i64,
+  label_id: i64,
+  now: &str,
+  cursor: Option<&MailCursor>,
+  limit: i64,
+) -> Result<Vec<CharacterMail>, Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
+  push_label_join(&mut builder);
+  builder.push("WHERE m.character_id = ").push_bind(character_id);
+  builder.push(" AND mem.label_id = ").push_bind(label_id);
+  push_visible_tail_predicate(&mut builder, now, true);
+  push_keyset_seek(&mut builder, cursor);
+  push_order_and_limit(&mut builder, limit);
+  let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// Every visible *pinned* header for a folder, newest first and unbounded.
+///
+/// Pins float to the top of the listing irrespective of timestamp, so they cannot
+/// participate in the keyset cursor; they are loaded once as a (necessarily small)
+/// head ahead of the paginated tail. `label_id` scopes to a label folder; `None`
+/// is the inbox path.
+pub async fn pinned_visible_headers(
+  db: &Database,
+  character_id: i64,
+  now: &str,
+  label_id: Option<i64>,
+) -> Result<Vec<CharacterMail>, Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
+  if label_id.is_some() {
+    push_label_join(&mut builder);
+  }
+  builder.push("WHERE m.character_id = ").push_bind(character_id);
+  if let Some(label_id) = label_id {
+    builder.push(" AND mem.label_id = ").push_bind(label_id);
+  }
+  builder.push(
+    " AND EXISTS ( \
+      SELECT 1 FROM mail_triage t \
+      WHERE t.character_id = m.character_id AND t.mail_id = m.mail_id AND t.pin = 1 \
+    )",
+  );
+  push_visible_tail_predicate(&mut builder, now, false);
+  builder.push(" ORDER BY m.timestamp DESC, m.mail_id DESC");
+  let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// One bounded page of visible mail whose subject or sender matches `needle`.
+///
+/// The bounded replacement for scanning the whole mailbox in memory on every
+/// keystroke. `needle` is matched case-insensitively as a substring of the subject
+/// or sender; `label_id` scopes the search to a label folder. Pins are not
+/// special-cased — search results are a flat recency-ranked list.
+pub async fn search_visible_headers_page(
+  db: &Database,
+  character_id: i64,
+  now: &str,
+  needle: &str,
+  label_id: Option<i64>,
+  cursor: Option<&MailCursor>,
+  limit: i64,
+) -> Result<Vec<CharacterMail>, Error> {
+  let pattern = format!("%{}%", escape_like(needle));
+  let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
+  if label_id.is_some() {
+    push_label_join(&mut builder);
+  }
+  builder.push("WHERE m.character_id = ").push_bind(character_id);
+  if let Some(label_id) = label_id {
+    builder.push(" AND mem.label_id = ").push_bind(label_id);
+  }
+  // Search keeps the filed/snoozed visibility predicate but omits the pin
+  // exclusion (results are a flat recency-ranked list, not a pinned-head listing).
+  push_visible_tail_predicate(&mut builder, now, false);
+  builder.push(" AND (m.subject LIKE ");
+  builder.push_bind(pattern.clone());
+  builder.push(" ESCAPE '\\' OR m.from_name LIKE ");
+  builder.push_bind(pattern);
+  builder.push(" ESCAPE '\\')");
+  push_keyset_seek(&mut builder, cursor);
+  push_order_and_limit(&mut builder, limit);
+  let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// One bounded page of unified (roster-wide) mail matching `needle`, newest first.
+///
+/// The unified-folder counterpart of [`search_visible_headers_page`]: it searches
+/// the cross-character `mail_unified` view so the default folder's search still
+/// spans the whole roster, keyset-paginated and excluding filed/snoozed mail.
+pub async fn search_visible_unified_page(
+  db: &Database,
+  now: &str,
+  needle: &str,
+  cursor: Option<&MailCursor>,
+  limit: i64,
+) -> Result<Vec<UnifiedMail>, Error> {
+  let pattern = format!("%{}%", escape_like(needle));
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT m.character_id, m.mail_id, m.from_id, m.from_name, m.subject, m.timestamp, m.is_read, \
+      m.has_attachment, m.important, m.from_corp, m.from_system, m.body FROM mail_unified m WHERE 1 = 1",
+  );
+  push_visible_tail_predicate(&mut builder, now, false);
+  builder.push(" AND (m.subject LIKE ");
+  builder.push_bind(pattern.clone());
+  builder.push(" ESCAPE '\\' OR m.from_name LIKE ");
+  builder.push_bind(pattern);
+  builder.push(" ESCAPE '\\')");
+  push_keyset_seek(&mut builder, cursor);
+  push_order_and_limit(&mut builder, limit);
+  let rows = builder.build_query_as::<UnifiedMail>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// Join `character_mail` to its label membership for a label-scoped listing.
+fn push_label_join(builder: &mut QueryBuilder<Sqlite>) {
+  builder
+    .push("JOIN character_mail_label_membership mem ON mem.character_id = m.character_id AND mem.mail_id = m.mail_id ");
+}
+
+/// Exclude mail that is filed or snoozed, and (when `exclude_pinned`) pinned.
+fn push_visible_tail_predicate(builder: &mut QueryBuilder<Sqlite>, now: &str, exclude_pinned: bool) {
+  builder.push(
+    " AND NOT EXISTS ( \
+      SELECT 1 FROM mail_folder_assignment fa \
+      WHERE fa.character_id = m.character_id AND fa.mail_id = m.mail_id \
+    ) AND NOT EXISTS ( \
+      SELECT 1 FROM mail_snooze sn \
+      WHERE sn.character_id = m.character_id AND sn.mail_id = m.mail_id AND sn.snooze_until > ",
+  );
+  builder.push_bind(now.to_owned());
+  builder.push(" )");
+  if exclude_pinned {
+    builder.push(
+      " AND NOT EXISTS ( \
+        SELECT 1 FROM mail_triage t \
+        WHERE t.character_id = m.character_id AND t.mail_id = m.mail_id AND t.pin = 1 \
+      )",
+    );
+  }
+}
+
+/// Seek strictly past `cursor` in `(timestamp DESC, mail_id DESC)` order.
+fn push_keyset_seek(builder: &mut QueryBuilder<Sqlite>, cursor: Option<&MailCursor>) {
+  if let Some(cursor) = cursor {
+    builder.push(" AND (m.timestamp < ");
+    builder.push_bind(cursor.timestamp.clone());
+    builder.push(" OR (m.timestamp = ");
+    builder.push_bind(cursor.timestamp.clone());
+    builder.push(" AND m.mail_id < ");
+    builder.push_bind(cursor.mail_id);
+    builder.push("))");
+  }
+}
+
+fn push_order_and_limit(builder: &mut QueryBuilder<Sqlite>, limit: i64) {
+  builder.push(" ORDER BY m.timestamp DESC, m.mail_id DESC LIMIT ");
+  builder.push_bind(limit);
+}
+
+/// Escape the SQL `LIKE` metacharacters so a user's literal text never acts as a
+/// wildcard. Pairs with an `ESCAPE '\'` clause in the query.
+fn escape_like(needle: &str) -> String {
+  needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 pub async fn visible_unread_count(db: &Database, character_id: i64, now: &str) -> Result<i64, Error> {
@@ -2039,6 +2269,212 @@ mod overlay_tests {
       let visible = super::visible_headers_for_label(&db, 42, 1, NOW).await.unwrap();
 
       assert_eq!(visible.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [10]);
+    }
+  }
+
+  mod paged_visible_headers {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ids(rows: &[CharacterMail]) -> Vec<i64> {
+      rows.iter().map(|m| m.mail_id()).collect()
+    }
+
+    #[tokio::test]
+    async fn it_walks_the_inbox_in_bounded_keyset_pages_newest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=5 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
+
+      let first = super::visible_headers_page(&db, 42, NOW, None, 2).await.unwrap();
+      assert_eq!(ids(&first), [5, 4]);
+
+      let cursor = super::MailCursor::after(first.last().unwrap());
+      let second = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
+        .await
+        .unwrap();
+      assert_eq!(ids(&second), [3, 2]);
+
+      let cursor = super::MailCursor::after(second.last().unwrap());
+      let third = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
+        .await
+        .unwrap();
+      assert_eq!(ids(&third), [1], "the final short page signals exhaustion");
+    }
+
+    #[tokio::test]
+    async fn it_excludes_pinned_snoozed_and_archived_mail_from_the_tail() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=4 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
+      super::set_triage(&db, 42, 4, false, true).await.unwrap(); // pinned -> head, not tail
+      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-20T00:00:00Z")
+        .await
+        .unwrap();
+
+      let tail = super::visible_headers_page(&db, 42, NOW, None, 50).await.unwrap();
+      assert_eq!(ids(&tail), [1]);
+
+      let pinned = super::pinned_visible_headers(&db, 42, NOW, None).await.unwrap();
+      assert_eq!(ids(&pinned), [4]);
+    }
+
+    #[tokio::test]
+    async fn it_pages_a_label_folder_and_keeps_pins_in_the_head() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_labels_for_character(
+        &db,
+        42,
+        &[CharacterMailLabel {
+          character_id: 42,
+          color: None,
+          label_id: 7,
+          name: "Fleet".to_owned(),
+        }],
+      )
+      .await
+      .unwrap();
+      for id in 1..=3 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
+      super::replace_membership_for_character(
+        &db,
+        42,
+        &(1..=3)
+          .map(|mail_id| CharacterMailLabelMembership {
+            character_id: 42,
+            label_id: 7,
+            mail_id,
+          })
+          .collect::<Vec<_>>(),
+      )
+      .await
+      .unwrap();
+      super::set_triage(&db, 42, 2, false, true).await.unwrap();
+
+      let tail = super::visible_headers_for_label_page(&db, 42, 7, NOW, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(ids(&tail), [3, 1], "the pinned mail is excluded from the tail");
+
+      let pinned = super::pinned_visible_headers(&db, 42, NOW, Some(7)).await.unwrap();
+      assert_eq!(ids(&pinned), [2]);
+    }
+  }
+
+  mod search_visible_headers {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn with_subject_and_sender(mail_id: i64, ts: &str, subject: &str, sender: &str) -> CharacterMail {
+      CharacterMail {
+        character_id: 42,
+        from_id: 95_000_001,
+        from_name: sender.to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some(subject.to_owned()),
+        timestamp: ts.to_owned(),
+        ..Default::default()
+      }
+    }
+
+    #[tokio::test]
+    async fn it_matches_subject_or_sender_case_insensitively_in_bounded_pages() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "CTA tonight", "Vex"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "Market update", "Cta Bot"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(3, "2026-06-03T10:00:00Z", "Standings", "Other"),
+      )
+      .await;
+
+      let hits = super::search_visible_headers_page(&db, 42, NOW, "cta", None, None, 50)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        hits.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [2, 1],
+        "newest first; matches either subject or sender, ignoring case"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_treats_like_metacharacters_as_literals() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "50% off", "Trader"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "no discount", "Trader"),
+      )
+      .await;
+
+      let literal = super::search_visible_headers_page(&db, 42, NOW, "50%", None, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(literal.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [1]);
+
+      let bare_percent = super::search_visible_headers_page(&db, 42, NOW, "%", None, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(
+        bare_percent.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [1],
+        "a bare percent is a literal needle: it matches only the subject containing '%', not every row"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_archived_mail_and_pages_by_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=3 {
+        store_mail(
+          &db,
+          &with_subject_and_sender(id, &format!("2026-06-0{id}T10:00:00Z"), "fleet ping", "Org"),
+        )
+        .await;
+      }
+      super::assign_folder(&db, 42, 2, "archive", None, false).await.unwrap();
+
+      let first = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, None, 1)
+        .await
+        .unwrap();
+      assert_eq!(first.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [3]);
+
+      let cursor = super::MailCursor::after(first.last().unwrap());
+      let second = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, Some(&cursor), 50)
+        .await
+        .unwrap();
+      assert_eq!(
+        second.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [1],
+        "the archived mail 2 is skipped and the cursor advances past it"
+      );
     }
   }
 

@@ -77,15 +77,16 @@ pub enum StandardFolder {
 
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
-  all_messages: Vec<MessageRow>,
   folder: Folder,
   folder_data: FolderPaneData,
   folder_pane_width: f32,
   headers: Vec<CharacterMail>,
   message_list_pane_width: f32,
   messages: Vec<MessageRow>,
+  messages_has_more: bool,
   outbox_indicator: OutboxIndicator,
   overlays: HashMap<i64, MailOverlayState>,
+  pinned: Vec<MessageRow>,
   roster: Vec<RosterPilot>,
   scope: Scope,
   unified: Vec<UnifiedMail>,
@@ -149,8 +150,16 @@ pub enum Message {
   ListPaneDragEnd,
   ListPaneDragStart,
   ListPaneDragged(f32),
+  /// The message list scrolled. `relative` (0.0–1.0) drives the load-more threshold;
+  /// `absolute` is the pixel offset stored to window the virtual list.
+  ListScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   Loaded(Box<Loaded>),
   MarkedRead,
+  /// One more keyset page of the non-pinned tail finished loading.
+  MessagesPageLoaded(Vec<MessageRow>),
   OutboxDismiss(i64),
   OutboxRefreshed(Box<OutboxIndicator>),
   OutboxRetry(i64),
@@ -163,6 +172,12 @@ pub enum Message {
   ReplyAll(i64),
   ScopeSelected(Scope),
   SearchChanged(String),
+  /// One more keyset page of search results finished loading, tagged with the query
+  /// it was issued for so a stale page from a superseded query can be dropped.
+  SearchPageLoaded {
+    query: String,
+    rows: Vec<MessageRow>,
+  },
   Selected(i64),
   SnoozeCalendarBack,
   #[allow(dead_code)]
@@ -204,15 +219,23 @@ pub struct State {
   headers: Vec<CharacterMail>,
   label_modal: Option<LabelDraft>,
   label_picker: Option<LabelPicker>,
+  list_scroll_offset: f32,
   message_list_pane: PaneDrag,
   messages: Vec<MessageRow>,
+  messages_cursor: Option<mail::MailCursor>,
+  messages_has_more: bool,
+  messages_loading: bool,
   outbox_indicator: OutboxIndicator,
   overlays: HashMap<i64, MailOverlayState>,
   pending_label_delete: Option<i64>,
   picker_open: bool,
+  pinned: Vec<MessageRow>,
   render: Option<ReadingRender>,
   roster: Vec<RosterPilot>,
   search: String,
+  search_cursor: Option<mail::MailCursor>,
+  search_has_more: bool,
+  search_loading: bool,
   selected: Option<i64>,
   snooze_calendar: Option<snooze::Calendar>,
   snooze_menu: SnoozeMenu,
@@ -247,19 +270,27 @@ impl State {
       headers: Vec::new(),
       label_modal: None,
       label_picker: None,
+      list_scroll_offset: 0.0,
       message_list_pane: PaneDrag::with_min_width(
         MESSAGE_LIST_PANE_DEFAULT_WIDTH,
         MESSAGE_LIST_PANE_MIN_WIDTH,
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       ),
       messages: Vec::new(),
+      messages_cursor: None,
+      messages_has_more: false,
+      messages_loading: false,
       outbox_indicator: OutboxIndicator::default(),
       overlays: HashMap::new(),
       pending_label_delete: None,
       picker_open: false,
+      pinned: Vec::new(),
       render: None,
       roster: Vec::new(),
       search: String::new(),
+      search_cursor: None,
+      search_has_more: false,
+      search_loading: false,
       selected: None,
       snooze_calendar: None,
       snooze_menu: SnoozeMenu::Closed,
@@ -299,11 +330,13 @@ impl State {
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
     let roster = self.roster.iter().map(|pilot| &pilot.portrait);
     let messages = self.messages.iter().map(|row| &row.sender_portrait);
+    let pinned = self.pinned.iter().map(|row| &row.sender_portrait);
     let all_messages = self.all_messages.iter().map(|row| &row.sender_portrait);
     let render = self.render.iter().map(|render| &render.sender_portrait);
 
     roster
       .chain(messages)
+      .chain(pinned)
       .chain(all_messages)
       .chain(render)
       .filter_map(images::ImageState::stale_key)
@@ -360,6 +393,14 @@ impl State {
 
   pub fn messages(&self) -> &[MessageRow] {
     &self.messages
+  }
+
+  pub fn pinned(&self) -> &[MessageRow] {
+    &self.pinned
+  }
+
+  pub fn list_scroll_offset(&self) -> f32 {
+    self.list_scroll_offset
   }
 
   pub fn all_messages(&self) -> &[MessageRow] {
@@ -433,6 +474,7 @@ impl State {
     self
       .messages
       .iter()
+      .chain(self.pinned.iter())
       .chain(self.all_messages.iter())
       .find(|row| row.mail_id == mail_id)
       .map(|row| row.label_ids.clone())
@@ -445,7 +487,12 @@ impl State {
     {
       return Some(render.mail.header.character_id());
     }
-    if let Some(row) = self.messages.iter().find(|r| r.mail_id == mail_id) {
+    if let Some(row) = self
+      .messages
+      .iter()
+      .chain(self.pinned.iter())
+      .find(|r| r.mail_id == mail_id)
+    {
       return Some(row.character_id);
     }
     let Scope::Character(id) = self.active;
@@ -505,6 +552,114 @@ fn reload_for(db: &Database, scope: Scope, folder: Folder) -> Task<Message> {
   Task::perform(load_mail(db.clone(), scope, folder), |loaded| {
     Message::Loaded(Box::new(loaded))
   })
+}
+
+/// Load more once the viewport scrolls within this fraction of the bottom.
+const LIST_SCROLL_THRESHOLD: f32 = 0.85;
+
+/// Build a keyset cursor at a loaded row's position.
+fn cursor_of(row: &MessageRow) -> mail::MailCursor {
+  mail::MailCursor::new(row.timestamp.clone(), row.mail_id)
+}
+
+/// Kick the first page of a search. Results stream into `all_messages`, the
+/// search-results accumulator that [`message_list::pane`] renders while a query is
+/// active.
+fn start_search(state: &mut State, db: &Database) -> Task<Message> {
+  state.search_loading = true;
+  let (db, scope, folder, needle) = (db.clone(), state.active, state.folder, state.search.clone());
+  Task::perform(
+    async move {
+      let rows = message_list::load_search_page(&db, scope, folder, &needle, None).await;
+      (needle, rows)
+    },
+    |(query, rows)| Message::SearchPageLoaded {
+      query,
+      rows,
+    },
+  )
+}
+
+fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::ListScrolled {
+      absolute,
+      relative,
+    } => {
+      state.list_scroll_offset = absolute;
+      if relative < LIST_SCROLL_THRESHOLD {
+        return Task::none();
+      }
+      if state.search.trim().is_empty() {
+        load_more_messages(state, db)
+      } else {
+        load_more_search(state, db)
+      }
+    }
+    Message::MessagesPageLoaded(rows) => {
+      state.messages_loading = false;
+      state.messages_has_more = rows.len() as i64 == message_list::MESSAGE_PAGE_SIZE;
+      if let Some(last) = rows.last() {
+        state.messages_cursor = Some(cursor_of(last));
+      }
+      state.messages.extend(rows);
+      Task::none()
+    }
+    Message::SearchPageLoaded {
+      query,
+      rows,
+    } => {
+      // Drop a page whose query the user has since changed; its `all_messages`
+      // accumulator was already cleared by the newer `SearchChanged`.
+      if query != state.search {
+        return Task::none();
+      }
+      state.search_loading = false;
+      state.search_has_more = rows.len() as i64 == message_list::MESSAGE_PAGE_SIZE;
+      if let Some(last) = rows.last() {
+        state.search_cursor = Some(cursor_of(last));
+      }
+      state.all_messages.extend(rows);
+      Task::none()
+    }
+    _ => Task::none(),
+  }
+}
+
+fn load_more_messages(state: &mut State, db: &Database) -> Task<Message> {
+  if state.messages_loading || !state.messages_has_more {
+    return Task::none();
+  }
+  let Some(cursor) = state.messages_cursor.clone() else {
+    return Task::none();
+  };
+  state.messages_loading = true;
+  let (db, scope, folder) = (db.clone(), state.active, state.folder);
+  Task::perform(
+    async move { message_list::load_messages_page(&db, scope, folder, cursor).await },
+    Message::MessagesPageLoaded,
+  )
+}
+
+fn load_more_search(state: &mut State, db: &Database) -> Task<Message> {
+  if state.search_loading || !state.search_has_more {
+    return Task::none();
+  }
+  let Some(cursor) = state.search_cursor.clone() else {
+    return Task::none();
+  };
+  state.search_loading = true;
+  let (db, scope, folder, needle) = (db.clone(), state.active, state.folder, state.search.clone());
+  Task::perform(
+    async move {
+      let rows = message_list::load_search_page(&db, scope, folder, &needle, Some(cursor)).await;
+      (needle, rows)
+    },
+    |(query, rows)| Message::SearchPageLoaded {
+      query,
+      rows,
+    },
+  )
 }
 
 fn triage_write<Fut>(state: &State, db: &Database, mail_id: i64, op: fn(Database, i64, i64) -> Fut) -> Task<Message>
@@ -569,8 +724,24 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::SearchChanged(query) => {
       state.search = query;
-      Task::none()
+      state.list_scroll_offset = 0.0;
+      state.all_messages.clear();
+      state.search_cursor = None;
+      state.search_has_more = false;
+      state.search_loading = false;
+      if state.search.trim().is_empty() {
+        Task::none()
+      } else {
+        start_search(state, db)
+      }
     }
+    Message::ListScrolled {
+      ..
+    }
+    | Message::MessagesPageLoaded(_)
+    | Message::SearchPageLoaded {
+      ..
+    } => update_pagination(state, message, db),
     Message::Selected(mail_id) => handle_message_selected(state, mail_id, db),
     Message::RenderLoaded(render) => {
       state.render = *render;
@@ -655,15 +826,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
 fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Message> {
   let Loaded {
-    all_messages,
     folder,
     folder_data,
     folder_pane_width,
     headers,
     message_list_pane_width,
     messages,
+    messages_has_more,
     outbox_indicator,
     overlays,
+    pinned,
     roster,
     scope,
     unified,
@@ -680,12 +852,25 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     state.message_list_pane.set_ratio_from_store(message_list_pane_width);
   }
   if scope == state.active && folder == state.folder {
-    state.all_messages = all_messages;
     state.folder_data = folder_data;
     state.headers = headers;
     state.overlays = overlays;
+    state.pinned = pinned;
     state.messages = messages;
-    Task::none()
+    state.messages_cursor = state.messages.last().map(cursor_of);
+    state.messages_has_more = messages_has_more;
+    state.messages_loading = false;
+    state.list_scroll_offset = 0.0;
+    // A fresh folder load supersedes any in-flight search paging.
+    state.all_messages.clear();
+    state.search_cursor = None;
+    state.search_has_more = false;
+    state.search_loading = false;
+    if state.search.trim().is_empty() {
+      Task::none()
+    } else {
+      start_search(state, db)
+    }
   } else {
     reload_for(db, state.active, state.folder)
   }
@@ -1145,8 +1330,7 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
     _ => loaders::load_folder_pane(&db, scope_id).await,
   };
 
-  let messages = message_list::load_messages(&db, scope, folder).await;
-  let all_messages = message_list::load_all_messages(&db, scope, folder).await;
+  let first_page = message_list::load_first_page(&db, scope, folder).await;
   let outbox_indicator = loaders::load_outbox_indicator(&db).await;
 
   let (headers, overlays) = match folder {
@@ -1171,15 +1355,16 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
     .unwrap_or(MESSAGE_LIST_PANE_DEFAULT_WIDTH);
 
   Loaded {
-    all_messages,
     folder,
     folder_data,
     folder_pane_width,
     headers,
     message_list_pane_width,
-    messages,
+    messages: first_page.tail,
+    messages_has_more: first_page.has_more,
     outbox_indicator,
     overlays,
+    pinned: first_page.pinned,
     roster,
     scope,
     unified,
@@ -1311,6 +1496,7 @@ mod tests {
         snippet: String::new(),
         subject: "S".to_owned(),
         time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
       }
     }
 
@@ -1529,6 +1715,7 @@ mod tests {
         snippet: String::new(),
         subject: "S".to_owned(),
         time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
       }
     }
 
@@ -2073,6 +2260,191 @@ mod tests {
         let _ = update_labels(&mut state, Message::LabelsWritten, &db);
       }
     }
+
+    mod pagination {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_stores_the_absolute_scroll_offset_for_windowing() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 1_234.0,
+            relative: 0.2,
+          },
+          &db,
+        );
+
+        assert_eq!(
+          state.list_scroll_offset(),
+          1_234.0,
+          "the pixel offset is stored so the virtual list can window the body"
+        );
+        assert!(!state.messages_loading, "a shallow scroll loads no further page");
+      }
+
+      #[tokio::test]
+      async fn it_does_not_load_more_when_the_tail_is_exhausted() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.folder = Folder::Standard(StandardFolder::Inbox);
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_cursor = Some(cursor_of(&state.messages[0]));
+        state.messages_has_more = false;
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 9_000.0,
+            relative: 0.99,
+          },
+          &db,
+        );
+
+        assert!(!state.messages_loading, "no page is requested past the last page");
+      }
+
+      #[tokio::test]
+      async fn it_starts_a_tail_load_when_scrolling_past_the_threshold_with_more_pages() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.folder = Folder::Standard(StandardFolder::Inbox);
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_cursor = Some(cursor_of(&state.messages[0]));
+        state.messages_has_more = true;
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 9_000.0,
+            relative: 0.99,
+          },
+          &db,
+        );
+
+        assert!(
+          state.messages_loading,
+          "a deep scroll with more pages requests the next"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_appends_a_loaded_tail_page_and_advances_the_cursor() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_loading = true;
+
+        let _ = update(
+          &mut state,
+          Message::MessagesPageLoaded(vec![list_row(8, 42, true)]),
+          &db,
+        );
+
+        assert_eq!(
+          state.messages().iter().map(|r| r.mail_id).collect::<Vec<_>>(),
+          [7, 8],
+          "the new page is appended to the tail"
+        );
+        assert!(!state.messages_loading);
+        assert!(
+          !state.messages_has_more,
+          "a short page (under the page size) ends pagination"
+        );
+        assert!(
+          state.messages_cursor.is_some(),
+          "the cursor advances to the last loaded row"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_resets_search_paging_and_kicks_a_query_on_search_change() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_cursor = Some(cursor_of(&state.all_messages[0]));
+
+        let _ = update(&mut state, Message::SearchChanged("cta".to_owned()), &db);
+
+        assert_eq!(state.search(), "cta");
+        assert!(state.all_messages().is_empty(), "the prior search results are cleared");
+        assert!(
+          state.search_cursor.is_none(),
+          "the search cursor resets for the new query"
+        );
+        assert!(state.search_loading, "the first search page is requested");
+      }
+
+      #[tokio::test]
+      async fn it_clears_search_paging_when_the_query_is_emptied() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.search = "cta".to_owned();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_loading = true;
+
+        let _ = update(&mut state, Message::SearchChanged(String::new()), &db);
+
+        assert_eq!(state.search(), "");
+        assert!(state.all_messages().is_empty());
+        assert!(!state.search_loading, "no search runs for an empty query");
+      }
+
+      #[tokio::test]
+      async fn it_appends_a_loaded_search_page_into_the_search_accumulator() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.search = "cta".to_owned();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_loading = true;
+
+        let _ = update(
+          &mut state,
+          Message::SearchPageLoaded {
+            query: "cta".to_owned(),
+            rows: vec![list_row(8, 42, true)],
+          },
+          &db,
+        );
+
+        assert_eq!(
+          state.all_messages().iter().map(|r| r.mail_id).collect::<Vec<_>>(),
+          [7, 8]
+        );
+        assert!(!state.search_loading);
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_search_page_from_a_superseded_query() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.search = "wormhole".to_owned();
+        state.search_loading = true;
+
+        let _ = update(
+          &mut state,
+          Message::SearchPageLoaded {
+            query: "cta".to_owned(),
+            rows: vec![list_row(8, 42, true)],
+          },
+          &db,
+        );
+
+        assert!(
+          state.all_messages().is_empty(),
+          "a page tagged with a stale query is discarded"
+        );
+        assert!(
+          state.search_loading,
+          "the in-flight load for the current query is left untouched"
+        );
+      }
+    }
   }
 
   fn sample_render() -> crate::store::model::character_mail_view::MailRender {
@@ -2215,6 +2587,7 @@ mod tests {
         snippet: "Form up at Jita.".to_owned(),
         subject: "CTA tonight".to_owned(),
         time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
       }
     }
 

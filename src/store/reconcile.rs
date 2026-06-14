@@ -13,9 +13,10 @@ use std::{
 use crate::store::{
   lease::LEASE_FILE_NAME,
   share_meta::{read_generation, write_generation},
-  sync_copy::publish_database,
+  sync_copy::{prune_backups, publish_database},
 };
 
+const BACKUP_RETENTION: usize = 3;
 const GENERATION_SUFFIX: &str = ".generation";
 const WAL_SIDECARS: [&str; 2] = ["-wal", "-shm"];
 
@@ -34,6 +35,10 @@ pub fn clean_direct_artifacts(canonical: &Path, working_copy: &Path) {
 /// loser is backed up via `publish_database`. Markers on both sides are brought to the same
 /// generation so the next boot finds no divergence.
 pub fn reconcile_sync(canonical: &Path, working_copy: &Path) -> io::Result<()> {
+  // Unconditional boot-time prune: self-heals pre-existing backup piles regardless of which branch below fires.
+  prune_backups(canonical, BACKUP_RETENTION);
+  prune_backups(working_copy, BACKUP_RETENTION);
+
   let canonical_sidecar = sidecar_path(canonical);
   let wc_marker = marker_path(working_copy);
   let canonical_generation = read_generation(&canonical_sidecar);
@@ -139,12 +144,28 @@ mod tests {
       }
     }
 
+    fn backup_count(&self, dir: &Path) -> usize {
+      fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count()
+    }
+
     fn backup_in(&self, dir: &Path) -> Option<PathBuf> {
       fs::read_dir(dir)
         .unwrap()
         .filter_map(Result::ok)
         .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
         .map(|entry| entry.path())
+    }
+
+    fn seed_backups(&self, database: &Path, stamps: &[&str]) {
+      for stamp in stamps {
+        let mut name = database.as_os_str().to_owned();
+        name.push(format!(".{stamp}.backup"));
+        fs::write(PathBuf::from(name), stamp.as_bytes()).unwrap();
+      }
     }
   }
 
@@ -229,6 +250,38 @@ mod tests {
         "no empty database is conjured for a fresh install"
       );
       assert!(!layout.canonical.exists());
+    }
+
+    #[test]
+    fn it_prunes_pre_existing_backup_piles_beside_both_databases_to_the_newest_three() {
+      let layout = Layout::new();
+      // In-step markers so no divergence branch fires: the prune must run on its own.
+      fs::write(&layout.canonical, b"canonical").unwrap();
+      fs::write(&layout.working_copy, b"working copy").unwrap();
+      write_generation(&sidecar_path(&layout.canonical), 5).unwrap();
+      write_generation(&marker_path(&layout.working_copy), 5).unwrap();
+      let stamps = [
+        "20260101-000000",
+        "20260102-000000",
+        "20260103-000000",
+        "20260104-000000",
+        "20260105-000000",
+      ];
+      layout.seed_backups(&layout.canonical, &stamps);
+      layout.seed_backups(&layout.working_copy, &stamps);
+
+      reconcile_sync(&layout.canonical, &layout.working_copy).unwrap();
+
+      assert_eq!(
+        layout.backup_count(layout.canonical.parent().unwrap()),
+        3,
+        "the canonical's backup pile is pruned to the newest three"
+      );
+      assert_eq!(
+        layout.backup_count(layout.working_copy.parent().unwrap()),
+        3,
+        "the working copy's backup pile is pruned to the newest three"
+      );
     }
   }
 

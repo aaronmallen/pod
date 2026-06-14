@@ -138,7 +138,9 @@ pub async fn search_locations(
   if !public_ids.is_empty() {
     match esi.universe().names(&public_ids).await {
       Ok(names) => named.extend(names.into_iter().map(|record| (record.id, record.name))),
-      Err(error) => tracing::warn!(target: "pod::assets", %error, "location name resolution failed"),
+      Err(error) => {
+        tracing::warn!(target: "pod::assets", %error, "location name resolution failed")
+      }
     }
   }
 

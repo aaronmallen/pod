@@ -21,8 +21,8 @@ use crate::{
   store::{
     Database, images,
     model::{
-      CharacterContactLabel, CharacterNotification, CharacterState, OwnerType, character_clone_view::CharacterClones,
-      character_contacts_view::image_kind,
+      CharacterContact, CharacterContactLabel, CharacterNotification, CharacterState, OwnerType,
+      character_clone_view::CharacterClones, character_contacts_view::image_kind,
     },
     repo::{
       character::{self, ContactCursor, ContactSortColumn, ContactSortDir},
@@ -162,13 +162,37 @@ pub enum LoadState<T> {
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
+  ContactAddOpened,
+  ContactDeleteCancelled,
+  ContactDeleteConfirmed,
+  ContactDeleted(Result<(), String>),
+  ContactDeleteRequested(Box<CharacterContact>),
+  ContactEditOpened(Box<CharacterContact>),
+  ContactEntityChanged(Option<crate::ui::components::entity_search::EntityRef>),
+  ContactEntityInput(String),
+  ContactEntityResults {
+    generation: u64,
+    results: Vec<crate::ui::components::entity_search::EntityRef>,
+  },
   ContactFilterChanged(tabs::contacts::ContactFilter),
+  ContactLabelToggled(i64),
+  ContactModalClosed,
+  ContactModalSubmitted,
   ContactSortChanged(tabs::contacts::ContactSort),
+  ContactStandingChanged(f64),
+  ContactSubmitted(Result<(), String>),
+  ContactWatchToggled,
   ContactsPageLoaded(Box<ContactsPage>),
-  ContactsScrolled { absolute: f32, relative: f32 },
+  ContactsScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
-  KilllogScrolled { absolute: f32, relative: f32 },
+  KilllogScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   Loaded(Box<Loaded>),
   NotificationRead(i64),
   NotificationsFilterChanged(NotificationsFilter),
@@ -180,7 +204,10 @@ pub enum Message {
   StandingsFilterChanged(tabs::standings::StandingsFilter),
   StandingsInsertQuery(String),
   StandingsResults(Box<StandingsResult>),
-  StandingsScrolled { absolute: f32, relative: f32 },
+  StandingsScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   StandingsSearchChanged(String),
   StandingsToggleHelp,
   TabChanged(Tab),
@@ -252,6 +279,9 @@ pub struct State {
   active: i64,
   active_tab: Tab,
   clones: LoadState<Option<CharacterClones>>,
+  contact_delete: Option<tabs::contact_modal::DeleteConfirm>,
+  contact_modal: Option<tabs::contact_modal::ContactModal>,
+  contact_search_generation: u64,
   contacts: LoadState<ContactsPage>,
   contact_filter: tabs::contacts::ContactFilter,
   contact_sort: tabs::contacts::ContactSort,
@@ -291,6 +321,9 @@ impl State {
       active,
       active_tab,
       clones: LoadState::Loading,
+      contact_delete: None,
+      contact_modal: None,
+      contact_search_generation: 0,
       contacts: LoadState::Loading,
       contact_filter: tabs::contacts::ContactFilter::All,
       contact_sort: tabs::contacts::ContactSort::default(),
@@ -362,13 +395,31 @@ impl State {
       .map_or("", |pilot| pilot.name.as_str())
   }
 
+  pub(super) fn contact_delete(&self) -> Option<&tabs::contact_modal::DeleteConfirm> {
+    self.contact_delete.as_ref()
+  }
+
+  /// Names of already-loaded contacts, used to dedupe the add picker. Only the current keyset page is visible, so a
+  /// duplicate add for an off-page contact still reconciles on the next sync.
+  pub(super) fn contact_exclude_names(&self) -> Vec<String> {
+    match &self.contacts {
+      LoadState::Loaded(page) => page.rows.iter().map(|row| row.contact.contact_name().clone()).collect(),
+      _ => Vec::new(),
+    }
+  }
+
+  pub(super) fn contact_modal(&self) -> Option<&tabs::contact_modal::ContactModal> {
+    self.contact_modal.as_ref()
+  }
+
+  pub fn contact_search_generation(&self) -> u64 {
+    self.contact_search_generation
+  }
+
   pub(super) fn contacts_scroll_offset(&self) -> f32 {
     self.contacts_scroll_offset
   }
 
-  /// Whether the pilot granted the write-contacts scope, gating the (not-yet-built) Contacts add/edit/remove UI. A
-  /// pilot authorized before the scope existed reads as disabled, which the UI surfaces as a re-auth prompt.
-  #[allow(dead_code)]
   pub(super) fn contacts_write_enabled(&self) -> bool {
     crate::ui::components::forbidden::missing_scopes(
       self.granted_scopes(),
@@ -429,6 +480,23 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.contact_sort = sort;
       restart_contacts(state, db)
     }
+    Message::ContactAddOpened
+    | Message::ContactDeleteCancelled
+    | Message::ContactDeleteConfirmed
+    | Message::ContactDeleteRequested(_)
+    | Message::ContactDeleted(_)
+    | Message::ContactEditOpened(_)
+    | Message::ContactEntityChanged(_)
+    | Message::ContactEntityInput(_)
+    | Message::ContactEntityResults {
+      ..
+    }
+    | Message::ContactLabelToggled(_)
+    | Message::ContactModalClosed
+    | Message::ContactModalSubmitted
+    | Message::ContactStandingChanged(_)
+    | Message::ContactSubmitted(_)
+    | Message::ContactWatchToggled => update_contacts_modal(state, message, db),
     Message::ContactsPageLoaded(_)
     | Message::ContactsScrolled {
       ..
@@ -681,6 +749,243 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
     }
     _ => Task::none(),
   }
+}
+
+fn update_contacts_modal(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  use tabs::contact_modal::{ContactModal, DeleteConfirm};
+
+  match message {
+    Message::ContactAddOpened => {
+      let exclude = state.contact_exclude_names();
+      state.contact_modal = Some(ContactModal::add(exclude));
+      Task::none()
+    }
+    Message::ContactEditOpened(contact) => {
+      state.contact_modal = Some(ContactModal::edit(&contact));
+      Task::none()
+    }
+    Message::ContactModalClosed => {
+      state.contact_modal = None;
+      Task::none()
+    }
+    Message::ContactEntityInput(query) => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        state.contact_search_generation = modal.set_query(query);
+      }
+      Task::none()
+    }
+    Message::ContactEntityResults {
+      generation,
+      results,
+    } => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.accept_results(generation, results);
+      }
+      Task::none()
+    }
+    Message::ContactEntityChanged(entity) => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.set_entity(entity);
+      }
+      Task::none()
+    }
+    Message::ContactStandingChanged(standing) => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.set_standing(standing);
+      }
+      Task::none()
+    }
+    Message::ContactLabelToggled(label_id) => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.toggle_label(label_id);
+      }
+      Task::none()
+    }
+    Message::ContactWatchToggled => {
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.toggle_watch();
+      }
+      Task::none()
+    }
+    Message::ContactModalSubmitted => submit_contact(state, db),
+    Message::ContactSubmitted(result) => {
+      match result {
+        Ok(()) => state.contact_modal = None,
+        Err(error) => {
+          tracing::warn!(target: "pod::character_detail", %error, "contact submit failed to enqueue")
+        }
+      }
+      Task::none()
+    }
+    Message::ContactDeleteRequested(contact) => {
+      state.contact_delete = Some(DeleteConfirm {
+        contact: *contact,
+      });
+      Task::none()
+    }
+    Message::ContactDeleteCancelled => {
+      state.contact_delete = None;
+      Task::none()
+    }
+    Message::ContactDeleteConfirmed => {
+      let Some(confirm) = state.contact_delete.take() else {
+        return Task::none();
+      };
+      let character_id = state.active;
+      Task::perform(
+        enqueue_contact_remove(db.clone(), character_id, confirm.contact),
+        Message::ContactDeleted,
+      )
+    }
+    Message::ContactDeleted(result) => {
+      if let Err(error) = result {
+        tracing::warn!(target: "pod::character_detail", %error, "contact remove failed to enqueue");
+      }
+      reload(db, state.active, DetailDataType::Contacts)
+    }
+    _ => Task::none(),
+  }
+}
+
+fn submit_contact(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(modal) = state.contact_modal.as_ref() else {
+    return Task::none();
+  };
+  let Some(entity) = modal.entity() else {
+    return Task::none();
+  };
+
+  let character_id = state.active;
+  let target = ContactPayload {
+    contact_id: entity.id,
+    contact_name: entity.name.clone(),
+    contact_type: entity_kind_str(entity.kind).to_owned(),
+    label_ids: modal.labels().to_vec(),
+    standing: modal.standing(),
+    watched: modal.watch(),
+  };
+
+  // `previous` is derived only from loaded rows; a contact paginated off-page yields None, in which case the edit's
+  // compensation falls back to `target` (see enqueue_contact_edit).
+  let previous = modal
+    .is_edit()
+    .then(|| existing_contact(&state.contacts, target.contact_id).map(ContactPayload::from_contact));
+
+  let submit = if modal.is_edit() {
+    let previous = previous.flatten();
+    Task::perform(
+      enqueue_contact_edit(db.clone(), character_id, target, previous),
+      Message::ContactSubmitted,
+    )
+  } else {
+    Task::perform(
+      enqueue_contact_add(db.clone(), character_id, target),
+      Message::ContactSubmitted,
+    )
+  };
+
+  Task::batch([submit, reload(db, character_id, DetailDataType::Contacts)])
+}
+
+fn entity_kind_str(kind: crate::ui::components::entity_search::EntityKind) -> &'static str {
+  use crate::ui::components::entity_search::EntityKind;
+  match kind {
+    EntityKind::Alliance => "alliance",
+    EntityKind::Character => "character",
+    EntityKind::Corporation => "corporation",
+  }
+}
+
+fn existing_contact(contacts: &LoadState<ContactsPage>, contact_id: i64) -> Option<&CharacterContact> {
+  match contacts {
+    LoadState::Loaded(page) => page
+      .rows
+      .iter()
+      .map(|row| &row.contact)
+      .find(|contact| contact.contact_id() == contact_id),
+    _ => None,
+  }
+}
+
+/// JSON shape serialized into the outbox payload (nested under `target`/`previous` by the enqueue fns) and consumed by
+/// the sync contact handlers. The field set is a contract: `label_ids` is a flat `Vec<i64>` and `is_blocked` is absent
+/// (writes never block).
+#[derive(Clone, serde::Serialize)]
+struct ContactPayload {
+  contact_id: i64,
+  contact_name: String,
+  contact_type: String,
+  label_ids: Vec<i64>,
+  standing: f64,
+  watched: bool,
+}
+
+impl ContactPayload {
+  fn from_contact(contact: &CharacterContact) -> Self {
+    ContactPayload {
+      contact_id: contact.contact_id(),
+      contact_name: contact.contact_name().clone(),
+      contact_type: contact.contact_type().clone(),
+      label_ids: serde_json::from_str(contact.label_ids()).unwrap_or_default(),
+      standing: contact.standing(),
+      watched: contact.is_watched(),
+    }
+  }
+
+  fn into_contact(self, character_id: i64) -> Result<CharacterContact, String> {
+    Ok(CharacterContact {
+      character_id,
+      contact_id: self.contact_id,
+      contact_name: self.contact_name,
+      contact_type: self.contact_type,
+      is_blocked: false,
+      is_watched: self.watched,
+      label_ids: serde_json::to_string(&self.label_ids).map_err(|error| error.to_string())?,
+      standing: self.standing,
+    })
+  }
+}
+
+/// Mirrors the contact into the local store before appending the outbox row, so the new row shows immediately. The
+/// `"contact.add"` kind string must match the sync handler registry.
+async fn enqueue_contact_add(db: Database, character_id: i64, target: ContactPayload) -> Result<(), String> {
+  let json = serde_json::json!({ "character_id": character_id, "target": &target }).to_string();
+  character::upsert_contact(&db, &target.clone().into_contact(character_id)?)
+    .await
+    .map_err(|error| error.to_string())?;
+  infra::append(&db, OwnerType::Character, character_id, "contact.add", &json, None)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+async fn enqueue_contact_edit(
+  db: Database,
+  character_id: i64,
+  target: ContactPayload,
+  previous: Option<ContactPayload>,
+) -> Result<(), String> {
+  let previous = previous.unwrap_or_else(|| target.clone());
+  let json = serde_json::json!({ "character_id": character_id, "previous": &previous, "target": &target }).to_string();
+  character::upsert_contact(&db, &target.clone().into_contact(character_id)?)
+    .await
+    .map_err(|error| error.to_string())?;
+  infra::append(&db, OwnerType::Character, character_id, "contact.edit", &json, None)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+async fn enqueue_contact_remove(db: Database, character_id: i64, contact: CharacterContact) -> Result<(), String> {
+  let previous = ContactPayload::from_contact(&contact);
+  let json = serde_json::json!({ "character_id": character_id, "previous": &previous }).to_string();
+  character::delete_contact(&db, character_id, contact.contact_id())
+    .await
+    .map_err(|error| error.to_string())?;
+  infra::append(&db, OwnerType::Character, character_id, "contact.remove", &json, None)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 /// Translates the active contact filter and sort header into the repo's page parameters.
@@ -944,6 +1249,28 @@ pub fn view(state: &State) -> Element<'_, Message> {
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
       dropdown,
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
+  if let Some(confirm) = state.contact_delete() {
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::backdrop(Message::ContactDeleteCancelled),
+      tabs::contact_modal::delete_confirm(confirm),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+  }
+
+  if let Some(modal) = state.contact_modal() {
+    return Stack::with_children(vec![
+      base.into(),
+      backdrop::backdrop(Message::ContactModalClosed),
+      tabs::contact_modal::modal(modal),
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1436,6 +1763,7 @@ mod tests {
     [
       scopes::CHARACTER_CLONES,
       scopes::CHARACTER_CONTACTS,
+      scopes::CHARACTER_CONTACTS_WRITE,
       scopes::CHARACTER_KILLMAILS,
       scopes::CHARACTER_NOTIFICATIONS,
       scopes::CHARACTER_STANDINGS,
@@ -2574,6 +2902,339 @@ mod tests {
         matches!(state.standings, LoadState::Loading),
         "a full load kicks off the standings catalog query"
       );
+    }
+  }
+
+  mod contacts_modal {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::ui::components::entity_search::{EntityKind, EntityRef};
+
+    fn entity(id: i64, kind: EntityKind, name: &str) -> EntityRef {
+      EntityRef {
+        id,
+        kind,
+        name: name.to_owned(),
+        portrait: None,
+      }
+    }
+
+    fn contact(id: i64, kind: &str, name: &str, standing: f64, watched: bool, label_ids: &str) -> CharacterContact {
+      CharacterContact {
+        character_id: 42,
+        contact_id: id,
+        contact_name: name.to_owned(),
+        contact_type: kind.to_owned(),
+        is_blocked: false,
+        is_watched: watched,
+        label_ids: label_ids.to_owned(),
+        standing,
+      }
+    }
+
+    async fn outbox_count(db: &Database, kind: &str) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = ? AND subject_id = 42")
+        .bind(kind)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    async fn contact_present(db: &Database, contact_id: i64) -> bool {
+      character::contacts(db, 42)
+        .await
+        .unwrap()
+        .contacts
+        .iter()
+        .any(|c| c.contact_id() == contact_id)
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_add_modal() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+      assert!(state.contact_modal().is_some());
+      assert!(!state.contact_modal().unwrap().is_edit());
+
+      let _ = update(&mut state, Message::ContactModalClosed, &db);
+      assert!(state.contact_modal().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_edit_modal_with_the_entity_locked() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_001, "character", "Test Pilot", 5.0, true, "[1]");
+      let _ = update(&mut state, Message::ContactEditOpened(Box::new(row)), &db);
+
+      let modal = state.contact_modal().expect("modal open");
+      assert!(modal.is_edit());
+      assert_eq!(modal.entity().map(|e| e.id), Some(95_001));
+      assert_eq!(modal.standing(), 5.0);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_field_edits_in_the_open_modal() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+
+      let _ = update(
+        &mut state,
+        Message::ContactEntityChanged(Some(entity(95_002, EntityKind::Character, "New Pilot"))),
+        &db,
+      );
+      let _ = update(&mut state, Message::ContactStandingChanged(-10.0), &db);
+      let _ = update(&mut state, Message::ContactLabelToggled(2), &db);
+      let _ = update(&mut state, Message::ContactWatchToggled, &db);
+
+      let modal = state.contact_modal().expect("modal open");
+      assert_eq!(modal.entity().map(|e| e.id), Some(95_002));
+      assert_eq!(modal.standing(), -10.0);
+      assert_eq!(modal.labels(), &[2]);
+      assert!(modal.watch());
+      assert!(modal.can_submit());
+    }
+
+    #[tokio::test]
+    async fn it_forces_watch_off_for_non_character_entities() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+
+      let _ = update(
+        &mut state,
+        Message::ContactEntityChanged(Some(entity(98_001, EntityKind::Corporation, "Test Corp"))),
+        &db,
+      );
+      let _ = update(&mut state, Message::ContactWatchToggled, &db);
+
+      assert!(
+        !state.contact_modal().unwrap().watch(),
+        "a corporation can never be watchlisted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_stale_search_response_from_a_superseded_generation() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+
+      let _ = update(&mut state, Message::ContactEntityInput("Vex".to_owned()), &db);
+      let stale = state.contact_search_generation();
+      let _ = update(&mut state, Message::ContactEntityInput("Vexor".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::ContactEntityResults {
+          generation: stale,
+          results: vec![entity(1, EntityKind::Character, "Stale")],
+        },
+        &db,
+      );
+
+      assert!(
+        state.contact_modal().unwrap().entity().is_none(),
+        "a stale results message does not populate the picker"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_submit_task_and_clears_the_modal_on_success() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+      let _ = update(
+        &mut state,
+        Message::ContactEntityChanged(Some(entity(95_010, EntityKind::Character, "New Friend"))),
+        &db,
+      );
+
+      let task = update(&mut state, Message::ContactModalSubmitted, &db);
+      drop(task);
+      assert!(
+        state.contact_modal().is_some(),
+        "the modal stays open until the enqueue resolves"
+      );
+
+      let _ = update(&mut state, Message::ContactSubmitted(Ok(())), &db);
+      assert!(state.contact_modal().is_none(), "a successful enqueue closes the modal");
+    }
+
+    #[tokio::test]
+    async fn it_enqueues_an_add_and_mirrors_the_row_optimistically() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+
+      enqueue_contact_add(
+        db.clone(),
+        42,
+        ContactPayload {
+          contact_id: 95_010,
+          contact_name: "New Friend".to_owned(),
+          contact_type: "character".to_owned(),
+          label_ids: vec![1, 2],
+          standing: 10.0,
+          watched: true,
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(outbox_count(&db, "contact.add").await, 1);
+      assert!(contact_present(&db, 95_010).await, "the optimistic row is mirrored");
+    }
+
+    #[tokio::test]
+    async fn it_enqueues_an_edit_and_updates_the_row_immediately() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      character::upsert_contact(&db, &contact(95_020, "character", "Old Friend", 5.0, false, "[1]"))
+        .await
+        .unwrap();
+
+      enqueue_contact_edit(
+        db.clone(),
+        42,
+        ContactPayload {
+          contact_id: 95_020,
+          contact_name: "Old Friend".to_owned(),
+          contact_type: "character".to_owned(),
+          label_ids: vec![1],
+          standing: -10.0,
+          watched: false,
+        },
+        Some(ContactPayload {
+          contact_id: 95_020,
+          contact_name: "Old Friend".to_owned(),
+          contact_type: "character".to_owned(),
+          label_ids: vec![1],
+          standing: 5.0,
+          watched: false,
+        }),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(outbox_count(&db, "contact.edit").await, 1);
+      let stored = character::contacts(&db, 42)
+        .await
+        .unwrap()
+        .contacts
+        .into_iter()
+        .find(|c| c.contact_id() == 95_020)
+        .unwrap();
+      assert_eq!(stored.standing(), -10.0);
+    }
+
+    #[tokio::test]
+    async fn it_confirms_a_delete_and_drops_the_row_immediately() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      character::upsert_contact(&db, &contact(95_030, "character", "Doomed", 0.0, false, "[]"))
+        .await
+        .unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_030, "character", "Doomed", 0.0, false, "[]");
+      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
+      assert!(state.contact_delete().is_some());
+
+      let task = update(&mut state, Message::ContactDeleteConfirmed, &db);
+      drop(task);
+      enqueue_contact_remove(db.clone(), 42, contact(95_030, "character", "Doomed", 0.0, false, "[]"))
+        .await
+        .unwrap();
+
+      assert!(state.contact_delete().is_none(), "the confirm dialog closes");
+      assert_eq!(outbox_count(&db, "contact.remove").await, 1);
+      assert!(!contact_present(&db, 95_030).await, "the row drops optimistically");
+    }
+
+    #[tokio::test]
+    async fn it_cancels_a_pending_delete() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_040, "character", "Spared", 0.0, false, "[]");
+      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
+      let _ = update(&mut state, Message::ContactDeleteCancelled, &db);
+
+      assert!(state.contact_delete().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_is_a_noop_to_submit_with_no_entity_selected() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+
+      let task = update(&mut state, Message::ContactModalSubmitted, &db);
+      drop(task);
+
+      assert_eq!(outbox_count(&db, "contact.add").await, 0);
+      assert!(
+        state.contact_modal().is_some(),
+        "the modal stays open until an entity is chosen"
+      );
+    }
+  }
+
+  mod write_gating {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_contacts_tab_with_write_actions_when_the_scope_is_granted() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+
+      assert!(state.contacts_write_enabled());
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_contacts_tab_read_only_when_the_write_scope_is_absent() {
+      use crate::clients::esi::scopes;
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
+
+      assert!(!state.contacts_write_enabled());
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_open_add_modal_overlay() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contact_modal = Some(tabs::contact_modal::ContactModal::add(Vec::new()));
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_delete_confirm_overlay() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contact_delete = Some(tabs::contact_modal::DeleteConfirm {
+        contact: CharacterContact {
+          character_id: 42,
+          contact_id: 95_050,
+          contact_name: "Doomed".to_owned(),
+          contact_type: "character".to_owned(),
+          is_blocked: false,
+          is_watched: false,
+          label_ids: "[]".to_owned(),
+          standing: 0.0,
+        },
+      });
+
+      let _el: Element<'_, Message> = view(&state);
     }
   }
 

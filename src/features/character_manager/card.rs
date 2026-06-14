@@ -458,7 +458,9 @@ fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   let label = match failure? {
     Phase::BackingOff => "Sync backing off",
     Phase::Failed => "Sync failed",
-    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => return None,
+    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => {
+      return None;
+    }
   };
 
   Some(

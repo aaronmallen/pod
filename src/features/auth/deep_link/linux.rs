@@ -86,7 +86,9 @@ fn update_desktop_database(applications_dir: &Path) {
 fn log_database_refresh(outcome: std::io::Result<std::process::ExitStatus>) {
   match outcome {
     Ok(status) => log_nonzero_exit(status),
-    Err(error) => tracing::warn!(%error, "update-desktop-database unavailable; scheme may route only after a refresh"),
+    Err(error) => {
+      tracing::warn!(%error, "update-desktop-database unavailable; scheme may route only after a refresh")
+    }
   }
 }
 

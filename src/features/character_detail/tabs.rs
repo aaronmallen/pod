@@ -1,4 +1,5 @@
 pub(super) mod clones;
+pub(super) mod contact_modal;
 pub(super) mod contacts;
 pub(super) mod killlog;
 pub(super) mod notifications;
@@ -141,18 +142,22 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
       Tab::Notifications,
       notifications::body(&state.notifications, state.notifications_filter),
     ),
-    Tab::Contacts => windowed_tab(
-      Tab::Contacts,
-      Some(contacts::header(&state.contacts, state.contact_filter)),
-      move |viewport_height| {
-        contacts::body(
-          &state.contacts,
-          state.contact_sort,
-          viewport_height,
-          state.contacts_scroll_offset(),
-        )
-      },
-    ),
+    Tab::Contacts => {
+      let write_enabled = state.contacts_write_enabled();
+      windowed_tab(
+        Tab::Contacts,
+        Some(contacts::header(&state.contacts, state.contact_filter, write_enabled)),
+        move |viewport_height| {
+          contacts::body(
+            &state.contacts,
+            state.contact_sort,
+            write_enabled,
+            viewport_height,
+            state.contacts_scroll_offset(),
+          )
+        },
+      )
+    }
     Tab::Killlog => windowed_tab(
       Tab::Killlog,
       killlog::header(&state.killlog, state.killlog_filter),

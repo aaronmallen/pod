@@ -367,14 +367,18 @@ impl Engine {
   async fn parent_row_exists(&self, subject: Subject) -> bool {
     match subject {
       Subject::Character(id) => matches!(character::get(&self.db, id).await, Ok(Some(_))),
-      Subject::Corporation(id) => matches!(org::get_corporation(&self.db, id).await, Ok(Some(_))),
+      Subject::Corporation(id) => {
+        matches!(org::get_corporation(&self.db, id).await, Ok(Some(_)))
+      }
     }
   }
 
   async fn prune_done_rows(&self) {
     let before = (Utc::now() - ChronoDuration::from_std(DONE_RETENTION).unwrap_or(ChronoDuration::zero())).to_rfc3339();
     match infra::prune_done(&self.housekeeping, &before).await {
-      Ok(pruned) if pruned > 0 => tracing::debug!(pruned, "pruned done outbox rows past retention"),
+      Ok(pruned) if pruned > 0 => {
+        tracing::debug!(pruned, "pruned done outbox rows past retention")
+      }
       Ok(_) => {}
       Err(error) => tracing::warn!(%error, "pruning done outbox rows failed"),
     }

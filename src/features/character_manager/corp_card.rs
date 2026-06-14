@@ -243,7 +243,9 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
 fn sync_failure_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   match failure? {
     Phase::BackingOff | Phase::Failed => {}
-    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => return None,
+    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => {
+      return None;
+    }
   }
 
   Some(

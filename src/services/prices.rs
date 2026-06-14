@@ -47,7 +47,9 @@ pub async fn refresh(db: &Database, esi: &esi::Client, type_ids: &[i64]) -> usiz
         }
         match finance::price_history_upsert_many(db, &rows).await {
           Ok(()) => persisted += rows.len(),
-          Err(error) => tracing::warn!(?batch, "prices: persist failed; continuing: {error}"),
+          Err(error) => {
+            tracing::warn!(?batch, "prices: persist failed; continuing: {error}")
+          }
         }
       }
       Err(error) => tracing::warn!(?batch, "prices: batch fetch failed; continuing: {error}"),

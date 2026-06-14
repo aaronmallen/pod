@@ -36,8 +36,12 @@ const ICON_BOX: f32 = 32.0;
 pub(in crate::features::character_detail) fn body(clones: &LoadState<Option<CharacterClones>>) -> Element<'_, Message> {
   let clones = match clones {
     LoadState::Loaded(Some(clones)) => clones,
-    LoadState::Loaded(None) => return load_state_view(LoadStateView::Empty(empty_state("No clones synced yet"))),
-    LoadState::Loading => return load_state_view(LoadStateView::Loading("Loading clones\u{2026}")),
+    LoadState::Loaded(None) => {
+      return load_state_view(LoadStateView::Empty(empty_state("No clones synced yet")));
+    }
+    LoadState::Loading => {
+      return load_state_view(LoadStateView::Loading("Loading clones\u{2026}"));
+    }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
 

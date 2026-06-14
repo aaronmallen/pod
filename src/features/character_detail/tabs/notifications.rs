@@ -121,7 +121,9 @@ pub(in crate::features::character_detail) fn body(
 ) -> Element<'_, Message> {
   let entries = match notifications {
     LoadState::Loaded(entries) => entries,
-    LoadState::Loading => return load_state_view(LoadStateView::Loading("Loading notifications\u{2026}")),
+    LoadState::Loading => {
+      return load_state_view(LoadStateView::Loading("Loading notifications\u{2026}"));
+    }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
   if entries.is_empty() {

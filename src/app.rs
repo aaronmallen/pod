@@ -3481,10 +3481,59 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
   if let character_detail::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }
+  if let character_detail::Message::ContactEntityInput(query) = &msg {
+    let query = query.clone();
+    return match (app.character_detail.as_mut(), app.runtime.as_ref()) {
+      (Some(state), Some(runtime)) => {
+        let update = character_detail::update(state, msg, &runtime.db).map(Message::CharacterDetail);
+        Task::batch([update, contact_entity_search(state, runtime, query)])
+      }
+      _ => Task::none(),
+    };
+  }
   match (app.character_detail.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => character_detail::update(state, msg, &runtime.db).map(Message::CharacterDetail),
     _ => Task::none(),
   }
+}
+
+/// Captures the modal's current search generation and stamps it onto the async result so a stale response
+/// arriving after the user has typed again is discarded by the handler rather than clobbering newer results.
+fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, query: String) -> Task<Message> {
+  use crate::{features::entity_search, ui::components::entity_search as picker};
+
+  let generation = state.contact_search_generation();
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let eve_image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  let categories = vec![
+    entity_search::EntityCategory::Character,
+    entity_search::EntityCategory::Corporation,
+    entity_search::EntityCategory::Alliance,
+  ];
+  Task::perform(
+    async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
+    move |results| {
+      let results = results
+        .into_iter()
+        .map(|result| picker::EntityRef {
+          id: result.id,
+          kind: match result.category {
+            entity_search::EntityCategory::Alliance => picker::EntityKind::Alliance,
+            entity_search::EntityCategory::Character => picker::EntityKind::Character,
+            entity_search::EntityCategory::Corporation => picker::EntityKind::Corporation,
+          },
+          name: result.name,
+          portrait: Some(store::images::default_store().image_path(result.category.image_kind(), result.id)),
+        })
+        .collect();
+      Message::CharacterDetail(character_detail::Message::ContactEntityResults {
+        generation,
+        results,
+      })
+    },
+  )
 }
 
 fn compare_seed_ids(app: &App) -> Vec<i64> {

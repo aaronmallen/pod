@@ -127,7 +127,9 @@ fn breadcrumb(url: Option<&str>, claim: &Claim) {
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn breadcrumb_message(url: Option<&str>, claim: &Claim) -> String {
   match (claim, url) {
-    (Claim::Forwarded, Some(url)) => format!("[INFO] launch forwarded callback to the running primary url={url}"),
+    (Claim::Forwarded, Some(url)) => {
+      format!("[INFO] launch forwarded callback to the running primary url={url}")
+    }
     (Claim::Forwarded, None) => "[INFO] launch focused the running primary (no callback url)".to_owned(),
     (
       Claim::Primary {

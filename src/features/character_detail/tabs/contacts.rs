@@ -19,6 +19,7 @@ use crate::{
       card,
       empty_state::{LoadStateView, load_state_view},
       eyebrow::eyebrow_text,
+      icon::Icon,
       section_header::section_header,
       segmented::segment_button_style,
       virtual_list::{VirtualList, VirtualListConfig},
@@ -27,6 +28,8 @@ use crate::{
   },
 };
 
+const ACTIONS_WIDTH: f32 = 70.0;
+const ACTION_SIZE: f32 = 28.0;
 const AVATAR_SIZE: f32 = 30.0;
 const STANDING_WIDTH: f32 = 70.0;
 const TYPE_WIDTH: f32 = 90.0;
@@ -147,19 +150,71 @@ impl SortDirection {
 pub(in crate::features::character_detail) fn header(
   contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
+  write_enabled: bool,
 ) -> Element<'_, Message> {
   let (count, suffix) = match contacts {
     LoadState::Loaded(page) => (page.rows().len(), if page.has_more() { "+" } else { "" }),
     _ => (0, ""),
   };
 
-  Row::with_children(vec![
+  let mut children: Vec<Element<'_, Message>> = vec![
     section_header("Address book", Some(&format!("{count}{suffix} contacts"))),
     segmented(filter),
+  ];
+  if write_enabled {
+    children.push(add_button());
+  }
+
+  Row::with_children(children)
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill)
+    .into()
+}
+
+fn add_button<'a>() -> Element<'a, Message> {
+  let label = Row::with_children(vec![
+    Icon::plus().size(14.0).color(color::text::PRIMARY).render(),
+    text("Add contact")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
   ])
-  .spacing(spacing::SPACE_3)
-  .align_y(Vertical::Center)
-  .width(Length::Fill)
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  button(container(label).padding(Padding {
+    top: 0.0,
+    right: spacing::SPACE_3_5,
+    bottom: 0.0,
+    left: spacing::SPACE_3_5,
+  }))
+  .height(Length::Fixed(36.0))
+  .on_press(Message::ContactAddOpened)
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hover.then_some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+      border: Border {
+        color: if hover {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      text_color: if hover {
+        color::accent::PLASMA
+      } else {
+        color::text::PRIMARY
+      },
+      ..button::Style::default()
+    }
+  })
   .into()
 }
 
@@ -169,6 +224,7 @@ pub(in crate::features::character_detail) fn header(
 pub(in crate::features::character_detail) fn body<'a>(
   contacts: &'a LoadState<ContactsPage>,
   sort: ContactSort,
+  write_enabled: bool,
   viewport_height: f32,
   scroll_offset: f32,
 ) -> Element<'a, Message> {
@@ -210,10 +266,16 @@ pub(in crate::features::character_detail) fn body<'a>(
     .scroll_offset(scroll_offset);
   let list = VirtualList::new(config, |index| {
     let row = &rows[index];
-    contact_row(&row.contact, Some(&row.image), &labels, index == rows.len() - 1)
+    contact_row(
+      &row.contact,
+      Some(&row.image),
+      &labels,
+      write_enabled,
+      index == rows.len() - 1,
+    )
   })
   .view();
-  let body = Column::with_children(vec![column_header(sort), list]).width(Length::Fill);
+  let body = Column::with_children(vec![column_header(sort, write_enabled), list]).width(Length::Fill);
 
   card::panel(body, false)
 }
@@ -312,8 +374,8 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
     .into()
 }
 
-fn column_header<'a>(sort: ContactSort) -> Element<'a, Message> {
-  let row = Row::with_children(vec![
+fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Message> {
+  let mut children = vec![
     sortable_label("Entity", false, SortColumn::Entity, sort),
     cell(sortable_label("Type", false, SortColumn::Type, sort), TYPE_WIDTH),
     cell(
@@ -322,10 +384,15 @@ fn column_header<'a>(sort: ContactSort) -> Element<'a, Message> {
     ),
     col_label("Note", false),
     cell(col_label("Watchlist", true), WATCHLIST_WIDTH),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
+  ];
+  if write_enabled {
+    children.push(cell(col_label("Edit", true), ACTIONS_WIDTH));
+  }
+
+  let row = Row::with_children(children)
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
 
   container(row)
     .width(Length::Fill)
@@ -351,6 +418,7 @@ fn contact_row<'a>(
   contact: &'a CharacterContact,
   image: Option<&ImageState>,
   labels: &HashMap<i64, &'a str>,
+  write_enabled: bool,
   last: bool,
 ) -> Element<'a, Message> {
   let standing = contact.standing();
@@ -404,16 +472,21 @@ fn contact_row<'a>(
     text("").width(Length::Fill).into()
   };
 
-  let row = Row::with_children(vec![
+  let mut children = vec![
     entity.into(),
     cell(kind.into(), TYPE_WIDTH),
     cell(right_align(standing_text.into()), STANDING_WIDTH),
     note.into(),
     cell(right_align(watch), WATCHLIST_WIDTH),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
+  ];
+  if write_enabled {
+    children.push(cell(row_actions(contact), ACTIONS_WIDTH));
+  }
+
+  let row = Row::with_children(children)
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
 
   let border_bottom = if last { 0.0 } else { 1.0 };
   container(row)
@@ -421,6 +494,66 @@ fn contact_row<'a>(
     .padding(row_padding())
     .style(move |_| shared::row_rule_style(border_bottom))
     .into()
+}
+
+fn row_actions(contact: &CharacterContact) -> Element<'_, Message> {
+  let edit = action_button(
+    Icon::pencil(),
+    false,
+    Message::ContactEditOpened(Box::new(contact.clone())),
+  );
+  let delete = action_button(
+    Icon::trash(),
+    true,
+    Message::ContactDeleteRequested(Box::new(contact.clone())),
+  );
+
+  Row::with_children(vec![edit, delete])
+    .spacing(spacing::UNIT)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn action_button<'a>(icon: Icon, danger: bool, message: Message) -> Element<'a, Message> {
+  let tint = if danger {
+    color::status::DANGER
+  } else {
+    color::text::secondary()
+  };
+
+  button(
+    container(icon.size(14.0).color(tint).render())
+      .width(Length::Fixed(ACTION_SIZE))
+      .height(Length::Fixed(ACTION_SIZE))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .padding(0)
+  .on_press(message)
+  .style(move |_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let (border, background) = if hover && danger {
+      (
+        color::with_alpha(color::status::DANGER, 0.4),
+        color::with_alpha(color::status::DANGER, 0.12),
+      )
+    } else if hover {
+      (color::rule_strong(), color::with_alpha(color::text::PRIMARY, 0.06))
+    } else {
+      (iced::Color::TRANSPARENT, iced::Color::TRANSPARENT)
+    };
+    button::Style {
+      background: Some(Background::Color(background)),
+      border: Border {
+        color: border,
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    }
+  })
+  .into()
 }
 
 fn label_note(contact: &CharacterContact, labels: &HashMap<i64, &str>) -> String {
@@ -540,8 +673,15 @@ mod tests {
         ContactFilter::Corp,
         ContactFilter::Alliance,
       ] {
-        let _el: Element<'_, Message> = super::super::header(&state, filter);
+        let _el: Element<'_, Message> = super::super::header(&state, filter, false);
       }
+    }
+
+    #[test]
+    fn it_renders_the_add_button_when_writes_are_enabled() {
+      let state = LoadState::Loaded(loaded());
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, true);
     }
 
     #[test]
@@ -553,14 +693,14 @@ mod tests {
       );
       let state = LoadState::Loaded(page);
 
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All);
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, false);
     }
 
     #[test]
     fn it_renders_a_zero_count_in_the_loading_state() {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
 
-      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All);
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, false);
     }
   }
 
@@ -578,7 +718,15 @@ mod tests {
       labels.insert(1, "Fleet");
       labels.insert(2, "Trusted");
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false);
+      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false, false);
+    }
+
+    #[test]
+    fn it_renders_the_edit_and_delete_actions_when_writes_are_enabled() {
+      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
+      let labels: HashMap<i64, &str> = HashMap::new();
+
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true, false);
     }
 
     #[test]
@@ -586,7 +734,7 @@ mod tests {
       let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
       let labels: HashMap<i64, &str> = HashMap::new();
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true);
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, false, true);
     }
   }
 
@@ -617,6 +765,7 @@ mod tests {
               column,
               direction,
             },
+            true,
             600.0,
             0.0,
           );
@@ -629,15 +778,15 @@ mod tests {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
       let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 600.0, 0.0);
-      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 600.0, 0.0);
+      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), false, 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, ContactSort::default(), false, 600.0, 0.0);
     }
 
     #[test]
     fn it_renders_an_empty_page_as_a_no_match_panel() {
       let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
 
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 600.0, 0.0);
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), false, 600.0, 0.0);
     }
   }
 

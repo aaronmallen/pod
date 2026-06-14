@@ -79,10 +79,8 @@ pub(super) fn card<'a>(
     stats_row(model),
   ];
 
-  if model.needs_reauth {
-    sections.push(reauth_affordance(model.character_id));
-  }
-
+  // Re-authorization is offered through the right-click context menu (context_menu_view), not a
+  // card button.
   if let Some(indicator) = sync_indicator(failure) {
     sections.push(indicator);
   }
@@ -456,38 +454,6 @@ fn stat<'a>(label: &'a str, value: String, value_font: iced::Font) -> Element<'a
     .into()
 }
 
-fn reauth_affordance<'a>(character_id: i64) -> Element<'a, Message> {
-  container(
-    button(
-      text("Needs re-authorization")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS),
-    )
-    .padding(0)
-    .on_press(Message::ReauthCharacterRequested(character_id))
-    .style(reauth_button),
-  )
-  .padding(Padding {
-    top: 0.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_3,
-    left: spacing::SPACE_3_5,
-  })
-  .into()
-}
-
-fn reauth_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
-  let text_color = match status {
-    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
-    _ => color::status::DANGER,
-  };
-  button::Style {
-    background: Some(Background::Color(Color::TRANSPARENT)),
-    text_color,
-    ..button::Style::default()
-  }
-}
-
 fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   let label = match failure? {
     Phase::BackingOff => "Sync backing off",
@@ -760,7 +726,9 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_reauthorize_affordance_when_the_character_needs_reauth() {
+    fn it_renders_a_needs_reauth_character_without_a_card_affordance() {
+      // needs_reauth no longer paints anything on the card itself (re-auth lives in the
+      // right-click context menu); the card still renders normally.
       let mut model = base_model();
       model.needs_reauth = true;
 

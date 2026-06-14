@@ -71,6 +71,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/copy.svg"))
   }
 
+  pub fn doc() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/doc.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn corp() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/corp.svg"))

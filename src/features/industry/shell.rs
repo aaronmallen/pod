@@ -304,7 +304,7 @@ fn tab_count(state: &State, tab: Tab) -> String {
 
 fn tab_icon(tab: Tab) -> Icon {
   match tab {
-    Tab::Blueprints => Icon::copy(),
+    Tab::Blueprints => Icon::doc(),
     Tab::Jobs => Icon::industry(),
   }
 }

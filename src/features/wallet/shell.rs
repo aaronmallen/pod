@@ -112,20 +112,11 @@ fn center(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   head_children.push(filter_bar(state));
   let head = Column::with_children(head_children).width(Length::Fill);
 
-  let body = scrollable(tab_body(state, now))
-    .style(crate::ui::style::control::scrollbar)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .on_scroll(|viewport| Message::TabScrolled {
-      absolute: viewport.absolute_offset().y,
-      relative: viewport.relative_offset().y,
-    });
-
   let mut children: Vec<Element<'_, Message>> = vec![head.into()];
   if let Some(pinned_header) = pinned_header(state) {
     children.push(pinned_header);
   }
-  children.push(body.into());
+  children.push(tab_body(state, now));
 
   Column::with_children(children)
     .width(Length::Fill)
@@ -349,7 +340,17 @@ where
     let config = VirtualListConfig::new(entries.len(), ESTIMATED_ROW_HEIGHT)
       .viewport_height(viewport_height)
       .scroll_offset(offset);
-    VirtualList::new(config, |index| render(entries[index])).view()
+    let list = VirtualList::new(config, |index| render(entries[index])).view();
+
+    scrollable(list)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::TabScrolled {
+        absolute: viewport.absolute_offset().y,
+        relative: viewport.relative_offset().y,
+      })
+      .into()
   })
 }
 

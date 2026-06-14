@@ -687,25 +687,11 @@ fn open_reply(state: &mut State, mail_id: i64, kind: compose::Kind) -> Task<Mess
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::Loaded(loaded) => handle_loaded(state, *loaded, db),
-    Message::ScopeSelected(scope) => {
-      state.active = scope;
-      state.folder = Folder::Unified;
-      state.selected = None;
-      state.render = None;
-      state.picker_open = false;
-      state.snooze_menu = SnoozeMenu::Closed;
-      state.snooze_calendar = None;
-      state.label_modal = None;
-      state.label_picker = None;
-      state.pending_label_delete = None;
-      state.dragging_mail = None;
-      state.drop_target = None;
-      Task::none()
-    }
-    Message::PickerToggled => {
-      state.picker_open = !state.picker_open;
-      Task::none()
-    }
+    Message::ScopeSelected(_)
+    | Message::PickerToggled
+    | Message::FolderSelected(_)
+    | Message::SearchChanged(_)
+    | Message::RenderLoaded(_) => update_navigation(state, message, db),
     Message::FolderPaneDragStart
     | Message::FolderPaneDragged(_)
     | Message::FolderPaneDragEnd
@@ -713,28 +699,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::ListPaneDragged(_)
     | Message::ListPaneDragEnd
     | Message::PaneSettled(..) => update_pane_drag(state, message),
-    Message::FolderSelected(folder) => {
-      state.folder = folder;
-      state.selected = None;
-      state.render = None;
-      state.snooze_menu = SnoozeMenu::Closed;
-      state.snooze_calendar = None;
-      state.label_picker = None;
-      reload_for(db, state.active, folder)
-    }
-    Message::SearchChanged(query) => {
-      state.search = query;
-      state.list_scroll_offset = 0.0;
-      state.all_messages.clear();
-      state.search_cursor = None;
-      state.search_has_more = false;
-      state.search_loading = false;
-      if state.search.trim().is_empty() {
-        Task::none()
-      } else {
-        start_search(state, db)
-      }
-    }
     Message::ListScrolled {
       ..
     }
@@ -743,10 +707,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       ..
     } => update_pagination(state, message, db),
     Message::Selected(mail_id) => handle_message_selected(state, mail_id, db),
-    Message::RenderLoaded(render) => {
-      state.render = *render;
-      Task::none()
-    }
     Message::MarkedRead => reload_for(db, state.active, state.folder),
     Message::ToggleStar(mail_id) => triage_write(state, db, mail_id, triage::toggle_star),
     Message::TogglePin(mail_id) => triage_write(state, db, mail_id, triage::toggle_pin),
@@ -810,6 +770,66 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::LabelRowMenuOpened(_)
     | Message::LabelToggled(..)
     | Message::LabelsWritten => update_labels(state, message, db),
+    Message::OutboxRetry(_) | Message::OutboxDismiss(_) | Message::OutboxRefreshed(_) => {
+      update_outbox(state, message, db)
+    }
+    Message::ReauthRequested(_) => Task::none(),
+  }
+}
+
+fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::ScopeSelected(scope) => {
+      state.active = scope;
+      state.folder = Folder::Unified;
+      state.selected = None;
+      state.render = None;
+      state.picker_open = false;
+      state.snooze_menu = SnoozeMenu::Closed;
+      state.snooze_calendar = None;
+      state.label_modal = None;
+      state.label_picker = None;
+      state.pending_label_delete = None;
+      state.dragging_mail = None;
+      state.drop_target = None;
+      Task::none()
+    }
+    Message::PickerToggled => {
+      state.picker_open = !state.picker_open;
+      Task::none()
+    }
+    Message::FolderSelected(folder) => {
+      state.folder = folder;
+      state.selected = None;
+      state.render = None;
+      state.snooze_menu = SnoozeMenu::Closed;
+      state.snooze_calendar = None;
+      state.label_picker = None;
+      reload_for(db, state.active, folder)
+    }
+    Message::SearchChanged(query) => {
+      state.search = query;
+      state.list_scroll_offset = 0.0;
+      state.all_messages.clear();
+      state.search_cursor = None;
+      state.search_has_more = false;
+      state.search_loading = false;
+      if state.search.trim().is_empty() {
+        Task::none()
+      } else {
+        start_search(state, db)
+      }
+    }
+    Message::RenderLoaded(render) => {
+      state.render = *render;
+      Task::none()
+    }
+    _ => Task::none(),
+  }
+}
+
+fn update_outbox(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::OutboxRetry(id) => Task::perform(read_state::retry_outbox(db.clone(), id), |indicator| {
       Message::OutboxRefreshed(Box::new(indicator))
     }),
@@ -820,7 +840,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.outbox_indicator = *indicator;
       Task::none()
     }
-    Message::ReauthRequested(_) => Task::none(),
+    _ => Task::none(),
   }
 }
 

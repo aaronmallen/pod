@@ -321,3 +321,69 @@ struct SlotUsage {
   reactions: i64,
   science: i64,
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::store::images::{ImageKind, ImageState};
+
+  fn owner(id: i64, is_corporation: bool) -> RosterOwner {
+    RosterOwner {
+      corp: "TST".to_owned(),
+      granted_scopes: None,
+      id,
+      is_corporation,
+      logo: is_corporation.then_some(ImageState::Stale {
+        id,
+        kind: ImageKind::CorporationLogo,
+      }),
+      name: format!("Owner {id}"),
+      portrait: (!is_corporation).then_some(ImageState::Stale {
+        id,
+        kind: ImageKind::CharacterPortrait,
+      }),
+      slots: super::super::loaders::SlotCaps::default(),
+    }
+  }
+
+  fn state_with(active: Scope) -> State {
+    let mut state = State::new(super::super::EMPTY_INDUSTRY_SELECTION, Vec::new());
+    state.active = active;
+    state.roster = vec![owner(1, false), owner(2, false), owner(98, true)];
+    state
+  }
+
+  mod slot_pool {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_full_roster_for_the_combined_scope() {
+      let state = state_with(Scope::All);
+
+      assert_eq!(super::super::slot_pool(&state).len(), 3);
+    }
+
+    #[test]
+    fn it_filters_to_one_character_for_a_char_scope() {
+      let state = state_with(Scope::Char(1));
+
+      let pool = super::super::slot_pool(&state);
+
+      assert_eq!(pool.len(), 1);
+      assert_eq!(pool[0].id, 1);
+      assert!(!pool[0].is_corporation);
+    }
+
+    #[test]
+    fn it_filters_to_one_corporation_for_a_corp_scope() {
+      let state = state_with(Scope::Corp(98));
+
+      let pool = super::super::slot_pool(&state);
+
+      assert_eq!(pool.len(), 1);
+      assert!(pool[0].is_corporation);
+    }
+  }
+}

@@ -458,14 +458,8 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
 
   let members_by_corp = corporation_members(&characters);
   for corp in &corporations {
-    let mut caps = SlotCaps::default();
-    for member in members_by_corp.get(&corp.id()).into_iter().flatten() {
-      if let Some(member_caps) = caps_by_character.get(member) {
-        caps.manufacturing += member_caps.manufacturing;
-        caps.reactions += member_caps.reactions;
-        caps.science += member_caps.science;
-      }
-    }
+    let members = members_by_corp.get(&corp.id());
+    let caps = aggregate_corp_caps(members.map(Vec::as_slice).unwrap_or_default(), &caps_by_character);
     let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
     roster.push(RosterOwner {
       corp: corp.ticker().to_owned(),
@@ -480,6 +474,18 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
   }
 
   roster
+}
+
+fn aggregate_corp_caps(members: &[i64], caps_by_character: &HashMap<i64, SlotCaps>) -> SlotCaps {
+  let mut caps = SlotCaps::default();
+  for member in members {
+    if let Some(member_caps) = caps_by_character.get(member) {
+      caps.manufacturing += member_caps.manufacturing;
+      caps.reactions += member_caps.reactions;
+      caps.science += member_caps.science;
+    }
+  }
+  caps
 }
 
 fn corporation_members(characters: &[crate::store::model::Character]) -> HashMap<i64, Vec<i64>> {
@@ -680,6 +686,139 @@ mod tests {
       let prices = HashMap::new();
 
       assert_eq!(super::job_value(Activity::Manufacturing, Some(587), 10, &prices), None);
+    }
+  }
+
+  fn roster_owner(id: i64, is_corporation: bool, name: &str) -> RosterOwner {
+    RosterOwner {
+      corp: "CORP".to_owned(),
+      granted_scopes: None,
+      id,
+      is_corporation,
+      logo: None,
+      name: name.to_owned(),
+      portrait: None,
+      slots: SlotCaps::default(),
+    }
+  }
+
+  mod aggregate_corp_caps {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sums_member_caps_and_skips_unknown_members() {
+      let caps_by_character = HashMap::from([
+        (
+          1,
+          SlotCaps {
+            manufacturing: 2,
+            reactions: 1,
+            science: 3,
+          },
+        ),
+        (
+          2,
+          SlotCaps {
+            manufacturing: 4,
+            reactions: 0,
+            science: 1,
+          },
+        ),
+      ]);
+
+      let caps = super::aggregate_corp_caps(&[1, 2, 99], &caps_by_character);
+
+      assert_eq!(
+        caps,
+        SlotCaps {
+          manufacturing: 6,
+          reactions: 1,
+          science: 4,
+        }
+      );
+    }
+  }
+
+  mod build_job {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_falls_back_to_placeholder_names_when_unresolved() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut type_names = TypeNames::new();
+      let mut locations = LocationNames::new();
+      let prices = HashMap::new();
+      let input = JobInput {
+        activity_id: 1,
+        blueprint_type_id: 1,
+        cost: 0.0,
+        end_date: "2026-06-13T13:00:00Z".to_owned(),
+        facility_id: 60_003_760,
+        installer: "Pilot".to_owned(),
+        job_id: 1,
+        owner: Owner::Character(1),
+        owner_name: "Pilot".to_owned(),
+        probability: None,
+        product_type_id: Some(587),
+        runs: 10,
+        start_date: "2026-06-13T11:00:00Z".to_owned(),
+      };
+
+      let job = super::build_job(&db, &mut type_names, &mut locations, &prices, input).await;
+
+      assert_eq!(job.product_name, "Type 587");
+      assert_eq!(job.facility, "Facility 60003760");
+    }
+
+    #[tokio::test]
+    async fn it_uses_an_unknown_product_label_without_a_type() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut type_names = TypeNames::new();
+      let mut locations = LocationNames::new();
+      let prices = HashMap::new();
+      let input = JobInput {
+        activity_id: 5,
+        blueprint_type_id: 1,
+        cost: 0.0,
+        end_date: "2026-06-13T13:00:00Z".to_owned(),
+        facility_id: 1,
+        installer: "Pilot".to_owned(),
+        job_id: 2,
+        owner: Owner::Corporation(9),
+        owner_name: "Corp".to_owned(),
+        probability: None,
+        product_type_id: None,
+        runs: 1,
+        start_date: "2026-06-13T11:00:00Z".to_owned(),
+      };
+
+      let job = super::build_job(&db, &mut type_names, &mut locations, &prices, input).await;
+
+      assert_eq!(job.product_name, "Unknown product");
+    }
+  }
+
+  mod owner_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_the_matching_roster_entry() {
+      let roster = vec![roster_owner(1, false, "Pilot One"), roster_owner(1, true, "Corp One")];
+
+      assert_eq!(super::owner_name(&roster, Owner::Character(1)), "Pilot One");
+      assert_eq!(super::owner_name(&roster, Owner::Corporation(1)), "Corp One");
+    }
+
+    #[test]
+    fn it_falls_back_to_placeholder_labels_when_absent() {
+      let roster: Vec<RosterOwner> = Vec::new();
+
+      assert_eq!(super::owner_name(&roster, Owner::Character(42)), "Pilot 42");
+      assert_eq!(super::owner_name(&roster, Owner::Corporation(7)), "Corp 7");
     }
   }
 

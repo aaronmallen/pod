@@ -1,3 +1,4 @@
+mod blueprints;
 mod jobs;
 mod loaders;
 mod shell;
@@ -9,7 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use iced::{Element, Subscription, Task};
 
-pub use self::loaders::{Activity, IndustryJob, Loaded, Owner, RosterOwner};
+pub use self::loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner};
 use crate::store::{Database, images};
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
@@ -42,22 +43,46 @@ pub enum Scope {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
+  Blueprints,
   #[default]
   Jobs,
 }
 
 impl Tab {
-  pub const ALL: [Tab; 1] = [Tab::Jobs];
+  pub const ALL: [Tab; 2] = [Tab::Jobs, Tab::Blueprints];
 
   pub fn label(self) -> &'static str {
     match self {
+      Tab::Blueprints => "Blueprints",
       Tab::Jobs => "Jobs",
     }
   }
 }
 
+/// The All / Originals / Copies segmented filter on the Blueprints tab.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BlueprintKind {
+  #[default]
+  All,
+  Originals,
+  Copies,
+}
+
+/// The Name / ME / Runs sort toggle on the Blueprints tab.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BlueprintSort {
+  #[default]
+  Name,
+  MaterialEfficiency,
+  Runs,
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
+  BlueprintKindSelected(BlueprintKind),
+  BlueprintScrolled { absolute: f32 },
+  BlueprintSearchChanged(String),
+  BlueprintSortSelected(BlueprintSort),
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
   Loaded(Box<Loaded>),
@@ -71,6 +96,11 @@ pub enum Message {
 #[derive(Debug)]
 pub struct State {
   active: Scope,
+  blueprint_kind: BlueprintKind,
+  blueprint_scroll_offset: f32,
+  blueprint_search: String,
+  blueprint_sort: BlueprintSort,
+  blueprints: Vec<Blueprint>,
   filter: Filter,
   group_by: GroupBy,
   jobs: Vec<IndustryJob>,
@@ -88,6 +118,11 @@ impl State {
       } else {
         Scope::Char(active)
       },
+      blueprint_kind: BlueprintKind::default(),
+      blueprint_scroll_offset: 0.0,
+      blueprint_search: String::new(),
+      blueprint_sort: BlueprintSort::default(),
+      blueprints: Vec::new(),
       filter: Filter::default(),
       group_by: GroupBy::default(),
       jobs: Vec::new(),
@@ -113,6 +148,32 @@ impl State {
       .filter_map(|owner| owner.portrait.as_ref().or(owner.logo.as_ref()))
       .filter_map(images::ImageState::stale_key)
       .filter(|(_, id)| *id > 0)
+      .collect()
+  }
+
+  pub(super) fn blueprint_kind(&self) -> BlueprintKind {
+    self.blueprint_kind
+  }
+
+  pub(super) fn blueprint_scroll_offset(&self) -> f32 {
+    self.blueprint_scroll_offset
+  }
+
+  pub(super) fn blueprint_search(&self) -> &str {
+    &self.blueprint_search
+  }
+
+  pub(super) fn blueprint_sort(&self) -> BlueprintSort {
+    self.blueprint_sort
+  }
+
+  /// Blueprints visible under the current scope. Corporation blueprints are always shown; a character's blueprints are
+  /// hidden when that pilot is missing the required industry scope (mirroring [`visible_jobs`]).
+  pub(super) fn visible_blueprints(&self) -> Vec<&Blueprint> {
+    self
+      .blueprints
+      .iter()
+      .filter(|blueprint| self.is_authorized(blueprint.owner))
       .collect()
   }
 
@@ -224,6 +285,27 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
 
 pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime<Utc>) -> Task<Message> {
   match message {
+    Message::BlueprintKindSelected(kind) => {
+      state.blueprint_kind = kind;
+      state.blueprint_scroll_offset = 0.0;
+      Task::none()
+    }
+    Message::BlueprintScrolled {
+      absolute,
+    } => {
+      state.blueprint_scroll_offset = absolute;
+      Task::none()
+    }
+    Message::BlueprintSearchChanged(query) => {
+      state.blueprint_search = query;
+      state.blueprint_scroll_offset = 0.0;
+      Task::none()
+    }
+    Message::BlueprintSortSelected(sort) => {
+      state.blueprint_sort = sort;
+      state.blueprint_scroll_offset = 0.0;
+      Task::none()
+    }
     Message::FilterSelected(filter) => {
       state.filter = filter;
       Task::none()
@@ -234,12 +316,14 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     }
     Message::Loaded(loaded) => {
       let Loaded {
+        blueprints,
         jobs,
         roster,
         scope,
       } = *loaded;
       // Drop results that belong to a scope the user already navigated away from.
       if scope == state.active {
+        state.blueprints = blueprints;
         state.jobs = jobs;
         state.roster = roster;
       }
@@ -253,6 +337,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     Message::ScopeSelected(scope) => {
       state.active = scope;
       state.picker_open = false;
+      state.blueprint_scroll_offset = 0.0;
       reload(db, scope, &state.required_scopes)
     }
     Message::TabSelected(tab) => {
@@ -371,7 +456,89 @@ mod tests {
       job(Owner::Character(2), 12, Activity::Copy, "2026-06-13T13:00:00Z"),
       job(Owner::Corporation(98), 13, Activity::Reactions, "2026-06-13T16:00:00Z"),
     ];
-    state_with(Scope::All, roster, jobs)
+    let mut state = state_with(Scope::All, roster, jobs);
+    state.blueprints = vec![
+      blueprint(Owner::Character(1), 1, "Rifter Blueprint", -1, 10, 20, false),
+      blueprint(Owner::Character(1), 2, "Hobgoblin I Blueprint", 12, 4, 8, false),
+      blueprint(Owner::Character(2), 3, "Hidden Blueprint", 5, 0, 0, false),
+      blueprint(Owner::Corporation(98), 4, "Sulfuric Acid Reaction", -1, 0, 0, true),
+    ];
+    state
+  }
+
+  fn blueprint(owner: Owner, item_id: i64, name: &str, runs: i64, me: i64, te: i64, reaction: bool) -> Blueprint {
+    Blueprint {
+      group_name: "Frigate Blueprint".to_owned(),
+      item_id,
+      location: "Jita IV - Moon 4".to_owned(),
+      material_efficiency: me,
+      name: name.to_owned(),
+      owner,
+      product_name: Some("Rifter".to_owned()),
+      reaction,
+      runs,
+      system_name: Some("Jita".to_owned()),
+      time_efficiency: te,
+      type_id: 681,
+    }
+  }
+
+  mod blueprints_state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_drops_unauthorized_character_blueprints_but_keeps_corporations() {
+      let state = populated();
+      let visible = state.visible_blueprints();
+
+      // The character-2 blueprint is hidden (missing scope); originals/copies for the authorized pilot and the
+      // corporation remain.
+      assert_eq!(visible.len(), 3);
+      assert!(visible.iter().all(|bp| bp.owner != Owner::Character(2)));
+    }
+
+    #[tokio::test]
+    async fn it_stores_the_blueprint_scroll_offset() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+
+      let _ = update(
+        &mut state,
+        Message::BlueprintScrolled {
+          absolute: 512.0,
+        },
+        &db,
+        now(),
+      );
+
+      assert_eq!(state.blueprint_scroll_offset(), 512.0);
+    }
+
+    #[tokio::test]
+    async fn it_resets_the_scroll_offset_when_the_filter_changes() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+      let _ = update(
+        &mut state,
+        Message::BlueprintScrolled {
+          absolute: 512.0,
+        },
+        &db,
+        now(),
+      );
+
+      let _ = update(
+        &mut state,
+        Message::BlueprintSearchChanged("rifter".to_owned()),
+        &db,
+        now(),
+      );
+
+      assert_eq!(state.blueprint_search(), "rifter");
+      assert_eq!(state.blueprint_scroll_offset(), 0.0);
+    }
   }
 
   mod rendering {
@@ -400,6 +567,31 @@ mod tests {
         state.filter = filter;
         let _el: Element<'_, Message> = view(&state, &required(), now());
       }
+    }
+
+    #[test]
+    fn it_renders_the_blueprints_tab_for_each_kind_and_sort() {
+      let mut state = populated();
+      state.tab = Tab::Blueprints;
+      for kind in [BlueprintKind::All, BlueprintKind::Originals, BlueprintKind::Copies] {
+        state.blueprint_kind = kind;
+        for sort in [
+          BlueprintSort::Name,
+          BlueprintSort::MaterialEfficiency,
+          BlueprintSort::Runs,
+        ] {
+          state.blueprint_sort = sort;
+          let _el: Element<'_, Message> = view(&state, &required(), now());
+        }
+      }
+    }
+
+    #[test]
+    fn it_renders_an_empty_blueprints_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.tab = Tab::Blueprints;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
     }
 
     #[test]
@@ -438,18 +630,37 @@ mod tests {
       let _ = update(&mut state, Message::FilterSelected(Filter::Ready), &db, n);
       let _ = update(&mut state, Message::GroupBySelected(GroupBy::Activity), &db, n);
       let _ = update(&mut state, Message::TabSelected(Tab::Jobs), &db, n);
+      let _ = update(&mut state, Message::TabSelected(Tab::Blueprints), &db, n);
+      let _ = update(
+        &mut state,
+        Message::BlueprintKindSelected(BlueprintKind::Originals),
+        &db,
+        n,
+      );
+      let _ = update(&mut state, Message::BlueprintSortSelected(BlueprintSort::Runs), &db, n);
+      let _ = update(&mut state, Message::BlueprintSearchChanged("rifter".to_owned()), &db, n);
+      let _ = update(
+        &mut state,
+        Message::BlueprintScrolled {
+          absolute: 240.0,
+        },
+        &db,
+        n,
+      );
       let _ = update(&mut state, Message::Tick, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Char(1)), &db, n);
 
       let fresh = Loaded {
+        blueprints: Vec::new(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: state.active,
       };
       let _ = update(&mut state, Message::Loaded(Box::new(fresh)), &db, n);
       let stale = Loaded {
+        blueprints: Vec::new(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: Scope::Char(424_242),

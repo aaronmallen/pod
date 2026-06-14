@@ -5,9 +5,18 @@ use chrono::{DateTime, Utc};
 use super::Scope;
 use crate::store::{
   Database, images,
-  model::{CharacterIndustryJob, CorporationIndustryJob, OwnerType as CredentialOwner},
-  repo::{assets, character, finance, industry, org, sde},
+  model::{
+    CharacterBlueprint, CharacterIndustryJob, CorporationBlueprint, CorporationIndustryJob,
+    OwnerType as CredentialOwner,
+  },
+  repo::{assets, blueprints, character, finance, industry, org, sde},
 };
+
+/// Manufacturing activity id in the seeded `blueprint_activity_products` reference; resolves a blueprint's product.
+const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+/// Reaction activity id in the seeded reference (the SDE seed maps "reaction" to 11, not the ESI job id 9); a
+/// blueprint whose only product is a reaction renders "n/a" for ME/TE.
+const REACTION_ACTIVITY_ID: i64 = 11;
 
 // EVE skill type ids. Each slot bucket sums one base + one advanced skill (see `slot_caps`):
 // manufacturing = Mass Production + Advanced, reactions = Mass Reactions + Advanced, science = Laboratory Operation + Advanced.
@@ -103,6 +112,7 @@ pub enum SlotBucket {
 
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
+  pub blueprints: Vec<Blueprint>,
   pub jobs: Vec<IndustryJob>,
   pub roster: Vec<RosterOwner>,
   pub scope: Scope,
@@ -151,6 +161,104 @@ impl IndustryJob {
 
   pub fn remaining_seconds(&self, now: DateTime<Utc>) -> i64 {
     self.end().map(|end| (end - now).num_seconds().max(0)).unwrap_or(0)
+  }
+}
+
+/// A single owned blueprint (BPO or BPC) resolved for the Blueprints tab.
+#[derive(Clone, Debug)]
+pub struct Blueprint {
+  /// Blueprint group name (e.g. "Frigate Blueprint"), used for the row subtitle.
+  pub group_name: String,
+  /// Stable in-game item id, used as the list/window key.
+  pub item_id: i64,
+  /// Station / structure / system display name.
+  pub location: String,
+  pub material_efficiency: i64,
+  pub name: String,
+  pub owner: Owner,
+  /// Manufacturing product name (the "makes {Product}" half of the subtitle).
+  pub product_name: Option<String>,
+  /// True when the blueprint manufactures via a reaction; ME/TE render "n/a".
+  pub reaction: bool,
+  /// `-1` ⇒ BPO (infinite runs); otherwise remaining runs on a BPC.
+  pub runs: i64,
+  pub system_name: Option<String>,
+  pub time_efficiency: i64,
+  pub type_id: i64,
+}
+
+impl Blueprint {
+  /// A BPO has unlimited runs (`runs == -1`); anything else is a finite-run BPC.
+  pub fn is_original(&self) -> bool {
+    self.runs < 0
+  }
+}
+
+/// Manufacturing product + reaction flag for a blueprint type, sourced from the SDE reference tables.
+#[derive(Clone, Default)]
+struct BlueprintReference {
+  product_type_id: Option<i64>,
+  reaction: bool,
+}
+
+/// Per-load cache of SDE blueprint-product lookups (`blueprint_activity_products`) keyed by blueprint type id.
+struct BlueprintProducts {
+  cache: HashMap<i64, BlueprintReference>,
+}
+
+impl BlueprintProducts {
+  fn new() -> Self {
+    BlueprintProducts {
+      cache: HashMap::new(),
+    }
+  }
+
+  async fn resolve(&mut self, db: &Database, blueprint_type_id: i64) -> BlueprintReference {
+    if let Some(hit) = self.cache.get(&blueprint_type_id) {
+      return hit.clone();
+    }
+    let reference = blueprint_reference(db, blueprint_type_id).await;
+    self.cache.insert(blueprint_type_id, reference.clone());
+    reference
+  }
+}
+
+/// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
+///
+/// `Database.0` (the pool) is public; the Blueprints tab reads the `blueprint_activity_products` reference table
+/// directly here rather than through a repo, mirroring how the loaders already join other SDE tables. A blueprint that
+/// has only a reaction product (activity id 9) is flagged so the row hides ME/TE.
+async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> BlueprintReference {
+  let manufacturing: Option<i64> = sqlx::query_scalar(
+    "SELECT product_type_id FROM blueprint_activity_products WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
+  )
+  .bind(blueprint_type_id)
+  .bind(MANUFACTURING_ACTIVITY_ID)
+  .fetch_optional(&db.0)
+  .await
+  .ok()
+  .flatten();
+
+  if let Some(product_type_id) = manufacturing {
+    return BlueprintReference {
+      product_type_id: Some(product_type_id),
+      reaction: false,
+    };
+  }
+
+  let reaction: Option<i64> = sqlx::query_scalar(
+    "SELECT product_type_id FROM blueprint_activity_products WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
+  )
+  .bind(blueprint_type_id)
+  .bind(REACTION_ACTIVITY_ID)
+  .fetch_optional(&db.0)
+  .await
+  .ok()
+  .flatten();
+
+  BlueprintReference {
+    product_type_id: reaction,
+    reaction: reaction.is_some(),
   }
 }
 
@@ -226,6 +334,158 @@ impl TypeNames {
   }
 }
 
+/// Per-load cache resolving a type id to its item-group name (e.g. "Frigate Blueprint").
+struct GroupNames {
+  cache: HashMap<i64, Option<String>>,
+}
+
+impl GroupNames {
+  fn new() -> Self {
+    GroupNames {
+      cache: HashMap::new(),
+    }
+  }
+
+  async fn resolve(&mut self, db: &Database, type_id: i64) -> Option<String> {
+    if let Some(name) = self.cache.get(&type_id) {
+      return name.clone();
+    }
+    let name = resolve_group_name(db, type_id).await;
+    self.cache.insert(type_id, name.clone());
+    name
+  }
+}
+
+async fn resolve_group_name(db: &Database, type_id: i64) -> Option<String> {
+  let item = sde::get_item_type(db, type_id).await.ok().flatten()?;
+  sde::get_item_group(db, item.group_id())
+    .await
+    .ok()
+    .flatten()
+    .map(|group| group.name().to_owned())
+}
+
+/// The SDE / name lookup caches shared while resolving a batch of blueprints.
+struct BlueprintResolvers {
+  group_names: GroupNames,
+  locations: LocationNames,
+  products: BlueprintProducts,
+  type_names: TypeNames,
+}
+
+impl BlueprintResolvers {
+  fn new() -> Self {
+    BlueprintResolvers {
+      group_names: GroupNames::new(),
+      locations: LocationNames::new(),
+      products: BlueprintProducts::new(),
+      type_names: TypeNames::new(),
+    }
+  }
+}
+
+async fn collect_blueprints(db: &Database, scope: Scope) -> Vec<Blueprint> {
+  let mut resolvers = BlueprintResolvers::new();
+  let mut out = Vec::new();
+  match scope {
+    Scope::All => {
+      let all = blueprints::list_all(db).await.unwrap_or_default();
+      for row in all.character_blueprints {
+        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::character(&row)).await);
+      }
+      for row in all.corporation_blueprints {
+        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::corporation(&row)).await);
+      }
+    }
+    Scope::Char(id) => {
+      for row in blueprints::list_for_character(db, id).await.unwrap_or_default() {
+        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::character(&row)).await);
+      }
+    }
+    Scope::Corp(id) => {
+      for row in blueprints::list_for_corporation(db, id).await.unwrap_or_default() {
+        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::corporation(&row)).await);
+      }
+    }
+  }
+  out
+}
+
+struct BlueprintInput {
+  item_id: i64,
+  location_id: i64,
+  material_efficiency: i64,
+  owner: Owner,
+  runs: i64,
+  time_efficiency: i64,
+  type_id: i64,
+}
+
+impl BlueprintInput {
+  fn character(row: &CharacterBlueprint) -> Self {
+    BlueprintInput {
+      item_id: row.item_id(),
+      location_id: row.location_id(),
+      material_efficiency: row.material_efficiency(),
+      owner: Owner::Character(row.character_id()),
+      runs: row.runs(),
+      time_efficiency: row.time_efficiency(),
+      type_id: row.type_id(),
+    }
+  }
+
+  fn corporation(row: &CorporationBlueprint) -> Self {
+    BlueprintInput {
+      item_id: row.item_id(),
+      location_id: row.location_id(),
+      material_efficiency: row.material_efficiency(),
+      owner: Owner::Corporation(row.corporation_id()),
+      runs: row.runs(),
+      time_efficiency: row.time_efficiency(),
+      type_id: row.type_id(),
+    }
+  }
+}
+
+async fn build_blueprint(db: &Database, resolvers: &mut BlueprintResolvers, input: BlueprintInput) -> Blueprint {
+  let name = resolvers
+    .type_names
+    .resolve(db, input.type_id)
+    .await
+    .unwrap_or_else(|| format!("Type {}", input.type_id));
+  let group_name = resolvers
+    .group_names
+    .resolve(db, input.type_id)
+    .await
+    .unwrap_or_default();
+  let reference = resolvers.products.resolve(db, input.type_id).await;
+  let product_name = match reference.product_type_id {
+    Some(id) => resolvers.type_names.resolve(db, id).await,
+    None => None,
+  };
+  let location = resolvers.locations.resolve(db, input.location_id).await;
+  let location_label = location
+    .name
+    .clone()
+    .or_else(|| location.system_name.clone())
+    .unwrap_or_else(|| format!("Location {}", input.location_id));
+
+  Blueprint {
+    group_name,
+    item_id: input.item_id,
+    location: location_label,
+    material_efficiency: input.material_efficiency,
+    name,
+    owner: input.owner,
+    product_name,
+    reaction: reference.reaction,
+    runs: input.runs,
+    system_name: location.system_name,
+    time_efficiency: input.time_efficiency,
+    type_id: input.type_id,
+  }
+}
+
 pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
   let db = &db;
   let roster = load_roster(db).await;
@@ -256,7 +516,10 @@ pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
     }
   }
 
+  let blueprints = collect_blueprints(db, scope).await;
+
   Loaded {
+    blueprints,
     jobs,
     roster,
     scope,
@@ -829,9 +1092,24 @@ mod tests {
     async fn it_loads_each_scope_against_an_empty_store() {
       let db = crate::store::open_test().await.unwrap();
 
-      assert!(super::load(db.clone(), Scope::All).await.jobs.is_empty());
+      let all = super::load(db.clone(), Scope::All).await;
+      assert!(all.jobs.is_empty());
+      assert!(all.blueprints.is_empty());
       assert!(super::load(db.clone(), Scope::Char(1)).await.jobs.is_empty());
       assert!(super::load(db.clone(), Scope::Corp(1)).await.jobs.is_empty());
+    }
+  }
+
+  mod blueprint_reference {
+
+    #[tokio::test]
+    async fn it_returns_no_product_for_an_unseeded_blueprint() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let reference = super::blueprint_reference(&db, 681).await;
+
+      assert!(reference.product_type_id.is_none());
+      assert!(!reference.reaction);
     }
   }
 }

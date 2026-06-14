@@ -12,6 +12,7 @@ use iced::{
 
 use super::{Message, State};
 use crate::{
+  clients::esi::scopes,
   config::Feature,
   features::registry,
   ui::{
@@ -62,6 +63,17 @@ impl Tab {
     self.feature().noun()
   }
 
+  /// The tab's read scopes only, so the forbidden wall gates visibility on reads — a missing write scope (e.g.
+  /// `write_contacts`) must never block viewing the tab.
+  fn read_scopes(self) -> Vec<&'static str> {
+    self
+      .required_scopes()
+      .iter()
+      .copied()
+      .filter(|scope| !scopes::is_write_scope(scope))
+      .collect()
+  }
+
   fn required_scopes(self) -> &'static [&'static str] {
     registry::descriptor(self.feature()).scopes
   }
@@ -109,7 +121,7 @@ pub(super) fn tab_strip(enabled: &[Tab], active: Tab) -> Element<'_, Message> {
 }
 
 pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
-  let missing = forbidden::missing_scopes(state.granted_scopes(), state.active_tab.required_scopes());
+  let missing = forbidden::missing_scopes(state.granted_scopes(), &state.active_tab.read_scopes());
   if !missing.is_empty() {
     let forbidden = forbidden::forbidden(
       state.active_tab.noun(),
@@ -332,7 +344,10 @@ mod tests {
     #[test]
     fn it_maps_each_gated_tab_to_its_esi_scope() {
       assert_eq!(Tab::Clones.required_scopes(), &[scopes::CHARACTER_CLONES]);
-      assert_eq!(Tab::Contacts.required_scopes(), &[scopes::CHARACTER_CONTACTS]);
+      assert_eq!(
+        Tab::Contacts.required_scopes(),
+        &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE]
+      );
       assert_eq!(Tab::Killlog.required_scopes(), &[scopes::CHARACTER_KILLMAILS]);
       assert_eq!(Tab::Notifications.required_scopes(), &[scopes::CHARACTER_NOTIFICATIONS]);
       assert_eq!(Tab::Standings.required_scopes(), &[scopes::CHARACTER_STANDINGS]);
@@ -347,6 +362,22 @@ mod tests {
           tab.label()
         );
       }
+    }
+  }
+
+  mod read_scopes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_drops_the_write_scope_so_the_forbidden_wall_only_gates_reads() {
+      assert_eq!(Tab::Contacts.read_scopes(), vec![scopes::CHARACTER_CONTACTS]);
+    }
+
+    #[test]
+    fn it_keeps_read_only_tabs_unchanged() {
+      assert_eq!(Tab::Standings.read_scopes(), vec![scopes::CHARACTER_STANDINGS]);
     }
   }
 

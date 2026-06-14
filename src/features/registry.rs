@@ -42,7 +42,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
     Feature::Contacts => Descriptor {
       jobs: &[JobKind::CharacterContacts],
       rail: None,
-      scopes: &[scopes::CHARACTER_CONTACTS],
+      scopes: &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE],
       tab: Some(Tab::Contacts),
     },
     Feature::EveNotifications => Descriptor {

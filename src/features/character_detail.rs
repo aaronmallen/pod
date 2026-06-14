@@ -165,21 +165,14 @@ pub enum Message {
   ContactFilterChanged(tabs::contacts::ContactFilter),
   ContactSortChanged(tabs::contacts::ContactSort),
   ContactsPageLoaded(Box<ContactsPage>),
-  ContactsScrolled {
-    absolute: f32,
-    relative: f32,
-  },
+  ContactsScrolled { absolute: f32, relative: f32 },
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
-  KilllogScrolled {
-    absolute: f32,
-    relative: f32,
-  },
+  KilllogScrolled { absolute: f32, relative: f32 },
   Loaded(Box<Loaded>),
   NotificationRead(i64),
   NotificationsFilterChanged(NotificationsFilter),
   PickerToggled,
-  #[allow(dead_code)]
   ReauthRequested(i64),
   Reloaded(Box<Reloaded>),
   StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
@@ -187,10 +180,7 @@ pub enum Message {
   StandingsFilterChanged(tabs::standings::StandingsFilter),
   StandingsInsertQuery(String),
   StandingsResults(Box<StandingsResult>),
-  StandingsScrolled {
-    absolute: f32,
-    relative: f32,
-  },
+  StandingsScrolled { absolute: f32, relative: f32 },
   StandingsSearchChanged(String),
   StandingsToggleHelp,
   TabChanged(Tab),
@@ -374,6 +364,17 @@ impl State {
 
   pub(super) fn contacts_scroll_offset(&self) -> f32 {
     self.contacts_scroll_offset
+  }
+
+  /// Whether the pilot granted the write-contacts scope, gating the (not-yet-built) Contacts add/edit/remove UI. A
+  /// pilot authorized before the scope existed reads as disabled, which the UI surfaces as a re-auth prompt.
+  #[allow(dead_code)]
+  pub(super) fn contacts_write_enabled(&self) -> bool {
+    crate::ui::components::forbidden::missing_scopes(
+      self.granted_scopes(),
+      &[crate::clients::esi::scopes::CHARACTER_CONTACTS_WRITE],
+    )
+    .is_empty()
   }
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
@@ -1575,6 +1576,43 @@ mod tests {
       state.roster = vec![fresh];
 
       assert!(state.stale_images().is_empty());
+    }
+  }
+
+  mod contacts_write_enabled {
+    use super::*;
+
+    #[test]
+    fn it_is_enabled_when_the_write_scope_is_granted() {
+      use crate::clients::esi::scopes;
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = Some(format!(
+        "{} {}",
+        scopes::CHARACTER_CONTACTS,
+        scopes::CHARACTER_CONTACTS_WRITE
+      ));
+
+      assert!(state.contacts_write_enabled());
+    }
+
+    #[test]
+    fn it_is_gated_when_only_the_read_scope_is_granted() {
+      use crate::clients::esi::scopes;
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
+
+      assert!(
+        !state.contacts_write_enabled(),
+        "a pilot authorized before write_contacts existed must be surfaced for re-auth"
+      );
+    }
+
+    #[test]
+    fn it_is_gated_when_no_scopes_are_granted() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = None;
+
+      assert!(!state.contacts_write_enabled());
     }
   }
 

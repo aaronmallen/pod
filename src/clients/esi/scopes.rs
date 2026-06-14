@@ -6,6 +6,7 @@ pub const CHARACTER_CALENDAR_READ: &str = "esi-calendar.read_calendar_events.v1"
 pub const CHARACTER_CALENDAR_RESPOND: &str = "esi-calendar.respond_calendar_events.v1";
 pub const CHARACTER_CLONES: &str = "esi-clones.read_clones.v1";
 pub const CHARACTER_CONTACTS: &str = "esi-characters.read_contacts.v1";
+pub const CHARACTER_CONTACTS_WRITE: &str = "esi-characters.write_contacts.v1";
 pub const CHARACTER_CONTRACTS: &str = "esi-contracts.read_character_contracts.v1";
 pub const CHARACTER_CORPORATION_HISTORY: &str = "esi-characters.read_corporation_history.v1";
 pub const CHARACTER_FATIGUE: &str = "esi-characters.read_fatigue.v1";
@@ -57,6 +58,16 @@ pub const UNIVERSE_STRUCTURES: &str = "esi-universe.read_structures.v1";
 
 pub const BASELINE_CORP_SCOPES: &[&str] = &[CORPORATION_DIVISIONS, CORPORATION_MEMBERS, CORPORATION_ROLES];
 
+/// The set of scopes that grant write access; the source of truth for telling write scopes from read scopes.
+///
+/// Read-gating treats a missing scope as a forbidden wall, so a write-only scope must be excluded here to
+/// avoid blocking read access when only the write grant is absent.
+pub const WRITE_SCOPES: &[&str] = &[CHARACTER_CONTACTS_WRITE];
+
+pub fn is_write_scope(scope: &str) -> bool {
+  WRITE_SCOPES.contains(&scope)
+}
+
 #[cfg(test)]
 mod tests {
   mod baseline_corp_scopes {
@@ -70,6 +81,21 @@ mod tests {
     #[test]
     fn it_keeps_members_for_the_corp_card_member_section() {
       assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_MEMBERS));
+    }
+  }
+
+  mod is_write_scope {
+    use super::super::*;
+
+    #[test]
+    fn it_flags_the_contacts_write_scope() {
+      assert!(is_write_scope(CHARACTER_CONTACTS_WRITE));
+    }
+
+    #[test]
+    fn it_leaves_read_scopes_unflagged() {
+      assert!(!is_write_scope(CHARACTER_CONTACTS));
+      assert!(!is_write_scope(CHARACTER_STANDINGS));
     }
   }
 }

@@ -291,14 +291,17 @@ fn abyssals_body(state: &State) -> Element<'_, Message> {
     .height(Length::Fill)
     .style(control::sunken_pane);
 
-  let cards: Vec<&abyssals::AbyssalCard> = state.abyssals().iter().take(state.abyssal_visible_count()).collect();
+  let cards: Vec<&abyssals::AbyssalCard> = state.abyssals().iter().collect();
   let any_owned = !state.abyssals().is_empty() || !state.abyssal_source_types().is_empty();
   let results = container(
-    scrollable(abyssals::body(&cards, any_owned))
+    scrollable(abyssals::body(cards, any_owned, state.abyssal_scroll_offset()))
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)
-      .on_scroll(|viewport| Message::AbyssalGridScrolled(viewport.relative_offset().y)),
+      .on_scroll(|viewport| Message::AbyssalGridScrolled {
+        absolute: viewport.absolute_offset().y,
+        relative: viewport.relative_offset().y,
+      }),
   )
   .width(Length::Fill)
   .height(Length::Fill);

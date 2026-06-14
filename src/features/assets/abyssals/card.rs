@@ -13,8 +13,8 @@ use crate::{
   },
 };
 
+pub(super) const CARD_WIDTH: f32 = 440.0;
 const AVATAR_SIZE: f32 = 18.0;
-const CARD_WIDTH: f32 = 440.0;
 
 pub(super) fn view(card_data: &AbyssalCard) -> Element<'_, Message> {
   let body = Column::with_children(vec![header(card_data), stats(card_data), footer(card_data)]).width(Length::Fill);

@@ -46,8 +46,6 @@ const SIDEBAR_PANE_KEY: &str = "assets.sidebar";
 const SIDEBAR_DEFAULT_WIDTH: f32 = 280.0;
 const ABYSSALS_FILTER_PANE_KEY: &str = "assets.abyssals_filter";
 const ABYSSALS_FILTER_DEFAULT_WIDTH: f32 = 240.0;
-const ABYSSAL_PAGE_SIZE: usize = 50;
-const ABYSSAL_PAGE_STEP: usize = 25;
 const ABYSSAL_SCROLL_THRESHOLD: f32 = 0.85;
 const MUTAMARKET_MODULE_URL: &str = "https://mutamarket.com/modules";
 
@@ -193,8 +191,14 @@ pub struct Loaded {
 pub enum Message {
   AbyssalCardsReloaded(Vec<abyssals::AbyssalCard>),
   AbyssalFilterReset,
-  AbyssalGridScrolled(f32),
+  /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
+  /// the pixel offset stored to window the card grid.
+  AbyssalGridScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   AbyssalMutaMarketOpened(i64),
+  AbyssalPageLoaded(Vec<abyssals::AbyssalCard>),
   AbyssalPickerToggled,
   AbyssalSliderEditCommitted(i64, SliderEndpoint),
   AbyssalSliderEditInput(String),
@@ -357,7 +361,9 @@ pub struct State {
   abyssal_slider_edit: Option<(i64, SliderEndpoint)>,
   abyssal_slider_edit_text: String,
   abyssal_stat_templates: Vec<StatTemplate>,
-  abyssal_visible_count: usize,
+  abyssal_has_more: bool,
+  abyssal_loading: bool,
+  abyssal_scroll_offset: f32,
 }
 
 impl State {
@@ -417,7 +423,9 @@ impl State {
       abyssal_slider_edit: None,
       abyssal_slider_edit_text: String::new(),
       abyssal_stat_templates: Vec::new(),
-      abyssal_visible_count: ABYSSAL_PAGE_SIZE,
+      abyssal_has_more: false,
+      abyssal_loading: false,
+      abyssal_scroll_offset: 0.0,
     }
   }
 
@@ -623,8 +631,8 @@ impl State {
     &self.abyssal_stat_templates
   }
 
-  pub(super) fn abyssal_visible_count(&self) -> usize {
-    self.abyssal_visible_count
+  pub(super) fn abyssal_scroll_offset(&self) -> f32 {
+    self.abyssal_scroll_offset
   }
 
   pub(super) fn abyssal_slider_edit(&self) -> Option<(i64, SliderEndpoint)> {
@@ -663,6 +671,22 @@ impl State {
     self.abyssal_source_types = source_types;
     self.abyssal_filters = filters;
     self.abyssal_picker_open = picker_open;
+  }
+
+  #[cfg(test)]
+  pub(super) fn set_abyssal_pagination_for_test(&mut self, has_more: bool, loading: bool) {
+    self.abyssal_has_more = has_more;
+    self.abyssal_loading = loading;
+  }
+
+  #[cfg(test)]
+  pub(super) fn abyssal_has_more(&self) -> bool {
+    self.abyssal_has_more
+  }
+
+  #[cfg(test)]
+  pub(super) fn abyssal_loading(&self) -> bool {
+    self.abyssal_loading
   }
 
   #[cfg(test)]
@@ -817,6 +841,9 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.values = values;
   state.nav = nav;
   state.stockpiles = stockpiles;
+  state.abyssal_has_more = abyssals.cards.len() as i64 == abyssals::PAGE_SIZE;
+  state.abyssal_loading = false;
+  state.abyssal_scroll_offset = 0.0;
   state.abyssals = abyssals.cards;
   state.abyssal_source_types = abyssals.source_types;
   state.abyssal_filters = abyssals::Filters::default();
@@ -824,7 +851,6 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_slider_edit = None;
   state.abyssal_slider_edit_text = String::new();
   state.abyssal_stat_templates = Vec::new();
-  state.abyssal_visible_count = ABYSSAL_PAGE_SIZE;
   state.geo_tree = geo_tree;
 }
 
@@ -856,6 +882,8 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   state.values = values;
   state.nav = nav;
   state.stockpiles = stockpiles;
+  state.abyssal_has_more = abyssals.cards.len() as i64 == abyssals::PAGE_SIZE;
+  state.abyssal_loading = false;
   state.abyssals = abyssals.cards;
   state.abyssal_source_types = abyssals.source_types;
   state.geo_tree = geo_tree;
@@ -991,8 +1019,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
     Message::AbyssalCardsReloaded(_)
     | Message::AbyssalFilterReset
-    | Message::AbyssalGridScrolled(_)
+    | Message::AbyssalGridScrolled {
+      ..
+    }
     | Message::AbyssalMutaMarketOpened(_)
+    | Message::AbyssalPageLoaded(_)
     | Message::AbyssalPickerToggled
     | Message::AbyssalSliderEditCommitted(..)
     | Message::AbyssalSliderEditInput(_)
@@ -1542,10 +1573,24 @@ fn update_abyssal(state: &mut State, message: Message, db: &Database) -> Task<Me
       state.abyssal_stat_templates = Vec::new();
       reload_abyssal_cards(state, db)
     }
-    Message::AbyssalGridScrolled(offset) => {
-      if offset >= ABYSSAL_SCROLL_THRESHOLD && state.abyssal_visible_count < state.abyssals.len() {
-        state.abyssal_visible_count = (state.abyssal_visible_count + ABYSSAL_PAGE_STEP).min(state.abyssals.len());
+    Message::AbyssalGridScrolled {
+      absolute,
+      relative,
+    } => {
+      state.abyssal_scroll_offset = absolute;
+      if relative < ABYSSAL_SCROLL_THRESHOLD || !state.abyssal_has_more || state.abyssal_loading {
+        return Task::none();
       }
+      let Some(cursor) = state.abyssals.last().map(abyssals::AbyssalCard::cursor) else {
+        return Task::none();
+      };
+      state.abyssal_loading = true;
+      load_abyssal_page(state, db, cursor)
+    }
+    Message::AbyssalPageLoaded(cards) => {
+      state.abyssal_loading = false;
+      state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
+      state.abyssals.extend(cards);
       Task::none()
     }
     Message::AbyssalStatTemplatesLoaded(templates) => {
@@ -1553,8 +1598,10 @@ fn update_abyssal(state: &mut State, message: Message, db: &Database) -> Task<Me
       Task::none()
     }
     Message::AbyssalCardsReloaded(cards) => {
+      state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
+      state.abyssal_loading = false;
+      state.abyssal_scroll_offset = 0.0;
       state.abyssals = cards;
-      state.abyssal_visible_count = ABYSSAL_PAGE_SIZE;
       Task::none()
     }
     other => update_abyssal_slider(state, other, db),
@@ -1662,6 +1709,20 @@ fn reload_abyssal_cards(state: &State, db: &Database) -> Task<Message> {
   Task::perform(
     async move { abyssals::load_filtered_cards(&db, scope, &roster, &filters).await },
     Message::AbyssalCardsReloaded,
+  )
+}
+
+/// Fetch the next cursor-delimited page of abyssal cards under the active filters.
+fn load_abyssal_page(state: &State, db: &Database, cursor: abyssals::AbyssalCursor) -> Task<Message> {
+  let (db, scope, roster, filters) = (
+    db.clone(),
+    state.active,
+    state.roster.clone(),
+    state.abyssal_filters.clone(),
+  );
+  Task::perform(
+    async move { abyssals::load_filtered_page(&db, scope, &roster, &filters, Some(cursor)).await },
+    Message::AbyssalPageLoaded,
   )
 }
 
@@ -2445,41 +2506,125 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrolling_past_the_threshold_grows_the_visible_page_then_caps_at_the_total() {
+    async fn scrolling_past_the_threshold_starts_loading_the_next_page() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      assert_eq!(state.abyssal_visible_count(), ABYSSAL_PAGE_SIZE);
+      state.set_abyssal_pagination_for_test(true, false);
 
-      let _ = update(&mut state, Message::AbyssalGridScrolled(0.9), &db);
-      assert_eq!(state.abyssal_visible_count(), 60);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 2_000.0,
+          relative: 0.9,
+        },
+        &db,
+      );
 
-      let _ = update(&mut state, Message::AbyssalGridScrolled(0.9), &db);
-      assert_eq!(state.abyssal_visible_count(), 60);
+      assert!(state.abyssal_loading(), "crossing the threshold begins a page load");
+      assert_eq!(
+        state.abyssal_scroll_offset(),
+        2_000.0,
+        "the pixel offset is tracked for windowing"
+      );
     }
 
     #[tokio::test]
-    async fn scrolling_below_the_threshold_does_not_grow_the_page() {
+    async fn scrolling_does_not_load_when_already_loading_or_exhausted() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(200), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
 
-      let _ = update(&mut state, Message::AbyssalGridScrolled(0.5), &db);
+      // No more pages: a threshold scroll must not start a load.
+      state.set_abyssal_pagination_for_test(false, false);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+      assert!(!state.abyssal_loading(), "no load is started once the set is exhausted");
 
-      assert_eq!(state.abyssal_visible_count(), ABYSSAL_PAGE_SIZE);
+      // Already loading: a second threshold scroll must not start a duplicate load.
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+      assert!(state.abyssal_loading());
     }
 
     #[tokio::test]
-    async fn reloading_cards_resets_the_visible_page() {
+    async fn scrolling_below_the_threshold_only_tracks_the_offset() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(200), Vec::new(), abyssals::Filters::default(), false);
-      let _ = update(&mut state, Message::AbyssalGridScrolled(0.9), &db);
-      assert_eq!(state.abyssal_visible_count(), ABYSSAL_PAGE_SIZE + ABYSSAL_PAGE_STEP);
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, false);
 
-      let _ = update(&mut state, Message::AbyssalCardsReloaded(abyssal_cards(200)), &db);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 120.0,
+          relative: 0.5,
+        },
+        &db,
+      );
 
-      assert_eq!(state.abyssal_visible_count(), ABYSSAL_PAGE_SIZE);
+      assert!(!state.abyssal_loading(), "a shallow scroll does not page");
+      assert_eq!(state.abyssal_scroll_offset(), 120.0);
+    }
+
+    #[tokio::test]
+    async fn a_loaded_page_is_appended_and_clears_has_more_for_a_short_page() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+
+      // A short page (fewer than PAGE_SIZE) means the set is exhausted.
+      let _ = update(&mut state, Message::AbyssalPageLoaded(abyssal_cards(10)), &db);
+
+      assert_eq!(state.abyssals().len(), 70, "the page is appended to the loaded set");
+      assert!(!state.abyssal_has_more(), "a short page leaves no more to load");
+      assert!(!state.abyssal_loading());
+    }
+
+    #[tokio::test]
+    async fn reloading_cards_replaces_the_set_and_resets_pagination() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 999.0,
+          relative: 0.9,
+        },
+        &db,
+      );
+
+      // A reload that returns a full page keeps has_more true and clears loading/offset.
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssal_cards(abyssals::PAGE_SIZE as usize)),
+        &db,
+      );
+
+      assert_eq!(state.abyssals().len(), abyssals::PAGE_SIZE as usize);
+      assert!(state.abyssal_has_more(), "a full reload page implies more to load");
+      assert!(!state.abyssal_loading());
+      assert_eq!(
+        state.abyssal_scroll_offset(),
+        0.0,
+        "a reload returns the grid to the top"
+      );
     }
 
     #[tokio::test]

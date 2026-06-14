@@ -68,6 +68,34 @@ pub async fn filtered_for_characters(
   source_type_id: Option<i64>,
   stat_ranges: &HashMap<i64, StatRange>,
 ) -> Result<Vec<AbyssalItem>, Error> {
+  page_for_characters(db, character_ids, source_type_id, stat_ranges, None, None).await
+}
+
+/// A keyset-pagination cursor over the abyssal grid.
+///
+/// The grid groups cards by their rolled base module (`source_type_id`), so the
+/// page query orders by `(source_type_id, item_id)` to keep a group's cards
+/// contiguous across pages. The cursor is the `(source_type_id, item_id)` of the
+/// last card on the previous page; the next page resumes strictly after it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbyssalCursor {
+  pub item_id: i64,
+  pub source_type_id: i64,
+}
+
+/// Fetch one cursor-delimited page of abyssal items for the given characters.
+///
+/// Pass `cursor: None` for the first page and `limit: None` for the unbounded
+/// full set (the in-memory fallback path / tests). The shared filter clauses
+/// (rolled-type and per-attribute stat ranges) match [`filtered_for_characters`].
+pub async fn page_for_characters(
+  db: &Database,
+  character_ids: &[i64],
+  source_type_id: Option<i64>,
+  stat_ranges: &HashMap<i64, StatRange>,
+  cursor: Option<AbyssalCursor>,
+  limit: Option<i64>,
+) -> Result<Vec<AbyssalItem>, Error> {
   if character_ids.is_empty() {
     return Ok(Vec::new());
   }
@@ -100,7 +128,24 @@ pub async fn filtered_for_characters(
     builder.push(")");
   }
 
-  builder.push(" ORDER BY item_id");
+  // Keyset predicate: resume strictly after the cursor's (source_type_id, item_id).
+  if let Some(cursor) = cursor {
+    builder.push(" AND (source_type_id > ");
+    builder.push_bind(cursor.source_type_id);
+    builder.push(" OR (source_type_id = ");
+    builder.push_bind(cursor.source_type_id);
+    builder.push(" AND item_id > ");
+    builder.push_bind(cursor.item_id);
+    builder.push("))");
+  }
+
+  builder.push(" ORDER BY source_type_id, item_id");
+
+  if let Some(limit) = limit {
+    builder.push(" LIMIT ");
+    builder.push_bind(limit);
+  }
+
   let rows = builder.build_query_as::<AbyssalItem>().fetch_all(&db.0).await?;
   Ok(rows)
 }
@@ -2598,6 +2643,115 @@ mod abyssal_tests {
       let rows = filtered_for_characters(&db, &[42], None, &ranges).await.unwrap();
 
       assert_eq!(rows.len(), 1);
+    }
+  }
+
+  mod page_for_characters {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// `item_id`, `type_id` and `source_type_id` are all distinct so ordering and
+    /// the keyset cursor can be asserted unambiguously.
+    fn item(item_id: i64, character_id: i64, source_type_id: i64) -> AbyssalItem {
+      AbyssalItem::new(
+        item_id,
+        character_id,
+        2410,
+        source_type_id,
+        47_297,
+        r#"[{"attribute_id":50,"value":41.0}]"#.to_owned(),
+        1_700_000_000,
+      )
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_source_type_then_item_so_groups_stay_contiguous() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      // Interleave source types so insertion order can't accidentally satisfy the assert.
+      upsert(&db, &item(3, 42, 100)).await.unwrap();
+      upsert(&db, &item(1, 42, 200)).await.unwrap();
+      upsert(&db, &item(2, 42, 100)).await.unwrap();
+      upsert(&db, &item(4, 42, 200)).await.unwrap();
+
+      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), None, None)
+        .await
+        .unwrap();
+
+      let keys: Vec<(i64, i64)> = rows.iter().map(|r| (r.source_type_id(), r.item_id())).collect();
+      assert_eq!(keys, vec![(100, 2), (100, 3), (200, 1), (200, 4)]);
+    }
+
+    #[tokio::test]
+    async fn it_caps_a_page_at_the_limit() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=5 {
+        upsert(&db, &item(id, 42, 100)).await.unwrap();
+      }
+
+      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), None, Some(2))
+        .await
+        .unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].item_id(), 1);
+      assert_eq!(rows[1].item_id(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_resumes_strictly_after_the_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item(1, 42, 100)).await.unwrap();
+      upsert(&db, &item(2, 42, 100)).await.unwrap();
+      upsert(&db, &item(3, 42, 200)).await.unwrap();
+
+      let cursor = AbyssalCursor {
+        item_id: 2,
+        source_type_id: 100,
+      };
+      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), Some(cursor), Some(10))
+        .await
+        .unwrap();
+
+      // Only items after (100, 2) remain: (200, 3).
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 3);
+    }
+
+    #[tokio::test]
+    async fn it_walks_a_smaller_source_type_cursor_within_the_same_group() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item(10, 42, 100)).await.unwrap();
+      upsert(&db, &item(20, 42, 100)).await.unwrap();
+
+      let cursor = AbyssalCursor {
+        item_id: 10,
+        source_type_id: 100,
+      };
+      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), Some(cursor), Some(10))
+        .await
+        .unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 20);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(
+        page_for_characters(&db, &[], None, &HashMap::new(), None, Some(50))
+          .await
+          .unwrap()
+          .is_empty()
+      );
     }
   }
 

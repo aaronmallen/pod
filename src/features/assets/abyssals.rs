@@ -12,7 +12,10 @@ use std::collections::HashMap;
 use iced::{Element, Length, Padding, widget::container};
 
 use super::{Message, RosterPilot, Scope};
-pub(super) use crate::store::model::{StatRange, StatTemplate, abyssal_source_type_filter::SourceTypeFilter};
+pub(super) use crate::store::{
+  model::{StatRange, StatTemplate, abyssal_source_type_filter::SourceTypeFilter},
+  repo::assets::AbyssalCursor,
+};
 use crate::{
   store::{
     Database, images,
@@ -21,6 +24,9 @@ use crate::{
   },
   ui::{components::empty_state::empty_state as shared_empty_state, style::spacing},
 };
+
+/// Number of cards fetched per cursor-paginated abyssal page.
+pub(super) const PAGE_SIZE: i64 = 60;
 
 const UNIT_SUFFIX_TABLE: &[(i64, &str)] = &[
   (71, " GJ"),
@@ -48,6 +54,18 @@ pub struct AbyssalCard {
   pub(super) price_unavailable: bool,
   pub(super) stats: Vec<AbyssalStat>,
   pub(super) tier_label: String,
+}
+
+impl AbyssalCard {
+  /// The keyset cursor that resumes pagination strictly after this card.
+  ///
+  /// Mirrors the grid's group ordering: `(source_type_id, item_id)`.
+  pub(super) fn cursor(&self) -> AbyssalCursor {
+    AbyssalCursor {
+      item_id: self.item_id,
+      source_type_id: self.group_type_id,
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,29 +124,11 @@ impl Filters {
   }
 }
 
+/// Load the initial abyssals payload: the first cursor page of (unfiltered) cards
+/// plus the source-type filter facets.
 pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilot]) -> AbyssalsData {
   let character_ids = scope_character_ids(db, scope, roster).await;
-
-  let mut base_cache: HashMap<i64, BaseModule> = HashMap::new();
-  let mut cards = Vec::new();
-  for character_id in &character_ids {
-    let owner_name = owner_name_for(roster, *character_id);
-    let items = assets::for_character_abyssal(db, *character_id)
-      .await
-      .unwrap_or_default();
-    for item in items {
-      cards.push(build_card(db, &item, &owner_name, &mut base_cache).await);
-    }
-  }
-
-  let item_ids: Vec<i64> = cards.iter().map(|card| card.item_id).collect();
-  let locations = assets::locations_for_items(db, &item_ids).await.unwrap_or_default();
-  for card in &mut cards {
-    if let Some(location) = locations.get(&card.item_id) {
-      card.location = location.clone();
-    }
-  }
-
+  let cards = load_filtered_page(db, scope, roster, &Filters::default(), None).await;
   let source_types = assets::source_type_filters(db, &character_ids)
     .await
     .unwrap_or_default();
@@ -138,25 +138,51 @@ pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilo
   }
 }
 
+/// Load the first cursor-delimited page of filtered cards.
+///
+/// Replaces the old full-set fetch: only [`PAGE_SIZE`] cards are materialized up
+/// front, with the rest loaded on scroll via [`load_filtered_page`].
 pub(super) async fn load_filtered_cards(
   db: &Database,
   scope: Scope,
   roster: &[RosterPilot],
   filters: &Filters,
 ) -> Vec<AbyssalCard> {
+  load_filtered_page(db, scope, roster, filters, None).await
+}
+
+/// Load one cursor-delimited page of filtered cards.
+///
+/// `cursor` is `None` for the first page, or the [`AbyssalCard::cursor`] of the
+/// last card already shown to resume strictly after it.
+pub(super) async fn load_filtered_page(
+  db: &Database,
+  scope: Scope,
+  roster: &[RosterPilot],
+  filters: &Filters,
+  cursor: Option<AbyssalCursor>,
+) -> Vec<AbyssalCard> {
   let character_ids = scope_character_ids(db, scope, roster).await;
-  let items = assets::filtered_for_characters(
+  let items = assets::page_for_characters(
     db,
     &character_ids,
     filters.source_type_id,
     &filters.stat_ranges_for_query(),
+    cursor,
+    Some(PAGE_SIZE),
   )
   .await
   .unwrap_or_default();
 
+  cards_from_items(db, roster, &items).await
+}
+
+/// Build the display cards for a batch of items, resolving each card's stats and
+/// then back-filling locations in a single batched lookup.
+async fn cards_from_items(db: &Database, roster: &[RosterPilot], items: &[AbyssalItem]) -> Vec<AbyssalCard> {
   let mut base_cache: HashMap<i64, BaseModule> = HashMap::new();
   let mut cards = Vec::with_capacity(items.len());
-  for item in &items {
+  for item in items {
     let owner_name = owner_name_for(roster, item.character_id());
     cards.push(build_card(db, item, &owner_name, &mut base_cache).await);
   }
@@ -364,12 +390,17 @@ pub(super) fn picker_modal(state: &super::State) -> Element<'_, Message> {
   module_type_picker::modal(state)
 }
 
-pub(super) fn body<'a>(cards: &[&'a AbyssalCard], any_owned: bool) -> Element<'a, Message> {
+/// Render the abyssals card grid, windowed so only the viewport's rows-of-cards
+/// are materialized.
+///
+/// `cards` is the full loaded set (cursor pagination appends to it); `scroll_offset`
+/// is the live pixel offset tracked in feature state and fed to the windowing math.
+pub(super) fn body<'a>(cards: Vec<&'a AbyssalCard>, any_owned: bool, scroll_offset: f32) -> Element<'a, Message> {
   if cards.is_empty() {
     return empty_state(any_owned);
   }
 
-  container(card_grid::grid(cards))
+  container(card_grid::windowed_grid(cards, scroll_offset))
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_6,
@@ -593,12 +624,12 @@ mod tests {
         card(2, "Adaptive Invulnerability Field II", 2281, "Gravid"),
       ];
       let refs: Vec<&AbyssalCard> = cards.iter().collect();
-      let _el: Element<'_, Message> = body(&refs, true);
+      let _el: Element<'_, Message> = body(refs, true, 0.0);
     }
 
     #[test]
     fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(&[], false);
+      let _el: Element<'_, Message> = body(Vec::new(), false, 0.0);
     }
   }
 }

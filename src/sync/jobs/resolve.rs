@@ -15,7 +15,7 @@ const SKILL_SECONDARY_ATTR_ID: i32 = 181;
 
 pub async fn resolve_item_type(ctx: &JobCtx<'_>, type_id: i64) -> Result<(), Error> {
   if sde::get_item_type(ctx.db, type_id).await?.is_some() {
-    tracing::debug!(item_type_id = type_id, "resolved item type from db");
+    tracing::trace!(item_type_id = type_id, "resolved item type from db");
     return Ok(());
   }
   let lookup_id = i32::try_from(type_id)
@@ -47,7 +47,7 @@ pub async fn resolve_market_group(ctx: &JobCtx<'_>, market_group_id: i64) -> Res
 
   while let Some(id) = next {
     if sde::get_market_group(ctx.db, id).await?.is_some() {
-      tracing::debug!(market_group_id = id, "resolved market group from db");
+      tracing::trace!(market_group_id = id, "resolved market group from db");
       break;
     }
     let lookup_id =

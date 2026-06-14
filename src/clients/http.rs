@@ -222,7 +222,7 @@ impl Client {
       && let Some(ref entry) = cached
       && !entry.is_expired()
     {
-      tracing::debug!(target: HTTP_TARGET, method = "GET", url, cache = "hit", "served from fresh cache");
+      tracing::trace!(target: HTTP_TARGET, method = "GET", url, cache = "hit", "served from fresh cache");
       return Ok(entry.body().to_vec());
     }
 
@@ -243,7 +243,7 @@ impl Client {
     let status = resp.status().as_u16();
 
     if status == 304 {
-      tracing::debug!(target: HTTP_TARGET, method = "GET", url, status, cache = "not-modified", "revalidated; served from cache");
+      tracing::trace!(target: HTTP_TARGET, method = "GET", url, status, cache = "not-modified", "revalidated; served from cache");
       let entry = cached.expect("304 requires a prior cached entry");
       return Ok(entry.body().to_vec());
     }
@@ -549,7 +549,7 @@ async fn send_logged(
   if let Some(delay) = budgets.reserve_slot(&key, Instant::now())
     && !delay.is_zero()
   {
-    tracing::debug!(target: HTTP_TARGET, method, url, delay_ms = delay.as_millis() as u64, "spacing request to respect rate-limit budget");
+    tracing::trace!(target: HTTP_TARGET, method, url, delay_ms = delay.as_millis() as u64, "spacing request to respect rate-limit budget");
     tokio::time::sleep(delay).await;
   }
 
@@ -564,7 +564,7 @@ async fn send_logged(
       }
       let status = resp.status().as_u16();
       if (200..400).contains(&status) {
-        tracing::debug!(target: HTTP_TARGET, method, url, status, elapsed_ms, "request completed");
+        tracing::trace!(target: HTTP_TARGET, method, url, status, elapsed_ms, "request completed");
       } else {
         tracing::warn!(target: HTTP_TARGET, method, url, status, elapsed_ms, "request returned non-success status");
       }

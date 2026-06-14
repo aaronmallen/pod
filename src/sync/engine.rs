@@ -63,7 +63,9 @@ pub fn spawn(
   features: FeatureFlags,
 ) -> (Handle, mpsc::Receiver<Event>) {
   spawn_with_registry(db, housekeeping, esi, sso, image, image_store, features, || {
-    super::mail_handlers::registry().extend(super::calendar_handlers::registry())
+    super::mail_handlers::registry()
+      .extend(super::calendar_handlers::registry())
+      .extend(super::contact_handlers::registry())
   })
 }
 

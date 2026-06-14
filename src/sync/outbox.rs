@@ -27,6 +27,9 @@ pub trait KindHandler: Send + Sync {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OutboxKind {
   CalendarRespond,
+  ContactAdd,
+  ContactEdit,
+  ContactRemove,
   MailCreateLabel,
   MailDelete,
   MailDeleteLabel,
@@ -44,11 +47,17 @@ impl OutboxKind {
     OutboxKind::MailDeleteLabel,
     OutboxKind::MailDelete,
     OutboxKind::CalendarRespond,
+    OutboxKind::ContactAdd,
+    OutboxKind::ContactEdit,
+    OutboxKind::ContactRemove,
   ];
 
   pub fn as_str(self) -> &'static str {
     match self {
       Self::CalendarRespond => "calendar.respond",
+      Self::ContactAdd => "contact.add",
+      Self::ContactEdit => "contact.edit",
+      Self::ContactRemove => "contact.remove",
       Self::MailCreateLabel => "mail.create_label",
       Self::MailDelete => "mail.delete",
       Self::MailDeleteLabel => "mail.delete_label",
@@ -75,6 +84,9 @@ impl FromStr for OutboxKind {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
       "calendar.respond" => Ok(Self::CalendarRespond),
+      "contact.add" => Ok(Self::ContactAdd),
+      "contact.edit" => Ok(Self::ContactEdit),
+      "contact.remove" => Ok(Self::ContactRemove),
       "mail.create_label" => Ok(Self::MailCreateLabel),
       "mail.delete" => Ok(Self::MailDelete),
       "mail.delete_label" => Ok(Self::MailDeleteLabel),
@@ -259,7 +271,10 @@ mod tests {
           "mail.create_label",
           "mail.delete_label",
           "mail.delete",
-          "calendar.respond"
+          "calendar.respond",
+          "contact.add",
+          "contact.edit",
+          "contact.remove"
         ]
       );
     }

@@ -1,5 +1,6 @@
 mod calendar_handlers;
 mod command;
+mod contact_handlers;
 mod drain;
 mod engine;
 mod event;

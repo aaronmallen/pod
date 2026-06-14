@@ -264,13 +264,35 @@ async fn run_character_job(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::
 }
 
 async fn run_character_job_a(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
+  if let Some(result) = run_character_job_a1(ctx).await {
+    return Some(result);
+  }
+  if let Some(result) = run_character_job_a2(ctx).await {
+    return Some(result);
+  }
+  run_character_job_a3(ctx).await
+}
+
+async fn run_character_job_a1(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
   Some(match ctx.key.kind {
     JobKind::CharacterAbyssals => super::jobs::abyssals::run(ctx).await,
     JobKind::CharacterCalendar => super::jobs::character_calendar::run(ctx).await,
     JobKind::CharacterClones => super::jobs::character_clones::run(ctx).await,
+    _ => return None,
+  })
+}
+
+async fn run_character_job_a2(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
+  Some(match ctx.key.kind {
     JobKind::CharacterContacts => super::jobs::character_contacts::run(ctx).await,
     JobKind::CharacterContracts => super::jobs::character_contracts::run(ctx).await,
     JobKind::CharacterIndustryJobs => super::jobs::industry::run(ctx).await,
+    _ => return None,
+  })
+}
+
+async fn run_character_job_a3(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients::Error>> {
+  Some(match ctx.key.kind {
     JobKind::CharacterKillmails => super::jobs::character_killmails::run(ctx).await,
     JobKind::CharacterMail => super::jobs::character_mail::run(ctx).await,
     JobKind::CharacterMarketOrders => super::jobs::character_market_orders::run(ctx).await,

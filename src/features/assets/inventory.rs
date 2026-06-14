@@ -975,6 +975,37 @@ mod tests {
     }
   }
 
+  mod owner_cell {
+    use super::*;
+
+    fn corp(id: i64, name: &str) -> RosterCorp {
+      RosterCorp {
+        id,
+        logo: images::ImageState::Stale {
+          id,
+          kind: images::ImageKind::CorporationLogo,
+        },
+        name: name.to_owned(),
+        ticker: "TC".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_a_pilot_owner() {
+      let _el: Element<'_, Message> = super::super::owner_cell(7, &[pilot(7, "Vex")], &[]);
+    }
+
+    #[test]
+    fn it_renders_a_corporation_owner() {
+      let _el: Element<'_, Message> = super::super::owner_cell(2_000, &[], &[corp(2_000, "Test Corp")]);
+    }
+
+    #[test]
+    fn it_renders_an_unknown_owner_without_a_portrait() {
+      let _el: Element<'_, Message> = super::super::owner_cell(99, &[], &[]);
+    }
+  }
+
   mod row_icon {
     use pretty_assertions::assert_eq;
 

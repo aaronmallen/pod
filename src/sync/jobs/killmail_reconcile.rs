@@ -118,7 +118,9 @@ mod tests {
       value_isk: 100.0,
       value_recheck_count: recheck_count,
       value_source: "local".to_owned(),
+      victim_alliance_id: None,
       victim_corp_id: None,
+      victim_damage_taken: 0,
       victim_id: Some(character_id),
     }
   }

@@ -1718,7 +1718,9 @@ mod tests {
       value_isk: 1234.5,
       value_recheck_count: 0,
       value_source: "zkill".to_owned(),
+      victim_alliance_id: None,
       victim_corp_id,
+      victim_damage_taken: 0,
       victim_id,
     }
   }

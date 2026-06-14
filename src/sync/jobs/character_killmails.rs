@@ -281,7 +281,9 @@ async fn assemble(
     value_isk: resolution.value,
     value_recheck_count: 0,
     value_source: resolution.source.as_str().to_owned(),
+    victim_alliance_id: None,
     victim_corp_id: detail.victim.corporation_id,
+    victim_damage_taken: 0,
     victim_id: detail.victim.character_id,
   })
 }
@@ -630,7 +632,9 @@ mod tests {
           value_isk: 1.0,
           value_recheck_count: 0,
           value_source: "local".to_owned(),
+          victim_alliance_id: None,
           victim_corp_id: None,
+          victim_damage_taken: 0,
           victim_id: None,
         },
       )

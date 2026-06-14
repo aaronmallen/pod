@@ -35,7 +35,11 @@ pub struct Model {
   #[getset(get = "pub")]
   pub value_source: String,
   #[getset(get_copy = "pub")]
+  pub victim_alliance_id: Option<i64>,
+  #[getset(get_copy = "pub")]
   pub victim_corp_id: Option<i64>,
+  #[getset(get_copy = "pub")]
+  pub victim_damage_taken: i64,
   #[getset(get_copy = "pub")]
   pub victim_id: Option<i64>,
 }

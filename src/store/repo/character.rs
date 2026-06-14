@@ -11,7 +11,7 @@ use crate::store::{
     Alliance, Bloodline, Character, CharacterAttributes, CharacterClone, CharacterCloneImplant, CharacterContact,
     CharacterContactLabel, CharacterImplant, CharacterJumpClone, CharacterKillEntry, CharacterNotification,
     CharacterSkill, CharacterSkillqueue, CharacterSquad, CharacterStanding, CharacterState, CharacterTelemetry,
-    Corporation, ENTITY_TYPE_CHARACTER, Faction, OwnerType, Race, Squad,
+    Corporation, ENTITY_TYPE_CHARACTER, Faction, KillmailAttacker, KillmailItem, OwnerType, Race, Squad,
     character_card::{CardRow, CardRowSql, CardTag, CardTraining, TagRowSql},
     character_clone_view::{ActiveCloneRow, CharacterClones, CloneWithImplants},
     character_contacts_view::CharacterContacts,
@@ -1283,13 +1283,16 @@ pub async fn contacts_page(
 pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO character_killmails \
-      (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
+      (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
       value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
       attacker_count, final_blow, kill_time, synced_at) \
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     ON CONFLICT (character_id, killmail_id) DO UPDATE SET \
       kill_hash = excluded.kill_hash, is_kill = excluded.is_kill, ship_type_id = excluded.ship_type_id, \
-      victim_id = excluded.victim_id, victim_corp_id = excluded.victim_corp_id, system_id = excluded.system_id, \
+      victim_id = excluded.victim_id, victim_corp_id = excluded.victim_corp_id, \
+      victim_alliance_id = excluded.victim_alliance_id, victim_damage_taken = excluded.victim_damage_taken, \
+      system_id = excluded.system_id, \
       value_isk = excluded.value_isk, value_destroyed_isk = excluded.value_destroyed_isk, \
       value_source = excluded.value_source, value_recheck_count = excluded.value_recheck_count, \
       value_final = excluded.value_final, attacker_count = excluded.attacker_count, \
@@ -1302,6 +1305,8 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
   .bind(killmail.ship_type_id())
   .bind(killmail.victim_id())
   .bind(killmail.victim_corp_id())
+  .bind(killmail.victim_alliance_id())
+  .bind(killmail.victim_damage_taken())
   .bind(killmail.system_id())
   .bind(killmail.value_isk())
   .bind(killmail.value_destroyed_isk())
@@ -1319,7 +1324,8 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
 
 pub async fn killmails(db: &Database, character_id: i64) -> Result<Vec<CharacterKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CharacterKillEntry>(
-    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
+    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
       value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
       attacker_count, final_blow, kill_time, synced_at FROM character_killmails \
     WHERE character_id = ? ORDER BY kill_time DESC, killmail_id DESC",
@@ -1337,7 +1343,8 @@ pub async fn killmails_page(
   limit: i64,
 ) -> Result<Vec<CharacterKillEntry>, Error> {
   let mut builder = QueryBuilder::<Sqlite>::new(
-    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
+    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
       value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
       attacker_count, final_blow, kill_time, synced_at FROM character_killmails WHERE character_id = ",
   );
@@ -1404,11 +1411,102 @@ pub async fn killmail_upgrade_to_zkill(
 
 pub async fn killmails_needing_recheck(db: &Database) -> Result<Vec<CharacterKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CharacterKillEntry>(
-    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, system_id, \
+    "SELECT character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
       value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
       attacker_count, final_blow, kill_time, synced_at FROM character_killmails \
     WHERE value_source = 'local' AND value_final = 0 ORDER BY kill_time DESC, killmail_id DESC",
   )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn upsert_killmail_detail(
+  db: &Database,
+  character_id: i64,
+  killmail_id: i64,
+  attackers: &[KillmailAttacker],
+  items: &[KillmailItem],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM killmail_attackers WHERE character_id = ? AND killmail_id = ?")
+    .bind(character_id)
+    .bind(killmail_id)
+    .execute(&mut *tx)
+    .await?;
+  sqlx::query("DELETE FROM killmail_items WHERE character_id = ? AND killmail_id = ?")
+    .bind(character_id)
+    .bind(killmail_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for attacker in attackers {
+    sqlx::query(
+      "INSERT INTO killmail_attackers \
+        (character_id, killmail_id, ordinal, attacker_character_id, corporation_id, alliance_id, \
+        ship_type_id, damage_done, final_blow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(attacker.character_id())
+    .bind(attacker.killmail_id())
+    .bind(attacker.ordinal())
+    .bind(attacker.attacker_character_id())
+    .bind(attacker.corporation_id())
+    .bind(attacker.alliance_id())
+    .bind(attacker.ship_type_id())
+    .bind(attacker.damage_done())
+    .bind(attacker.final_blow())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  for item in items {
+    sqlx::query(
+      "INSERT INTO killmail_items \
+        (character_id, killmail_id, ordinal, type_id, flag, quantity_destroyed, quantity_dropped, value_isk) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item.character_id())
+    .bind(item.killmail_id())
+    .bind(item.ordinal())
+    .bind(item.type_id())
+    .bind(item.flag())
+    .bind(item.quantity_destroyed())
+    .bind(item.quantity_dropped())
+    .bind(item.value_isk())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn killmail_attackers(
+  db: &Database,
+  character_id: i64,
+  killmail_id: i64,
+) -> Result<Vec<KillmailAttacker>, Error> {
+  let rows = sqlx::query_as::<_, KillmailAttacker>(
+    "SELECT alliance_id, attacker_character_id, character_id, corporation_id, damage_done, final_blow, \
+      killmail_id, ordinal, ship_type_id FROM killmail_attackers \
+    WHERE character_id = ? AND killmail_id = ? ORDER BY ordinal",
+  )
+  .bind(character_id)
+  .bind(killmail_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn killmail_items(db: &Database, character_id: i64, killmail_id: i64) -> Result<Vec<KillmailItem>, Error> {
+  let rows = sqlx::query_as::<_, KillmailItem>(
+    "SELECT character_id, flag, killmail_id, ordinal, quantity_destroyed, quantity_dropped, type_id, value_isk \
+    FROM killmail_items WHERE character_id = ? AND killmail_id = ? ORDER BY ordinal",
+  )
+  .bind(character_id)
+  .bind(killmail_id)
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -1791,7 +1889,9 @@ mod tests {
         value_isk: 0.0,
         value_recheck_count: 0,
         value_source: "local".to_owned(),
+        victim_alliance_id: None,
         victim_corp_id: None,
+        victim_damage_taken: 0,
         victim_id: None,
       }
     }
@@ -3991,7 +4091,9 @@ mod killmail_tests {
       value_isk,
       value_recheck_count: 0,
       value_source: "zkill".to_owned(),
+      victim_alliance_id: Some(4004),
       victim_corp_id: Some(3003),
+      victim_damage_taken: 0,
       victim_id: Some(2002),
     }
   }
@@ -4092,6 +4194,94 @@ mod killmail_tests {
       let rows = killmails_needing_recheck(&db).await.unwrap();
 
       assert_eq!(rows.iter().map(|k| k.killmail_id()).collect::<Vec<_>>(), [200]);
+    }
+  }
+
+  mod detail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn attacker(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailAttacker {
+      KillmailAttacker {
+        alliance_id: Some(99_000_001),
+        attacker_character_id: Some(5005),
+        character_id,
+        corporation_id: Some(6006),
+        damage_done: 1234,
+        final_blow: ordinal == 0,
+        killmail_id,
+        ordinal,
+        ship_type_id: Some(670),
+      }
+    }
+
+    fn item(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailItem {
+      KillmailItem {
+        character_id,
+        flag: 27,
+        killmail_id,
+        ordinal,
+        quantity_destroyed: 1,
+        quantity_dropped: 0,
+        type_id: 2185,
+        value_isk: 4242.5,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_attackers_items_and_victim_columns() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut kill = entry(42, 100, 1234.5);
+      kill.victim_alliance_id = Some(7007);
+      kill.victim_damage_taken = 56_789;
+      upsert_killmail(&db, &kill).await.unwrap();
+      let attackers = vec![attacker(42, 100, 0), attacker(42, 100, 1)];
+      let items = vec![item(42, 100, 0), item(42, 100, 1)];
+
+      upsert_killmail_detail(&db, 42, 100, &attackers, &items).await.unwrap();
+
+      let read_kill = killmails(&db, 42).await.unwrap();
+      assert_eq!(read_kill[0].victim_alliance_id(), Some(7007));
+      assert_eq!(read_kill[0].victim_damage_taken(), 56_789);
+      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap(), attackers);
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), items);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_existing_detail_on_rewrite() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
+        .await
+        .unwrap();
+
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0), attacker(42, 100, 1)], &[])
+        .await
+        .unwrap();
+
+      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap().len(), 2);
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
+    }
+
+    #[tokio::test]
+    async fn it_cascades_both_child_tables_when_the_character_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
+        .await
+        .unwrap();
+
+      character::delete(&db, 42).await.unwrap();
+
+      assert_eq!(
+        killmail_attackers(&db, 42, 100).await.unwrap(),
+        Vec::<KillmailAttacker>::new()
+      );
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
     }
   }
 }

@@ -66,6 +66,8 @@ mod inaccessible_structure;
 mod item_category;
 mod item_group;
 mod item_type;
+mod killmail_attacker;
+mod killmail_item;
 mod mail_folder_assignment;
 pub mod mail_overlay_state;
 mod mail_snooze;
@@ -194,6 +196,10 @@ pub use inaccessible_structure::Model as InaccessibleStructure;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;
 pub use item_type::Model as ItemType;
+#[allow(unused_imports)]
+pub use killmail_attacker::Model as KillmailAttacker;
+#[allow(unused_imports)]
+pub use killmail_item::Model as KillmailItem;
 #[allow(unused_imports)]
 pub use mail_folder_assignment::Model as MailFolderAssignment;
 #[allow(unused_imports)]

@@ -667,6 +667,17 @@ mod tests {
     }
   }
 
+  mod segmented {
+    use super::*;
+
+    #[test]
+    fn it_renders_each_active_filter() {
+      for filter in [KilllogFilter::All, KilllogFilter::Kills, KilllogFilter::Losses] {
+        let _el: Element<'_, Message> = super::super::segmented(filter);
+      }
+    }
+  }
+
   mod compute_stats {
     use pretty_assertions::assert_eq;
 

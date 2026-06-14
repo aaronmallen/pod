@@ -867,6 +867,30 @@ mod tests {
     }
   }
 
+  mod preview_chip {
+    use super::*;
+
+    #[test]
+    fn it_renders_each_chip_kind() {
+      for kind in [ChipKind::Negated, ChipKind::KeyValue, ChipKind::FreeText] {
+        let _el: Element<'_, Message> = super::super::preview_chip("label", &kind);
+      }
+    }
+  }
+
+  mod row_view {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_plain_row_and_an_agent_row() {
+      let plain = row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0);
+      let agent_row = agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true));
+
+      let _plain: Element<'_, Message> = super::super::row_view(&plain, false);
+      let _agent: Element<'_, Message> = super::super::row_view(&agent_row, true);
+    }
+  }
+
   mod flatten_sections {
     use pretty_assertions::assert_eq;
 

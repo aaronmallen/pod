@@ -567,6 +567,44 @@ mod tests {
     }
   }
 
+  mod contact_row {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_watched_contact_with_labels() {
+      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
+      let image = ImageState::Stale {
+        id: 100,
+        kind: crate::store::images::ImageKind::CharacterPortrait,
+      };
+      let mut labels = HashMap::new();
+      labels.insert(1, "Fleet");
+      labels.insert(2, "Trusted");
+
+      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false);
+    }
+
+    #[test]
+    fn it_renders_an_unwatched_negative_standing_last_row() {
+      let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
+      let labels: HashMap<i64, &str> = HashMap::new();
+
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true);
+    }
+  }
+
+  mod sortable_label {
+    use super::*;
+
+    #[test]
+    fn it_renders_active_and_inactive_columns_on_both_sides() {
+      let sort = ContactSort::default();
+
+      let _active: Element<'_, Message> = super::super::sortable_label("Standing", true, SortColumn::Standing, sort);
+      let _inactive: Element<'_, Message> = super::super::sortable_label("Entity", false, SortColumn::Entity, sort);
+    }
+  }
+
   mod body {
     use super::*;
 

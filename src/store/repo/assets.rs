@@ -2242,6 +2242,32 @@ pub async fn location_name(db: &Database, location_id: i64) -> Result<Option<Str
   Ok(name)
 }
 
+/// Resolve a (possibly nested) location id to the id of its enclosing station / structure /
+/// solar system by walking the asset container hierarchy across character and corporation
+/// assets. Returns `None` when the id is not a tracked container item — callers fall back to a
+/// direct lookup. Mirrors the recursive walk in `locations_for_items`.
+pub async fn enclosing_location_id(db: &Database, location_id: i64) -> Result<Option<i64>, Error> {
+  let enclosing = sqlx::query_scalar::<_, i64>(
+    "WITH RECURSIVE assets(item_id, location_id, location_type) AS ( \
+      SELECT item_id, location_id, location_type FROM character_assets \
+      UNION ALL \
+      SELECT item_id, location_id, location_type FROM corporation_assets \
+    ), \
+    loc(location_id, location_type) AS ( \
+      SELECT location_id, location_type FROM assets WHERE item_id = ?1 \
+      UNION ALL \
+      SELECT a.location_id, a.location_type FROM loc \
+        JOIN assets a ON a.item_id = loc.location_id \
+        WHERE loc.location_type = 'item' \
+    ) \
+    SELECT location_id FROM loc WHERE location_type <> 'item' LIMIT 1",
+  )
+  .bind(location_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(enclosing)
+}
+
 async fn insert_items(
   tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
   stockpile_id: i64,
@@ -3053,6 +3079,27 @@ mod abyssal_tests {
       let locations = locations_for_items(&db, &[99]).await.unwrap();
 
       assert!(locations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enclosing_location_id_walks_a_container_up_to_its_station() {
+      // A blueprint's location_id points at a hangar container; the container is itself an asset
+      // docked in a station. The walk returns the station id so the caller can name it.
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      insert_asset(&db, 1000, 60_000_001, "station").await;
+      insert_asset(&db, 2000, 1000, "item").await;
+
+      assert_eq!(enclosing_location_id(&db, 1000).await.unwrap(), Some(60_000_001));
+      assert_eq!(enclosing_location_id(&db, 2000).await.unwrap(), Some(60_000_001));
+    }
+
+    #[tokio::test]
+    async fn enclosing_location_id_is_none_for_an_untracked_id() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+
+      assert_eq!(enclosing_location_id(&db, 60_000_001).await.unwrap(), None);
     }
   }
 

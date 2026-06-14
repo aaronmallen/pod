@@ -785,37 +785,54 @@ fn parse_time(value: &str) -> Option<DateTime<Utc>> {
 }
 
 async fn resolve_location(db: &Database, location_id: i64) -> ResolvedLocation {
-  let name = assets::location_name(db, location_id).await.ok().flatten();
+  if let Some(resolved) = resolve_direct_location(db, location_id).await {
+    return resolved;
+  }
 
-  if let Ok(Some(station)) = sde::get_station(db, location_id).await {
-    let (system_name, security) = system_meta(db, station.system_id()).await;
-    return ResolvedLocation {
-      name: Some(station.name().to_owned()),
-      security,
-      system_name,
-    };
-  }
-  if let Ok(Some(structure)) = sde::get_structure(db, location_id).await {
-    let (system_name, security) = system_meta(db, structure.solar_system_id()).await;
-    return ResolvedLocation {
-      name: Some(structure.name().to_owned()),
-      security,
-      system_name,
-    };
-  }
-  if let Ok(Some(system)) = sde::get_solar_system(db, location_id).await {
-    return ResolvedLocation {
-      name: Some(system.name().to_owned()),
-      security: Some(system.security_status()),
-      system_name: Some(system.name().to_owned()),
-    };
+  // The id may be a container or ship nested inside the owner's assets (e.g. a blueprint in a
+  // station-hangar container). Walk up to the enclosing station / structure / system and resolve
+  // that, mirroring how the Assets view names container contents — otherwise we'd show the raw id.
+  if let Ok(Some(parent_id)) = assets::enclosing_location_id(db, location_id).await
+    && parent_id != location_id
+    && let Some(resolved) = resolve_direct_location(db, parent_id).await
+  {
+    return resolved;
   }
 
   ResolvedLocation {
-    name,
+    name: assets::location_name(db, location_id).await.ok().flatten(),
     security: None,
     system_name: None,
   }
+}
+
+/// Resolve a location id that is directly a station / structure / solar system. `None` when the id
+/// is something else (e.g. a container item), which the caller resolves via the container walk.
+async fn resolve_direct_location(db: &Database, location_id: i64) -> Option<ResolvedLocation> {
+  if let Ok(Some(station)) = sde::get_station(db, location_id).await {
+    let (system_name, security) = system_meta(db, station.system_id()).await;
+    return Some(ResolvedLocation {
+      name: Some(station.name().to_owned()),
+      security,
+      system_name,
+    });
+  }
+  if let Ok(Some(structure)) = sde::get_structure(db, location_id).await {
+    let (system_name, security) = system_meta(db, structure.solar_system_id()).await;
+    return Some(ResolvedLocation {
+      name: Some(structure.name().to_owned()),
+      security,
+      system_name,
+    });
+  }
+  if let Ok(Some(system)) = sde::get_solar_system(db, location_id).await {
+    return Some(ResolvedLocation {
+      name: Some(system.name().to_owned()),
+      security: Some(system.security_status()),
+      system_name: Some(system.name().to_owned()),
+    });
+  }
+  None
 }
 
 async fn slot_caps(db: &Database, character_id: i64) -> SlotCaps {

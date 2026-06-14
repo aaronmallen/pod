@@ -15,6 +15,10 @@ pub struct CharacterContacts {
 }
 
 impl CharacterContacts {
+  /// Looks up a contact's resolved avatar by `contact_id`. The character-detail tab now paginates contacts and
+  /// resolves each page's avatars itself, so this whole-set accessor survives only for the view-model tests and
+  /// any future whole-set consumer.
+  #[allow(dead_code)]
   pub fn image(&self, contact_id: i64) -> Option<&ImageState> {
     self.images.get(&contact_id)
   }

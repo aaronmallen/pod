@@ -1143,6 +1143,108 @@ pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterConta
   Ok(CharacterContacts::resolved(&images::default_store(), contacts, labels))
 }
 
+/// The column a contacts page is keyset-ordered by. Mirrors the address-book sort header so the UI can push its
+/// active sort into SQL instead of holding the full set in memory and sorting client-side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactSortColumn {
+  Name,
+  Standing,
+  Type,
+}
+
+/// Sort direction for a contacts page; pairs with [`ContactSortColumn`] to drive the keyset comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactSortDir {
+  Asc,
+  Desc,
+}
+
+/// The keyset cursor for the next contacts page: the active sort column's value of the last row plus its
+/// `contact_id` tiebreaker. `Name`/`Type` carry the text value; `Standing` carries the numeric value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContactCursor {
+  Number(f64, i64),
+  Text(String, i64),
+}
+
+/// The keyset-paginated contact labels: small per-character lookup set, fetched once and shared across pages.
+pub async fn contact_labels(db: &Database, character_id: i64) -> Result<Vec<CharacterContactLabel>, Error> {
+  let labels = sqlx::query_as::<_, CharacterContactLabel>(
+    "SELECT character_id, label_id, label_name FROM character_contact_labels \
+    WHERE character_id = ? ORDER BY label_id",
+  )
+  .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(labels)
+}
+
+/// Fetches one keyset page of contacts ordered by `sort`/`dir`, optionally filtered to a single `contact_type`
+/// (the address-book facet), starting after `cursor`. The keyset compares `(sort column, contact_id)` so the page
+/// is stable across loads; the caller derives the next cursor from the last returned row.
+pub async fn contacts_page(
+  db: &Database,
+  character_id: i64,
+  contact_type: Option<&str>,
+  sort: ContactSortColumn,
+  dir: ContactSortDir,
+  cursor: Option<&ContactCursor>,
+  limit: i64,
+) -> Result<Vec<CharacterContact>, Error> {
+  let column = match sort {
+    ContactSortColumn::Name => "contact_name",
+    ContactSortColumn::Standing => "standing",
+    ContactSortColumn::Type => "contact_type",
+  };
+  // The keyset comparator points the seek the same way the rows are ordered: `>` advances an ascending page,
+  // `<` advances a descending one. `contact_id` breaks ties so equal sort values can't strand or repeat a row.
+  let (cmp, order) = match dir {
+    ContactSortDir::Asc => (">", "ASC"),
+    ContactSortDir::Desc => ("<", "DESC"),
+  };
+
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT character_id, contact_id, contact_name, contact_type, is_blocked, is_watched, label_ids, standing \
+    FROM character_contacts WHERE character_id = ",
+  );
+  builder.push_bind(character_id);
+  if let Some(kind) = contact_type {
+    builder.push(" AND contact_type = ");
+    builder.push_bind(kind.to_owned());
+  }
+  if let Some(cursor) = cursor {
+    builder.push(" AND (");
+    builder.push(column);
+    builder.push(format!(" {cmp} "));
+    match cursor {
+      ContactCursor::Text(value, id) => {
+        builder.push_bind(value.clone());
+        builder.push(" OR (");
+        builder.push(column);
+        builder.push(" = ");
+        builder.push_bind(value.clone());
+        builder.push(format!(" AND contact_id {cmp} "));
+        builder.push_bind(*id);
+      }
+      ContactCursor::Number(value, id) => {
+        builder.push_bind(*value);
+        builder.push(" OR (");
+        builder.push(column);
+        builder.push(" = ");
+        builder.push_bind(*value);
+        builder.push(format!(" AND contact_id {cmp} "));
+        builder.push_bind(*id);
+      }
+    }
+    builder.push("))");
+  }
+  builder.push(format!(" ORDER BY {column} {order}, contact_id {order} LIMIT "));
+  builder.push_bind(limit);
+
+  let rows = builder.build_query_as::<CharacterContact>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
 pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO character_killmails \
@@ -3470,6 +3572,159 @@ mod contact_tests {
           .iter()
           .map(|l| l.label_name().as_str())
           .collect::<Vec<_>>(),
+        ["Friendlies", "Watchlist"]
+      );
+    }
+  }
+
+  mod contacts_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::repo::character::{ContactCursor, ContactSortColumn, ContactSortDir};
+
+    async fn seed_three(db: &Database) {
+      seed_character(db, 42).await;
+      seed_contact(db, 42, 95_001, "character", 5.0, true, "[]", "Bravo Pilot").await;
+      seed_contact(db, 42, 95_002, "character", -3.0, false, "[]", "Alpha Pilot").await;
+      seed_contact(db, 42, 98_001, "corporation", 1.0, false, "[]", "Charlie Corp").await;
+    }
+
+    fn names(rows: &[CharacterContact]) -> Vec<&str> {
+      rows.iter().map(|c| c.contact_name().as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn it_orders_a_name_ascending_page() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(&db, 42, None, ContactSortColumn::Name, ContactSortDir::Asc, None, 10)
+        .await
+        .unwrap();
+
+      assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot", "Charlie Corp"]);
+    }
+
+    #[tokio::test]
+    async fn it_orders_a_standing_descending_page() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(
+        &db,
+        42,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        10,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&rows), ["Bravo Pilot", "Charlie Corp", "Alpha Pilot"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_contact_type() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(
+        &db,
+        42,
+        Some("corporation"),
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        10,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&rows), ["Charlie Corp"]);
+    }
+
+    #[tokio::test]
+    async fn it_walks_a_text_keyset_cursor_without_repeating_or_skipping() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let first = super::contacts_page(&db, 42, None, ContactSortColumn::Name, ContactSortDir::Asc, None, 2)
+        .await
+        .unwrap();
+      assert_eq!(names(&first), ["Alpha Pilot", "Bravo Pilot"]);
+
+      let last = first.last().unwrap();
+      let cursor = ContactCursor::Text(last.contact_name().clone(), last.contact_id());
+      let second = super::contacts_page(
+        &db,
+        42,
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        Some(&cursor),
+        2,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&second), ["Charlie Corp"]);
+    }
+
+    #[tokio::test]
+    async fn it_walks_a_numeric_keyset_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let first = super::contacts_page(
+        &db,
+        42,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        1,
+      )
+      .await
+      .unwrap();
+      assert_eq!(names(&first), ["Bravo Pilot"]);
+
+      let last = first.last().unwrap();
+      let cursor = ContactCursor::Number(last.standing(), last.contact_id());
+      let second = super::contacts_page(
+        &db,
+        42,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        Some(&cursor),
+        10,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&second), ["Charlie Corp", "Alpha Pilot"]);
+    }
+  }
+
+  mod contact_labels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_labels_for_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_label(&db, 42, 2, "Watchlist").await;
+      seed_label(&db, 42, 1, "Friendlies").await;
+
+      let labels = super::super::contact_labels(&db, 42).await.unwrap();
+
+      assert_eq!(
+        labels.iter().map(|l| l.label_name().as_str()).collect::<Vec<_>>(),
         ["Friendlies", "Watchlist"]
       );
     }

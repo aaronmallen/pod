@@ -110,36 +110,55 @@ pub(super) fn tab_strip(enabled: &[Tab], active: Tab) -> Element<'_, Message> {
 
 pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   let missing = forbidden::missing_scopes(state.granted_scopes(), state.active_tab.required_scopes());
-  let inner: Element<'_, Message> = if missing.is_empty() {
-    match state.active_tab {
-      Tab::Clones => clones::body(&state.clones),
-      Tab::Contacts => contacts::body(
-        &state.contacts,
-        state.contact_filter,
-        state.contact_sort,
-        state.contacts_visible(),
-      ),
-      Tab::Killlog => killlog::body(&state.killlog, state.killlog_filter),
-      Tab::Notifications => notifications::body(&state.notifications, state.notifications_filter),
-      Tab::Standings => standings::body(
-        &state.standings,
-        state.standings_query(),
-        state.standings_filter,
-        state.standings_has_filters(),
-      ),
-    }
-  } else {
-    forbidden::forbidden(
+  if !missing.is_empty() {
+    let forbidden = forbidden::forbidden(
       state.active_tab.noun(),
       state.active_name(),
       &missing,
       Message::ReauthRequested(state.active()),
-    )
-  };
+    );
+    return plain_scroll(state.active_tab, forbidden);
+  }
 
-  // The detail view shares one scrollbar across every tab; route its scroll offset to the active tab's
-  // pagination message so each list grows independently as the user nears the bottom.
-  let active_tab = state.active_tab;
+  // The windowed tabs (Contacts, Kill Log, Standings) hoist their header out of the scroll region and make the
+  // virtualized list the sole scrollable content, so `responsive` reads the real viewport height (mirrors the
+  // Assets inventory adoption). The short, unwindowed tabs render their whole body inside one scrollable.
+  match state.active_tab {
+    Tab::Clones => plain_scroll(Tab::Clones, clones::body(&state.clones)),
+    Tab::Notifications => plain_scroll(
+      Tab::Notifications,
+      notifications::body(&state.notifications, state.notifications_filter),
+    ),
+    Tab::Contacts => windowed_tab(
+      Tab::Contacts,
+      Some(contacts::header(&state.contacts, state.contact_filter)),
+      contacts::body(&state.contacts, state.contact_sort, state.contacts_scroll_offset()),
+    ),
+    Tab::Killlog => windowed_tab(
+      Tab::Killlog,
+      killlog::header(&state.killlog, state.killlog_filter),
+      killlog::body(&state.killlog, state.killlog_filter, state.killlog_scroll_offset()),
+    ),
+    Tab::Standings => windowed_tab(
+      Tab::Standings,
+      Some(standings::header(
+        state.standings_query(),
+        state.standings_filter,
+        state.standings_has_filters(),
+      )),
+      standings::body(
+        &state.standings,
+        state.standings_filter,
+        state.standings_has_filters(),
+        state.standings_scroll_offset(),
+      ),
+    ),
+  }
+}
+
+/// Wraps a whole tab body in one scrollable (for the short, unwindowed tabs and the scope-missing state). Its scroll
+/// is routed to the active tab's message, which is a harmless no-op for tabs that do not paginate.
+fn plain_scroll(active_tab: Tab, inner: Element<'_, Message>) -> Element<'_, Message> {
   scrollable(container(inner).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_6,
     right: TAB_BODY_PADDING,
@@ -149,16 +168,73 @@ pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   .style(crate::ui::style::control::scrollbar)
   .width(Length::Fill)
   .height(Length::Fill)
-  .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y))
+  .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y, viewport.absolute_offset().y))
   .into()
 }
 
-fn scroll_message(tab: Tab, offset: f32) -> Message {
+/// Lays out a windowed tab: a hoisted, non-scrolling `header` above a height-filling scrollable whose sole content
+/// is the virtualized `body`. The scrollbar's offset drives both the pagination threshold and the virtual window.
+fn windowed_tab<'a>(
+  active_tab: Tab,
+  header: Option<Element<'a, Message>>,
+  body: Element<'a, Message>,
+) -> Element<'a, Message> {
+  let side = Padding {
+    top: 0.0,
+    right: TAB_BODY_PADDING,
+    bottom: 0.0,
+    left: TAB_BODY_PADDING,
+  };
+
+  let scroll = scrollable(container(body).width(Length::Fill).padding(Padding {
+    top: 0.0,
+    right: TAB_BODY_PADDING,
+    bottom: spacing::SPACE_6,
+    left: TAB_BODY_PADDING,
+  }))
+  .style(crate::ui::style::control::scrollbar)
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .on_scroll(move |viewport| scroll_message(active_tab, viewport.relative_offset().y, viewport.absolute_offset().y));
+
+  let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
+  if let Some(header) = header {
+    children.push(
+      container(header)
+        .width(Length::Fill)
+        .padding(Padding {
+          top: spacing::SPACE_6,
+          bottom: spacing::SPACE_3_5,
+          ..side
+        })
+        .into(),
+    );
+  }
+  children.push(scroll.into());
+
+  Column::with_children(children)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Routes the shared scrollbar's offset to the active tab's pagination/windowing message. The `relative` fraction
+/// drives the load-more threshold; the `absolute` pixel offset drives the virtual window. Clones and Notifications
+/// are short, unwindowed tabs, so their scroll feeds the contacts message harmlessly (a no-op for that tab).
+fn scroll_message(tab: Tab, relative: f32, absolute: f32) -> Message {
   match tab {
-    Tab::Contacts => Message::ContactsScrolled(offset),
-    Tab::Killlog => Message::KilllogScrolled(offset),
-    Tab::Standings => Message::StandingsScrolled(offset),
-    Tab::Clones | Tab::Notifications => Message::ContactsScrolled(offset),
+    Tab::Killlog => Message::KilllogScrolled {
+      absolute,
+      relative,
+    },
+    Tab::Standings => Message::StandingsScrolled {
+      absolute,
+      relative,
+    },
+    Tab::Clones | Tab::Contacts | Tab::Notifications => Message::ContactsScrolled {
+      absolute,
+      relative,
+    },
   }
 }
 
@@ -254,16 +330,25 @@ mod tests {
     #[test]
     fn it_routes_each_paginated_tab_to_its_scroll_message() {
       assert!(matches!(
-        scroll_message(Tab::Contacts, 0.9),
-        Message::ContactsScrolled(0.9)
+        scroll_message(Tab::Contacts, 0.9, 120.0),
+        Message::ContactsScrolled {
+          relative: 0.9,
+          absolute: 120.0
+        }
       ));
       assert!(matches!(
-        scroll_message(Tab::Killlog, 0.9),
-        Message::KilllogScrolled(0.9)
+        scroll_message(Tab::Killlog, 0.9, 120.0),
+        Message::KilllogScrolled {
+          relative: 0.9,
+          absolute: 120.0
+        }
       ));
       assert!(matches!(
-        scroll_message(Tab::Standings, 0.9),
-        Message::StandingsScrolled(0.9)
+        scroll_message(Tab::Standings, 0.9, 120.0),
+        Message::StandingsScrolled {
+          relative: 0.9,
+          absolute: 120.0
+        }
       ));
     }
   }

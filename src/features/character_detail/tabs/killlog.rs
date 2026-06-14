@@ -22,11 +22,15 @@ use crate::{
       icon_tile::icon_tile,
       section_header::section_header,
       segmented::segment_button_style,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
 };
 
+/// Nominal height of one kill-log row, in pixels. Rows have a two-line victim/ship cell, so this only feeds the
+/// [`VirtualList`] offset math; overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 52.0;
 const SHIP_ICON_SIZE: Size = Size::S64;
 const SHIP_ICON_BOX: f32 = 32.0;
 const SYSTEM_WIDTH: f32 = 100.0;
@@ -101,37 +105,60 @@ fn compute_stats(entries: &[KillLogEntry]) -> KillStats {
   stats
 }
 
-pub(in crate::features::character_detail) fn body(
+/// The non-scrolling header for the Kill Log tab: the kill/loss summary tiles and the activity eyebrow with the
+/// kill/loss facet. Hoisted above the windowed list. Returns `None` for the loading/error/empty states (which the
+/// body renders as a single full-height placeholder instead).
+pub(in crate::features::character_detail) fn header(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
-) -> Element<'_, Message> {
-  let entries = match killlog {
-    LoadState::Loaded(entries) => entries,
-    LoadState::Loading => return load_state_view(LoadStateView::Loading("Loading kill log\u{2026}")),
-    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
+) -> Option<Element<'_, Message>> {
+  let LoadState::Loaded(entries) = killlog else {
+    return None;
   };
   if entries.is_empty() {
-    return load_state_view(LoadStateView::Empty(empty_state("No killmails recorded")));
+    return None;
   }
 
   let stats = compute_stats(entries);
-  let visible: Vec<&KillLogEntry> = entries.iter().filter(|entry| filter.matches(entry)).collect();
+  let visible = entries.iter().filter(|entry| filter.matches(entry)).count();
 
   let tiles = summary_tiles(&stats);
   let eyebrow = Row::with_children(vec![
-    section_header(&format!("Activity \u{00b7} {} entries", visible.len()), None),
+    section_header(&format!("Activity \u{00b7} {visible} entries"), None),
     segmented(filter),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  let table = entries_card(&visible);
+  Some(
+    Column::with_children(vec![tiles, eyebrow.into()])
+      .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
+      .width(Length::Fill)
+      .into(),
+  )
+}
 
-  Column::with_children(vec![tiles, eyebrow.into(), table])
-    .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
-    .width(Length::Fill)
-    .into()
+/// The windowed body for the Kill Log tab: the (filtered) entries table, windowed so a multi-page kill log renders
+/// only the viewport's rows. Designed to be the sole content of the tab's scrollable.
+pub(in crate::features::character_detail) fn body(
+  killlog: &LoadState<Vec<KillLogEntry>>,
+  filter: KilllogFilter,
+  scroll_offset: f32,
+) -> Element<'_, Message> {
+  let entries = match killlog {
+    LoadState::Loaded(entries) => entries,
+    LoadState::Loading => {
+      return load_state_view(LoadStateView::Loading("Loading kill log\u{2026}"));
+    }
+    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
+  };
+  if entries.is_empty() {
+    return load_state_view(LoadStateView::Empty(empty_state("No killmails recorded")));
+  }
+
+  let visible: Vec<&KillLogEntry> = entries.iter().filter(|entry| filter.matches(entry)).collect();
+  entries_card(visible, scroll_offset)
 }
 
 fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
@@ -242,29 +269,37 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
     .into()
 }
 
-fn entries_card<'a>(visible: &[&'a KillLogEntry]) -> Element<'a, Message> {
-  let mut rows: Vec<Element<'a, Message>> = vec![header_row()];
+fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, scroll_offset: f32) -> Element<'a, Message> {
   if visible.is_empty() {
-    rows.push(
-      container(
-        text("No entries match this filter")
-          .font(typography::body::REGULAR)
-          .size(typography::size::MD)
-          .style(|_| text::Style {
-            color: Some(color::text::secondary()),
-          }),
-      )
-      .width(Length::Fill)
-      .padding(spacing::SPACE_3_5 + spacing::SPACE_2)
-      .into(),
+    let empty = container(
+      text("No entries match this filter")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        }),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_3_5 + spacing::SPACE_2);
+    return card::panel(
+      Column::with_children(vec![header_row(), empty.into()]).width(Length::Fill),
+      false,
     );
-  } else {
-    for (index, entry) in visible.iter().enumerate() {
-      rows.push(kill_row(entry, index == visible.len() - 1));
-    }
   }
 
-  card::panel(Column::with_children(rows).width(Length::Fill), false)
+  // Window the (filtered) entries so a multi-page kill log renders only the viewport's rows; the column header
+  // stays mounted above the windowed list.
+  let body = virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(visible.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(scroll_offset);
+    let list = VirtualList::new(config, |index| kill_row(visible[index], index == visible.len() - 1)).view();
+    Column::with_children(vec![header_row(), list])
+      .width(Length::Fill)
+      .into()
+  });
+
+  card::panel(body, false)
 }
 
 fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
@@ -594,7 +629,7 @@ mod tests {
       let loaded = LoadState::Loaded(vec![entry(1, true, 1_000_000.0), entry(2, false, 2_000_000.0)]);
 
       for filter in [KilllogFilter::All, KilllogFilter::Kills, KilllogFilter::Losses] {
-        let _el: Element<'_, Message> = body(&loaded, filter);
+        let _el: Element<'_, Message> = body(&loaded, filter, 0.0);
       }
     }
 
@@ -604,9 +639,9 @@ mod tests {
       let loading: LoadState<Vec<KillLogEntry>> = LoadState::Loading;
       let error: LoadState<Vec<KillLogEntry>> = LoadState::Error("boom".to_owned());
 
-      let _empty: Element<'_, Message> = body(&empty, KilllogFilter::All);
-      let _loading: Element<'_, Message> = body(&loading, KilllogFilter::All);
-      let _error: Element<'_, Message> = body(&error, KilllogFilter::All);
+      let _empty: Element<'_, Message> = body(&empty, KilllogFilter::All, 0.0);
+      let _loading: Element<'_, Message> = body(&loading, KilllogFilter::All, 0.0);
+      let _error: Element<'_, Message> = body(&error, KilllogFilter::All, 0.0);
     }
   }
 

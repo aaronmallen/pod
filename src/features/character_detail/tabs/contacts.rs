@@ -8,14 +8,11 @@ use iced::{
 };
 
 use super::{
-  super::{LoadState, Message},
+  super::{ContactsPage, LoadState, Message},
   shared,
 };
 use crate::{
-  store::{
-    images::ImageState,
-    model::{CharacterContact, character_contacts_view::CharacterContacts},
-  },
+  store::{images::ImageState, model::CharacterContact},
   ui::{
     components::{
       avatar::avatar,
@@ -24,6 +21,7 @@ use crate::{
       eyebrow::eyebrow_text,
       section_header::section_header,
       segmented::segment_button_style,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
@@ -33,6 +31,10 @@ const AVATAR_SIZE: f32 = 30.0;
 const STANDING_WIDTH: f32 = 70.0;
 const TYPE_WIDTH: f32 = 90.0;
 const WATCHLIST_WIDTH: f32 = 80.0;
+
+/// Nominal height of one contact row, in pixels. Rows are single-line, so this only feeds the [`VirtualList`]
+/// offset math; the overscan margin absorbs any minor variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 46.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ContactFilter {
@@ -51,7 +53,9 @@ impl ContactFilter {
     (ContactFilter::Alliance, "Alliances"),
   ];
 
-  fn contact_type(self) -> Option<&'static str> {
+  /// The `character_contacts.contact_type` value this facet filters to, or `None` for the All facet. The feature
+  /// pushes this into the paginated SQL query rather than filtering an in-memory set.
+  pub(in crate::features::character_detail) fn contact_type(self) -> Option<&'static str> {
     match self {
       ContactFilter::All => None,
       ContactFilter::Character => Some("character"),
@@ -59,13 +63,14 @@ impl ContactFilter {
       ContactFilter::Alliance => Some("alliance"),
     }
   }
+}
 
-  fn matches(self, contact: &CharacterContact) -> bool {
-    match self.contact_type() {
-      None => true,
-      Some(kind) => contact.contact_type().eq_ignore_ascii_case(kind),
-    }
-  }
+/// A render-ready contact row: the raw contact joined to its resolved avatar so the windowed body can build a
+/// row without holding the whole address book (and its image map) in memory.
+#[derive(Clone, Debug)]
+pub struct ContactRow {
+  pub contact: CharacterContact,
+  pub image: ImageState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -137,56 +142,46 @@ impl SortDirection {
   }
 }
 
-fn sort_contacts(rows: &mut [&CharacterContact], sort: ContactSort) {
-  rows.sort_by(|a, b| {
-    let ordering = match sort.column {
-      SortColumn::Entity => a.contact_name().cmp(b.contact_name()),
-      SortColumn::Standing => a.standing().total_cmp(&b.standing()),
-      SortColumn::Type => a.contact_type().cmp(b.contact_type()),
-    };
-    let ordering = match sort.direction {
-      SortDirection::Ascending => ordering,
-      SortDirection::Descending => ordering.reverse(),
-    };
-    ordering.then_with(|| a.contact_name().cmp(b.contact_name()))
-  });
-}
-
-pub(in crate::features::character_detail) fn body(
-  contacts: &LoadState<CharacterContacts>,
+/// The non-scrolling header for the Contacts tab: the address-book title (with a loaded-so-far count) and the
+/// entity-type facet. Hoisted above the windowed list so it stays put while the list scrolls.
+pub(in crate::features::character_detail) fn header(
+  contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
-  sort: ContactSort,
-  visible: usize,
 ) -> Element<'_, Message> {
-  let loaded = match contacts {
-    LoadState::Loaded(loaded) => loaded,
-    LoadState::Loading => return load_state_view(LoadStateView::Loading("Loading contacts\u{2026}")),
-    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
+  let (count, suffix) = match contacts {
+    LoadState::Loaded(page) => (page.rows().len(), if page.has_more() { "+" } else { "" }),
+    _ => (0, ""),
   };
 
-  let labels: HashMap<i64, &str> = loaded
-    .labels
-    .iter()
-    .map(|label| (label.label_id(), label.label_name().as_str()))
-    .collect();
-
-  let mut rows: Vec<&CharacterContact> = loaded
-    .contacts
-    .iter()
-    .filter(|contact| filter.matches(contact))
-    .collect();
-  sort_contacts(&mut rows, sort);
-
-  let header = Row::with_children(vec![
-    section_header("Address book", Some(&format!("{} contacts", rows.len()))),
+  Row::with_children(vec![
+    section_header("Address book", Some(&format!("{count}{suffix} contacts"))),
     segmented(filter),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
-  .width(Length::Fill);
+  .width(Length::Fill)
+  .into()
+}
 
-  let table = if rows.is_empty() {
-    card::panel(
+/// The windowed body for the Contacts tab: the column header plus the keyset page of rows, windowed so only the
+/// viewport's rows (plus overscan) are materialized regardless of how many pages have loaded. Designed to be the
+/// sole content of the tab's scrollable so `responsive` reads the real viewport height.
+pub(in crate::features::character_detail) fn body<'a>(
+  contacts: &'a LoadState<ContactsPage>,
+  sort: ContactSort,
+  scroll_offset: f32,
+) -> Element<'a, Message> {
+  let page = match contacts {
+    LoadState::Loaded(page) => page,
+    LoadState::Loading => {
+      return load_state_view(LoadStateView::Loading("Loading contacts\u{2026}"));
+    }
+    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
+  };
+
+  let rows = page.rows();
+  if rows.is_empty() {
+    return card::panel(
       container(
         text("No contacts match this filter")
           .font(typography::body::REGULAR)
@@ -198,21 +193,32 @@ pub(in crate::features::character_detail) fn body(
       .width(Length::Fill)
       .padding(spacing::SPACE_3_5),
       false,
-    )
-  } else {
-    let shown = visible.min(rows.len());
-    let mut card_rows: Vec<Element<'_, Message>> = vec![column_header(sort)];
-    for (index, contact) in rows.iter().take(shown).enumerate() {
-      let image = loaded.image(contact.contact_id());
-      card_rows.push(contact_row(contact, image, &labels, index == shown - 1));
-    }
-    card::panel(Column::with_children(card_rows).width(Length::Fill), false)
-  };
+    );
+  }
 
-  Column::with_children(vec![header.into(), table])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill)
-    .into()
+  let labels: HashMap<i64, &str> = page
+    .labels()
+    .iter()
+    .map(|label| (label.label_id(), label.label_name().as_str()))
+    .collect();
+
+  // Window the rows so a multi-thousand-contact address book renders the same handful of widgets. The column
+  // header rides inside the windowed column so it scrolls with the rows under the hoisted address-book header.
+  let body = virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(rows.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(scroll_offset);
+    let list = VirtualList::new(config, |index| {
+      let row = &rows[index];
+      contact_row(&row.contact, Some(&row.image), &labels, index == rows.len() - 1)
+    })
+    .view();
+    Column::with_children(vec![column_header(sort), list])
+      .width(Length::Fill)
+      .into()
+  });
+
+  card::panel(body, false)
 }
 
 fn segmented<'a>(active: ContactFilter) -> Element<'a, Message> {
@@ -502,19 +508,29 @@ mod tests {
     }
   }
 
-  fn loaded() -> CharacterContacts {
-    CharacterContacts::resolved(
-      &crate::store::images::Store::new(std::path::PathBuf::from("/data/images")),
+  fn contact_row(id: i64, kind: &str, standing: f64, watched: bool, label_ids: &str, name: &str) -> ContactRow {
+    ContactRow {
+      contact: contact(id, kind, standing, watched, label_ids, name),
+      image: ImageState::Stale {
+        id,
+        kind: crate::store::images::ImageKind::CharacterPortrait,
+      },
+    }
+  }
+
+  fn loaded() -> ContactsPage {
+    ContactsPage::for_test(
       vec![
-        contact(100, "character", 8.5, true, "[1,2]", "Wingmate"),
-        contact(200, "corporation", -5.0, false, "[]", "Hostile Corp"),
-        contact(300, "alliance", 0.0, false, "[99]", "Neutral Alliance"),
+        contact_row(100, "character", 8.5, true, "[1,2]", "Wingmate"),
+        contact_row(200, "corporation", -5.0, false, "[]", "Hostile Corp"),
+        contact_row(300, "alliance", 0.0, false, "[99]", "Neutral Alliance"),
       ],
       vec![label(1, "Fleet"), label(2, "Trusted")],
+      false,
     )
   }
 
-  mod body {
+  mod header {
     use super::*;
 
     #[test]
@@ -527,9 +543,32 @@ mod tests {
         ContactFilter::Corp,
         ContactFilter::Alliance,
       ] {
-        let _el: Element<'_, Message> = body(&state, filter, ContactSort::default(), usize::MAX);
+        let _el: Element<'_, Message> = super::super::header(&state, filter);
       }
     }
+
+    #[test]
+    fn it_renders_the_more_pages_count_suffix() {
+      let page = ContactsPage::for_test(
+        vec![contact_row(100, "character", 1.0, false, "[]", "Pilot")],
+        Vec::new(),
+        true,
+      );
+      let state = LoadState::Loaded(page);
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All);
+    }
+
+    #[test]
+    fn it_renders_a_zero_count_in_the_loading_state() {
+      let loading: LoadState<ContactsPage> = LoadState::Loading;
+
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All);
+    }
+  }
+
+  mod body {
+    use super::*;
 
     #[test]
     fn it_renders_each_sort_column_and_direction() {
@@ -539,12 +578,11 @@ mod tests {
         for direction in [SortDirection::Ascending, SortDirection::Descending] {
           let _el: Element<'_, Message> = body(
             &state,
-            ContactFilter::All,
             ContactSort {
               column,
               direction,
             },
-            usize::MAX,
+            0.0,
           );
         }
       }
@@ -552,11 +590,18 @@ mod tests {
 
     #[test]
     fn it_renders_loading_and_error_states() {
-      let loading: LoadState<CharacterContacts> = LoadState::Loading;
-      let error: LoadState<CharacterContacts> = LoadState::Error("boom".to_owned());
+      let loading: LoadState<ContactsPage> = LoadState::Loading;
+      let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactFilter::All, ContactSort::default(), usize::MAX);
-      let _error: Element<'_, Message> = body(&error, ContactFilter::All, ContactSort::default(), usize::MAX);
+      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 0.0);
+      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 0.0);
+    }
+
+    #[test]
+    fn it_renders_an_empty_page_as_a_no_match_panel() {
+      let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 0.0);
     }
   }
 
@@ -566,24 +611,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_passes_everything_for_all() {
-      let contacts = loaded().contacts;
-
-      let matched = contacts.iter().filter(|c| ContactFilter::All.matches(c)).count();
-      assert_eq!(matched, 3);
-    }
-
-    #[test]
-    fn it_filters_by_contact_type() {
-      let contacts = loaded().contacts;
-
-      let chars = contacts.iter().filter(|c| ContactFilter::Character.matches(c)).count();
-      let corps = contacts.iter().filter(|c| ContactFilter::Corp.matches(c)).count();
-      let alliances = contacts.iter().filter(|c| ContactFilter::Alliance.matches(c)).count();
-
-      assert_eq!(chars, 1);
-      assert_eq!(corps, 1);
-      assert_eq!(alliances, 1);
+    fn it_maps_each_facet_to_its_contact_type() {
+      assert_eq!(ContactFilter::All.contact_type(), None);
+      assert_eq!(ContactFilter::Character.contact_type(), Some("character"));
+      assert_eq!(ContactFilter::Corp.contact_type(), Some("corporation"));
+      assert_eq!(ContactFilter::Alliance.contact_type(), Some("alliance"));
     }
   }
 
@@ -592,61 +624,10 @@ mod tests {
 
     use super::*;
 
-    fn names(rows: &[&CharacterContact]) -> Vec<String> {
-      rows.iter().map(|c| c.contact_name().clone()).collect()
-    }
-
     #[test]
     fn it_defaults_to_strongest_standing_first() {
       assert_eq!(ContactSort::default().column, SortColumn::Standing);
       assert_eq!(ContactSort::default().direction, SortDirection::Descending);
-
-      let contacts = loaded().contacts;
-      let mut rows: Vec<&CharacterContact> = contacts.iter().collect();
-      sort_contacts(&mut rows, ContactSort::default());
-
-      assert_eq!(names(&rows), vec!["Wingmate", "Neutral Alliance", "Hostile Corp"]);
-    }
-
-    #[test]
-    fn it_sorts_by_entity_name_ascending_and_descending() {
-      let contacts = loaded().contacts;
-
-      let mut asc: Vec<&CharacterContact> = contacts.iter().collect();
-      sort_contacts(
-        &mut asc,
-        ContactSort {
-          column: SortColumn::Entity,
-          direction: SortDirection::Ascending,
-        },
-      );
-      assert_eq!(names(&asc), vec!["Hostile Corp", "Neutral Alliance", "Wingmate"]);
-
-      let mut desc: Vec<&CharacterContact> = contacts.iter().collect();
-      sort_contacts(
-        &mut desc,
-        ContactSort {
-          column: SortColumn::Entity,
-          direction: SortDirection::Descending,
-        },
-      );
-      assert_eq!(names(&desc), vec!["Wingmate", "Neutral Alliance", "Hostile Corp"]);
-    }
-
-    #[test]
-    fn it_sorts_by_contact_type_ascending() {
-      let contacts = loaded().contacts;
-      let mut rows: Vec<&CharacterContact> = contacts.iter().collect();
-      sort_contacts(
-        &mut rows,
-        ContactSort {
-          column: SortColumn::Type,
-          direction: SortDirection::Ascending,
-        },
-      );
-
-      let kinds: Vec<&str> = rows.iter().map(|c| c.contact_type().as_str()).collect();
-      assert_eq!(kinds, vec!["alliance", "character", "corporation"]);
     }
 
     #[test]

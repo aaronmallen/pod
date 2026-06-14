@@ -11,6 +11,7 @@ use iced::{
 
 pub use self::tabs::Tab;
 use self::tabs::{
+  contacts::ContactRow,
   killlog::{KillLogEntry, KilllogFilter},
   notifications::NotificationsFilter,
 };
@@ -20,10 +21,13 @@ use crate::{
   store::{
     Database, images,
     model::{
-      CharacterNotification, CharacterState, OwnerType, character_clone_view::CharacterClones,
-      character_contacts_view::CharacterContacts,
+      CharacterContactLabel, CharacterNotification, CharacterState, OwnerType, character_clone_view::CharacterClones,
+      character_contacts_view::image_kind,
     },
-    repo::{character, infra, org, sde, standings},
+    repo::{
+      character::{self, ContactCursor, ContactSortColumn, ContactSortDir},
+      infra, org, sde, standings,
+    },
   },
   sync::JobKind,
   ui::{
@@ -37,7 +41,7 @@ use crate::{
 
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "standings-search-input";
 
-const CONTACTS_PAGE_SIZE: usize = 100;
+const CONTACTS_PAGE_SIZE: i64 = 100;
 const HEADER_SIDE_PADDING: f32 = 28.0;
 const KILLLOG_PAGE_SIZE: i64 = 100;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
@@ -95,10 +99,50 @@ pub struct HeadStats {
   pub total_sp: Option<i64>,
 }
 
+/// One keyset page of render-ready contact rows plus the per-character label lookup. The labels travel with the
+/// first page so the address-book notes can resolve label ids without a second query per page.
+#[derive(Clone, Debug)]
+pub struct ContactsPage {
+  cursor: Option<ContactCursor>,
+  has_more: bool,
+  labels: Vec<CharacterContactLabel>,
+  rows: Vec<ContactRow>,
+}
+
+impl ContactsPage {
+  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
+  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
+  #[cfg(test)]
+  pub(in crate::features::character_detail) fn for_test(
+    rows: Vec<ContactRow>,
+    labels: Vec<CharacterContactLabel>,
+    has_more: bool,
+  ) -> Self {
+    ContactsPage {
+      cursor: None,
+      has_more,
+      labels,
+      rows,
+    }
+  }
+
+  pub(super) fn has_more(&self) -> bool {
+    self.has_more
+  }
+
+  pub(super) fn labels(&self) -> &[CharacterContactLabel] {
+    &self.labels
+  }
+
+  pub(super) fn rows(&self) -> &[ContactRow] {
+    &self.rows
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct Loaded {
   pub clones: LoadState<Option<CharacterClones>>,
-  pub contacts: LoadState<CharacterContacts>,
+  pub contacts: LoadState<ContactsPage>,
   pub granted_scopes: Option<String>,
   pub head: HeadStats,
   pub killlog: LoadState<Vec<KillLogEntry>>,
@@ -118,10 +162,17 @@ pub enum Message {
   CharacterChanged(i64),
   ContactFilterChanged(tabs::contacts::ContactFilter),
   ContactSortChanged(tabs::contacts::ContactSort),
-  ContactsScrolled(f32),
+  ContactsPageLoaded(Box<ContactsPage>),
+  ContactsScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
-  KilllogScrolled(f32),
+  KilllogScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   Loaded(Box<Loaded>),
   NotificationRead(i64),
   NotificationsFilterChanged(NotificationsFilter),
@@ -134,7 +185,10 @@ pub enum Message {
   StandingsFilterChanged(tabs::standings::StandingsFilter),
   StandingsInsertQuery(String),
   StandingsResults(Box<StandingsResult>),
-  StandingsScrolled(f32),
+  StandingsScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   StandingsSearchChanged(String),
   StandingsToggleHelp,
   TabChanged(Tab),
@@ -154,7 +208,7 @@ pub struct PickerPilot {
 #[derive(Clone, Debug)]
 pub enum Reloaded {
   Clones(LoadState<Option<CharacterClones>>),
-  Contacts(LoadState<CharacterContacts>),
+  Contacts(LoadState<ContactsPage>),
   Killlog(LoadState<Vec<KillLogEntry>>),
   Notifications(LoadState<Vec<CharacterNotification>>),
   /// Payload-less, unlike the other variants: a standings reload re-runs the catalog query (preserving the active
@@ -206,10 +260,13 @@ pub struct State {
   active: i64,
   active_tab: Tab,
   clones: LoadState<Option<CharacterClones>>,
-  contacts: LoadState<CharacterContacts>,
+  contacts: LoadState<ContactsPage>,
   contact_filter: tabs::contacts::ContactFilter,
   contact_sort: tabs::contacts::ContactSort,
-  contacts_visible: usize,
+  contacts_cursor: Option<ContactCursor>,
+  contacts_has_more: bool,
+  contacts_loading_more: bool,
+  contacts_scroll_offset: f32,
   enabled_tabs: Vec<Tab>,
   granted_scopes: Option<String>,
   head: HeadStats,
@@ -218,6 +275,7 @@ pub struct State {
   killlog_filter: KilllogFilter,
   killlog_has_more: bool,
   killlog_loading_more: bool,
+  killlog_scroll_offset: f32,
   notifications: LoadState<Vec<CharacterNotification>>,
   notifications_filter: NotificationsFilter,
   picker_open: bool,
@@ -230,6 +288,7 @@ pub struct State {
   standings_help_open: bool,
   standings_loading_more: bool,
   standings_query: String,
+  standings_scroll_offset: f32,
 }
 
 impl State {
@@ -243,7 +302,10 @@ impl State {
       contacts: LoadState::Loading,
       contact_filter: tabs::contacts::ContactFilter::All,
       contact_sort: tabs::contacts::ContactSort::default(),
-      contacts_visible: CONTACTS_PAGE_SIZE,
+      contacts_cursor: None,
+      contacts_has_more: false,
+      contacts_loading_more: false,
+      contacts_scroll_offset: 0.0,
       enabled_tabs,
       granted_scopes: None,
       head: HeadStats::default(),
@@ -252,6 +314,7 @@ impl State {
       killlog_filter: KilllogFilter::All,
       killlog_has_more: false,
       killlog_loading_more: false,
+      killlog_scroll_offset: 0.0,
       notifications: LoadState::Loading,
       notifications_filter: NotificationsFilter::All,
       picker_open: false,
@@ -264,6 +327,7 @@ impl State {
       standings_help_open: false,
       standings_loading_more: false,
       standings_query: String::new(),
+      standings_scroll_offset: 0.0,
     }
   }
 
@@ -285,8 +349,8 @@ impl State {
     if let LoadState::Loaded(rows) = &self.standings {
       keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
     }
-    if let LoadState::Loaded(contacts) = &self.contacts {
-      keys.extend(contacts.images.values().filter_map(images::ImageState::stale_key));
+    if let LoadState::Loaded(page) = &self.contacts {
+      keys.extend(page.rows.iter().filter_map(|row| row.image.stale_key()));
     }
     keys
   }
@@ -306,12 +370,20 @@ impl State {
       .map_or("", |pilot| pilot.name.as_str())
   }
 
-  pub(super) fn contacts_visible(&self) -> usize {
-    self.contacts_visible
+  pub(super) fn contacts_scroll_offset(&self) -> f32 {
+    self.contacts_scroll_offset
   }
 
   pub(super) fn granted_scopes(&self) -> Option<&str> {
     self.granted_scopes.as_deref()
+  }
+
+  pub(super) fn killlog_scroll_offset(&self) -> f32 {
+    self.killlog_scroll_offset
+  }
+
+  pub(super) fn standings_scroll_offset(&self) -> f32 {
+    self.standings_scroll_offset
   }
 
   fn has_loaded_agents(&self) -> bool {
@@ -348,18 +420,24 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::ContactFilterChanged(filter) => {
       state.contact_filter = filter;
-      state.contacts_visible = CONTACTS_PAGE_SIZE;
-      Task::none()
+      restart_contacts(state, db)
     }
     Message::ContactSortChanged(sort) => {
       state.contact_sort = sort;
-      Task::none()
+      restart_contacts(state, db)
     }
-    Message::ContactsScrolled(_)
+    Message::ContactsPageLoaded(_)
+    | Message::ContactsScrolled {
+      ..
+    }
     | Message::KilllogPageLoaded(_)
-    | Message::KilllogScrolled(_)
+    | Message::KilllogScrolled {
+      ..
+    }
     | Message::StandingsAgentsPageLoaded(_)
-    | Message::StandingsScrolled(_) => update_pagination(state, message, db),
+    | Message::StandingsScrolled {
+      ..
+    } => update_pagination(state, message, db),
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
       Task::none()
@@ -384,7 +462,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       } = *loaded;
       state.clones = clones;
       state.contacts = contacts;
-      state.contacts_visible = CONTACTS_PAGE_SIZE;
+      reset_contacts_pagination(state);
       state.granted_scopes = granted_scopes;
       state.head = head;
       state.killlog = killlog;
@@ -400,6 +478,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       Reloaded::Contacts(contacts) => {
         state.contacts = contacts;
+        reset_contacts_pagination(state);
         Task::none()
       }
       Reloaded::Killlog(killlog) => {
@@ -472,11 +551,60 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
 fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::ContactsScrolled(offset) => {
-      if offset >= SCROLL_THRESHOLD && state.active_tab == Tab::Contacts {
-        state.contacts_visible = state.contacts_visible.saturating_add(CONTACTS_PAGE_SIZE);
+    Message::ContactsPageLoaded(page) => {
+      let ContactsPage {
+        cursor,
+        has_more,
+        labels,
+        rows,
+      } = *page;
+      state.contacts_loading_more = false;
+      state.contacts_has_more = has_more;
+      state.contacts_cursor = cursor.clone();
+      // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
+      // (a fresh first page from initial load, reload, or a sort/filter restart).
+      match &mut state.contacts {
+        LoadState::Loaded(existing) => {
+          existing.cursor = cursor;
+          existing.has_more = has_more;
+          existing.rows.extend(rows);
+          if existing.labels.is_empty() {
+            existing.labels = labels;
+          }
+        }
+        _ => {
+          state.contacts = LoadState::Loaded(ContactsPage {
+            cursor,
+            has_more,
+            labels,
+            rows,
+          });
+        }
       }
       Task::none()
+    }
+    Message::ContactsScrolled {
+      absolute,
+      relative,
+    } => {
+      // The shared scrollbar also routes the short Clones/Notifications tabs here; only track the offset and
+      // paginate when Contacts is actually the active tab so their scrolling can't disturb its window.
+      if state.active_tab != Tab::Contacts {
+        return Task::none();
+      }
+      state.contacts_scroll_offset = absolute;
+      if relative < SCROLL_THRESHOLD || !state.contacts_has_more || state.contacts_loading_more {
+        return Task::none();
+      }
+      let Some(cursor) = state.contacts_cursor.clone() else {
+        return Task::none();
+      };
+      state.contacts_loading_more = true;
+      let (contact_type, sort, dir) = contact_query_params(state);
+      Task::perform(
+        load_contacts_page(db.clone(), state.active, contact_type, sort, dir, Some(cursor)),
+        |page| Message::ContactsPageLoaded(Box::new(page)),
+      )
     }
     Message::KilllogPageLoaded(entries) => {
       state.killlog_loading_more = false;
@@ -487,8 +615,12 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       }
       Task::none()
     }
-    Message::KilllogScrolled(offset) => {
-      if offset < SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
+    Message::KilllogScrolled {
+      absolute,
+      relative,
+    } => {
+      state.killlog_scroll_offset = absolute;
+      if relative < SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
         return Task::none();
       }
       let Some(cursor) = state.killlog_cursor.clone() else {
@@ -517,10 +649,14 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       }
       Task::none()
     }
-    Message::StandingsScrolled(offset) => {
+    Message::StandingsScrolled {
+      absolute,
+      relative,
+    } => {
+      state.standings_scroll_offset = absolute;
       // Only the agent-surfacing filters paginate agents; under Factions/Corps/Other a forced-false page
       // would come back empty and clobber `standings_has_more`, so skip the fetch entirely.
-      if offset < SCROLL_THRESHOLD
+      if relative < SCROLL_THRESHOLD
         || !state.standings_has_more
         || state.standings_loading_more
         || !state.standings_filter.surfaces_agents()
@@ -542,6 +678,66 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
     }
     _ => Task::none(),
   }
+}
+
+/// Translates the active contact filter and sort header into the repo's page parameters.
+fn contact_query_params(state: &State) -> (Option<&'static str>, ContactSortColumn, ContactSortDir) {
+  use tabs::contacts::{SortColumn, SortDirection};
+
+  let contact_type = state.contact_filter.contact_type();
+  let sort = match state.contact_sort.column {
+    SortColumn::Entity => ContactSortColumn::Name,
+    SortColumn::Standing => ContactSortColumn::Standing,
+    SortColumn::Type => ContactSortColumn::Type,
+  };
+  let dir = match state.contact_sort.direction {
+    SortDirection::Ascending => ContactSortDir::Asc,
+    SortDirection::Descending => ContactSortDir::Desc,
+  };
+  (contact_type, sort, dir)
+}
+
+/// Derives the next keyset cursor from the last row of a page, matching the active sort column.
+fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
+  let id = row.contact.contact_id();
+  match sort {
+    ContactSortColumn::Name => ContactCursor::Text(row.contact.contact_name().clone(), id),
+    ContactSortColumn::Type => ContactCursor::Text(row.contact.contact_type().clone(), id),
+    ContactSortColumn::Standing => ContactCursor::Number(row.contact.standing(), id),
+  }
+}
+
+/// Re-derives the contacts pagination guards from whatever page is currently loaded. A short page (fewer rows than
+/// the page size) is the last page, so `has_more` is false and no further fetch is attempted.
+fn reset_contacts_pagination(state: &mut State) {
+  let (_, sort, _) = contact_query_params(state);
+  state.contacts_loading_more = false;
+  state.contacts_scroll_offset = 0.0;
+  match &state.contacts {
+    LoadState::Loaded(page) => {
+      state.contacts_has_more = page.has_more;
+      state.contacts_cursor = page.rows.last().map(|row| contact_cursor(sort, row));
+    }
+    _ => {
+      state.contacts_has_more = false;
+      state.contacts_cursor = None;
+    }
+  }
+}
+
+/// Re-runs the first contacts page after a sort or filter change so the new ordering/facet is applied in SQL
+/// (rather than holding the whole address book in memory) and the virtual window snaps back to the top.
+fn restart_contacts(state: &mut State, db: &Database) -> Task<Message> {
+  state.contacts = LoadState::Loading;
+  state.contacts_cursor = None;
+  state.contacts_has_more = false;
+  state.contacts_loading_more = true;
+  state.contacts_scroll_offset = 0.0;
+  let (contact_type, sort, dir) = contact_query_params(state);
+  Task::perform(
+    load_contacts_page(db.clone(), state.active, contact_type, sort, dir, None),
+    |page| Message::ContactsPageLoaded(Box::new(page)),
+  )
 }
 
 fn killlog_cursor(entry: &KillLogEntry) -> (String, i64) {
@@ -790,10 +986,7 @@ async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded
     Ok(clones) => LoadState::Loaded(clones),
     Err(error) => LoadState::Error(error.to_string()),
   };
-  let contacts = match character::contacts(&db, character_id).await {
-    Ok(contacts) => LoadState::Loaded(contacts),
-    Err(error) => LoadState::Error(error.to_string()),
-  };
+  let contacts = load_contacts(&db, character_id).await;
   let killlog = load_killlog(&db, character_id).await;
   let notifications = load_notifications(&db, character_id).await;
   let granted_scopes = load_granted_scopes(&db, character_id).await;
@@ -815,6 +1008,75 @@ async fn load_granted_scopes(db: &Database, character_id: i64) -> Option<String>
     .ok()
     .flatten()
     .and_then(|credential| credential.scopes().clone())
+}
+
+/// Loads the first contacts page under the default sort/filter (the values `State::new` starts with): standing
+/// descending, all entity types. The page carries the per-character labels.
+async fn load_contacts(db: &Database, character_id: i64) -> LoadState<ContactsPage> {
+  LoadState::Loaded(
+    load_contacts_page(
+      db.clone(),
+      character_id,
+      None,
+      ContactSortColumn::Standing,
+      ContactSortDir::Desc,
+      None,
+    )
+    .await,
+  )
+}
+
+/// Fetches and image-resolves one keyset page of contacts. The returned page carries the next cursor (when the page
+/// filled to the page size). A first page (`after` is `None`) also carries the per-character labels, so the initial
+/// load and every sort/filter restart bring the address-book labels along; follow-on pages return an empty label set
+/// and the caller keeps the labels it already holds.
+async fn load_contacts_page(
+  db: Database,
+  character_id: i64,
+  contact_type: Option<&'static str>,
+  sort: ContactSortColumn,
+  dir: ContactSortDir,
+  after: Option<ContactCursor>,
+) -> ContactsPage {
+  let labels = if after.is_none() {
+    character::contact_labels(&db, character_id).await.unwrap_or_default()
+  } else {
+    Vec::new()
+  };
+
+  let rows = character::contacts_page(
+    &db,
+    character_id,
+    contact_type,
+    sort,
+    dir,
+    after.as_ref(),
+    CONTACTS_PAGE_SIZE,
+  )
+  .await
+  .unwrap_or_default();
+  let has_more = rows.len() as i64 == CONTACTS_PAGE_SIZE;
+
+  let store = images::default_store();
+  let rows: Vec<ContactRow> = rows
+    .into_iter()
+    .map(|contact| {
+      let kind = image_kind(contact.contact_type());
+      let image = images::resolve(&store, kind, contact.contact_id());
+      ContactRow {
+        contact,
+        image,
+      }
+    })
+    .collect();
+  let cursor = rows.last().map(|row| contact_cursor(sort, row));
+
+  ContactsPage {
+    cursor,
+    has_more,
+    labels,
+    rows,
+  }
 }
 
 async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLogEntry>> {
@@ -912,10 +1174,7 @@ async fn reload_type(db: Database, character_id: i64, data_type: DetailDataType)
       Ok(clones) => LoadState::Loaded(clones),
       Err(error) => LoadState::Error(error.to_string()),
     }),
-    DetailDataType::Contacts => Reloaded::Contacts(match character::contacts(&db, character_id).await {
-      Ok(contacts) => LoadState::Loaded(contacts),
-      Err(error) => LoadState::Error(error.to_string()),
-    }),
+    DetailDataType::Contacts => Reloaded::Contacts(load_contacts(&db, character_id).await),
     DetailDataType::Killlog => Reloaded::Killlog(load_killlog(&db, character_id).await),
     DetailDataType::Notifications => Reloaded::Notifications(load_notifications(&db, character_id).await),
     DetailDataType::Standings => Reloaded::Standings,
@@ -1371,7 +1630,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::model::{CharacterContact, character_contacts_view::CharacterContacts};
+    use crate::store::model::CharacterContact;
 
     fn killlog_entry(killmail_id: i64, kill_time: &str) -> KillLogEntry {
       KillLogEntry {
@@ -1391,17 +1650,27 @@ mod tests {
       }
     }
 
-    fn contact(contact_id: i64) -> CharacterContact {
-      CharacterContact {
-        character_id: 42,
-        contact_id,
-        contact_name: format!("Contact {contact_id}"),
-        contact_type: "character".to_owned(),
-        is_blocked: false,
-        is_watched: false,
-        label_ids: String::new(),
-        standing: 0.0,
+    fn contact_row(contact_id: i64) -> ContactRow {
+      ContactRow {
+        contact: CharacterContact {
+          character_id: 42,
+          contact_id,
+          contact_name: format!("Contact {contact_id}"),
+          contact_type: "character".to_owned(),
+          is_blocked: false,
+          is_watched: false,
+          label_ids: String::new(),
+          standing: 0.0,
+        },
+        image: images::ImageState::Stale {
+          id: contact_id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
       }
+    }
+
+    fn contacts_page(count: i64) -> ContactsPage {
+      ContactsPage::for_test((0..count).map(|n| contact_row(95_000 + n)).collect(), Vec::new(), false)
     }
 
     fn killlog_page(count: i64) -> Vec<KillLogEntry> {
@@ -1417,7 +1686,14 @@ mod tests {
       state.standings_has_more = true;
       state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
 
-      let _ = update(&mut state, Message::StandingsScrolled(0.5), &db);
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
 
       assert!(!state.standings_loading_more, "a sub-threshold scroll is a no-op");
     }
@@ -1429,7 +1705,14 @@ mod tests {
       state.standings_has_more = false;
       state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
 
-      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(!state.standings_loading_more, "exhausted agents do not fetch");
     }
@@ -1441,7 +1724,14 @@ mod tests {
       state.standings_has_more = true;
       state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
 
-      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(state.standings_loading_more, "a qualifying scroll starts a load");
     }
@@ -1454,7 +1744,14 @@ mod tests {
       state.standings_loading_more = true;
       state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
 
-      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(state.standings_loading_more);
     }
@@ -1467,7 +1764,14 @@ mod tests {
       state.standings_has_more = true;
       state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
 
-      let _ = update(&mut state, Message::StandingsScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(
         !state.standings_loading_more,
@@ -1554,7 +1858,14 @@ mod tests {
       state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
       reset_killlog_pagination(&mut state);
 
-      let _ = update(&mut state, Message::KilllogScrolled(0.5), &db);
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
 
       assert!(!state.killlog_loading_more);
     }
@@ -1566,7 +1877,14 @@ mod tests {
       state.killlog = LoadState::Loaded(killlog_page(3));
       reset_killlog_pagination(&mut state);
 
-      let _ = update(&mut state, Message::KilllogScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(!state.killlog_has_more, "a short page is the last page");
       assert!(!state.killlog_loading_more);
@@ -1579,7 +1897,14 @@ mod tests {
       state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
       reset_killlog_pagination(&mut state);
 
-      let _ = update(&mut state, Message::KilllogScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(state.killlog_loading_more);
     }
@@ -1599,31 +1924,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_grows_the_contacts_window_on_scroll_and_resets_on_a_filter_change() {
+    async fn it_tracks_the_contacts_scroll_offset_for_windowing() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = loaded_state(42);
       state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(CharacterContacts::resolved(
-        &images::Store::new(std::path::PathBuf::from("/data/images")),
-        (0..CONTACTS_PAGE_SIZE as i64 * 3).map(contact).collect(),
-        Vec::new(),
-      ));
-
-      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE);
-
-      let _ = update(&mut state, Message::ContactsScrolled(0.9), &db);
-      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE * 2);
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
 
       let _ = update(
         &mut state,
-        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        Message::ContactsScrolled {
+          absolute: 1_234.0,
+          relative: 0.1,
+        },
         &db,
       );
-      assert_eq!(
-        state.contacts_visible(),
-        CONTACTS_PAGE_SIZE,
-        "switching filters resets the virtual window"
+
+      assert_eq!(state.contacts_scroll_offset(), 1_234.0);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_full_contacts_page_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(3));
+      state.contacts_has_more = false;
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
       );
+
+      assert!(!state.contacts_loading_more, "an exhausted set does not fetch");
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_contacts_fetch_past_the_threshold_with_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(state.contacts_loading_more, "a qualifying scroll starts a load");
     }
 
     #[tokio::test]
@@ -1631,10 +1988,61 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = loaded_state(42);
       state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
 
-      let _ = update(&mut state, Message::ContactsScrolled(0.5), &db);
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
 
-      assert_eq!(state.contacts_visible(), CONTACTS_PAGE_SIZE);
+      assert!(!state.contacts_loading_more, "a sub-threshold scroll is a no-op");
+    }
+
+    #[tokio::test]
+    async fn it_restarts_contacts_pagination_on_a_filter_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_scroll_offset = 900.0;
+
+      let _ = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+
+      assert!(
+        matches!(state.contacts, LoadState::Loading),
+        "switching filters re-runs the first page from SQL"
+      );
+      assert_eq!(state.contacts_scroll_offset(), 0.0, "the window snaps back to the top");
+      assert!(state.contacts_loading_more, "a fresh first page is in flight");
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_contacts_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_loading_more = true;
+
+      let mut page = contacts_page(3);
+      page.has_more = false;
+      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.contacts_loading_more);
+      assert!(!state.contacts_has_more, "a short appended page exhausts the set");
+      assert!(
+        matches!(state.contacts, LoadState::Loaded(ref page) if page.rows().len() == CONTACTS_PAGE_SIZE as usize + 3)
+      );
     }
   }
 
@@ -1905,12 +2313,8 @@ mod tests {
   mod reload_arm {
     use super::*;
 
-    fn contacts() -> CharacterContacts {
-      CharacterContacts::resolved(
-        &images::Store::new(std::path::PathBuf::from("/data/images")),
-        Vec::new(),
-        Vec::new(),
-      )
+    fn contacts() -> ContactsPage {
+      ContactsPage::for_test(Vec::new(), Vec::new(), false)
     }
 
     #[tokio::test]
@@ -2110,11 +2514,7 @@ mod tests {
       let mut state = State::new(42, &Feature::ALL);
       let loaded = Loaded {
         clones: LoadState::Loaded(None),
-        contacts: LoadState::Loaded(CharacterContacts::resolved(
-          &images::Store::new(std::path::PathBuf::from("/data/images")),
-          Vec::new(),
-          Vec::new(),
-        )),
+        contacts: LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false)),
         granted_scopes: None,
         head: HeadStats {
           total_sp: Some(1_000),
@@ -2204,6 +2604,102 @@ mod tests {
       };
 
       assert!(entries.is_empty());
+    }
+  }
+
+  mod load_contacts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_contact(db: &Database, contact_id: i64, kind: &str, name: &str) {
+      sqlx::query(
+        "INSERT INTO character_contacts \
+          (character_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
+        VALUES (42, ?, ?, 0.0, 0, 0, '[]', ?)",
+      )
+      .bind(contact_id)
+      .bind(kind)
+      .bind(name)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_label(db: &Database, label_id: i64, name: &str) {
+      sqlx::query("INSERT INTO character_contact_labels (character_id, label_id, label_name) VALUES (42, ?, ?)")
+        .bind(label_id)
+        .bind(name)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_first_page_with_resolved_rows_and_labels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      seed_label(&db, 1, "Fleet").await;
+      seed_contact(&db, 100, "character", "Wingmate").await;
+
+      let LoadState::Loaded(page) = load_contacts(&db, 42).await else {
+        panic!("expected a loaded contacts page");
+      };
+
+      assert_eq!(page.rows().len(), 1);
+      assert_eq!(page.rows()[0].contact.contact_name(), "Wingmate");
+      assert_eq!(
+        page
+          .labels()
+          .iter()
+          .map(|l| l.label_name().as_str())
+          .collect::<Vec<_>>(),
+        ["Fleet"]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_labels_through_a_filter_restart() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      seed_label(&db, 1, "Fleet").await;
+      seed_contact(&db, 100, "character", "Wingmate").await;
+
+      let mut state = State::new(42, &Feature::ALL);
+      state.contacts = load_contacts(&db, 42).await;
+      reset_contacts_pagination(&mut state);
+
+      // A filter change re-runs the first page; its labels must survive so the address-book notes still resolve.
+      let task = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+      // Drive the dispatched first-page load to completion and apply it.
+      let page = load_contacts_page(
+        db.clone(),
+        42,
+        Some("character"),
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+      )
+      .await;
+      drop(task);
+      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
+
+      let LoadState::Loaded(page) = &state.contacts else {
+        panic!("expected a loaded contacts page");
+      };
+      assert_eq!(
+        page
+          .labels()
+          .iter()
+          .map(|l| l.label_name().as_str())
+          .collect::<Vec<_>>(),
+        ["Fleet"],
+        "labels survive a sort/filter restart"
+      );
     }
   }
 

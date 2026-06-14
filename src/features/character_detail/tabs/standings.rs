@@ -14,12 +14,12 @@ use crate::{
   ui::{
     components::{
       avatar::avatar,
-      card,
       empty_state::{LoadStateView, empty_state, load_state_view},
       eyebrow::eyebrow,
       meter, rule,
       section_header::section_header,
       segmented::segment_button_style,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -35,6 +35,9 @@ const ACCESS_ICON_SIZE: f32 = 14.0;
 const AVATAR_SIZE: f32 = 30.0;
 const CHIPS_PER_ROW: usize = 4;
 const CLOSE_ICON_SIZE: f32 = 14.0;
+/// Nominal height of one standings row, in pixels (avatar + optional agent meta line). Feeds only the
+/// [`VirtualList`] offset math; overscan absorbs the one-vs-two-line variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 48.0;
 
 const EXAMPLES: &[(&str, &str)] = &[
   ("faction:caldari", "Caldari faction + corps"),
@@ -90,36 +93,95 @@ impl StandingsFilter {
   }
 }
 
+/// One flattened entry in the windowed standings body: either a section's header pseudo-row or one standings row
+/// (carrying whether it is the last row of its section, which drops the bottom rule).
+enum FlatItem<'a> {
+  Header { count: usize, label: &'static str },
+  Row { last: bool, row: &'a StandingsRow },
+}
+
+/// The non-scrolling header for the Standings tab: the search bar, the parsed-query preview, and the facet filter.
+/// Hoisted above the windowed list so the search input stays mounted while the catalog scrolls.
+pub(crate) fn header<'a>(query: &'a str, filter: StandingsFilter, has_filters: bool) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = vec![search_bar(query, has_filters)];
+  if let Some(preview) = query_preview(query) {
+    children.push(preview);
+  }
+  children.push(segmented(filter));
+
+  Column::with_children(children)
+    .spacing(spacing::SPACE_6)
+    .width(Length::Fill)
+    .into()
+}
+
+/// The windowed body for the Standings tab: the grouped Factions / Corporations / Agents / Other sections flattened
+/// into a single index space and windowed, so the keyset-paginated Agents catalog renders only the viewport's rows.
+/// Designed to be the sole content of the tab's scrollable so `responsive` reads the real viewport height.
 pub(crate) fn body<'a>(
   catalog: &'a LoadState<Vec<StandingsRow>>,
-  query: &'a str,
   filter: StandingsFilter,
   has_filters: bool,
+  scroll_offset: f32,
 ) -> Element<'a, Message> {
-  let bar = search_bar(query, has_filters);
-  let preview = query_preview(query);
-  let facets = segmented(filter);
-
   let rows = match catalog {
     LoadState::Loaded(rows) => rows,
     LoadState::Loading => {
-      return stacked(
-        bar,
-        preview,
-        facets,
-        load_state_view(LoadStateView::Loading("Loading standings\u{2026}")),
-      );
+      return load_state_view(LoadStateView::Loading("Loading standings\u{2026}"));
     }
-    LoadState::Error(error) => {
-      return stacked(bar, preview, facets, load_state_view(LoadStateView::Error(error)));
-    }
+    LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
 
   if rows.is_empty() {
-    return stacked(bar, preview, facets, no_results(has_filters));
+    return no_results(has_filters);
   }
 
-  let mut sections: Vec<Element<'a, Message>> = Vec::new();
+  let items = flatten_sections(rows, filter);
+  if items.is_empty() {
+    return no_results(has_filters);
+  }
+
+  virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(items.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(scroll_offset);
+    VirtualList::new(config, |index| match &items[index] {
+      FlatItem::Header {
+        count,
+        label,
+      } => section_heading(label, *count, has_filters),
+      FlatItem::Row {
+        last,
+        row,
+      } => row_view(row, *last),
+    })
+    .spacing(spacing::SPACE_2_5)
+    .view()
+  })
+}
+
+/// Flattens the visible standings rows into the windowed index space: a header pseudo-row introduces each
+/// non-empty section, followed by that section's rows. The section order matches the grouped view (Factions,
+/// Corporations, Agents, then the factionless Other bucket).
+fn flatten_sections<'a>(rows: &'a [StandingsRow], filter: StandingsFilter) -> Vec<FlatItem<'a>> {
+  let mut items: Vec<FlatItem<'a>> = Vec::new();
+  let mut push_section = |label: &'static str, group: Vec<&'a StandingsRow>| {
+    if group.is_empty() {
+      return;
+    }
+    items.push(FlatItem::Header {
+      count: group.len(),
+      label,
+    });
+    let last = group.len() - 1;
+    for (index, row) in group.into_iter().enumerate() {
+      items.push(FlatItem::Row {
+        last: index == last,
+        row,
+      });
+    }
+  };
+
   for (kind, label) in [
     (StandingKind::Faction, "Factions"),
     (StandingKind::Corporation, "Corporations"),
@@ -129,22 +191,13 @@ pub(crate) fn body<'a>(
       .iter()
       .filter(|row| row.kind == kind && !is_other(row) && filter.matches(row))
       .collect();
-    if group.is_empty() {
-      continue;
-    }
-    sections.push(section(label, &group, has_filters));
+    push_section(label, group);
   }
 
   let other: Vec<&StandingsRow> = rows.iter().filter(|row| is_other(row) && filter.matches(row)).collect();
-  if !other.is_empty() {
-    sections.push(section("Other", &other, has_filters));
-  }
+  push_section("Other", other);
 
-  let groups = Column::with_children(sections)
-    .spacing(spacing::SPACE_6)
-    .width(Length::Fill);
-
-  stacked(bar, preview, facets, groups.into())
+  items
 }
 
 pub(crate) fn help_popover<'a>() -> Element<'a, Message> {
@@ -700,43 +753,15 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
     .into()
 }
 
-fn section<'a>(label: &'a str, rows: &[&'a StandingsRow], has_filters: bool) -> Element<'a, Message> {
+/// A section heading pseudo-row for the flattened, windowed standings body. Mirrors the `section_header` the grouped
+/// view rendered above each card, with the same matched/tracked count suffix.
+fn section_heading<'a>(label: &'a str, count: usize, has_filters: bool) -> Element<'a, Message> {
   let suffix = if has_filters { "matched" } else { "tracked" };
-  let header = section_header(label, Some(&format!("{} {suffix}", rows.len())));
-
-  let mut card_rows: Vec<Element<'a, Message>> = Vec::with_capacity(rows.len());
-  for (index, row) in rows.iter().enumerate() {
-    card_rows.push(row_view(row, index == rows.len() - 1));
-  }
-  let card = card::panel(Column::with_children(card_rows).width(Length::Fill), false);
-
-  Column::with_children(vec![header, card])
-    .spacing(spacing::SPACE_2_5)
-    .width(Length::Fill)
-    .into()
+  section_header(label, Some(&format!("{count} {suffix}")))
 }
 
 fn section_label<'a>(label: &str) -> Element<'a, Message> {
   eyebrow(label, Some(color::text::tertiary()))
-}
-
-fn stacked<'a>(
-  bar: Element<'a, Message>,
-  preview: Option<Element<'a, Message>>,
-  facets: Element<'a, Message>,
-  content: Element<'a, Message>,
-) -> Element<'a, Message> {
-  let mut children: Vec<Element<'a, Message>> = vec![bar];
-  if let Some(preview) = preview {
-    children.push(preview);
-  }
-  children.push(facets);
-  children.push(content);
-
-  Column::with_children(children)
-    .spacing(spacing::SPACE_6)
-    .width(Length::Fill)
-    .into()
 }
 
 #[cfg(test)]
@@ -798,7 +823,7 @@ mod tests {
       ];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, "", StandingsFilter::All, false);
+      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, false, 0.0);
     }
 
     #[test]
@@ -806,7 +831,7 @@ mod tests {
       let rows = vec![agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true))];
       let catalog = LoadState::Loaded(rows);
 
-      let _el: Element<'_, Message> = body(&catalog, "level:4", StandingsFilter::All, true);
+      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, true, 0.0);
     }
 
     #[test]
@@ -826,7 +851,7 @@ mod tests {
         StandingsFilter::Agents,
         StandingsFilter::Other,
       ] {
-        let _el: Element<'_, Message> = body(&catalog, "", filter, false);
+        let _el: Element<'_, Message> = body(&catalog, filter, false, 0.0);
       }
     }
 
@@ -836,9 +861,83 @@ mod tests {
       let error: LoadState<Vec<StandingsRow>> = LoadState::Error("boom".to_owned());
       let empty = LoadState::Loaded(Vec::new());
 
-      let _loading: Element<'_, Message> = body(&loading, "", StandingsFilter::All, false);
-      let _error: Element<'_, Message> = body(&error, "", StandingsFilter::All, false);
-      let _empty: Element<'_, Message> = body(&empty, "faction:none", StandingsFilter::All, true);
+      let _loading: Element<'_, Message> = body(&loading, StandingsFilter::All, false, 0.0);
+      let _error: Element<'_, Message> = body(&error, StandingsFilter::All, false, 0.0);
+      let _empty: Element<'_, Message> = body(&empty, StandingsFilter::All, true, 0.0);
+    }
+  }
+
+  mod flatten_sections {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn labels(items: &[FlatItem<'_>]) -> Vec<&'static str> {
+      items
+        .iter()
+        .filter_map(|item| match item {
+          FlatItem::Header {
+            label, ..
+          } => Some(*label),
+          FlatItem::Row {
+            ..
+          } => None,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn it_emits_a_header_then_its_rows_in_section_order() {
+      let rows = vec![
+        agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
+      ];
+
+      let items = flatten_sections(&rows, StandingsFilter::All);
+
+      assert_eq!(labels(&items), ["Factions", "Corporations", "Agents", "Other"]);
+      assert_eq!(items.len(), 4 + 4, "one header per section plus every visible row");
+    }
+
+    #[test]
+    fn it_marks_only_the_last_row_of_a_section() {
+      let rows = vec![
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_002, StandingKind::Corporation, "State Navy", Some(500_001), 3.0),
+      ];
+
+      let items = flatten_sections(&rows, StandingsFilter::All);
+
+      let lasts: Vec<bool> = items
+        .iter()
+        .filter_map(|item| match item {
+          FlatItem::Row {
+            last, ..
+          } => Some(*last),
+          FlatItem::Header {
+            ..
+          } => None,
+        })
+        .collect();
+      assert_eq!(lasts, [false, true]);
+    }
+
+    #[test]
+    fn it_drops_sections_the_facet_filters_out() {
+      let rows = vec![
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+      ];
+
+      let items = flatten_sections(&rows, StandingsFilter::Factions);
+
+      assert_eq!(
+        labels(&items),
+        ["Factions"],
+        "the corps section is filtered out entirely"
+      );
     }
   }
 

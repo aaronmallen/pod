@@ -43,23 +43,23 @@ pub fn reconcile_sync(canonical: &Path, working_copy: &Path) -> io::Result<()> {
 
   if wc_has_data && canonical_has_data && canonical_generation != wc_generation {
     if canonical_generation > wc_generation {
-      adopt(canonical, working_copy)?;
+      adopt(canonical, working_copy, true)?;
       write_generation(&wc_marker, canonical_generation)?;
     } else {
       // Advance past whichever side had the higher counter so the merged marker is strictly newer than both.
       let next = wc_generation.max(canonical_generation) + 1;
-      adopt(working_copy, canonical)?;
+      adopt(working_copy, canonical, true)?;
       write_generation(&canonical_sidecar, next)?;
       write_generation(&wc_marker, next)?;
     }
   } else if !wc_has_data && canonical_has_data {
     let generation = canonical_generation.max(1);
-    adopt(canonical, working_copy)?;
+    adopt(canonical, working_copy, false)?;
     write_generation(&canonical_sidecar, generation)?;
     write_generation(&wc_marker, generation)?;
   } else if wc_has_data && !canonical_has_data {
     let generation = wc_generation.max(canonical_generation).max(1);
-    adopt(working_copy, canonical)?;
+    adopt(working_copy, canonical, false)?;
     write_generation(&canonical_sidecar, generation)?;
     write_generation(&wc_marker, generation)?;
   }
@@ -67,8 +67,11 @@ pub fn reconcile_sync(canonical: &Path, working_copy: &Path) -> io::Result<()> {
   Ok(())
 }
 
-fn adopt(source: &Path, destination: &Path) -> io::Result<()> {
-  publish_database(source, destination)?;
+/// Copies `source` over `destination`. `back_up` is true only on genuine divergence (both sides
+/// held data and lost work would otherwise be overwritten); it is false when the destination is
+/// empty and nothing of value is being replaced.
+fn adopt(source: &Path, destination: &Path, back_up: bool) -> io::Result<()> {
+  publish_database(source, destination, back_up)?;
   // Copy any live WAL/SHM sidecars so an uncheckpointed working-copy WAL is not lost.
   // If the source has no sidecar, remove the destination's to prevent a stale WAL from
   // corrupting the freshly adopted database on next open.

@@ -10,6 +10,7 @@ use sqlx::{Connection, SqliteConnection};
 
 use crate::store::share_meta::{read_generation, write_generation};
 
+const BACKUP_RETENTION: usize = 3;
 const WAL_SIDECARS: [&str; 2] = ["-wal", "-shm"];
 
 #[derive(Debug, thiserror::Error)]
@@ -78,7 +79,7 @@ impl SyncCopy {
     // write leaves a generation that understates the bytes (re-pushed next time), never one that
     // overstates them (which would skip a needed pull and silently lose data).
     let next = share_generation.max(local_generation) + 1;
-    publish_database(&self.working_copy, &self.canonical)?;
+    publish_database(&self.working_copy, &self.canonical, share_generation > local_generation)?;
     write_generation(&self.sidecar, next)?;
     write_generation(&self.marker, next)?;
 
@@ -90,18 +91,58 @@ impl SyncCopy {
       return Ok(false);
     }
 
-    publish_database(&self.canonical, &self.working_copy)?;
+    // No backup: the single-writer lease guarantees this parked working copy holds no un-pushed
+    // writes, so the overwrite can only discard a strict ancestor.
+    publish_database(&self.canonical, &self.working_copy, false)?;
     write_generation(&self.marker, read_generation(&self.sidecar))?;
 
     Ok(true)
   }
 }
 
-/// The guarded DB-replace primitive every replace site must route through: never overwrites a
-/// non-empty destination without first writing a timestamped `.backup` of it.
-pub fn publish_database(source: &Path, destination: &Path) -> io::Result<()> {
-  if is_non_empty(destination) {
-    back_up(destination)?;
+/// Deletes the oldest `.backup` siblings of `database`, keeping the newest `keep` by name. The
+/// `%Y%m%d-%H%M%S` timestamp sorts lexicographically in chronological order. Best-effort: a
+/// failure to list or delete any individual file is ignored.
+pub fn prune_backups(database: &Path, keep: usize) {
+  let Some(parent) = database.parent() else {
+    return;
+  };
+  let Some(prefix) = database.file_name().map(|name| {
+    let mut prefix = name.to_owned();
+    prefix.push(".");
+    prefix
+  }) else {
+    return;
+  };
+  let Ok(entries) = fs::read_dir(parent) else {
+    return;
+  };
+
+  let mut backups: Vec<PathBuf> = entries
+    .filter_map(Result::ok)
+    .map(|entry| entry.file_name())
+    .filter(|name| {
+      let name = name.as_encoded_bytes();
+      name.starts_with(prefix.as_encoded_bytes()) && name.ends_with(b".backup")
+    })
+    .map(|name| parent.join(name))
+    .collect();
+  backups.sort();
+
+  if backups.len() <= keep {
+    return;
+  }
+  for stale in &backups[..backups.len() - keep] {
+    let _ = fs::remove_file(stale);
+  }
+}
+
+/// The guarded DB-replace primitive every replace site must route through: when `back_up` is set
+/// and the destination holds non-empty data, a timestamped `.backup` of it is written (and the set
+/// pruned to the newest few) before the overwrite. Routine same-lineage replaces pass `false`.
+pub fn publish_database(source: &Path, destination: &Path, back_up: bool) -> io::Result<()> {
+  if back_up && is_non_empty(destination) {
+    self::back_up(destination)?;
   }
   copy_file(source, destination)
 }
@@ -113,7 +154,10 @@ fn back_up(database: &Path) -> io::Result<()> {
 
   let mut name = database.as_os_str().to_owned();
   name.push(format!(".{}.backup", Utc::now().format("%Y%m%d-%H%M%S")));
-  copy_file(database, Path::new(&name))
+  copy_file(database, Path::new(&name))?;
+  prune_backups(database, BACKUP_RETENTION);
+
+  Ok(())
 }
 
 fn is_non_empty(path: &Path) -> bool {
@@ -258,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn it_backs_up_a_non_empty_working_copy_before_overwriting_it() {
+    fn it_does_not_back_up_the_working_copy_when_pulling_a_newer_canonical() {
       let layout = Layout::new();
       fs::write(&layout.canonical, b"share bytes").unwrap();
       fs::write(&layout.working_copy, b"local bytes").unwrap();
@@ -267,12 +311,15 @@ mod tests {
 
       layout.engine().pull_if_newer().unwrap();
 
-      let backup = fs::read_dir(layout.working_copy.parent().unwrap())
+      let backups = fs::read_dir(layout.working_copy.parent().unwrap())
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .expect("the local copy is backed up before the pull overwrites it");
-      assert_eq!(fs::read(backup.path()).unwrap(), b"local bytes");
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(
+        backups, 0,
+        "the single-writer lease guarantees the parked copy holds no un-pushed writes, so the routine pull never backs up"
+      );
       assert_eq!(fs::read(&layout.working_copy).unwrap(), b"share bytes");
     }
   }
@@ -389,7 +436,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_backs_up_a_non_empty_canonical_even_when_the_generations_are_in_step() {
+    async fn it_does_not_back_up_a_non_empty_canonical_when_the_generations_are_in_step() {
       let layout = Layout::new();
       seed_wal_database(&layout.working_copy).await;
       fs::write(&layout.canonical, b"in-step canonical").unwrap();
@@ -398,17 +445,55 @@ mod tests {
 
       layout.engine().checkpoint_and_push().await.unwrap();
 
-      let backup = fs::read_dir(layout.canonical.parent().unwrap())
+      let backups = fs::read_dir(layout.canonical.parent().unwrap())
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .expect("the prior canonical is backed up before the in-step push overwrites it");
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(
+        backups, 0,
+        "a routine same-lineage push (share generation no newer than local) overwrites a strict ancestor, so no backup is warranted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_prunes_divergence_backups_to_the_newest_three() {
+      let layout = Layout::new();
+      seed_wal_database(&layout.working_copy).await;
+      fs::write(&layout.canonical, b"diverged canonical").unwrap();
+      write_generation(&layout.marker, 3).unwrap();
+      write_generation(&layout.sidecar, 8).unwrap();
+      for stamp in [
+        "20200101-000001",
+        "20200101-000002",
+        "20200101-000003",
+        "20200101-000004",
+      ] {
+        let mut name = layout.canonical.as_os_str().to_owned();
+        name.push(format!(".{stamp}.backup"));
+        fs::write(PathBuf::from(name), b"old backup").unwrap();
+      }
+
+      layout.engine().checkpoint_and_push().await.unwrap();
+
+      let mut backups: Vec<String> = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".backup"))
+        .collect();
+      backups.sort();
 
       assert_eq!(
-        fs::read(backup.path()).unwrap(),
-        b"in-step canonical",
-        "the data-loss hole is closed: the real canonical survives as a backup"
+        backups.len(),
+        3,
+        "the divergence backup is written and the set is capped at the newest three"
       );
+      assert!(
+        !backups.iter().any(|name| name.contains("20200101-000001")),
+        "the two oldest seeded backups are pruned"
+      );
+      assert!(!backups.iter().any(|name| name.contains("20200101-000002")));
     }
   }
 
@@ -424,7 +509,7 @@ mod tests {
       fs::write(&layout.canonical, b"real canonical data").unwrap();
       fs::write(&layout.working_copy, b"").unwrap();
 
-      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
 
       let backup = fs::read_dir(layout.canonical.parent().unwrap())
         .unwrap()
@@ -435,14 +520,34 @@ mod tests {
     }
 
     #[test]
+    fn it_does_not_back_up_when_the_caller_signals_a_routine_replace() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"real canonical data").unwrap();
+      fs::write(&layout.working_copy, b"replacement data").unwrap();
+
+      publish_database(&layout.working_copy, &layout.canonical, false).unwrap();
+
+      let backups = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(
+        backups, 0,
+        "a routine replace overwrites a strict ancestor and warrants no backup"
+      );
+      assert_eq!(fs::read(&layout.canonical).unwrap(), b"replacement data");
+    }
+
+    #[test]
     fn it_skips_the_backup_when_the_destination_is_missing_or_empty() {
       let layout = Layout::new();
       fs::write(&layout.working_copy, b"new data").unwrap();
       // Destination absent.
-      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
       // Destination present but empty.
       fs::write(&layout.canonical, b"").unwrap();
-      publish_database(&layout.working_copy, &layout.canonical).unwrap();
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
 
       let backups = fs::read_dir(layout.canonical.parent().unwrap())
         .unwrap()
@@ -451,6 +556,90 @@ mod tests {
         .count();
       assert_eq!(backups, 0, "nothing of value is overwritten, so no backup is written");
       assert_eq!(fs::read(&layout.canonical).unwrap(), b"new data");
+    }
+  }
+
+  mod prune_backups {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn seed_backup(database: &Path, stamp: &str) {
+      let mut name = database.as_os_str().to_owned();
+      name.push(format!(".{stamp}.backup"));
+      fs::write(PathBuf::from(name), stamp.as_bytes()).unwrap();
+    }
+
+    fn backup_stamps(database: &Path) -> Vec<String> {
+      let mut stamps: Vec<String> = fs::read_dir(database.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".backup"))
+        .collect();
+      stamps.sort();
+      stamps
+    }
+
+    #[test]
+    fn it_keeps_the_newest_three_backups_by_timestamp_name() {
+      let layout = Layout::new();
+      for stamp in [
+        "20260101-000000",
+        "20260102-000000",
+        "20260103-000000",
+        "20260104-000000",
+        "20260105-000000",
+      ] {
+        seed_backup(&layout.canonical, stamp);
+      }
+
+      super::super::prune_backups(&layout.canonical, 3);
+
+      let stamps = backup_stamps(&layout.canonical);
+      assert_eq!(stamps.len(), 3);
+      assert!(
+        stamps[0].contains("20260103-000000"),
+        "the two oldest backups are pruned"
+      );
+      assert!(stamps[2].contains("20260105-000000"), "the newest backup is retained");
+    }
+
+    #[test]
+    fn it_leaves_the_set_untouched_when_within_the_retention_limit() {
+      let layout = Layout::new();
+      seed_backup(&layout.canonical, "20260101-000000");
+      seed_backup(&layout.canonical, "20260102-000000");
+
+      super::super::prune_backups(&layout.canonical, 3);
+
+      assert_eq!(backup_stamps(&layout.canonical).len(), 2);
+    }
+
+    #[test]
+    fn it_never_touches_non_backup_siblings_of_the_database() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"live").unwrap();
+      write_generation(&layout.sidecar, 5).unwrap();
+      fs::write(with_suffix(&layout.canonical, "-wal"), b"wal").unwrap();
+      for stamp in [
+        "20260101-000000",
+        "20260102-000000",
+        "20260103-000000",
+        "20260104-000000",
+      ] {
+        seed_backup(&layout.canonical, stamp);
+      }
+
+      super::super::prune_backups(&layout.canonical, 3);
+
+      assert!(layout.canonical.exists(), "the live database is untouched");
+      assert!(layout.sidecar.exists(), "the generation sidecar is untouched");
+      assert!(
+        with_suffix(&layout.canonical, "-wal").exists(),
+        "the wal sidecar is untouched"
+      );
+      assert_eq!(backup_stamps(&layout.canonical).len(), 3);
     }
   }
 }

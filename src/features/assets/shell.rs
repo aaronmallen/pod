@@ -255,7 +255,10 @@ fn inventory_body(state: &State) -> Element<'_, Message> {
         .style(crate::ui::style::control::scrollbar)
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_scroll(|viewport| Message::InventoryScrolled(viewport.relative_offset().y)),
+        .on_scroll(|viewport| Message::InventoryScrolled {
+          relative: viewport.relative_offset().y,
+          absolute: viewport.absolute_offset().y,
+        }),
     )
     .width(Length::Fill)
     .height(Length::Fill)

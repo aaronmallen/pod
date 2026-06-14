@@ -15,8 +15,16 @@ use crate::{
   },
   ui::{
     components::{
-      avatar::avatar, badge::badge, empty_state::empty_state as shared_empty_state, eyebrow::eyebrow, icon::Icon,
-      icon_tile::icon_tile, rule, table_cell::TableCell, text_input::TextInput,
+      avatar::avatar,
+      badge::badge,
+      empty_state::empty_state as shared_empty_state,
+      eyebrow::eyebrow,
+      icon::Icon,
+      icon_tile::icon_tile,
+      rule,
+      table_cell::TableCell,
+      text_input::TextInput,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, radius, spacing, typography},
   },
@@ -327,6 +335,12 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
   column_header(sort, dir)
 }
 
+/// Nominal height of one inventory row, in pixels.
+///
+/// Rows are content-driven (one- or two-line name cells), so this is only an
+/// estimate for [`VirtualList`] offset math; overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 44.0;
+
 pub(super) fn body(state: &State) -> Element<'_, Message> {
   let rows = state.inventory();
   if rows.is_empty() {
@@ -337,24 +351,44 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     });
   }
 
-  let mut children: Vec<Element<'_, Message>> = Vec::new();
-  for inventory_row in rows {
-    push_row(state, &mut children, inventory_row);
-  }
+  // Flatten the inventory (with any expanded containers' children spliced inline)
+  // into a single flat index space, then window over it so only the viewport's
+  // rows are materialized regardless of how many pages have loaded.
+  let flat = flatten_rows(state);
+  let offset = state.inventory_scroll_offset();
 
-  Column::with_children(children).width(Length::Fill).into()
+  virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(offset);
+    VirtualList::new(config, |index| {
+      let inventory_row = flat[index];
+      let expanded = state.container_is_open(inventory_row.item_id);
+      table_row(inventory_row, state.roster(), state.corporations(), expanded)
+    })
+    .view()
+  })
 }
 
 pub(super) fn has_rows(state: &State) -> bool {
   !state.inventory().is_empty()
 }
 
-fn push_row<'a>(state: &'a State, out: &mut Vec<Element<'a, Message>>, inventory_row: &'a InventoryRow) {
-  let expanded = state.container_is_open(inventory_row.item_id);
-  out.push(table_row(inventory_row, state.roster(), state.corporations(), expanded));
+/// Splice the inventory and any open containers' loaded children into a single
+/// depth-first flat list, the index space [`VirtualList`] windows over.
+fn flatten_rows(state: &State) -> Vec<&InventoryRow> {
+  let mut out = Vec::with_capacity(state.inventory().len());
+  for inventory_row in state.inventory() {
+    push_row(state, &mut out, inventory_row);
+  }
+  out
+}
+
+fn push_row<'a>(state: &'a State, out: &mut Vec<&'a InventoryRow>, inventory_row: &'a InventoryRow) {
+  out.push(inventory_row);
 
   if inventory_row.is_container
-    && expanded
+    && state.container_is_open(inventory_row.item_id)
     && let Some(children) = state.container_children_of(inventory_row.item_id)
   {
     for child in children {

@@ -216,7 +216,12 @@ pub enum Message {
   GeoNodeToggled(GeoNodeKey),
   InventoryHelpToggled,
   InventoryPageLoaded(Vec<InventoryRow>),
-  InventoryScrolled(f32),
+  /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
+  /// the pixel offset stored to window the virtual list.
+  InventoryScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   Loaded(Box<Loaded>),
   PaneDrag(f32),
   PaneDragEnd,
@@ -318,6 +323,7 @@ pub struct State {
   inventory_has_more: bool,
   inventory_help_open: bool,
   inventory_loading: bool,
+  inventory_scroll_offset: f32,
   picker_open: bool,
   roster: Vec<RosterPilot>,
   saved_filter_active: Option<i64>,
@@ -374,6 +380,7 @@ impl State {
       inventory_has_more: false,
       inventory_help_open: false,
       inventory_loading: false,
+      inventory_scroll_offset: 0.0,
       picker_open: false,
       roster: Vec::new(),
       saved_filter_active: None,
@@ -461,6 +468,10 @@ impl State {
 
   pub(super) fn inventory(&self) -> &[InventoryRow] {
     &self.inventory
+  }
+
+  pub(super) fn inventory_scroll_offset(&self) -> f32 {
+    self.inventory_scroll_offset
   }
 
   pub(super) fn inventory_sort(&self) -> (SortColumn, SortDirection) {
@@ -928,7 +939,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::ContainerChildrenLoaded(..)
     | Message::ContainerToggled(_)
     | Message::InventoryPageLoaded(_)
-    | Message::InventoryScrolled(_) => update_pagination(state, message, db),
+    | Message::InventoryScrolled {
+      ..
+    } => update_pagination(state, message, db),
 
     Message::GeoNodeSelected(_) | Message::GeoNodeToggled(_) => update_geo(state, message, db),
 
@@ -1260,8 +1273,12 @@ fn location_ids_for_selection(tree: &GeoTree, selection: GeoSelection) -> Vec<i6
 
 fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::InventoryScrolled(offset) => {
-      if offset < INVENTORY_SCROLL_THRESHOLD || !state.inventory_has_more || state.inventory_loading {
+    Message::InventoryScrolled {
+      absolute,
+      relative,
+    } => {
+      state.inventory_scroll_offset = absolute;
+      if relative < INVENTORY_SCROLL_THRESHOLD || !state.inventory_has_more || state.inventory_loading {
         return Task::none();
       }
       let Some(cursor) = state.inventory.last().map(|row| row.cursor(state.sort)) else {
@@ -2955,7 +2972,14 @@ mod tests {
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = false;
 
-      let _ = update(&mut state, Message::InventoryScrolled(0.95), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
 
       assert!(!state.inventory_loading, "no load is started when the set is exhausted");
     }
@@ -2967,9 +2991,38 @@ mod tests {
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
 
-      let _ = update(&mut state, Message::InventoryScrolled(0.5), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
 
       assert!(!state.inventory_loading);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.inventory = vec![inv_row(100, false)];
+
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 1_234.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        1_234.0,
+        "the pixel offset is stored so the virtual list can window the body"
+      );
     }
 
     #[tokio::test]
@@ -2980,7 +3033,14 @@ mod tests {
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
 
-      let _ = update(&mut state, Message::InventoryScrolled(0.9), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.9,
+        },
+        &db,
+      );
 
       assert!(
         state.inventory_loading,

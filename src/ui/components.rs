@@ -38,3 +38,4 @@ pub mod table_cell;
 pub mod text_input;
 pub mod toggle;
 pub mod updater_banner;
+pub mod virtual_list;

@@ -9,6 +9,7 @@ pub mod confirm_modal;
 pub mod context_menu;
 pub mod count_badge;
 pub mod empty_state;
+pub mod entity_search;
 pub mod esi_status;
 pub mod eve_time;
 pub mod eyebrow;

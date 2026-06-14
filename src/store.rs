@@ -9,6 +9,7 @@ pub mod asset_filter;
 pub mod bootstrap;
 pub mod fs_kind;
 pub mod images;
+pub mod killmail_slot;
 pub mod lease;
 pub mod model;
 pub mod reconcile;

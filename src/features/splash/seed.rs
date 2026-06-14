@@ -2922,7 +2922,7 @@ mod tests {
 
       let quantity: i64 = sqlx::query_scalar(
         "SELECT quantity FROM blueprint_activity_products \
-         WHERE blueprint_type_id = 939 AND activity_id = 1 AND product_type_id = 587",
+        WHERE blueprint_type_id = 939 AND activity_id = 1 AND product_type_id = 587",
       )
       .fetch_one(&db.0)
       .await
@@ -2937,7 +2937,7 @@ mod tests {
 
       let quantity: i64 = sqlx::query_scalar(
         "SELECT quantity FROM blueprint_activity_materials \
-         WHERE blueprint_type_id = 939 AND activity_id = 1 AND material_type_id = 34",
+        WHERE blueprint_type_id = 939 AND activity_id = 1 AND material_type_id = 34",
       )
       .fetch_one(&db.0)
       .await
@@ -2952,7 +2952,7 @@ mod tests {
 
       let quantity: i64 = sqlx::query_scalar(
         "SELECT quantity FROM blueprint_activity_products \
-         WHERE blueprint_type_id = 46167 AND activity_id = 11 AND product_type_id = 16640",
+        WHERE blueprint_type_id = 46167 AND activity_id = 11 AND product_type_id = 16640",
       )
       .fetch_one(&db.0)
       .await
@@ -2998,7 +2998,7 @@ mod tests {
     fn it_splits_products_and_materials_with_mapped_activity_ids() {
       let entries = parse(
         "939:\n  activities:\n    manufacturing:\n      materials:\n        \
-         - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+        - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
       );
 
       let (products, materials) = build_blueprint_rows(entries);
@@ -3027,7 +3027,7 @@ mod tests {
     fn it_skips_unknown_activity_names() {
       let entries = parse(
         "1:\n  activities:\n    mystery:\n      materials:\n        \
-         - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+        - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
       );
 
       let (products, materials) = build_blueprint_rows(entries);

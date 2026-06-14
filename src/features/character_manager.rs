@@ -1588,7 +1588,7 @@ async fn load_roster_at(
   let groups = assemble_groups(&squads, &squad_memberships, &mut card_by_id);
   let unassigned = assemble_unassigned(&characters, &squad_memberships, reserved_unassigned_id, &mut card_by_id);
 
-  let corps = load_corps(db).await?;
+  let corps = load_corps(db, enabled_features).await?;
 
   Ok((
     groups,
@@ -1737,7 +1737,7 @@ fn tag_chips_by_entity(tags: &[Tag], memberships: &[EntityTag]) -> HashMap<i64, 
   by_entity
 }
 
-async fn load_corps(db: &Database) -> Result<Vec<CorpCardModel>, crate::store::Error> {
+async fn load_corps(db: &Database, enabled_features: &[Feature]) -> Result<Vec<CorpCardModel>, crate::store::Error> {
   let owned = org::all_owned_corporations(db).await?;
   let store = images::default_store();
 
@@ -1745,9 +1745,18 @@ async fn load_corps(db: &Database) -> Result<Vec<CorpCardModel>, crate::store::E
   let tag_memberships = infra::memberships(db, ENTITY_TYPE_CORPORATION).await?;
   let mut tags_by_corp = tag_chips_by_entity(&tags, &tag_memberships);
 
+  let required_scopes = auth_feature::corp_scopes_for(enabled_features);
+  let granted_by_id: HashMap<i64, Option<String>> = infra::all(db)
+    .await?
+    .into_iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Corporation)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+
   let mut corps = Vec::with_capacity(owned.len());
   for corp in &owned {
     let id = corp.id();
+    let granted = granted_by_id.get(&id).and_then(Option::clone);
 
     let alliance = match corp.alliance_id() {
       Some(alliance_id) => org::get_alliance(db, alliance_id).await?,
@@ -1765,6 +1774,8 @@ async fn load_corps(db: &Database) -> Result<Vec<CorpCardModel>, crate::store::E
       alliance_ticker: alliance.as_ref().map(|a| a.ticker().to_owned()),
       ceo,
       corporation_id: id,
+      needs_reauth: needs_reauthorization(granted.as_deref(), &required_scopes),
+      granted_scopes: granted,
       hq,
       logo: images::resolve(&store, images::ImageKind::CorporationLogo, id),
       members: Some(i64::from(corp.member_count())),
@@ -1928,10 +1939,14 @@ fn corp_card_from_row(row: corporation_card::CardRow) -> CorpCardModel {
     alliance_ticker: row.alliance_ticker,
     ceo: row.ceo_name,
     corporation_id: row.corporation_id,
+    // The corp finder projection carries no credential scopes; proactive drift is derived
+    // only on the owned-corp load path. The full grid reflects the flag.
+    granted_scopes: None,
     hq: row.hq_name,
     logo: images::resolve(&store, images::ImageKind::CorporationLogo, row.corporation_id),
     members: Some(row.member_count),
     name: row.name,
+    needs_reauth: false,
     tags: row
       .tags
       .into_iter()
@@ -2767,10 +2782,12 @@ mod tests {
         alliance_ticker: None,
         ceo: None,
         corporation_id,
+        granted_scopes: None,
         hq: None,
         logo,
         members: None,
         name: "Corp".to_owned(),
+        needs_reauth: false,
         tags: Vec::new(),
         tax_rate: None,
         ticker: "CORP".to_owned(),
@@ -4760,6 +4777,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_derives_needs_reauth_from_the_corp_grant_versus_enabled_features_and_clears_on_a_wider_grant() {
+      use crate::clients::esi::scopes;
+
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+
+      let enabled = [Feature::Industry, Feature::Wallet];
+      let required = auth_feature::corp_scopes_for(&enabled);
+
+      async fn grant(db: &Database, scopes: &str) {
+        infra::upsert(
+          db,
+          2_000_001,
+          OwnerType::Corporation,
+          "tok",
+          "rt",
+          9999,
+          Some(8001),
+          Some(scopes),
+        )
+        .await
+        .unwrap();
+      }
+
+      // A grant dropping one required corp scope is a strict subset of the required set.
+      let strict_subset = required[1..].join(" ");
+      grant(&db, &strict_subset).await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert_eq!(corps.len(), 1);
+      assert!(
+        corps[0].needs_reauth,
+        "a corp grant missing a required corp scope must flag needs-reauth"
+      );
+
+      // A grant covering every required corp scope must clear the flag.
+      grant(&db, &required.join(" ")).await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert!(
+        !corps[0].needs_reauth,
+        "a corp grant covering every required corp scope must clear needs-reauth"
+      );
+
+      // A superset grant (every required scope plus an extra) must also stay clear.
+      grant(
+        &db,
+        &format!("{} {}", required.join(" "), scopes::CORPORATION_KILLMAILS),
+      )
+      .await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert!(
+        !corps[0].needs_reauth,
+        "a superset corp grant must not flag needs-reauth"
+      );
+    }
+
+    #[tokio::test]
     async fn it_excludes_reference_corps_without_a_corporation_credential() {
       let db = store::open_test().await.unwrap();
       super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
@@ -4870,6 +4943,7 @@ mod tests {
         alliance_ticker: Some("IHP".to_owned()),
         ceo: Some("Vex Voronova".to_owned()),
         corporation_id: 2_000_001,
+        granted_scopes: None,
         hq: Some("Jita IV — Moon 4".to_owned()),
         logo: images::ImageState::Stale {
           id: 2_000_001,
@@ -4877,6 +4951,7 @@ mod tests {
         },
         members: Some(1247),
         name: "Cobalt Syndicate".to_owned(),
+        needs_reauth: false,
         tags: Vec::new(),
         tax_rate: Some(0.10),
         ticker: "COBSY".to_owned(),

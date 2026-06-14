@@ -28,10 +28,17 @@ pub struct CorpCardModel {
   pub alliance_ticker: Option<String>,
   pub ceo: Option<String>,
   pub corporation_id: i64,
+  /// Stored credential scopes for this corporation, plumbed through for the corp re-auth UX
+  /// task to consume (e.g. to drive a re-authorize affordance). Not yet read here.
+  #[allow(dead_code)]
+  pub granted_scopes: Option<String>,
   pub hq: Option<String>,
   pub logo: images::ImageState,
   pub members: Option<i64>,
   pub name: String,
+  /// Set when the stored credential scopes are a strict subset of the required corp scope
+  /// set, derived proactively on load independent of any sync-failure indicator.
+  pub needs_reauth: bool,
   pub tags: Vec<TagChip>,
   pub tax_rate: Option<f64>,
   pub ticker: String,
@@ -48,7 +55,7 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
   ];
 
-  if let Some(indicator) = reauth_indicator(failure) {
+  if let Some(indicator) = reauth_indicator(model.needs_reauth, failure) {
     sections.push(indicator);
   }
 
@@ -231,10 +238,17 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
     .into()
 }
 
-fn reauth_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
-  match failure? {
-    Phase::BackingOff | Phase::Failed => {}
-    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => return None,
+fn reauth_indicator<'a>(needs_reauth: bool, failure: Option<Phase>) -> Option<Element<'a, Message>> {
+  // The treatment fires either from a proactively detected scope drift (stored grant is a
+  // strict subset of the required corp scopes) or from a live sync failure that signals a
+  // lost grant. The drift case is independent of any sync failure.
+  let flagged = needs_reauth
+    || match failure {
+      Some(Phase::BackingOff | Phase::Failed) => true,
+      Some(Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing) | None => false,
+    };
+  if !flagged {
+    return None;
   }
 
   Some(
@@ -303,6 +317,7 @@ mod tests {
       alliance_ticker: Some("IHP".to_owned()),
       ceo: Some("Vex Voronova".to_owned()),
       corporation_id: 98_000_001,
+      granted_scopes: None,
       hq: Some("Jita IV — Moon 4".to_owned()),
       logo: images::ImageState::Stale {
         id: 98_000_001,
@@ -310,6 +325,7 @@ mod tests {
       },
       members: Some(1247),
       name: "Cobalt Syndicate".to_owned(),
+      needs_reauth: false,
       tags: Vec::new(),
       tax_rate: Some(0.10),
       ticker: "COBSY".to_owned(),
@@ -385,6 +401,14 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_proactive_scope_drift_treatment_without_a_sync_failure() {
+      let mut model = base_model();
+      model.needs_reauth = true;
+
+      let _el: Element<'_, Message> = corp_card(&model, None);
+    }
+
+    #[test]
     fn it_renders_with_tags() {
       let mut model = base_model();
       model.tags = vec![TagChip {
@@ -394,6 +418,28 @@ mod tests {
       }];
 
       let _el: Element<'_, Message> = corp_card(&model, None);
+    }
+  }
+
+  mod reauth_indicator {
+    use super::*;
+
+    #[test]
+    fn it_fires_on_proactive_drift_independent_of_a_sync_failure() {
+      assert!(reauth_indicator(true, None).is_some());
+    }
+
+    #[test]
+    fn it_fires_on_a_sync_failure_without_drift() {
+      assert!(reauth_indicator(false, Some(Phase::Failed)).is_some());
+      assert!(reauth_indicator(false, Some(Phase::BackingOff)).is_some());
+    }
+
+    #[test]
+    fn it_stays_quiet_when_neither_drift_nor_failure_is_present() {
+      assert!(reauth_indicator(false, None).is_none());
+      assert!(reauth_indicator(false, Some(Phase::Syncing)).is_none());
+      assert!(reauth_indicator(false, Some(Phase::Done)).is_none());
     }
   }
 }

@@ -28,6 +28,7 @@ pub enum Event {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  BrowserOpened(Result<(), String>),
   CallbackReceived(String),
   Cancel,
   Completed(Result<SignedIn, String>),
@@ -125,12 +126,20 @@ pub fn update(
   match message {
     Message::Start(features) => {
       let scopes = scopes_for(&features);
-      start_flow(state, sso, Kind::SignIn, &scopes, features);
-      (Task::none(), None)
+      let task = start_flow(state, sso, Kind::SignIn, &scopes, features);
+      (task, None)
     }
     Message::StartAddCorporation(features) => {
       let scopes = corp_scopes_for(&features);
-      start_flow(state, sso, Kind::AddCorporation, &scopes, features);
+      let task = start_flow(state, sso, Kind::AddCorporation, &scopes, features);
+      (task, None)
+    }
+    Message::BrowserOpened(Ok(())) => (Task::none(), None),
+    Message::BrowserOpened(Err(error)) => {
+      fail_active_flow(
+        state,
+        format!("Couldn't open your browser ({error}). Open the EVE sign-in page manually to continue."),
+      );
       (Task::none(), None)
     }
     Message::CallbackReceived(url) => {
@@ -292,20 +301,27 @@ fn fail_active_flow(state: &mut State, error: String) {
   }
 }
 
-fn start_flow(state: &mut State, sso: &eve_sso::Client, kind: Kind, scopes: &[&str], features: Vec<Feature>) {
+fn start_flow(
+  state: &mut State,
+  sso: &eve_sso::Client,
+  kind: Kind,
+  scopes: &[&str],
+  features: Vec<Feature>,
+) -> Task<Message> {
   let pending = sso.sign_in(scopes, &session::redirect_uri());
-  let status = match open::that_detached(&pending.url) {
-    Ok(()) => Status::Waiting,
-    Err(err) => Status::Failed(format!(
-      "Couldn't open your browser ({err}). Open the EVE sign-in page manually to continue."
-    )),
-  };
+  let url = pending.url.clone();
   state.flow = Some(Flow {
     kind,
     pending,
-    status,
+    status: Status::Waiting,
     features,
   });
+  // Open the browser from the returned Task (not eagerly), so `update` stays a pure state
+  // transition: unit tests that drive `update` never launch a real browser.
+  Task::perform(
+    async move { open::that_detached(&url).map_err(|err| err.to_string()) },
+    Message::BrowserOpened,
+  )
 }
 
 #[cfg(test)]

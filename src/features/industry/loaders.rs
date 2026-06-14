@@ -685,18 +685,11 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
   let characters = character::all_owned(db).await.unwrap_or_default();
   let corporations = org::all_owned_corporations(db).await.unwrap_or_default();
   let credentials = crate::store::repo::infra::all(db).await.unwrap_or_default();
-  let mut scopes_by_id: HashMap<i64, Option<String>> = HashMap::new();
-  let mut corp_scopes_by_id: HashMap<i64, Option<String>> = HashMap::new();
-  for cred in credentials {
-    match cred.owner_type() {
-      CredentialOwner::Character => {
-        scopes_by_id.insert(cred.owner_id(), cred.scopes().clone());
-      }
-      CredentialOwner::Corporation => {
-        corp_scopes_by_id.insert(cred.owner_id(), cred.scopes().clone());
-      }
-    }
-  }
+  let scopes_by_id: HashMap<i64, Option<String>> = credentials
+    .into_iter()
+    .filter(|cred| cred.owner_type() == CredentialOwner::Character)
+    .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
 
   let mut roster = Vec::with_capacity(characters.len() + corporations.len());
   let mut caps_by_character: HashMap<i64, SlotCaps> = HashMap::new();
@@ -733,7 +726,7 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
     let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
     roster.push(RosterOwner {
       corp: corp.ticker().to_owned(),
-      granted_scopes: corp_scopes_by_id.get(&corp.id()).cloned().flatten(),
+      granted_scopes: None,
       id: corp.id(),
       is_corporation: true,
       logo: Some(logo),

@@ -87,13 +87,8 @@ fn corporation_count(state: &State) -> usize {
 }
 
 fn corporation_row<'a>(state: &'a State, owner: &'a RosterOwner) -> Element<'a, Message> {
-  // Corp credentials are checked against the corp scope set (mirroring character_manager's
-  // char/corp split), not the character `required_scopes`, so a corp missing a corp-only scope
-  // (e.g. the new corporation blueprints scope) is flagged in the picker just like a character.
-  let corp_required = crate::features::auth::corp_scopes_for(&[crate::config::Feature::Industry]);
-  let needs_reauth =
-    crate::features::character_manager::needs_reauthorization(owner.granted_scopes.as_deref(), &corp_required);
-
+  // Matches the Assets picker: corporation rows carry no re-auth indicator. Corp re-authorization
+  // is surfaced through the character_manager corp context menu.
   picker_character_row(
     owner.id,
     owner.name.clone(),
@@ -101,7 +96,7 @@ fn corporation_row<'a>(state: &'a State, owner: &'a RosterOwner) -> Element<'a, 
     owner.logo.as_ref().and_then(images::ImageState::path),
     None,
     matches!(state.active(), Scope::Corp(id) if id == owner.id),
-    needs_reauth.then_some("Industry"),
+    None,
     Message::ScopeSelected(Scope::Corp(owner.id)),
   )
 }
@@ -195,35 +190,6 @@ mod tests {
     fn it_builds_a_dropdown_with_all_scopes_characters_and_corps() {
       let state = state_with(Scope::All, vec![character(1), corporation(98)]);
 
-      let _el: Element<'_, Message> = dropdown(&state);
-    }
-
-    #[test]
-    fn it_flags_a_corporation_missing_a_corp_scope_in_the_picker() {
-      // A corp whose stored scopes are a strict subset of the required corp set must surface
-      // the picker's needs-auth indicator, the same way a character does.
-      let required = crate::features::auth::corp_scopes_for(&[crate::config::Feature::Industry]);
-      assert!(crate::features::character_manager::needs_reauthorization(
-        None, &required
-      ));
-
-      let mut corp = corporation(98);
-      corp.granted_scopes = None;
-      let state = state_with(Scope::All, vec![corp]);
-      let _el: Element<'_, Message> = dropdown(&state);
-    }
-
-    #[test]
-    fn it_does_not_flag_a_fully_authorized_corporation() {
-      let required = crate::features::auth::corp_scopes_for(&[crate::config::Feature::Industry]);
-      assert!(!crate::features::character_manager::needs_reauthorization(
-        Some(&required.join(" ")),
-        &required,
-      ));
-
-      let mut corp = corporation(98);
-      corp.granted_scopes = Some(required.join(" "));
-      let state = state_with(Scope::All, vec![corp]);
       let _el: Element<'_, Message> = dropdown(&state);
     }
   }

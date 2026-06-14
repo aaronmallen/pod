@@ -331,44 +331,63 @@ impl Message {
   }
 
   fn lifecycle_variant_name(&self) -> Option<&'static str> {
+    self
+      .sync_variant_name()
+      .or_else(|| self.updater_variant_name())
+      .or_else(|| self.boot_variant_name())
+  }
+
+  fn boot_variant_name(&self) -> Option<&'static str> {
     Some(match self {
-      Message::CancelTakeOver => "CancelTakeOver",
       Message::ClockTick => "ClockTick",
-      Message::CloseSyncPopover => "CloseSyncPopover",
-      Message::ConfirmTakeOver => "ConfirmTakeOver",
-      Message::EngineStopped {
-        ..
-      } => "EngineStopped",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::ImageReady {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
-      Message::LeaseHeartbeat => "LeaseHeartbeat",
-      Message::LockReleased => "LockReleased",
       Message::OpenAbout => "OpenAbout",
-      Message::PeriodicPull => "PeriodicPull",
-      Message::PeriodicPush => "PeriodicPush",
-      Message::Pulled(_) => "Pulled",
-      Message::Pushed(_) => "Pushed",
-      Message::ReacquireLease => "ReacquireLease",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
-      Message::RestartSync => "RestartSync",
       Message::SeedProgress(_) => "SeedProgress",
       Message::SnoozesWoken(_) => "SnoozesWoken",
       Message::Splash(_) => "Splash",
       Message::StorageMigrated => "StorageMigrated",
       Message::StoreOpened(_) => "StoreOpened",
+      Message::WindowOpened(_) => "WindowOpened",
+      _ => return None,
+    })
+  }
+
+  fn sync_variant_name(&self) -> Option<&'static str> {
+    Some(match self {
+      Message::CancelTakeOver => "CancelTakeOver",
+      Message::CloseSyncPopover => "CloseSyncPopover",
+      Message::ConfirmTakeOver => "ConfirmTakeOver",
+      Message::EngineStopped {
+        ..
+      } => "EngineStopped",
+      Message::LeaseHeartbeat => "LeaseHeartbeat",
+      Message::LockReleased => "LockReleased",
+      Message::PeriodicPull => "PeriodicPull",
+      Message::PeriodicPush => "PeriodicPush",
+      Message::Pulled(_) => "Pulled",
+      Message::Pushed(_) => "Pushed",
+      Message::ReacquireLease => "ReacquireLease",
+      Message::RestartSync => "RestartSync",
       Message::SyncNowResolved(_) => "SyncNowResolved",
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
       Message::TakeOverResolved(_) => "TakeOverResolved",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
+      _ => return None,
+    })
+  }
+
+  fn updater_variant_name(&self) -> Option<&'static str> {
+    Some(match self {
       Message::UpdaterAction(_) => "UpdaterAction",
       Message::UpdaterDismissToast => "UpdaterDismissToast",
       Message::UpdaterStateChanged(_) => "UpdaterStateChanged",
-      Message::WindowOpened(_) => "WindowOpened",
       _ => return None,
     })
   }
@@ -2598,15 +2617,28 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
 fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::ClockTick => handle_clock_tick(app),
-    Message::EngineStopped {
-      reason,
-    } => handle_engine_stopped(app, reason),
     Message::ImageReady {
       id,
       kind,
       ready,
     } => handle_image_ready(app, kind, id, ready),
     Message::InitFailed(error) => handle_init_failed(app, error),
+    Message::Ready(runtime) => handle_ready(app, runtime),
+    Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
+    Message::SeedProgress(progress) => on_seed_progress(app, progress),
+    Message::SnoozesWoken(woken) => handle_snoozes_woken(app, woken),
+    Message::Splash(msg) => update_splash(app, msg),
+    Message::StorageMigrated => Task::none(),
+    Message::StoreOpened(ready) => handle_store_opened(app, *ready),
+    other => dispatch_sync_lifecycle(app, other),
+  }
+}
+
+fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
+  match message {
+    Message::EngineStopped {
+      reason,
+    } => handle_engine_stopped(app, reason),
     Message::LeaseHeartbeat => handle_lease_heartbeat(app),
     Message::LockReleased => handle_lock_released(app),
     Message::PeriodicPull => handle_periodic_pull(app),
@@ -2615,14 +2647,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Pulled(pulled) => handle_pulled(app, pulled),
     Message::Pushed(mark) => handle_pushed(app, mark),
     Message::ReacquireLease => handle_reacquire_lease(app),
-    Message::Ready(runtime) => handle_ready(app, runtime),
-    Message::ReauthCharacter(character_id) => handle_reauth_character(app, character_id),
     Message::RestartSync => handle_restart_sync(app),
-    Message::SeedProgress(progress) => on_seed_progress(app, progress),
-    Message::SnoozesWoken(woken) => handle_snoozes_woken(app, woken),
-    Message::Splash(msg) => update_splash(app, msg),
-    Message::StorageMigrated => Task::none(),
-    Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::SyncPulse => handle_sync_pulse(app),
     Message::CancelTakeOver => handle_cancel_take_over(app),
     Message::ConfirmTakeOver => handle_confirm_take_over(app),

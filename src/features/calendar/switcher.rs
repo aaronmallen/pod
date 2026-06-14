@@ -12,10 +12,10 @@ use crate::{
       icon::Icon,
       picker::{
         PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
-        picker_trigger, trigger_identity,
+        picker_trigger, trigger_badge_identity, trigger_identity,
       },
     },
-    style::{color, radius},
+    style::radius,
   },
 };
 
@@ -90,38 +90,11 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
       ),
       None => trigger_identity("Calendar".to_owned(), String::new(), None),
     },
-    _ => {
-      let badge = container(
-        Icon::users()
-          .color(color::accent::PLASMA)
-          .size(20.0)
-          .render::<Message>(),
-      )
-      .width(Length::Fixed(38.0))
-      .height(Length::Fixed(38.0))
-      .align_x(iced::alignment::Horizontal::Center)
-      .align_y(iced::alignment::Vertical::Center)
-      .style(|_| container::Style {
-        background: Some(iced::Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
-        border: Border {
-          color: color::with_alpha(color::accent::PLASMA, 0.3),
-          radius: radius::CONTROL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      });
-
-      let identity = trigger_identity(
-        "All Pilots".to_owned(),
-        format!("{} calendars combined", state.roster().len()),
-        None,
-      );
-
-      iced::widget::Row::with_children(vec![badge.into(), identity])
-        .spacing(crate::ui::style::spacing::SPACE_3)
-        .align_y(iced::alignment::Vertical::Center)
-        .into()
-    }
+    _ => trigger_badge_identity(
+      Icon::calendar(),
+      "All Pilots".to_owned(),
+      format!("{} calendars combined", state.roster().len()),
+    ),
   }
 }
 

@@ -2,17 +2,19 @@ use std::path::PathBuf;
 
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, button, container, scrollable, svg, text},
 };
 
 use crate::ui::{
-  components::avatar::avatar,
+  components::{avatar::avatar, icon::Icon},
   style::{color, radius, spacing, typography},
 };
 
 static LOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/lock.svg");
 
+const BADGE_ICON_SIZE: f32 = 20.0;
+const BADGE_SIZE: f32 = 38.0;
 const CARET: &str = "\u{25be}";
 const DROPDOWN_WIDTH: f32 = 360.0;
 const HEADER_PAD_X: f32 = 14.0;
@@ -184,6 +186,32 @@ pub fn picker_trigger<'a, M: 'a + Clone>(content: Element<'a, M>, open: bool, on
     .padding(TRIGGER_PAD)
     .on_press(on_toggle)
     .style(move |_, status| trigger_style(open, status))
+    .into()
+}
+
+pub fn trigger_badge_identity<'a, M: 'static>(
+  icon: Icon,
+  title: impl Into<String>,
+  subtitle: impl Into<String>,
+) -> Element<'a, M> {
+  let badge = container(icon.color(color::accent::PLASMA).size(BADGE_ICON_SIZE).render::<M>())
+    .width(Length::Fixed(BADGE_SIZE))
+    .height(Length::Fixed(BADGE_SIZE))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      border: Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.3),
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    });
+
+  Row::with_children(vec![badge.into(), trigger_identity(title, subtitle, None)])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
     .into()
 }
 
@@ -433,6 +461,15 @@ mod tests {
         None,
         Msg::Selected(3),
       );
+    }
+  }
+
+  mod trigger_badge_identity {
+    use super::{super::trigger_badge_identity, *};
+
+    #[test]
+    fn it_builds_a_badge_identity() {
+      let _el: Element<'_, Msg> = trigger_badge_identity(Icon::industry(), "All Industry", "3 pilots combined");
     }
   }
 

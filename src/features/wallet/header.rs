@@ -8,9 +8,10 @@ use crate::{
   ui::{
     components::{
       header::{header as shared_header, header_divider, stat_block},
+      icon::Icon,
       picker::{
         PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_row,
-        picker_trigger, trigger_identity,
+        picker_trigger, trigger_badge_identity, trigger_identity,
       },
     },
     style::color,
@@ -59,10 +60,10 @@ fn scope_picker(state: &State) -> Element<'_, Message> {
 
 fn trigger(state: &State) -> Element<'_, Message> {
   match state.active() {
-    Scope::All => trigger_identity(
+    Scope::All => trigger_badge_identity(
+      Icon::wallet(),
       "All Wallets",
       format!("{} characters combined", state.roster.len()),
-      None,
     ),
     Scope::Character(id) => match state.roster.iter().find(|pilot| pilot.id == id) {
       Some(pilot) => trigger_identity(

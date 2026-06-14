@@ -391,14 +391,22 @@ enum Route {
 impl From<rail::Destination> for Route {
   fn from(destination: rail::Destination) -> Self {
     match destination {
-      rail::Destination::Assets => unreachable!("Assets is routed via Message::Nav, not From"),
+      rail::Destination::Assets => {
+        unreachable!("Assets is routed via Message::Nav, not From")
+      }
       rail::Destination::Calendar => Route::Calendar,
       rail::Destination::Characters => Route::Characters,
-      rail::Destination::Industry => unreachable!("Industry is routed via Message::Nav, not From"),
+      rail::Destination::Industry => {
+        unreachable!("Industry is routed via Message::Nav, not From")
+      }
       rail::Destination::Mail => Route::Mail,
       rail::Destination::Settings => Route::Settings,
-      rail::Destination::Skills => unreachable!("Skills is routed via Message::Nav, not From"),
-      rail::Destination::Wallet => unreachable!("Wallet is routed via Message::Nav, not From"),
+      rail::Destination::Skills => {
+        unreachable!("Skills is routed via Message::Nav, not From")
+      }
+      rail::Destination::Wallet => {
+        unreachable!("Wallet is routed via Message::Nav, not From")
+      }
     }
   }
 }
@@ -1230,9 +1238,9 @@ fn navigate_to_calendar(app: &mut App, target: Option<i64>) -> Task<Message> {
   let features = calendar_features(app);
   let selection = target.unwrap_or(calendar::EMPTY_CALENDAR_SELECTION);
   app.calendar = Some(calendar::State::new(selection, app.now, tweaks, features));
-  match (target, app.runtime.as_ref()) {
-    (Some(id), Some(runtime)) => calendar::load(&runtime.db, id, features).map(Message::Calendar),
-    _ => Task::none(),
+  match app.runtime.as_ref() {
+    Some(runtime) => calendar::load(&runtime.db, selection, features).map(Message::Calendar),
+    None => Task::none(),
   }
 }
 
@@ -1261,15 +1269,6 @@ fn industry_clock_reload(app: &App) -> Task<Message> {
     }
     _ => Task::none(),
   }
-}
-
-fn resolve_calendar_target(roster: &[OwnedPilot], last_selected: Option<i64>) -> Option<i64> {
-  if let Some(id) = last_selected
-    && roster.iter().any(|pilot| pilot.id == id)
-  {
-    return Some(id);
-  }
-  roster.first().map(|pilot| pilot.id)
 }
 
 fn calendar_features(app: &App) -> config::FeatureFlags {
@@ -3556,24 +3555,8 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
       let target = resolve_mail_target(&roster, app.selected_character);
       navigate_to_mail(app, target)
     }
-    rail::Destination::Calendar => {
-      let roster = app
-        .character_manager
-        .as_ref()
-        .map(character_manager::owned_roster)
-        .unwrap_or_default();
-      let target = resolve_calendar_target(&roster, app.selected_character);
-      navigate_to_calendar(app, target)
-    }
-    rail::Destination::Industry => {
-      let roster = app
-        .character_manager
-        .as_ref()
-        .map(character_manager::owned_roster)
-        .unwrap_or_default();
-      let target = resolve_calendar_target(&roster, app.selected_character);
-      navigate_to_industry(app, target)
-    }
+    rail::Destination::Calendar => navigate_to_calendar(app, None),
+    rail::Destination::Industry => navigate_to_industry(app, None),
     rail::Destination::Wallet => navigate_to_wallet(app),
     rail::Destination::Assets => navigate_to_assets(app),
     other => {
@@ -6982,7 +6965,7 @@ mod tests {
       assert_eq!(Message::CloseSyncPopover.variant_name(), "CloseSyncPopover");
       assert_eq!(
         Message::EngineStopped {
-          reason: None,
+          reason: None
         }
         .variant_name(),
         "EngineStopped"

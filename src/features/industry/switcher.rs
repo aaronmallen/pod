@@ -1,25 +1,16 @@
-use iced::{
-  Border, Element, Length,
-  alignment::{Horizontal, Vertical},
-  widget::{Row, container},
-};
+use iced::Element;
 
 use super::{Message, RosterOwner, Scope, State};
 use crate::{
   store::images,
-  ui::{
-    components::{
-      icon::Icon,
-      picker::{
-        PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown, picker_row, picker_trigger,
-        trigger_identity,
-      },
+  ui::components::{
+    icon::Icon,
+    picker::{
+      PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown, picker_row, picker_trigger,
+      trigger_badge_identity, trigger_identity,
     },
-    style::{color, radius, spacing},
   },
 };
-
-const BADGE: f32 = 38.0;
 
 pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
   let combined = picker_row(
@@ -134,42 +125,15 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
       Some(owner) => trigger_identity(owner.name.clone(), owner.corp.clone(), None),
       None => trigger_identity("Industry".to_owned(), String::new(), None),
     },
-    Scope::All => {
-      let badge = container(
-        Icon::industry()
-          .color(color::accent::PLASMA)
-          .size(20.0)
-          .render::<Message>(),
-      )
-      .width(Length::Fixed(BADGE))
-      .height(Length::Fixed(BADGE))
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center)
-      .style(|_| container::Style {
-        background: Some(iced::Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
-        border: Border {
-          color: color::with_alpha(color::accent::PLASMA, 0.3),
-          radius: radius::CONTROL.into(),
-          width: 1.0,
-        },
-        ..container::Style::default()
-      });
-
-      let identity = trigger_identity(
-        "All Industry".to_owned(),
-        format!(
-          "{} pilots, {} corps combined",
-          character_count(state),
-          corporation_count(state)
-        ),
-        None,
-      );
-
-      Row::with_children(vec![badge.into(), identity])
-        .spacing(spacing::SPACE_3)
-        .align_y(Vertical::Center)
-        .into()
-    }
+    Scope::All => trigger_badge_identity(
+      Icon::industry(),
+      "All Industry".to_owned(),
+      format!(
+        "{} pilots, {} corps combined",
+        character_count(state),
+        corporation_count(state)
+      ),
+    ),
   }
 }
 

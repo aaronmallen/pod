@@ -23,6 +23,7 @@ use crate::{
 const ATTACKER_ICON_BOX: f32 = 30.0;
 const ITEM_ICON_BOX: f32 = 22.0;
 const ITEM_ICON_SIZE: Size = Size::S64;
+const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
 const MODAL_MAX_WIDTH: f32 = 880.0;
 const PORTRAIT_BOX: f32 = 52.0;
 const SHIP_ICON_BOX: f32 = 46.0;
@@ -309,37 +310,45 @@ pub fn overlay<'a>(base: Element<'a, Message>, detail: &'a KillmailDetail) -> El
 }
 
 fn modal(detail: &KillmailDetail) -> Element<'_, Message> {
-  let body = scrollable(
-    Column::with_children(vec![
-      Row::with_children(vec![victim_card(detail), value_card(detail)])
-        .spacing(spacing::SPACE_3_5)
-        .width(Length::Fill)
-        .into(),
-      Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
-        .spacing(spacing::SPACE_3_5)
-        .align_y(Vertical::Top)
-        .width(Length::Fill)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
-    .padding(spacing::SPACE_3_5 + spacing::UNIT)
-    .width(Length::Fill),
+  let body = container(
+    scrollable(
+      Column::with_children(vec![
+        Row::with_children(vec![victim_card(detail), value_card(detail)])
+          .spacing(spacing::SPACE_3_5)
+          .width(Length::Fill)
+          .into(),
+        Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
+          .spacing(spacing::SPACE_3_5)
+          .align_y(Vertical::Top)
+          .width(Length::Fill)
+          .into(),
+      ])
+      .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
+      .padding(spacing::SPACE_3_5 + spacing::UNIT)
+      .width(Length::Fill),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .height(Length::Shrink),
   )
-  .height(Length::Shrink);
+  .max_height(MODAL_CONTENT_MAX_HEIGHT);
 
-  container(Column::with_children(vec![header(detail), body.into()]).width(Length::Fill))
-    .max_width(MODAL_MAX_WIDTH)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.16),
-        width: 1.0,
-        radius: radius::PANEL.into(),
-      },
-      ..container::Style::default()
-    })
-    .clip(true)
-    .into()
+  container(
+    Column::with_children(vec![header(detail), body.into()])
+      .width(Length::Fill)
+      .height(Length::Shrink),
+  )
+  .max_width(MODAL_MAX_WIDTH)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.16),
+      width: 1.0,
+      radius: radius::PANEL.into(),
+    },
+    ..container::Style::default()
+  })
+  .clip(true)
+  .into()
 }
 
 fn header(detail: &KillmailDetail) -> Element<'_, Message> {
@@ -1206,6 +1215,26 @@ mod tests {
 
       let base: Element<'_, Message> = Space::new().into();
       let _el: Element<'_, Message> = overlay(base, &bare);
+    }
+
+    #[test]
+    fn it_renders_a_heavy_kill_with_many_items() {
+      let mut heavy = detail();
+      heavy.slots = vec![SlotGroupView {
+        items: (0..43)
+          .map(|index| ItemView {
+            dropped: index % 2 == 0,
+            icon: images::IconResolution::Missing,
+            name: format!("Module {index}"),
+            quantity: 1,
+            value_isk: 1_000_000.0,
+          })
+          .collect(),
+        label: "High power",
+      }];
+
+      let base: Element<'_, Message> = Space::new().into();
+      let _el: Element<'_, Message> = overlay(base, &heavy);
     }
   }
 

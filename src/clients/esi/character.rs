@@ -35,6 +35,26 @@ impl<'a> AuthenticatedClient<'a> {
     }
   }
 
+  /// Per the ESI contract the contact ids are the JSON request body, while standing, label_ids,
+  /// and watched ride the query string.
+  #[allow(dead_code)]
+  pub async fn add_contacts(
+    &self,
+    contact_ids: &[i64],
+    standing: f64,
+    label_ids: &[i64],
+    watched: bool,
+  ) -> Result<Vec<i64>, clients::Error> {
+    let base = self
+      .esi
+      .url(&format!("characters/{}/contacts/", self.grant.character_id()));
+    let url = contacts_write_url(&base, standing, label_ids, watched)?;
+    self
+      .esi
+      .post_json(url.as_str(), &contact_ids, self.grant.access_token())
+      .await
+  }
+
   pub async fn assets(&self) -> Result<Vec<Asset>, clients::Error> {
     let url = self
       .esi
@@ -154,6 +174,24 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.delete_empty(&url, self.grant.access_token()).await
   }
 
+  #[allow(dead_code)]
+  pub async fn edit_contacts(
+    &self,
+    contact_ids: &[i64],
+    standing: f64,
+    label_ids: &[i64],
+    watched: bool,
+  ) -> Result<(), clients::Error> {
+    let base = self
+      .esi
+      .url(&format!("characters/{}/contacts/", self.grant.character_id()));
+    let url = contacts_write_url(&base, standing, label_ids, watched)?;
+    self
+      .esi
+      .put_empty(url.as_str(), &contact_ids, self.grant.access_token())
+      .await
+  }
+
   pub async fn implants(&self) -> Result<Vec<i64>, clients::Error> {
     let url = self
       .esi
@@ -241,6 +279,16 @@ impl<'a> AuthenticatedClient<'a> {
   }
 
   #[allow(dead_code)]
+  pub async fn remove_contacts(&self, contact_ids: &[i64]) -> Result<(), clients::Error> {
+    let base = self
+      .esi
+      .url(&format!("characters/{}/contacts/", self.grant.character_id()));
+    let url = reqwest::Url::parse_with_params(&base, &[("contact_ids", join_ids(contact_ids))])
+      .map_err(|e| clients::Error::Internal(format!("invalid contacts url: {e}")))?;
+    self.esi.delete_empty(url.as_str(), self.grant.access_token()).await
+  }
+
+  #[allow(dead_code)]
   pub async fn respond_to_event(&self, event_id: i64, request: &RespondRequest) -> Result<(), clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/calendar/{event_id}/",
@@ -313,6 +361,24 @@ impl<'a> PublicClient<'a> {
   }
 }
 
+fn contacts_write_url(
+  base: &str,
+  standing: f64,
+  label_ids: &[i64],
+  watched: bool,
+) -> Result<reqwest::Url, clients::Error> {
+  let mut params: Vec<(&str, String)> = vec![("standing", standing.to_string()), ("watched", watched.to_string())];
+  if !label_ids.is_empty() {
+    params.push(("label_ids", join_ids(label_ids)));
+  }
+  reqwest::Url::parse_with_params(base, &params)
+    .map_err(|e| clients::Error::Internal(format!("invalid contacts url: {e}")))
+}
+
+fn join_ids(ids: &[i64]) -> String {
+  ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+}
+
 #[cfg(test)]
 mod tests {
   use wiremock::{
@@ -332,6 +398,60 @@ mod tests {
 
   mod authenticated_client {
     use super::*;
+
+    mod add_contacts {
+      use pretty_assertions::assert_eq;
+      use wiremock::matchers::{body_json, query_param};
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_posts_contact_ids_with_query_params_and_returns_affected_ids() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/contacts/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(query_param("standing", "5"))
+          .and(query_param("watched", "true"))
+          .and(query_param("label_ids", "10,20"))
+          .and(body_json(serde_json::json!([1001, 1002])))
+          .respond_with(ResponseTemplate::new(201).set_body_raw("[1001,1002]", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let affected = esi
+          .character_authenticated(&grant)
+          .add_contacts(&[1001, 1002], 5.0, &[10, 20], true)
+          .await
+          .unwrap();
+
+        assert_eq!(affected, vec![1001, 1002]);
+      }
+
+      #[tokio::test]
+      async fn it_omits_label_ids_when_none_are_assigned() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/contacts/"))
+          .and(query_param("standing", "-10"))
+          .and(query_param("watched", "false"))
+          .respond_with(ResponseTemplate::new(201).set_body_raw("[1003]", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let affected = esi
+          .character_authenticated(&grant)
+          .add_contacts(&[1003], -10.0, &[], false)
+          .await
+          .unwrap();
+
+        assert_eq!(affected, vec![1003]);
+      }
+    }
 
     mod assets {
       use pretty_assertions::assert_eq;
@@ -894,6 +1014,57 @@ mod tests {
       }
     }
 
+    mod edit_contacts {
+      use wiremock::matchers::{body_json, query_param};
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_puts_contact_ids_with_query_params_and_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/characters/42/contacts/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(query_param("standing", "10"))
+          .and(query_param("watched", "true"))
+          .and(query_param("label_ids", "7"))
+          .and(body_json(serde_json::json!([1001])))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let result = esi
+          .character_authenticated(&grant)
+          .edit_contacts(&[1001], 10.0, &[7], true)
+          .await;
+
+        assert!(result.is_ok());
+      }
+
+      #[tokio::test]
+      async fn it_omits_label_ids_when_none_are_assigned() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/characters/42/contacts/"))
+          .and(query_param("standing", "0"))
+          .and(query_param("watched", "false"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let result = esi
+          .character_authenticated(&grant)
+          .edit_contacts(&[1002], 0.0, &[], false)
+          .await;
+
+        assert!(result.is_ok());
+      }
+    }
+
     mod implants {
       use pretty_assertions::assert_eq;
 
@@ -1426,6 +1597,30 @@ mod tests {
         assert_eq!(killmails.len(), 1);
         assert_eq!(killmails[0].killmail_id, 100);
         assert_eq!(killmails[0].killmail_hash, "abc123");
+      }
+    }
+
+    mod remove_contacts {
+      use wiremock::matchers::query_param;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_deletes_contacts_by_id_query_param_with_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+          .and(path("/characters/42/contacts/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(query_param("contact_ids", "1001,1002"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let result = esi.character_authenticated(&grant).remove_contacts(&[1001, 1002]).await;
+
+        assert!(result.is_ok());
       }
     }
 

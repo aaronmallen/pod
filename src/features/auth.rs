@@ -15,6 +15,7 @@ use crate::{
   config::Feature,
   features::registry,
   store::Database,
+  sync::Subject,
   ui::style::{color, control, spacing, typography},
 };
 
@@ -67,8 +68,26 @@ enum Status {
   Waiting,
 }
 
+fn corp_feature_scopes(feature: Feature) -> impl Iterator<Item = &'static str> {
+  registry::descriptor(feature)
+    .jobs
+    .iter()
+    // `gating_scope` matches on the subject variant only, so the id here is an unused placeholder.
+    .filter_map(|job| job.gating_scope(Subject::Corporation(0)))
+}
+
 fn feature_scopes(feature: Feature) -> &'static [&'static str] {
   registry::descriptor(feature).scopes
+}
+
+pub fn corp_scopes_for(features: &[Feature]) -> Vec<&'static str> {
+  scopes::BASELINE_CORP_SCOPES
+    .iter()
+    .copied()
+    .chain(features.iter().flat_map(|&feature| corp_feature_scopes(feature)))
+    .collect::<BTreeSet<_>>()
+    .into_iter()
+    .collect()
 }
 
 pub fn scopes_for(features: &[Feature]) -> Vec<&'static str> {
@@ -110,13 +129,8 @@ pub fn update(
       (Task::none(), None)
     }
     Message::StartAddCorporation => {
-      start_flow(
-        state,
-        sso,
-        Kind::AddCorporation,
-        scopes::CORP_SIGN_IN_SCOPES,
-        Vec::new(),
-      );
+      let scopes = corp_scopes_for(&Feature::ALL);
+      start_flow(state, sso, Kind::AddCorporation, &scopes, Vec::new());
       (Task::none(), None)
     }
     Message::CallbackReceived(url) => {
@@ -480,6 +494,54 @@ mod tests {
           "{feature:?} must map to at least one scope"
         );
       }
+    }
+  }
+
+  mod corp_scopes_for {
+    use super::*;
+
+    #[test]
+    fn it_derives_corp_industry_jobs_when_industry_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Industry]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_INDUSTRY_JOBS),
+        "an enabled Industry feature must request the corp industry jobs scope, got {requested:?}"
+      );
+    }
+
+    #[test]
+    fn it_always_requests_the_baseline_companions() {
+      let requested = corp_scopes_for(&[]);
+
+      assert!(requested.contains(&scopes::CORPORATION_DIVISIONS));
+      assert!(requested.contains(&scopes::CORPORATION_MEMBERS));
+      assert!(requested.contains(&scopes::CORPORATION_ROLES));
+    }
+
+    #[test]
+    fn it_derives_corp_asset_and_wallet_scopes_from_their_features() {
+      let requested = corp_scopes_for(&[Feature::AssetTracking, Feature::Wallet]);
+
+      assert!(requested.contains(&scopes::CORPORATION_ASSETS));
+      assert!(requested.contains(&scopes::CORPORATION_WALLET));
+    }
+
+    #[test]
+    fn it_omits_a_disabled_features_corp_scope() {
+      let without_industry = corp_scopes_for(&[Feature::Wallet]);
+
+      assert!(!without_industry.contains(&scopes::CORPORATION_INDUSTRY_JOBS));
+    }
+
+    #[test]
+    fn the_union_is_deduplicated_and_sorted() {
+      let requested = corp_scopes_for(&Feature::ALL);
+      let mut sorted = requested.clone();
+      sorted.sort_unstable();
+      sorted.dedup();
+
+      assert_eq!(requested, sorted, "the union must be deduplicated and ordered");
     }
   }
 

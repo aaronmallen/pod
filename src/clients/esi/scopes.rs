@@ -55,22 +55,21 @@ pub const CORPORATION_WALLET_JOURNAL: &str = "esi-wallet.read_corporation_wallet
 pub const CORPORATION_WALLET_TRANSACTIONS: &str = "esi-wallet.read_corporation_wallets.v1";
 pub const UNIVERSE_STRUCTURES: &str = "esi-universe.read_structures.v1";
 
-pub const CORP_SIGN_IN_SCOPES: &[&str] = &[
-  CORPORATION_ROLES,
-  CORPORATION_ASSETS,
-  CORPORATION_WALLET,
-  CORPORATION_DIVISIONS,
-  CORPORATION_MEMBERS,
-];
+pub const BASELINE_CORP_SCOPES: &[&str] = &[CORPORATION_DIVISIONS, CORPORATION_MEMBERS, CORPORATION_ROLES];
 
 #[cfg(test)]
 mod tests {
-  mod corp_sign_in_scopes {
+  mod baseline_corp_scopes {
     use super::super::*;
 
     #[test]
     fn it_requests_divisions_so_corp_wallet_sync_does_not_401() {
-      assert!(CORP_SIGN_IN_SCOPES.contains(&CORPORATION_DIVISIONS));
+      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_DIVISIONS));
+    }
+
+    #[test]
+    fn it_keeps_members_for_the_corp_card_member_section() {
+      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_MEMBERS));
     }
   }
 }

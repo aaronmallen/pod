@@ -1098,6 +1098,41 @@ pub async fn replace_contacts_for_character(
   Ok(())
 }
 
+pub async fn upsert_contact(db: &Database, contact: &CharacterContact) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO character_contacts \
+      (character_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT(character_id, contact_id) DO UPDATE SET \
+      contact_type = excluded.contact_type, \
+      standing = excluded.standing, \
+      is_watched = excluded.is_watched, \
+      is_blocked = excluded.is_blocked, \
+      label_ids = excluded.label_ids, \
+      contact_name = excluded.contact_name",
+  )
+  .bind(contact.character_id())
+  .bind(contact.contact_id())
+  .bind(contact.contact_type())
+  .bind(contact.standing())
+  .bind(contact.is_watched())
+  .bind(contact.is_blocked())
+  .bind(contact.label_ids())
+  .bind(contact.contact_name())
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
+pub async fn delete_contact(db: &Database, character_id: i64, contact_id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM character_contacts WHERE character_id = ? AND contact_id = ?")
+    .bind(character_id)
+    .bind(contact_id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
 pub async fn replace_labels_for_character(
   db: &Database,
   character_id: i64,
@@ -3824,6 +3859,91 @@ mod contact_tests {
       let result = super::contacts(&db, 42).await.unwrap();
       assert!(result.contacts.is_empty());
       assert!(result.labels.is_empty());
+    }
+  }
+
+  mod single_row {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::CharacterContact;
+
+    fn contact(
+      character_id: i64,
+      contact_id: i64,
+      contact_type: &str,
+      name: &str,
+      standing: f64,
+      is_watched: bool,
+      label_ids: &str,
+    ) -> CharacterContact {
+      CharacterContact {
+        character_id,
+        contact_id,
+        contact_name: name.to_owned(),
+        contact_type: contact_type.to_owned(),
+        is_blocked: false,
+        is_watched,
+        label_ids: label_ids.to_owned(),
+        standing,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_new_contact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_contact(&db, &contact(42, 95_001, "character", "New Pilot", 5.0, true, "[1]"))
+        .await
+        .unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert_eq!(
+        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
+        [95_001]
+      );
+      assert_eq!(result.contacts[0].contact_name(), "New Pilot");
+      assert_eq!(result.contacts[0].standing(), 5.0);
+      assert!(result.contacts[0].is_watched());
+      assert_eq!(result.contacts[0].label_ids(), "[1]");
+    }
+
+    #[tokio::test]
+    async fn it_updates_an_existing_contact_in_place() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_contact(&db, 42, 95_001, "character", 5.0, true, "[1]", "Old Name").await;
+
+      super::upsert_contact(
+        &db,
+        &contact(42, 95_001, "character", "New Name", -10.0, false, "[2,3]"),
+      )
+      .await
+      .unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert_eq!(result.contacts.len(), 1);
+      assert_eq!(result.contacts[0].contact_name(), "New Name");
+      assert_eq!(result.contacts[0].standing(), -10.0);
+      assert!(!result.contacts[0].is_watched());
+      assert_eq!(result.contacts[0].label_ids(), "[2,3]");
+    }
+
+    #[tokio::test]
+    async fn it_deletes_only_the_targeted_contact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_contact(&db, 42, 95_001, "character", 5.0, true, "[]", "Keep Pilot").await;
+      seed_contact(&db, 42, 98_001, "corporation", 1.0, false, "[]", "Drop Corp").await;
+
+      super::delete_contact(&db, 42, 98_001).await.unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert_eq!(
+        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
+        [95_001]
+      );
     }
   }
 }

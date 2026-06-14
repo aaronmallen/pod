@@ -20,7 +20,7 @@ use crate::{
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 3;
+const SEED_FORMAT_REVISION: u32 = 4;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 const SKILL_RANK_ATTR_ID: i32 = 275;
@@ -345,6 +345,37 @@ struct SdeAgentSkillEntry {
   type_id: i64,
 }
 
+#[derive(Deserialize)]
+struct SdeBlueprintEntry {
+  #[serde(default)]
+  activities: HashMap<String, SdeBlueprintActivity>,
+}
+
+#[derive(Default, Deserialize)]
+struct SdeBlueprintActivity {
+  #[serde(default)]
+  materials: Vec<SdeBlueprintQuantity>,
+  #[serde(default)]
+  products: Vec<SdeBlueprintQuantity>,
+}
+
+#[derive(Deserialize)]
+struct SdeBlueprintQuantity {
+  #[serde(rename = "typeID")]
+  type_id: i64,
+  quantity: i64,
+}
+
+/// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
+/// materials table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BlueprintActivityRow {
+  blueprint_type_id: i64,
+  activity_id: i64,
+  type_id: i64,
+  quantity: i64,
+}
+
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
   let (tx, rx) = iced::futures::channel::mpsc::channel(64);
   tokio::spawn(run_seed(db, http, tx));
@@ -511,6 +542,12 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
 
   step(tx, "Seeding NPC agents\u{2026}").await;
   seed_npc_agents(db, &r.join("npcCharacters.yaml")).await?;
+
+  let blueprints_path = r.join("blueprints.yaml");
+  if blueprints_path.exists() {
+    step(tx, "Seeding blueprints\u{2026}").await;
+    seed_blueprints(db, &blueprints_path).await?;
+  }
 
   Ok(())
 }
@@ -1038,6 +1075,104 @@ async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
   sde::seed_many_npc_agents(db, &agents, &skills)
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Number of bind parameters SQLite allows in a single prepared statement. Both blueprint tables bind
+/// four columns per row, so a chunk caps at `SQLITE_MAX_BIND_PARAMS / 4` rows.
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
+/// Maps an SDE blueprint activity name to its EVE activity id. Unknown activities are skipped so future
+/// SDE additions never abort a seed.
+fn blueprint_activity_id(name: &str) -> Option<i64> {
+  match name {
+    "manufacturing" => Some(1),
+    "research_time" => Some(3),
+    "research_material" => Some(4),
+    "copying" => Some(5),
+    "invention" => Some(8),
+    "reaction" => Some(11),
+    _ => None,
+  }
+}
+
+/// Flattens the parsed `blueprints.yaml` into the product and material rows destined for their
+/// respective tables, keyed by `(blueprint_type_id, activity_id)`.
+fn build_blueprint_rows(
+  entries: HashMap<i64, SdeBlueprintEntry>,
+) -> (Vec<BlueprintActivityRow>, Vec<BlueprintActivityRow>) {
+  let mut products: Vec<BlueprintActivityRow> = Vec::new();
+  let mut materials: Vec<BlueprintActivityRow> = Vec::new();
+
+  for (blueprint_type_id, entry) in entries {
+    for (activity_name, activity) in entry.activities {
+      let Some(activity_id) = blueprint_activity_id(&activity_name) else {
+        continue;
+      };
+
+      for product in activity.products {
+        products.push(BlueprintActivityRow {
+          blueprint_type_id,
+          activity_id,
+          type_id: product.type_id,
+          quantity: product.quantity,
+        });
+      }
+
+      for material in activity.materials {
+        materials.push(BlueprintActivityRow {
+          blueprint_type_id,
+          activity_id,
+          type_id: material.type_id,
+          quantity: material.quantity,
+        });
+      }
+    }
+  }
+
+  (products, materials)
+}
+
+async fn seed_blueprints(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeBlueprintEntry> = read_yaml(path).await?;
+  let (products, materials) = build_blueprint_rows(entries);
+
+  insert_blueprint_rows(db, "blueprint_activity_products", "product_type_id", &products).await?;
+  insert_blueprint_rows(db, "blueprint_activity_materials", "material_type_id", &materials).await?;
+
+  Ok(())
+}
+
+/// Bulk-inserts blueprint activity rows into `table`, where `type_column` is the table's third column
+/// (`product_type_id` or `material_type_id`). Re-seeds replace existing rows via the primary key.
+async fn insert_blueprint_rows(
+  db: &Database,
+  table: &str,
+  type_column: &str,
+  rows: &[BlueprintActivityRow],
+) -> Result<(), String> {
+  if rows.is_empty() {
+    return Ok(());
+  }
+
+  let mut tx = db.0.begin().await.map_err(|e| e.to_string())?;
+
+  for chunk in rows.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
+    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+      "INSERT INTO {table} (blueprint_type_id, activity_id, {type_column}, quantity) "
+    ));
+    builder.push_values(chunk, |mut b, row| {
+      b.push_bind(row.blueprint_type_id)
+        .push_bind(row.activity_id)
+        .push_bind(row.type_id)
+        .push_bind(row.quantity);
+    });
+    builder.push(format!(
+      " ON CONFLICT(blueprint_type_id, activity_id, {type_column}) DO UPDATE SET quantity = excluded.quantity"
+    ));
+    builder.build().execute(&mut *tx).await.map_err(|e| e.to_string())?;
+  }
+
+  tx.commit().await.map_err(|e| e.to_string())
 }
 
 fn derive_orbit_name(
@@ -2737,6 +2872,168 @@ mod tests {
         .await
         .unwrap();
       assert_eq!(count, 1);
+    }
+  }
+
+  mod seed_blueprints {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    /// A two-blueprint fixture: a manufacturing blueprint that makes a Rifter from minerals, and a
+    /// reaction blueprint that makes a moon material. Exercises both activity kinds and both tables.
+    const FIXTURE: &str = "\
+939:
+  activities:
+    manufacturing:
+      materials:
+        - { typeID: 34, quantity: 32 }
+        - { typeID: 35, quantity: 6 }
+      products:
+        - { typeID: 587, quantity: 1 }
+      time: 600
+    copying:
+      time: 480
+  blueprintTypeID: 939
+46167:
+  activities:
+    reaction:
+      materials:
+        - { typeID: 16633, quantity: 100 }
+      products:
+        - { typeID: 16640, quantity: 200 }
+      time: 3600
+  blueprintTypeID: 46167
+";
+
+    async fn seed_fixture() -> Database {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("blueprints.yaml");
+      tokio::fs::write(&path, FIXTURE).await.unwrap();
+      let db = store::open_test().await.unwrap();
+      super::super::seed_blueprints(&db, &path).await.unwrap();
+      db
+    }
+
+    #[tokio::test]
+    async fn it_seeds_a_manufacturing_product_row() {
+      let db = seed_fixture().await;
+
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_products \
+         WHERE blueprint_type_id = 939 AND activity_id = 1 AND product_type_id = 587",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(quantity, 1);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_manufacturing_material_rows() {
+      let db = seed_fixture().await;
+
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_materials \
+         WHERE blueprint_type_id = 939 AND activity_id = 1 AND material_type_id = 34",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(quantity, 32);
+    }
+
+    #[tokio::test]
+    async fn it_records_reaction_products_under_activity_eleven() {
+      let db = seed_fixture().await;
+
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_products \
+         WHERE blueprint_type_id = 46167 AND activity_id = 11 AND product_type_id = 16640",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(quantity, 200);
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_across_reseed() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("blueprints.yaml");
+      tokio::fs::write(&path, FIXTURE).await.unwrap();
+      let db = store::open_test().await.unwrap();
+
+      super::super::seed_blueprints(&db, &path).await.unwrap();
+      super::super::seed_blueprints(&db, &path).await.unwrap();
+
+      let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_products")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      let materials: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_materials")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+
+      assert_eq!(products, 2);
+      assert_eq!(materials, 3);
+    }
+  }
+
+  mod build_blueprint_rows {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn parse(yaml: &str) -> HashMap<i64, SdeBlueprintEntry> {
+      serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn it_splits_products_and_materials_with_mapped_activity_ids() {
+      let entries = parse(
+        "939:\n  activities:\n    manufacturing:\n      materials:\n        \
+         - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+      );
+
+      let (products, materials) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        products,
+        vec![BlueprintActivityRow {
+          blueprint_type_id: 939,
+          activity_id: 1,
+          type_id: 587,
+          quantity: 1,
+        }]
+      );
+      assert_eq!(
+        materials,
+        vec![BlueprintActivityRow {
+          blueprint_type_id: 939,
+          activity_id: 1,
+          type_id: 34,
+          quantity: 32,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_skips_unknown_activity_names() {
+      let entries = parse(
+        "1:\n  activities:\n    mystery:\n      materials:\n        \
+         - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+      );
+
+      let (products, materials) = build_blueprint_rows(entries);
+
+      assert!(products.is_empty());
+      assert!(materials.is_empty());
     }
   }
 }

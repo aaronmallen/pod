@@ -67,7 +67,7 @@ impl DetailDataType {
     match kind {
       JobKind::CharacterClones => Some(Self::Clones),
       JobKind::CharacterContacts => Some(Self::Contacts),
-      JobKind::CharacterKillmails => Some(Self::Killlog),
+      JobKind::CharacterKillmails | JobKind::KillmailDetailBackfill => Some(Self::Killlog),
       JobKind::CharacterNotifications => Some(Self::Notifications),
       JobKind::CharacterStandings => Some(Self::Standings),
       JobKind::AssetSync

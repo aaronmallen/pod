@@ -1654,6 +1654,7 @@ mod tests {
       mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
+      seed_ledger(&db, "KillmailDetailBackfill", Some(&future), None).await;
       seed_ledger(&db, "KillmailReconcile", Some(&future), None).await;
       seed_ledger(&db, "MarketPrices", Some(&future), None).await;
       seed_ledger(&db, "NetWorthSnapshot", Some(&future), None).await;

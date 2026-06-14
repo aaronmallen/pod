@@ -1422,6 +1422,36 @@ pub async fn killmails_needing_recheck(db: &Database) -> Result<Vec<CharacterKil
   Ok(rows)
 }
 
+pub async fn killmails_needing_detail_backfill_count(db: &Database) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>(
+    "SELECT COUNT(*) FROM character_killmails k \
+    WHERE NOT EXISTS (SELECT 1 FROM killmail_attackers a \
+        WHERE a.character_id = k.character_id AND a.killmail_id = k.killmail_id) \
+      AND NOT EXISTS (SELECT 1 FROM killmail_items i \
+        WHERE i.character_id = k.character_id AND i.killmail_id = k.killmail_id)",
+  )
+  .fetch_one(&db.0)
+  .await?;
+  Ok(count)
+}
+
+/// Rows in either child table count as backfilled, so an item-less structure kill stops being
+/// selected once its attacker rows land rather than being re-fetched forever.
+pub async fn killmails_needing_detail_backfill(db: &Database, limit: i64) -> Result<Vec<(i64, i64, String)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, i64, String)>(
+    "SELECT character_id, killmail_id, kill_hash FROM character_killmails k \
+    WHERE NOT EXISTS (SELECT 1 FROM killmail_attackers a \
+        WHERE a.character_id = k.character_id AND a.killmail_id = k.killmail_id) \
+      AND NOT EXISTS (SELECT 1 FROM killmail_items i \
+        WHERE i.character_id = k.character_id AND i.killmail_id = k.killmail_id) \
+    ORDER BY kill_time DESC, killmail_id DESC LIMIT ?",
+  )
+  .bind(limit)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 pub async fn upsert_killmail_detail(
   db: &Database,
   character_id: i64,

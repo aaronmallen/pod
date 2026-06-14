@@ -30,6 +30,7 @@ pub enum JobKind {
   CorporationIndustryJobs,
   CorporationProfile,
   CorporationWallet,
+  KillmailDetailBackfill,
   KillmailReconcile,
   MarketPrices,
   NetWorthSnapshot,
@@ -58,6 +59,7 @@ impl JobKind {
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationProfile,
     JobKind::CorporationWallet,
+    JobKind::KillmailDetailBackfill,
     JobKind::KillmailReconcile,
     JobKind::MarketPrices,
     JobKind::NetWorthSnapshot,
@@ -194,7 +196,7 @@ impl JobKind {
       | Self::CharacterMail
       | Self::CharacterNotifications
       | Self::CharacterTelemetry => Duration::from_secs(300),
-      Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
+      Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
     }
   }
@@ -234,7 +236,7 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      Self::KillmailReconcile | Self::MarketPrices => &[],
+      Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => &[],
       Self::NetWorthSnapshot => &[],
     }
   }
@@ -333,6 +335,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
     JobKind::CorporationBlueprints => super::jobs::blueprints::run(ctx).await,
     JobKind::CorporationIndustryJobs => super::jobs::industry::run(ctx).await,
+    JobKind::KillmailDetailBackfill => super::jobs::killmail_detail_backfill::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationWallet => super::jobs::corporation_wallet::run(ctx).await,

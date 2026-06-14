@@ -34,7 +34,11 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Clones),
     },
     Feature::CombatLog => Descriptor {
-      jobs: &[JobKind::CharacterKillmails, JobKind::KillmailReconcile],
+      jobs: &[
+        JobKind::CharacterKillmails,
+        JobKind::KillmailDetailBackfill,
+        JobKind::KillmailReconcile,
+      ],
       rail: None,
       scopes: &[scopes::CHARACTER_KILLMAILS],
       tab: Some(Tab::Killlog),

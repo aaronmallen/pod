@@ -4,12 +4,16 @@ use chrono::Utc;
 
 use super::killmail_value::{self, PriceTable};
 use crate::{
-  clients::{Error, esi::scopes, zkillboard},
+  clients::{
+    Error,
+    esi::{models::killmail::Killmail, scopes},
+    zkillboard,
+  },
   store::{
-    model::CharacterKillEntry,
+    model::{CharacterKillEntry, KillmailAttacker, KillmailItem},
     repo::{character, finance},
   },
-  sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
+  sync::{job::JobCtx, jobs::names::resolve_names, outcome::Outcome, structure_resolution, subject::Subject},
 };
 
 const DIRECTOR_ROLE: &str = "Director";
@@ -52,9 +56,16 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
       continue;
     }
     match assemble(ctx, zkill, &prices, character_id, &reference, &synced_at, token).await {
-      Ok(entry) => {
+      Ok((entry, detail)) => {
         character::upsert_killmail(ctx.db, &entry).await?;
         synced += 1;
+        if let Err(error) = persist_killmail_detail(ctx, character_id, reference.killmail_id, &detail, &prices).await {
+          tracing::warn!(
+            character_id,
+            killmail_id = reference.killmail_id,
+            "character killmails: summary stored but detail persistence failed: {error}"
+          );
+        }
       }
       Err(error) => {
         skipped += 1;
@@ -232,7 +243,7 @@ async fn assemble(
   reference: &Ref,
   synced_at: &str,
   token: &str,
-) -> Result<CharacterKillEntry, Error> {
+) -> Result<(CharacterKillEntry, Killmail), Error> {
   let detail = ctx
     .esi
     .killmail()
@@ -265,13 +276,13 @@ async fn assemble(
   )
   .await?;
 
-  Ok(CharacterKillEntry {
+  let entry = CharacterKillEntry {
     attacker_count: detail.attackers.len() as i64,
     character_id,
     final_blow,
     is_kill,
     kill_hash: reference.hash.clone(),
-    kill_time: detail.killmail_time,
+    kill_time: detail.killmail_time.clone(),
     killmail_id: detail.killmail_id,
     ship_type_id: detail.victim.ship_type_id,
     synced_at: synced_at.to_owned(),
@@ -281,11 +292,126 @@ async fn assemble(
     value_isk: resolution.value,
     value_recheck_count: 0,
     value_source: resolution.source.as_str().to_owned(),
-    victim_alliance_id: None,
+    victim_alliance_id: detail.victim.alliance_id,
     victim_corp_id: detail.victim.corporation_id,
-    victim_damage_taken: 0,
+    victim_damage_taken: detail.victim.damage_taken,
     victim_id: detail.victim.character_id,
-  })
+  };
+  Ok((entry, detail))
+}
+
+/// Persists the attacker and victim-item child rows for an already-fetched killmail detail and
+/// ensures third-party pilot/corp/alliance name rows exist locally, so the killmail modal can render
+/// names rather than raw ids. Per-item ISK is snapshotted from `prices` at persistence time.
+///
+/// This is intentionally free of discovery-feed assumptions (it takes the detail directly) so the
+/// one-time backfill job can reuse it with a detail it fetched itself.
+pub async fn persist_killmail_detail(
+  ctx: &JobCtx<'_>,
+  character_id: i64,
+  killmail_id: i64,
+  detail: &Killmail,
+  prices: &PriceTable,
+) -> Result<(), Error> {
+  let attackers: Vec<KillmailAttacker> = detail
+    .attackers
+    .iter()
+    .enumerate()
+    .map(|(ordinal, attacker)| KillmailAttacker {
+      alliance_id: attacker.alliance_id,
+      attacker_character_id: attacker.character_id,
+      character_id,
+      corporation_id: attacker.corporation_id,
+      damage_done: attacker.damage_done,
+      final_blow: attacker.final_blow,
+      killmail_id,
+      ordinal: ordinal as i64,
+      ship_type_id: attacker.ship_type_id,
+    })
+    .collect();
+
+  let values = killmail_value::item_values(&detail.victim.items, prices);
+  let items: Vec<KillmailItem> = detail
+    .victim
+    .items
+    .iter()
+    .zip(values)
+    .enumerate()
+    .map(|(ordinal, (item, value))| KillmailItem {
+      character_id,
+      flag: item.flag,
+      killmail_id,
+      ordinal: ordinal as i64,
+      quantity_destroyed: item.quantity_destroyed.unwrap_or(0).max(0),
+      quantity_dropped: item.quantity_dropped.unwrap_or(0).max(0),
+      type_id: item.type_id,
+      value_isk: value.value_isk,
+    })
+    .collect();
+
+  character::upsert_killmail_detail(ctx.db, character_id, killmail_id, &attackers, &items).await?;
+  resolve_third_party_names(ctx, detail).await
+}
+
+/// Ensures name-bearing local rows exist for every third party referenced by the killmail —
+/// attacker (and victim) characters, corporations, and alliances — that is not already tracked.
+/// A single bulk `resolve_names` call filters out ids the universe cannot name (NPCs, structures)
+/// before the per-id `ensure_*` resolutions, so unresolvable ids are skipped without a wasted fetch.
+async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Result<(), Error> {
+  let mut alliance_ids = Vec::new();
+  let mut character_ids = Vec::new();
+  let mut corporation_ids = Vec::new();
+
+  let mut collect = |character: Option<i64>, corporation: Option<i64>, alliance: Option<i64>| {
+    if let Some(id) = character {
+      character_ids.push(id);
+    }
+    if let Some(id) = corporation {
+      corporation_ids.push(id);
+    }
+    if let Some(id) = alliance {
+      alliance_ids.push(id);
+    }
+  };
+
+  collect(
+    detail.victim.character_id,
+    detail.victim.corporation_id,
+    detail.victim.alliance_id,
+  );
+  for attacker in &detail.attackers {
+    collect(attacker.character_id, attacker.corporation_id, attacker.alliance_id);
+  }
+
+  let mut all_ids = Vec::new();
+  all_ids.extend(&character_ids);
+  all_ids.extend(&corporation_ids);
+  all_ids.extend(&alliance_ids);
+  let nameable = resolve_names(ctx, &all_ids).await?;
+
+  for id in dedupe_ids(corporation_ids) {
+    if nameable.contains_key(&id) {
+      structure_resolution::ensure_corporation_present(ctx, id).await?;
+    }
+  }
+  for id in dedupe_ids(alliance_ids) {
+    if nameable.contains_key(&id) {
+      structure_resolution::ensure_alliance(ctx, id).await?;
+    }
+  }
+  for id in dedupe_ids(character_ids) {
+    if nameable.contains_key(&id) {
+      structure_resolution::ensure_character_present(ctx, id).await?;
+    }
+  }
+
+  Ok(())
+}
+
+fn dedupe_ids(mut ids: Vec<i64>) -> Vec<i64> {
+  ids.sort_unstable();
+  ids.dedup();
+  ids
 }
 
 #[cfg(test)]
@@ -326,6 +452,14 @@ mod tests {
   async fn mount_json(server: &MockServer, route: &str, body: serde_json::Value) {
     Mock::given(method("GET"))
       .and(path(route))
+      .respond_with(ResponseTemplate::new(200).set_body_json(body))
+      .mount(server)
+      .await;
+  }
+
+  async fn mount_names(server: &MockServer, body: serde_json::Value) {
+    Mock::given(method("POST"))
+      .and(path("/universe/names/"))
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
@@ -782,6 +916,216 @@ mod tests {
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
       assert!(character::killmails(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_persists_attacker_and_item_detail_with_victim_alliance_and_damage() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/killmails/100/killhash/",
+        serde_json::json!({
+          "killmail_id": 100,
+          "killmail_time": "2024-01-01T00:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"character_id": 2002, "corporation_id": 90000001, "alliance_id": 99000001,
+            "damage_taken": 7821, "ship_type_id": 587,
+            "items": [{"flag": 27, "item_type_id": 34, "quantity_destroyed": 2},
+              {"flag": 5, "item_type_id": 99, "quantity_dropped": 1}]},
+          "attackers": [
+            {"character_id": 42, "corporation_id": 90000001, "alliance_id": 99000001,
+              "ship_type_id": 670, "damage_done": 5000, "final_blow": true},
+            {"damage_done": 100, "final_blow": false}
+          ]
+        }),
+      )
+      .await;
+      mount_names(
+        &esi_server,
+        serde_json::json!([
+          {"category": "character", "id": 42, "name": "Pilot"},
+          {"category": "character", "id": 2002, "name": "Victim"},
+          {"category": "corporation", "id": 90000001, "name": "Test Corp"},
+          {"category": "alliance", "id": 99000001, "name": "Test Alliance"}
+        ]),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+      mount_json(&zkill_server, "/killID/100/", serde_json::json!([])).await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      finance::market_prices_upsert_many(
+        &db,
+        &[
+          store::model::MarketPrice {
+            adjusted_price: Some(1_000.0),
+            average_price: None,
+            type_id: 587,
+          },
+          store::model::MarketPrice {
+            adjusted_price: Some(50.0),
+            average_price: None,
+            type_id: 34,
+          },
+        ],
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let summary = &character::killmails(&db, 42).await.unwrap()[0];
+      assert_eq!(summary.victim_alliance_id(), Some(99000001));
+      assert_eq!(summary.victim_damage_taken(), 7821);
+
+      let attackers = character::killmail_attackers(&db, 42, 100).await.unwrap();
+      assert_eq!(attackers.len(), 2);
+      assert_eq!(attackers[0].attacker_character_id(), Some(42));
+      assert_eq!(attackers[0].damage_done(), 5000);
+      assert!(attackers[0].final_blow());
+      assert_eq!(attackers[1].attacker_character_id(), None);
+
+      let items = character::killmail_items(&db, 42, 100).await.unwrap();
+      assert_eq!(items.len(), 2);
+      assert_eq!(items[0].type_id(), 34);
+      assert_eq!(items[0].quantity_destroyed(), 2);
+      assert_eq!(items[0].value_isk(), 100.0);
+      assert_eq!(items[1].type_id(), 99);
+      assert_eq!(items[1].value_isk(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_resolves_name_rows_for_an_untracked_attacker_character_corp_and_alliance() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/killmails/100/killhash/",
+        serde_json::json!({
+          "killmail_id": 100,
+          "killmail_time": "2024-01-01T00:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"character_id": 42, "corporation_id": 90000001, "ship_type_id": 670},
+          "attackers": [
+            {"character_id": 7001, "corporation_id": 80001, "alliance_id": 70001,
+              "ship_type_id": 17738, "damage_done": 9000, "final_blow": true}
+          ]
+        }),
+      )
+      .await;
+      mount_names(
+        &esi_server,
+        serde_json::json!([
+          {"category": "character", "id": 42, "name": "Pilot"},
+          {"category": "character", "id": 7001, "name": "Enemy Pilot"},
+          {"category": "corporation", "id": 80001, "name": "Enemy Corp"},
+          {"category": "corporation", "id": 90000001, "name": "Test Corp"},
+          {"category": "alliance", "id": 70001, "name": "Enemy Alliance"}
+        ]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/characters/7001/",
+        serde_json::json!({
+          "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": 80001,
+          "gender": "male", "name": "Enemy Pilot", "race_id": 1,
+        }),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/corporations/80001/",
+        serde_json::json!({
+          "alliance_id": 70001, "ceo_id": 7001, "creator_id": 7001, "member_count": 50,
+          "name": "Enemy Corp", "tax_rate": 0.1, "ticker": "ENMY",
+        }),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/alliances/70001/",
+        serde_json::json!({
+          "creator_corporation_id": 80001, "creator_id": 7001, "date_founded": "2009-01-01T00:00:00Z",
+          "name": "Enemy Alliance", "ticker": "ENA",
+        }),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/universe/races/",
+        serde_json::json!([
+          {"alliance_id": 500001, "description": "The Caldari.", "name": "Caldari", "race_id": 1}
+        ]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/universe/bloodlines/",
+        serde_json::json!([
+          {"bloodline_id": 5, "charisma": 6, "corporation_id": 80001, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5}
+        ]),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+      mount_json(&zkill_server, "/killID/100/", serde_json::json!([])).await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      use store::repo::org;
+      assert_eq!(
+        character::get(&db, 7001).await.unwrap().map(|c| c.name().to_owned()),
+        Some("Enemy Pilot".to_owned())
+      );
+      assert_eq!(
+        org::get_corporation(&db, 80001)
+          .await
+          .unwrap()
+          .map(|c| c.name().to_owned()),
+        Some("Enemy Corp".to_owned())
+      );
+      assert_eq!(
+        org::get_alliance(&db, 70001)
+          .await
+          .unwrap()
+          .map(|a| a.name().to_owned()),
+        Some("Enemy Alliance".to_owned())
+      );
     }
   }
 }

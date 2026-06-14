@@ -2,29 +2,24 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Attacker {
-  #[allow(dead_code)]
   #[serde(default)]
   pub alliance_id: Option<i64>,
   #[serde(default)]
   pub character_id: Option<i64>,
-  #[allow(dead_code)]
   #[serde(default)]
   pub corporation_id: Option<i64>,
   /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
-  #[allow(dead_code)]
   #[serde(default)]
   pub damage_done: i64,
   #[serde(default)]
   pub final_blow: bool,
   /// Optional because NPC and structure attackers omit alliance/corporation/ship ids.
-  #[allow(dead_code)]
   #[serde(default)]
   pub ship_type_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Item {
-  #[allow(dead_code)]
   pub flag: i64,
   /// Nested cargo contents; accepted so the recursive shape deserializes cleanly, but never used for valuation.
   #[allow(dead_code)]
@@ -52,7 +47,6 @@ pub struct Killmail {
 
 #[derive(Debug, Deserialize)]
 pub struct Victim {
-  #[allow(dead_code)]
   #[serde(default)]
   pub alliance_id: Option<i64>,
   #[serde(default)]
@@ -60,7 +54,6 @@ pub struct Victim {
   #[serde(default)]
   pub corporation_id: Option<i64>,
   /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
-  #[allow(dead_code)]
   #[serde(default)]
   pub damage_taken: i64,
   #[serde(default)]

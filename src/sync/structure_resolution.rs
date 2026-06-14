@@ -265,7 +265,7 @@ pub(crate) async fn resolve_owner_corporation(ctx: &JobCtx<'_>, owner_id: i64) -
   Ok(())
 }
 
-async fn ensure_alliance(ctx: &JobCtx<'_>, alliance_id: i64) -> Result<(), Error> {
+pub(crate) async fn ensure_alliance(ctx: &JobCtx<'_>, alliance_id: i64) -> Result<(), Error> {
   if org::get_alliance(ctx.db, alliance_id).await?.is_some() {
     return Ok(());
   }
@@ -274,11 +274,48 @@ async fn ensure_alliance(ctx: &JobCtx<'_>, alliance_id: i64) -> Result<(), Error
   Ok(())
 }
 
+// Resolve a full characters row for an untracked id, ensuring its corp/alliance/faction/race/
+// bloodline rows first — the characters table's alliance_id/faction_id FKs are non-deferrable, so
+// they must already exist when upsert_with_org commits (mirrors the CEO resolution above). A char
+// ESI can't fetch (404 biomassed / 422 invalid id) is tolerated as a no-op rather than aborting.
+pub(crate) async fn ensure_character_present(ctx: &JobCtx<'_>, character_id: i64) -> Result<(), Error> {
+  if character::get(ctx.db, character_id).await?.is_some() {
+    return Ok(());
+  }
+  let info = match ctx.esi.character().public_info(character_id).await {
+    Ok(info) => info,
+    Err(Error::Http(error)) if is_unfetchable_character(&error) => return Ok(()),
+    Err(error) => return Err(error),
+  };
+  let race_id = info.race_id;
+  let bloodline_id = info.bloodline_id;
+  let character = Character::from((character_id, info));
+
+  let corporation = Corporation::from((
+    character.corporation_id(),
+    ctx.esi.corporation().info(character.corporation_id()).await?,
+  ));
+  if let Some(id) = corporation.alliance_id() {
+    ensure_alliance(ctx, id).await?;
+  }
+  if let Some(id) = character.alliance_id() {
+    ensure_alliance(ctx, id).await?;
+  }
+  if let Some(id) = character.faction_id() {
+    ensure_faction(ctx, id).await?;
+  }
+  let race = resolve_race_model(ctx, i64::from(race_id)).await?;
+  let bloodline = resolve_bloodline(ctx, i64::from(bloodline_id)).await?;
+
+  character::upsert_with_org(ctx.db, &character, &bloodline, &race, &corporation, None, None).await?;
+  Ok(())
+}
+
 // Persist a corporation as a bare row (plus its alliance, the only org FK on the corporations
 // table) without recursing into its own CEO. corporations.ceo_id/creator_id/home_station_id are
 // plain integers with no FK, so a corp row alone satisfies a referencing characters.corporation_id,
 // which bounds the work to one extra (cache-friendly) ESI corp fetch and avoids CEO-of-CEO cycles.
-async fn ensure_corporation_present(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<(), Error> {
+pub(crate) async fn ensure_corporation_present(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<(), Error> {
   if org::get_corporation(ctx.db, corporation_id).await?.is_some() {
     return Ok(());
   }

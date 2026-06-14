@@ -104,6 +104,7 @@ pub struct CorpContextMenu {
   pub anchor: iced::Point,
   pub corporation_id: i64,
   pub name: String,
+  pub needs_reauth: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -282,6 +283,7 @@ pub enum Message {
   PickUpCard(i64),
   PickUpSquad(i64),
   ReauthCharacterRequested(i64),
+  ReauthCorporationRequested(i64),
   RemoveCharacterConfirmed(i64),
   RemoveCorporationConfirmed(i64),
   SearchChanged(String),
@@ -849,6 +851,7 @@ fn update_menus(state: &mut State, message: Message) -> ControlFlow<Task<Message
           anchor,
           corporation_id,
           name: corp.name.clone(),
+          needs_reauth: corp.needs_reauth,
         });
       }
       Task::none()
@@ -939,9 +942,10 @@ fn update_search(state: &mut State, message: Message, db: &Database) -> ControlF
 
 fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::AddCharacterRequested | Message::AddCorporationRequested | Message::ReauthCharacterRequested(_) => {
-      Task::none()
-    }
+    Message::AddCharacterRequested
+    | Message::AddCorporationRequested
+    | Message::ReauthCharacterRequested(_)
+    | Message::ReauthCorporationRequested(_) => Task::none(),
     Message::CharacterRemoved(Ok(()))
     | Message::CorporationRemoved(Ok(()))
     | Message::SquadsChanged(Ok(()))
@@ -1140,18 +1144,30 @@ fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
 }
 
 fn corp_context_menu_view(menu: &CorpContextMenu) -> Element<'_, Message> {
-  let items = vec![
-    Item::action("Copy name", Message::CopyCorporationName(menu.name.clone())),
-    Item::action(
-      "Edit tags",
-      Message::OpenAddTagModal {
-        entity_id: menu.corporation_id,
-        entity_type: ENTITY_TYPE_CORPORATION,
-      },
-    ),
-    Item::separator(),
-    Item::danger("Remove from app", Message::OpenCorpRemoveConfirm(menu.corporation_id)),
-  ];
+  let mut items = Vec::new();
+  if menu.needs_reauth {
+    items.push(Item::warning(
+      "Re-authorize",
+      Message::ReauthCorporationRequested(menu.corporation_id),
+    ));
+    items.push(Item::separator());
+  }
+  items.push(Item::action(
+    "Copy name",
+    Message::CopyCorporationName(menu.name.clone()),
+  ));
+  items.push(Item::action(
+    "Edit tags",
+    Message::OpenAddTagModal {
+      entity_id: menu.corporation_id,
+      entity_type: ENTITY_TYPE_CORPORATION,
+    },
+  ));
+  items.push(Item::separator());
+  items.push(Item::danger(
+    "Remove from app",
+    Message::OpenCorpRemoveConfirm(menu.corporation_id),
+  ));
   context_menu::context_menu(&menu.name, items, menu.anchor)
 }
 
@@ -4882,6 +4898,38 @@ mod tests {
           .is_none()
       );
       assert!(org::get_corporation(&db, 2_000_001).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_flagged_corp_context_menu_offers_a_reauthorize_item() {
+      use iced::advanced::widget::Tree;
+
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      // The seeded corp credential carries no scopes, so against Feature::ALL it is a strict
+      // subset of the required corp set and must be flagged for re-authorization.
+      assert!(state.corps[0].needs_reauth);
+
+      state.cursor = Some(iced::Point::new(10.0, 10.0));
+      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
+      let menu = state.corp_context_menu.as_ref().unwrap();
+      assert!(menu.needs_reauth);
+
+      let flagged = corp_context_menu_view(menu);
+      let flagged_rows = Tree::new(flagged.as_widget()).children.len();
+
+      let mut clear = menu.clone();
+      clear.needs_reauth = false;
+      let clear_rows = Tree::new(corp_context_menu_view(&clear).as_widget()).children.len();
+
+      assert_eq!(
+        flagged_rows,
+        clear_rows + 2,
+        "a flagged corp menu adds the re-authorize row and its separator"
+      );
     }
 
     #[tokio::test]

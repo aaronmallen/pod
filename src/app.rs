@@ -2778,6 +2778,16 @@ fn handle_reauth_character(app: &mut App, character_id: i64) -> Task<Message> {
   update(app, Message::Auth(auth::Message::Start(features)))
 }
 
+fn reauth_corporation(app: &mut App, corporation_id: i64) -> Task<Message> {
+  let features = enabled_features(app);
+  tracing::info!(
+    corporation_id,
+    scopes = ?auth::corp_scopes_for(&features),
+    "re-authorizing corporation via SSO sign-in"
+  );
+  update(app, Message::Auth(auth::Message::StartAddCorporation(features)))
+}
+
 fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   let features_changed = matches!(
     msg,
@@ -3409,6 +3419,7 @@ fn handle_character_manager(app: &mut App, msg: character_manager::Message) -> T
     character_manager::Message::ReauthCharacterRequested(character_id) => {
       update(app, Message::ReauthCharacter(character_id))
     }
+    character_manager::Message::ReauthCorporationRequested(corporation_id) => reauth_corporation(app, corporation_id),
     character_manager::Message::RemoveCharacterConfirmed(id) => remove_subject_then_update(
       app,
       sync::Subject::Character(id),
@@ -6245,6 +6256,10 @@ mod tests {
       let _ = update(
         &mut app,
         Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::ReauthCorporationRequested(7)),
       );
       let _ = update(
         &mut app,

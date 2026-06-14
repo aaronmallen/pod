@@ -1,7 +1,7 @@
 use iced::{
-  Background, Element, Length, Padding,
+  Background, Color, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, Stack, container, mouse_area, text},
+  widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
 };
 
 use super::{Message, card::TagChip};
@@ -55,7 +55,11 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
   ];
 
-  if let Some(indicator) = reauth_indicator(model.needs_reauth, failure) {
+  if model.needs_reauth {
+    sections.push(reauth_affordance(model.corporation_id));
+  }
+
+  if let Some(indicator) = sync_failure_indicator(failure) {
     sections.push(indicator);
   }
 
@@ -238,17 +242,42 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
     .into()
 }
 
-fn reauth_indicator<'a>(needs_reauth: bool, failure: Option<Phase>) -> Option<Element<'a, Message>> {
-  // The treatment fires either from a proactively detected scope drift (stored grant is a
-  // strict subset of the required corp scopes) or from a live sync failure that signals a
-  // lost grant. The drift case is independent of any sync failure.
-  let flagged = needs_reauth
-    || match failure {
-      Some(Phase::BackingOff | Phase::Failed) => true,
-      Some(Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing) | None => false,
-    };
-  if !flagged {
-    return None;
+fn reauth_affordance<'a>(corporation_id: i64) -> Element<'a, Message> {
+  container(
+    button(
+      text("Re-authorize")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS),
+    )
+    .padding(0)
+    .on_press(Message::ReauthCorporationRequested(corporation_id))
+    .style(reauth_button),
+  )
+  .padding(Padding {
+    top: 0.0,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_3,
+    left: spacing::SPACE_3_5,
+  })
+  .into()
+}
+
+fn reauth_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
+  let text_color = match status {
+    button::Status::Hovered | button::Status::Pressed => color::accent::PLASMA,
+    _ => color::status::DANGER,
+  };
+  button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    text_color,
+    ..button::Style::default()
+  }
+}
+
+fn sync_failure_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
+  match failure? {
+    Phase::BackingOff | Phase::Failed => {}
+    Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => return None,
   }
 
   Some(
@@ -421,25 +450,20 @@ mod tests {
     }
   }
 
-  mod reauth_indicator {
+  mod sync_failure_indicator {
     use super::*;
 
     #[test]
-    fn it_fires_on_proactive_drift_independent_of_a_sync_failure() {
-      assert!(reauth_indicator(true, None).is_some());
+    fn it_fires_on_a_failing_or_backing_off_sync() {
+      assert!(sync_failure_indicator(Some(Phase::Failed)).is_some());
+      assert!(sync_failure_indicator(Some(Phase::BackingOff)).is_some());
     }
 
     #[test]
-    fn it_fires_on_a_sync_failure_without_drift() {
-      assert!(reauth_indicator(false, Some(Phase::Failed)).is_some());
-      assert!(reauth_indicator(false, Some(Phase::BackingOff)).is_some());
-    }
-
-    #[test]
-    fn it_stays_quiet_when_neither_drift_nor_failure_is_present() {
-      assert!(reauth_indicator(false, None).is_none());
-      assert!(reauth_indicator(false, Some(Phase::Syncing)).is_none());
-      assert!(reauth_indicator(false, Some(Phase::Done)).is_none());
+    fn it_stays_quiet_for_healthy_or_absent_phases() {
+      assert!(sync_failure_indicator(None).is_none());
+      assert!(sync_failure_indicator(Some(Phase::Syncing)).is_none());
+      assert!(sync_failure_indicator(Some(Phase::Done)).is_none());
     }
   }
 }

@@ -55,8 +55,8 @@ const CONSOLE_DEFAULT_FILTER: &str = "warn,pod=info";
 const EDITOR_WINDOW_HEIGHT: f32 = 700.0;
 const EDITOR_WINDOW_WIDTH: f32 = 900.0;
 const EMPTY_SKILLS_SELECTION: i64 = 0;
-const FILE_FILTER: &str = "warn,\
-  pod=trace,\
+// Intentionally omits `pod=<level>`; the active level is prepended at runtime by `file_filter()`.
+const FILE_FILTER_CLAMP: &str = "warn,\
   hyper=warn,\
   reqwest=warn,\
   iced=warn,\
@@ -92,6 +92,8 @@ const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   y: 0.0,
 };
 
+type FileFilterReloadHandle =
+  OnceLock<tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>>;
 type Tx = iced::futures::channel::mpsc::Sender<Message>;
 
 static UPDATER_RECEIVER: std::sync::Mutex<Option<tokio::sync::watch::Receiver<updater::State>>> =
@@ -503,11 +505,11 @@ fn navigate(app: &mut App, to: Route) {
 }
 
 pub fn run() -> iced::Result {
-  let log_dir = config::load()
-    .map(|settings| settings.storage().resolved_log_dir())
-    .unwrap_or_else(|_| config::log_dir());
+  let (log_dir, log_level) = config::load()
+    .map(|settings| (settings.storage().resolved_log_dir(), *settings.storage().log_level()))
+    .unwrap_or_else(|_| (config::log_dir(), config::LogLevel::default()));
 
-  let _log_guard = init_tracing(&log_dir);
+  let _log_guard = init_tracing(&log_dir, log_level);
   install_panic_hook();
   graphics::probe();
 
@@ -524,19 +526,30 @@ pub fn run() -> iced::Result {
     .run()
 }
 
-fn scale_factor(app: &App, _id: window::Id) -> f32 {
-  scale_to_factor(*app.accessibility.scale())
+fn file_filter(level: config::LogLevel) -> String {
+  let pod = match level {
+    config::LogLevel::Normal => "debug",
+    config::LogLevel::Quiet => "info",
+    config::LogLevel::Verbose => "trace",
+  };
+  format!("pod={pod},{FILE_FILTER_CLAMP}")
 }
 
-fn scale_to_factor(scale: u8) -> f32 {
-  f32::from(scale.clamp(SCALE_MIN, SCALE_MAX)) / 100.0
+fn file_filter_reload_handle() -> &'static FileFilterReloadHandle {
+  static HANDLE: OnceLock<FileFilterReloadHandle> = OnceLock::new();
+  HANDLE.get_or_init(OnceLock::new)
 }
 
-fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-  use tracing_subscriber::{Layer as _, filter::EnvFilter, fmt, prelude::*};
+fn init_tracing(
+  log_dir: &std::path::Path,
+  log_level: config::LogLevel,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+  use tracing_subscriber::{Layer as _, filter::EnvFilter, fmt, prelude::*, reload};
 
   let console_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(CONSOLE_DEFAULT_FILTER));
   let console_layer = fmt::layer().compact().with_filter(console_filter);
+
+  let active_file_filter = file_filter(log_level);
 
   let (file_layer, guard) = match std::fs::create_dir_all(log_dir) {
     Ok(()) => {
@@ -549,11 +562,13 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
       match appender {
         Ok(appender) => {
           let (writer, guard) = tracing_appender::non_blocking(appender);
+          let (filter, handle) = reload::Layer::new(EnvFilter::new(&active_file_filter));
+          let _ = file_filter_reload_handle().set(handle);
           let layer = fmt::layer()
             .json()
             .with_ansi(false)
             .with_writer(writer)
-            .with_filter(EnvFilter::new(FILE_FILTER));
+            .with_filter(filter);
           (Some(layer), Some(guard))
         }
         Err(error) => {
@@ -572,8 +587,8 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
   };
 
   let _ = tracing_subscriber::registry()
-    .with(console_layer)
     .with(file_layer)
+    .with(console_layer)
     .try_init();
 
   tracing::info!(
@@ -581,11 +596,19 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
     version = env!("CARGO_PKG_VERSION"),
     log_dir = %log_dir.display(),
     console_filter = CONSOLE_DEFAULT_FILTER,
-    file_filter = FILE_FILTER,
+    file_filter = %active_file_filter,
     "pod starting up"
   );
 
   guard
+}
+
+fn scale_factor(app: &App, _id: window::Id) -> f32 {
+  scale_to_factor(*app.accessibility.scale())
+}
+
+fn scale_to_factor(scale: u8) -> f32 {
+  f32::from(scale.clamp(SCALE_MIN, SCALE_MAX)) / 100.0
 }
 
 /// Installs a process-wide panic hook that records every panic into the tracing JSON file log before
@@ -4276,6 +4299,43 @@ mod tests {
     }
   }
 
+  mod file_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn clamp_of(filter: &str) -> &str {
+      filter.split_once(',').expect("filter has a pod= prefix").1
+    }
+
+    #[test]
+    fn it_varies_only_the_pod_level_per_log_level() {
+      assert_eq!(
+        file_filter(config::LogLevel::Quiet),
+        format!("pod=info,{FILE_FILTER_CLAMP}")
+      );
+      assert_eq!(
+        file_filter(config::LogLevel::Normal),
+        format!("pod=debug,{FILE_FILTER_CLAMP}")
+      );
+      assert_eq!(
+        file_filter(config::LogLevel::Verbose),
+        format!("pod=trace,{FILE_FILTER_CLAMP}")
+      );
+    }
+
+    #[test]
+    fn it_keeps_every_dependency_clamp_identical_across_levels() {
+      let quiet = file_filter(config::LogLevel::Quiet);
+      let normal = file_filter(config::LogLevel::Normal);
+      let verbose = file_filter(config::LogLevel::Verbose);
+
+      assert_eq!(clamp_of(&quiet), FILE_FILTER_CLAMP);
+      assert_eq!(clamp_of(&normal), FILE_FILTER_CLAMP);
+      assert_eq!(clamp_of(&verbose), FILE_FILTER_CLAMP);
+    }
+  }
+
   mod scale_to_factor {
     use super::*;
 
@@ -7167,7 +7227,7 @@ mod tests {
     fn it_initializes_a_file_logger_under_a_writable_dir() {
       let dir = tempfile::tempdir().expect("temp dir");
 
-      let guard = init_tracing(dir.path());
+      let guard = init_tracing(dir.path(), config::LogLevel::default());
 
       assert!(guard.is_some(), "a writable log dir yields a worker guard");
     }
@@ -7258,7 +7318,7 @@ mod tests {
       let captured = |level: tracing::Level| -> bool {
         let layer = CaptureLayer::default();
         let messages = layer.messages.clone();
-        let filtered = layer.with_filter(EnvFilter::new(FILE_FILTER));
+        let filtered = layer.with_filter(EnvFilter::new(file_filter(config::LogLevel::default())));
         tracing::subscriber::with_default(registry().with(filtered), || match level {
           tracing::Level::TRACE => tracing::trace!(target: "sqlx::query", "stmt"),
           tracing::Level::DEBUG => tracing::debug!(target: "sqlx::query", "stmt"),

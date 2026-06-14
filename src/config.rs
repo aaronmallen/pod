@@ -304,6 +304,21 @@ impl Default for Settings {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevel {
+  Normal,
+  #[default]
+  Quiet,
+  Verbose,
+}
+
+impl LogLevel {
+  fn is_default(&self) -> bool {
+    *self == LogLevel::default()
+  }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
 #[getset(set = "pub")]
 pub struct StorageConfig {
@@ -316,6 +331,9 @@ pub struct StorageConfig {
   #[getset(get = "pub")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   log_dir: Option<PathBuf>,
+  #[getset(get = "pub")]
+  #[serde(default, skip_serializing_if = "LogLevel::is_default")]
+  log_level: LogLevel,
   #[getset(get = "pub")]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   machine_id: Option<String>,
@@ -1093,6 +1111,8 @@ mod tests {
   }
 
   mod serialization {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -1155,6 +1175,25 @@ mod tests {
         !toml.contains("machine_id"),
         "an unset machine_id must not leak to disk: {toml}"
       );
+      assert!(
+        !toml.contains("log_level"),
+        "a default (Quiet) log_level must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn a_non_default_log_level_round_trips_through_toml() {
+      let mut storage = StorageConfig::default();
+      storage.set_log_level(LogLevel::Verbose);
+
+      let toml = toml::to_string_pretty(&storage).unwrap();
+      let restored: StorageConfig = toml::from_str(&toml).unwrap();
+
+      assert!(
+        toml.contains("log_level = \"verbose\""),
+        "a non-default log_level must persist in snake_case: {toml}"
+      );
+      assert_eq!(restored.log_level(), &LogLevel::Verbose);
     }
   }
 

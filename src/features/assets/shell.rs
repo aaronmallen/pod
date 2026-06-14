@@ -250,19 +250,10 @@ fn inventory_body(state: &State) -> Element<'_, Message> {
     table.push(inventory::header(state));
   }
   table.push(
-    container(
-      scrollable(inventory::body(state))
-        .style(crate::ui::style::control::scrollbar)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .on_scroll(|viewport| Message::InventoryScrolled {
-          relative: viewport.relative_offset().y,
-          absolute: viewport.absolute_offset().y,
-        }),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into(),
+    container(inventory::body(state))
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
   );
 
   let inventory = Column::with_children(vec![
@@ -293,18 +284,9 @@ fn abyssals_body(state: &State) -> Element<'_, Message> {
 
   let cards: Vec<&abyssals::AbyssalCard> = state.abyssals().iter().collect();
   let any_owned = !state.abyssals().is_empty() || !state.abyssal_source_types().is_empty();
-  let results = container(
-    scrollable(abyssals::body(cards, any_owned, state.abyssal_scroll_offset()))
-      .style(crate::ui::style::control::scrollbar)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .on_scroll(|viewport| Message::AbyssalGridScrolled {
-        absolute: viewport.absolute_offset().y,
-        relative: viewport.relative_offset().y,
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill);
+  let results = container(abyssals::body(cards, any_owned, state.abyssal_scroll_offset()))
+    .width(Length::Fill)
+    .height(Length::Fill);
 
   Row::with_children(vec![
     rail.into(),

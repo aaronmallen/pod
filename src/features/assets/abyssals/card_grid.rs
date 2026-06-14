@@ -1,6 +1,6 @@
 use iced::{
   Element, Length,
-  widget::{Column, responsive},
+  widget::{Column, responsive, scrollable},
 };
 
 use super::{AbyssalCard, card, group_by_type};
@@ -133,9 +133,19 @@ pub(super) fn windowed_grid<'a>(cards: Vec<&'a AbyssalCard>, scroll_offset: f32)
       .viewport_height(size.height)
       .scroll_offset(scroll_offset);
 
-    VirtualList::new(config, move |row| layout.render_row(row))
+    let grid = VirtualList::new(config, move |row| layout.render_row(row))
       .spacing(spacing::SPACE_6)
-      .view()
+      .view();
+
+    scrollable(grid)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::AbyssalGridScrolled {
+        absolute: viewport.absolute_offset().y,
+        relative: viewport.relative_offset().y,
+      })
+      .into()
   })
   .into()
 }

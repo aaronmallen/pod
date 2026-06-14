@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text},
 };
 
 use super::{
@@ -361,12 +361,22 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     let config = VirtualListConfig::new(flat.len(), ESTIMATED_ROW_HEIGHT)
       .viewport_height(viewport_height)
       .scroll_offset(offset);
-    VirtualList::new(config, |index| {
+    let list = VirtualList::new(config, |index| {
       let inventory_row = flat[index];
       let expanded = state.container_is_open(inventory_row.item_id);
       table_row(inventory_row, state.roster(), state.corporations(), expanded)
     })
-    .view()
+    .view();
+
+    scrollable(list)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::InventoryScrolled {
+        relative: viewport.relative_offset().y,
+        absolute: viewport.absolute_offset().y,
+      })
+      .into()
   })
 }
 

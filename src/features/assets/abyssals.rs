@@ -402,6 +402,7 @@ pub(super) fn body<'a>(cards: Vec<&'a AbyssalCard>, any_owned: bool, scroll_offs
 
   container(card_grid::windowed_grid(cards, scroll_offset))
     .width(Length::Fill)
+    .height(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_6,
       right: super::HEADER_SIDE_PADDING,

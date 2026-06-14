@@ -48,7 +48,7 @@ const STANDINGS_PAGE_SIZE: i64 = 100;
 const STANDINGS_HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + TAB_STRIP_OVERLAY_OFFSET;
 const TAB_STRIP_OVERLAY_OFFSET: f32 = 96.0;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DetailDataType {
   Clones,
   Contacts,

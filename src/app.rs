@@ -101,6 +101,7 @@ struct App {
   about: Option<window::Id>,
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
+  assets_dirty: bool,
   auth: auth::State,
   calendar: Option<calendar::State>,
   calendar_attention: i64,
@@ -112,6 +113,7 @@ struct App {
   /// been received but the share has not yet been claimed — the forceful claim fires only on the
   /// second explicit confirmation.
   confirm_force_takeover: bool,
+  detail_dirty: HashSet<character_detail::DetailDataType>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
   esi_connected: bool,
@@ -145,6 +147,7 @@ struct App {
   updater_state: updater::State,
   updater_toast_dismissed: bool,
   wallet: Option<wallet::State>,
+  wallet_dirty: bool,
   windows: Windows,
 }
 
@@ -687,6 +690,7 @@ fn boot() -> (App, Task<Message>) {
     about: None,
     accessibility,
     assets: None,
+    assets_dirty: false,
     auth: auth::State::default(),
     calendar: None,
     calendar_attention: 0,
@@ -695,6 +699,7 @@ fn boot() -> (App, Task<Message>) {
     coalescer: WriteCoalescer::new(),
     compare: None,
     confirm_force_takeover: false,
+    detail_dirty: HashSet::new(),
     editor: None,
     engine_state: EngineState::default(),
     esi_connected: true,
@@ -728,6 +733,7 @@ fn boot() -> (App, Task<Message>) {
     updater_state: updater::State::default(),
     updater_toast_dismissed: false,
     wallet: None,
+    wallet_dirty: false,
     windows: registry,
   };
   let task = Task::batch([open_task.map(Message::WindowOpened), open_store()]);
@@ -1339,11 +1345,48 @@ fn detail_reload_target(
   character_detail::DetailDataType::for_job_kind(key.kind)
 }
 
-fn detail_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
-  let data_type = detail_reload_target(app.character_detail.as_ref(), key)?;
+fn drain_assets_dirty(app: &mut App) -> Option<Task<Message>> {
+  if !app.assets_dirty {
+    return None;
+  }
+  app.assets_dirty = false;
+  let runtime = app.runtime.as_ref()?;
+  let assets = app.assets.as_ref()?;
+  Some(assets::sync_reload(assets, &runtime.db).map(Message::Assets))
+}
+
+fn drain_detail_dirty(app: &mut App) -> Option<Task<Message>> {
+  if app.detail_dirty.is_empty() {
+    return None;
+  }
+  // Take before the guards: if runtime or detail screen is absent there is nothing to reload,
+  // so discarding the set here is intentional rather than deferring to the next pulse.
+  let data_types = std::mem::take(&mut app.detail_dirty);
   let runtime = app.runtime.as_ref()?;
   let active = app.character_detail.as_ref()?.active();
-  Some(character_detail::reload(&runtime.db, active, data_type).map(Message::CharacterDetail))
+  let tasks = data_types
+    .into_iter()
+    .map(|data_type| character_detail::reload(&runtime.db, active, data_type).map(Message::CharacterDetail));
+  Some(Task::batch(tasks))
+}
+
+fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
+  if !app.roster_dirty || app.character_manager.is_none() {
+    return None;
+  }
+  app.roster_dirty = false;
+  let runtime = app.runtime.as_ref()?;
+  Some(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager))
+}
+
+fn drain_wallet_dirty(app: &mut App) -> Option<Task<Message>> {
+  if !app.wallet_dirty {
+    return None;
+  }
+  app.wallet_dirty = false;
+  let runtime = app.runtime.as_ref()?;
+  app.wallet.as_ref()?;
+  Some(wallet::load(&runtime.db).map(Message::Wallet))
 }
 
 fn wallet_reload_kind(kind: JobKind) -> bool {
@@ -1351,24 +1394,6 @@ fn wallet_reload_kind(kind: JobKind) -> bool {
     kind,
     JobKind::CharacterWallet | JobKind::CorporationWallet | JobKind::MarketPrices | JobKind::NetWorthSnapshot
   )
-}
-
-fn wallet_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
-  if app.route != Route::Wallet || !wallet_reload_kind(key.kind) {
-    return None;
-  }
-  let runtime = app.runtime.as_ref()?;
-  app.wallet.as_ref()?;
-  Some(wallet::load(&runtime.db).map(Message::Wallet))
-}
-
-fn assets_reload_on_finished(app: &App, key: JobKey) -> Option<Task<Message>> {
-  if app.route != Route::Assets || key.kind != JobKind::AssetSync {
-    return None;
-  }
-  let runtime = app.runtime.as_ref()?;
-  app.assets.as_ref()?;
-  Some(assets::load(&runtime.db).map(Message::Assets))
 }
 
 fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
@@ -2981,14 +3006,20 @@ fn recover_unsynced_changes(app: &App) -> Task<Message> {
 
 fn handle_sync_pulse(app: &mut App) -> Task<Message> {
   app.sync_tick = !app.sync_tick;
-  if !app.roster_dirty || app.character_manager.is_none() {
-    return Task::none();
+  let mut tasks: Vec<Task<Message>> = Vec::new();
+  if let Some(reload) = drain_roster_dirty(app) {
+    tasks.push(reload);
   }
-  app.roster_dirty = false;
-  let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
-  };
-  character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager)
+  if let Some(reload) = drain_assets_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_wallet_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_detail_dirty(app) {
+    tasks.push(reload);
+  }
+  Task::batch(tasks)
 }
 
 fn holding_lease(app: &App) -> bool {
@@ -3763,20 +3794,31 @@ fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
     return Task::none();
   };
   app.last_synced = Some(app.now);
-  let mut tasks: Vec<Task<Message>> = Vec::new();
-  // Defer the roster reload to the next SyncPulse so a burst of Finished events coalesces into one
-  // full-roster reload instead of starving the interactive DB pool with one reload each.
+  // Defer every screen reload to the next SyncPulse so a burst of Finished events coalesces into one
+  // reload apiece instead of starving the interactive DB pool with one reload each.
   app.roster_dirty = true;
-  if let Some(reload) = detail_reload_on_finished(app, key) {
-    tasks.push(reload);
+  mark_detail_dirty(app, key);
+  mark_wallet_dirty(app, key);
+  mark_assets_dirty(app, key);
+  Task::none()
+}
+
+fn mark_assets_dirty(app: &mut App, key: JobKey) {
+  if app.route == Route::Assets && key.kind == JobKind::AssetSync && app.assets.is_some() {
+    app.assets_dirty = true;
   }
-  if let Some(reload) = wallet_reload_on_finished(app, key) {
-    tasks.push(reload);
+}
+
+fn mark_detail_dirty(app: &mut App, key: JobKey) {
+  if let Some(data_type) = detail_reload_target(app.character_detail.as_ref(), key) {
+    app.detail_dirty.insert(data_type);
   }
-  if let Some(reload) = assets_reload_on_finished(app, key) {
-    tasks.push(reload);
+}
+
+fn mark_wallet_dirty(app: &mut App, key: JobKey) {
+  if app.route == Route::Wallet && wallet_reload_kind(key.kind) && app.wallet.is_some() {
+    app.wallet_dirty = true;
   }
-  Task::batch(tasks)
 }
 
 fn handle_window(app: &mut App, id: window::Id, event: window::Event) -> Task<Message> {
@@ -3962,6 +4004,7 @@ mod tests {
       about: None,
       accessibility: config::AccessibilityConfig::default(),
       assets: None,
+      assets_dirty: false,
       auth: auth::State::default(),
       calendar: None,
       calendar_attention: 0,
@@ -3970,6 +4013,7 @@ mod tests {
       coalescer: WriteCoalescer::new(),
       compare: None,
       confirm_force_takeover: false,
+      detail_dirty: HashSet::new(),
       editor: None,
       engine_state: EngineState::default(),
       esi_connected: true,
@@ -4003,6 +4047,7 @@ mod tests {
       updater_state: updater::State::default(),
       updater_toast_dismissed: false,
       wallet: None,
+      wallet_dirty: false,
       windows: Windows::default(),
     }
   }
@@ -4401,6 +4446,46 @@ mod tests {
 
       let _ = update(&mut app, Message::SyncPulse);
       assert!(!app.roster_dirty, "a quiet pulse schedules no further reload");
+    }
+
+    fn asset_sync_event(character_id: i64) -> sync::Event {
+      sync::Event::Finished {
+        key: JobKey::new(JobKind::AssetSync, Subject::Character(character_id)),
+        outcome: sync::Outcome::synced(),
+      }
+    }
+
+    #[test]
+    fn it_coalesces_a_burst_of_asset_syncs_into_one_pending_assets_refresh() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      for character_id in 0..6 {
+        let _ = update(&mut app, Message::Sync(asset_sync_event(character_id)));
+      }
+
+      assert!(
+        app.assets_dirty,
+        "a burst of AssetSync events marks the assets dirty once instead of reloading per event"
+      );
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.assets_dirty, "the pulse consumes the coalesced assets refresh");
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.assets_dirty, "a quiet pulse schedules no further assets reload");
+    }
+
+    #[test]
+    fn it_does_not_mark_assets_dirty_while_off_the_assets_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.assets = Some(assets::State::new());
+
+      let _ = update(&mut app, Message::Sync(asset_sync_event(1)));
+
+      assert!(!app.assets_dirty, "an off-route asset sync schedules no assets reload");
     }
 
     #[test]
@@ -6296,6 +6381,88 @@ mod tests {
     }
   }
 
+  mod mark_assets_dirty {
+    use super::*;
+
+    fn finished(kind: JobKind) -> JobKey {
+      JobKey::new(kind, Subject::Character(1))
+    }
+
+    #[test]
+    fn it_marks_assets_dirty_on_route_for_an_asset_sync() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(app.assets_dirty);
+    }
+
+    #[test]
+    fn it_skips_the_assets_reload_off_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(!app.assets_dirty);
+    }
+
+    #[test]
+    fn it_skips_the_assets_reload_for_an_unrelated_kind() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(!app.assets_dirty);
+    }
+  }
+
+  mod mark_wallet_dirty {
+    use super::*;
+
+    fn finished(kind: JobKind) -> JobKey {
+      JobKey::new(kind, Subject::Character(1))
+    }
+
+    #[test]
+    fn it_marks_the_wallet_dirty_on_route_for_a_ledger_kind() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(app.wallet_dirty);
+    }
+
+    #[test]
+    fn it_skips_the_wallet_reload_off_route() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(!app.wallet_dirty);
+    }
+
+    #[test]
+    fn it_skips_the_wallet_reload_for_an_unrelated_kind() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(!app.wallet_dirty);
+    }
+  }
+
   mod wallet_reload_kind {
     use super::*;
 
@@ -6312,46 +6479,6 @@ mod tests {
       assert!(!wallet_reload_kind(JobKind::AssetSync));
       assert!(!wallet_reload_kind(JobKind::CharacterSkills));
       assert!(!wallet_reload_kind(JobKind::CharacterProfile));
-    }
-  }
-
-  mod sync_screen_reload {
-    use super::*;
-
-    fn finished(kind: JobKind) -> JobKey {
-      JobKey::new(kind, Subject::Character(1))
-    }
-
-    #[test]
-    fn it_skips_the_wallet_reload_off_route() {
-      let mut app = test_app();
-      app.route = Route::Assets;
-
-      assert!(wallet_reload_on_finished(&app, finished(JobKind::CharacterWallet)).is_none());
-    }
-
-    #[test]
-    fn it_skips_the_wallet_reload_for_an_unrelated_kind() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-
-      assert!(wallet_reload_on_finished(&app, finished(JobKind::AssetSync)).is_none());
-    }
-
-    #[test]
-    fn it_skips_the_assets_reload_off_route() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-
-      assert!(assets_reload_on_finished(&app, finished(JobKind::AssetSync)).is_none());
-    }
-
-    #[test]
-    fn it_skips_the_assets_reload_for_an_unrelated_kind() {
-      let mut app = test_app();
-      app.route = Route::Assets;
-
-      assert!(assets_reload_on_finished(&app, finished(JobKind::CharacterWallet)).is_none());
     }
   }
 

@@ -275,6 +275,10 @@ pub enum Message {
   StockpileMultibuyModeChanged(stockpiles::MultibuyMode),
   StockpileNew,
   StockpilesReloaded(Vec<stockpiles::StockpileCard>),
+  SyncReloaded {
+    generation: u64,
+    loaded: Box<Loaded>,
+  },
   TabSelected(Tab),
 }
 
@@ -731,6 +735,18 @@ pub fn load(db: &Database) -> Task<Message> {
   )
 }
 
+pub fn sync_reload(state: &State, db: &Database) -> Task<Message> {
+  let generation = state.search_generation;
+  let loaded_rows = (state.inventory.len() as i64).max(INVENTORY_PAGE_SIZE);
+  let view = InventoryView::from_state(state).with_limit(loaded_rows);
+  Task::perform(load_assets(db.clone(), state.active, view), move |loaded| {
+    Message::SyncReloaded {
+      generation,
+      loaded: Box::new(loaded),
+    }
+  })
+}
+
 fn reload(db: &Database, scope: Scope, inventory: InventoryView) -> Task<Message> {
   Task::perform(load_assets(db.clone(), scope, inventory), |loaded| {
     Message::Loaded(Box::new(loaded))
@@ -801,9 +817,46 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.geo_tree = geo_tree;
 }
 
+/// Refreshes data from a sync-triggered reload while preserving transient interaction state
+/// (expanded containers, search text, abyssal filters, slider edits, and picker state).
+///
+/// Contrast with `apply_loaded`, which resets all of that state on every reload.
+fn merge_loaded(state: &mut State, loaded: Loaded) {
+  let Loaded {
+    corporations,
+    geo_tree,
+    inventory,
+    roster,
+    saved_filters,
+    totals,
+    values,
+    nav,
+    stockpiles,
+    abyssals,
+  } = loaded;
+  state.corporations = corporations;
+  state.saved_filters = saved_filters;
+  // Compare fresh page length against the limit that was requested (old inventory len or minimum
+  // page size), not the constant — sync reloads may fetch more than one page worth.
+  state.inventory_has_more = inventory.len() as i64 == (state.inventory.len() as i64).max(INVENTORY_PAGE_SIZE);
+  state.inventory = inventory;
+  state.roster = roster;
+  state.totals = totals;
+  state.values = values;
+  state.nav = nav;
+  state.stockpiles = stockpiles;
+  state.abyssals = abyssals.cards;
+  state.abyssal_source_types = abyssals.source_types;
+  state.geo_tree = geo_tree;
+  let present: HashSet<i64> = state.inventory.iter().map(|row| row.item_id).collect();
+  state.expanded_containers.retain(|id| present.contains(id));
+  state.inventory_children.retain(|id, _| present.contains(id));
+}
+
 #[derive(Clone, Debug)]
 struct InventoryView {
   filter: String,
+  limit: i64,
   location_ids: Vec<i64>,
   sort: SortColumn,
   sort_dir: SortDirection,
@@ -813,6 +866,7 @@ impl Default for InventoryView {
   fn default() -> Self {
     Self {
       filter: String::new(),
+      limit: INVENTORY_PAGE_SIZE,
       location_ids: Vec::new(),
       sort: SortColumn::Value,
       sort_dir: SortDirection::Descending,
@@ -824,10 +878,16 @@ impl InventoryView {
   fn from_state(state: &State) -> Self {
     Self {
       filter: effective_filter(state.category, &state.search),
+      limit: INVENTORY_PAGE_SIZE,
       location_ids: location_ids_for_selection(&state.geo_tree, state.geo_selected),
       sort: state.sort,
       sort_dir: state.sort_dir,
     }
+  }
+
+  fn with_limit(mut self, limit: i64) -> Self {
+    self.limit = limit;
+    self
   }
 }
 
@@ -860,6 +920,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     | Message::SearchSubmitted
     | Message::SortSelected(_)
+    | Message::SyncReloaded {
+      ..
+    }
     | Message::TabSelected(_) => update_inventory(state, message, db),
 
     Message::ContainerChildrenLoaded(..)
@@ -949,6 +1012,15 @@ fn update_inventory(state: &mut State, message: Message, db: &Database) -> Task<
     } => {
       if generation == state.search_generation {
         apply_loaded(state, *loaded);
+      }
+      Task::none()
+    }
+    Message::SyncReloaded {
+      generation,
+      loaded,
+    } => {
+      if generation == state.search_generation {
+        merge_loaded(state, *loaded);
       }
       Task::none()
     }
@@ -1655,7 +1727,7 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
     cursor: None,
     direction: view.sort_dir,
     filter: &view.filter,
-    limit: INVENTORY_PAGE_SIZE,
+    limit: view.limit,
     location_ids: &view.location_ids,
     me_id,
     sort: view.sort,
@@ -2962,6 +3034,97 @@ mod tests {
       );
       assert!(state.container_children_of(100).is_none());
       assert!(!state.inventory_has_more, "a short first page leaves no more to load");
+    }
+
+    #[tokio::test]
+    async fn it_preserves_interaction_state_on_a_sync_triggered_reload() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.search = "name:Rifter".to_owned();
+      state.abyssal_picker_open = true;
+      state.set_inventory_children_for_test(200, vec![inv_row(201, false)]);
+      let generation = state.search_generation;
+
+      let _ = update(
+        &mut state,
+        Message::SyncReloaded {
+          generation,
+          loaded: Box::new(Loaded {
+            inventory: vec![inv_row(200, true), inv_row(300, false)],
+            totals: InventoryTotals {
+              items: 9,
+              locations: 1,
+              value: 0.0,
+              volume: 0.0,
+            },
+            ..Loaded::default()
+          }),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 9, "a sync reload refreshes the underlying totals");
+      assert_eq!(state.search, "name:Rifter", "the in-progress filter text survives");
+      assert!(state.abyssal_picker_open, "an open picker survives a sync reload");
+      assert!(
+        state.container_is_open(200),
+        "an expanded container still present in fresh data stays open"
+      );
+      assert_eq!(state.container_children_of(200).map(<[_]>::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn it_drops_expansions_for_items_absent_from_fresh_sync_data() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
+      let generation = state.search_generation;
+
+      let _ = update(
+        &mut state,
+        Message::SyncReloaded {
+          generation,
+          loaded: Box::new(Loaded {
+            inventory: vec![inv_row(200, false)],
+            ..Loaded::default()
+          }),
+        },
+        &db,
+      );
+
+      assert!(
+        !state.container_is_open(100),
+        "an expanded container that vanished from fresh data is dropped"
+      );
+      assert!(state.container_children_of(100).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_stale_sync_reload_after_the_search_advanced() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let stale_generation = state.search_generation;
+      state.search_generation = state.search_generation.wrapping_add(1);
+      state.totals.items = 3;
+
+      let _ = update(
+        &mut state,
+        Message::SyncReloaded {
+          generation: stale_generation,
+          loaded: Box::new(Loaded {
+            totals: InventoryTotals {
+              items: 99,
+              locations: 1,
+              value: 0.0,
+              volume: 0.0,
+            },
+            ..Loaded::default()
+          }),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 3, "a stale sync reload is discarded");
     }
   }
 

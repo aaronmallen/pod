@@ -175,9 +175,15 @@ impl VirtualListConfig {
     // Rows scrolled fully above the viewport.
     let first_visible = (self.scroll_offset / row_height).floor() as usize;
     // Rows needed to cover the viewport (ceil, +1 so a partially-shown final row
-    // still renders). A zero viewport falls back to one screenful of overscan.
-    let visible_rows = if self.viewport_height > 0.0 {
-      (self.viewport_height / row_height).ceil() as usize + 1
+    // still renders). A non-usable viewport (zero, negative, non-finite, or large
+    // enough to overflow `usize`) falls back to one screenful of overscan.
+    let raw_visible = (self.viewport_height / row_height).ceil();
+    let visible_rows = if self.viewport_height.is_finite()
+      && self.viewport_height > 0.0
+      && raw_visible.is_finite()
+      && raw_visible <= usize::MAX as f32
+    {
+      (raw_visible as usize).saturating_add(1)
     } else {
       self.overscan.max(1)
     };
@@ -368,6 +374,61 @@ mod tests {
       let window = VirtualListConfig::new(10, 0.0).viewport_height(100.0).window();
 
       assert!(window.end_row <= 10);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_an_infinite_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(f32::INFINITY)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_nan_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(f32::NAN)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_huge_finite_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(1e30)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_zero_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(0.0)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_negative_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(-400.0)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
     }
 
     #[test]

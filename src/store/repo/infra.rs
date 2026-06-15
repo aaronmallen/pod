@@ -7,8 +7,8 @@ use crate::store::{
 
 pub async fn all(db: &Database) -> Result<Vec<Credential>, Error> {
   let rows = sqlx::query_as::<_, Credential>(
-    "SELECT access_token, authorized_by, created_at, expires_at, owner_id, owner_type, \
-    refresh_token, scopes, updated_at FROM credentials",
+    "SELECT access_token, authorized_by, created_at, expires_at, last_checked_at, needs_reauth, owner_id, \
+    owner_type, refresh_token, scopes, updated_at FROM credentials",
   )
   .fetch_all(&db.0)
   .await?;
@@ -26,8 +26,8 @@ pub async fn delete(db: &Database, owner_id: i64, owner_type: OwnerType) -> Resu
 
 pub async fn get(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<Option<Credential>, Error> {
   let row = sqlx::query_as::<_, Credential>(
-    "SELECT access_token, authorized_by, created_at, expires_at, owner_id, owner_type, \
-    refresh_token, scopes, updated_at FROM credentials \
+    "SELECT access_token, authorized_by, created_at, expires_at, last_checked_at, needs_reauth, owner_id, \
+    owner_type, refresh_token, scopes, updated_at FROM credentials \
     WHERE owner_id = ? AND owner_type = ?",
   )
   .bind(owner_id)
@@ -73,6 +73,30 @@ pub async fn upsert(
   .bind(now)
   .execute(&db.0)
   .await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn mark_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<(), Error> {
+  let now = Utc::now().timestamp();
+  sqlx::query("UPDATE credentials SET needs_reauth = 1, last_checked_at = ? WHERE owner_id = ? AND owner_type = ?")
+    .bind(now)
+    .bind(owner_id)
+    .bind(owner_type)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<(), Error> {
+  let now = Utc::now().timestamp();
+  sqlx::query("UPDATE credentials SET needs_reauth = 0, last_checked_at = ? WHERE owner_id = ? AND owner_type = ?")
+    .bind(now)
+    .bind(owner_id)
+    .bind(owner_type)
+    .execute(&db.0)
+    .await?;
   Ok(())
 }
 
@@ -552,6 +576,79 @@ mod credential_tests {
 
       let cred = get(&db, 2000, OwnerType::Corporation).await.unwrap().unwrap();
       assert_eq!(cred.authorized_by(), Some(222));
+    }
+  }
+
+  mod needs_reauth {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_fresh_credential_defaults_to_healthy() {
+      let db = store::open_test().await.unwrap();
+      upsert(&db, 111, OwnerType::Character, "tok", "rt", 1000, None, None)
+        .await
+        .unwrap();
+
+      let cred = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+
+      assert!(!cred.needs_reauth());
+      assert_eq!(cred.last_checked_at(), None);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_marking_clearing_and_survives_a_token_refresh() {
+      let db = store::open_test().await.unwrap();
+      upsert(&db, 111, OwnerType::Character, "tok", "rt", 1000, None, None)
+        .await
+        .unwrap();
+
+      mark_needs_reauth(&db, 111, OwnerType::Character).await.unwrap();
+      let marked = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+      assert!(marked.needs_reauth());
+      assert!(marked.last_checked_at().is_some());
+
+      clear_needs_reauth(&db, 111, OwnerType::Character).await.unwrap();
+      let cleared = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+      assert!(!cleared.needs_reauth());
+      assert!(cleared.last_checked_at().is_some());
+
+      mark_needs_reauth(&db, 111, OwnerType::Character).await.unwrap();
+      upsert(
+        &db,
+        111,
+        OwnerType::Character,
+        "new-tok",
+        "new-rt",
+        9999,
+        None,
+        Some("esi-skills.read.v1"),
+      )
+      .await
+      .unwrap();
+
+      let after_refresh = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+      assert!(after_refresh.needs_reauth());
+      assert_eq!(after_refresh.access_token(), "new-tok");
+    }
+
+    #[tokio::test]
+    async fn mark_and_clear_target_only_the_keyed_owner() {
+      let db = store::open_test().await.unwrap();
+      upsert(&db, 111, OwnerType::Character, "tok", "rt", 1000, None, None)
+        .await
+        .unwrap();
+      upsert(&db, 111, OwnerType::Corporation, "tok", "rt", 1000, Some(111), None)
+        .await
+        .unwrap();
+
+      mark_needs_reauth(&db, 111, OwnerType::Character).await.unwrap();
+
+      let character = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+      let corporation = get(&db, 111, OwnerType::Corporation).await.unwrap().unwrap();
+      assert!(character.needs_reauth());
+      assert!(!corporation.needs_reauth());
     }
   }
 }

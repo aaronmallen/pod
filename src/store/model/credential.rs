@@ -17,6 +17,10 @@ pub struct Model {
   #[getset(get_copy = "pub")]
   expires_at: i64,
   #[getset(get_copy = "pub")]
+  last_checked_at: Option<i64>,
+  #[getset(get_copy = "pub")]
+  needs_reauth: bool,
+  #[getset(get_copy = "pub")]
   owner_id: i64,
   #[getset(get_copy = "pub")]
   owner_type: OwnerType,

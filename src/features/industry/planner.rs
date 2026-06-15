@@ -7,10 +7,18 @@ use super::{
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
   planner_model::{BuildNode, BuildPlan, Material},
 };
-use crate::store::repo::industry::{PlanNode, PlanTree};
+use crate::{
+  store::repo::industry::{PlanNode, PlanTree},
+  ui::components::resizable_pane::PaneDrag,
+  window_state::UiState,
+};
+
+pub const DETAIL_PANE_KEY: &str = "industry.planner.detail";
 
 const DEFAULT_ME: i64 = 10;
 const DEFAULT_TE: i64 = 20;
+const DETAIL_PANE_DEFAULT_WIDTH: f32 = 340.0;
+const DETAIL_PANE_MIN_WIDTH: f32 = 280.0;
 const INSTALL_FEE_RATE: f64 = 0.5;
 const MATERIAL_PLAN_SCROLL_ID: &str = "industry-planner-material-plan";
 const ME_MAX: i64 = 10;
@@ -46,6 +54,7 @@ impl Economics {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
+  pub anchor: Point,
   pub path: Vec<i64>,
   pub query: String,
 }
@@ -71,6 +80,10 @@ pub enum Message {
   MenuClosed,
   NodeBrokenDown { mat: i64, parent: Vec<i64> },
   NodeCollapsed { mat: i64, parent: Vec<i64> },
+  PaneDrag(f32),
+  PaneDragEnd,
+  PaneDragStart,
+  PickerScrolled { absolute: f32 },
   PickerToggled,
   PlanDeleteRequested(i64),
   PlanLoadRequested(i64),
@@ -161,15 +174,17 @@ impl NodeConfig {
   }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Planner {
   category: Category,
   cursor: Option<Point>,
   data: PlannerData,
+  detail_pane: PaneDrag,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
   picker_open: bool,
+  picker_scroll_offset: f32,
   placeholder: String,
   product: Option<i64>,
   recent: Vec<i64>,
@@ -185,9 +200,28 @@ impl Planner {
   pub fn new() -> Self {
     Planner {
       category: Category::Other,
+      cursor: None,
+      data: PlannerData::default(),
+      detail_pane: PaneDrag::with_min_width(
+        DETAIL_PANE_DEFAULT_WIDTH,
+        DETAIL_PANE_MIN_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      )
+      .right_anchored(true),
+      facility_picker: None,
+      loaded: false,
+      menu: None,
+      picker_open: false,
+      picker_scroll_offset: 0.0,
+      placeholder: String::new(),
+      product: None,
+      recent: Vec::new(),
+      right_tab: RightTab::default(),
       runs: 1,
       runs_input: "1".to_owned(),
-      ..Planner::default()
+      saved: Vec::new(),
+      search: String::new(),
+      tree: NodeConfig::default(),
     }
   }
 
@@ -236,6 +270,14 @@ impl Planner {
       })
   }
 
+  pub fn detail_pane_ratio(&self) -> f32 {
+    self.detail_pane.ratio()
+  }
+
+  pub fn detail_pane_width(&self) -> f32 {
+    self.detail_pane.width()
+  }
+
   /// Whole-plan economics: `material_cost` is the rolled-up acquisition total of every raw input the
   /// bill of materials says you must buy, plus the install fees of any in-house sub-builds. With no
   /// component broken down this equals pricing the root recipe's materials; once a component is built
@@ -277,6 +319,10 @@ impl Planner {
     self.facility_picker.as_ref()
   }
 
+  pub fn is_dragging_pane(&self) -> bool {
+    self.detail_pane.is_active()
+  }
+
   pub fn is_loaded(&self) -> bool {
     self.loaded
   }
@@ -291,6 +337,10 @@ impl Planner {
 
   pub fn picker_open(&self) -> bool {
     self.picker_open
+  }
+
+  pub fn picker_scroll_offset(&self) -> f32 {
+    self.picker_scroll_offset
   }
 
   pub fn plan(&self) -> Option<BuildPlan> {
@@ -349,6 +399,10 @@ impl Planner {
     }
   }
 
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.detail_pane.set_host_width(host_width);
+  }
+
   /// Returns the facility pinned to this node, falling back to the cheapest available
   /// default when the stored system id is absent from the current data (e.g. after a reload).
   pub fn selected_facility(&self, path: &[i64], is_reaction: bool) -> Option<&PlannerFacility> {
@@ -392,9 +446,25 @@ impl Planner {
     })
   }
 
+  pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
+    let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.detail_pane = PaneDrag::from_store_with_min(
+      ui,
+      DETAIL_PANE_KEY,
+      DETAIL_PANE_DEFAULT_WIDTH,
+      DETAIL_PANE_MIN_WIDTH,
+      host_width,
+    )
+    .right_anchored(true);
+    self
+  }
+
   pub fn update(&mut self, message: Message) {
     match message {
-      Message::CategorySelected(category) => self.category = category,
+      Message::CategorySelected(category) => {
+        self.category = category;
+        self.picker_scroll_offset = 0.0;
+      }
       Message::CursorMoved(point) => self.cursor = Some(point),
       Message::FacilityPickerToggled {
         path,
@@ -407,6 +477,7 @@ impl Planner {
         // Typing into the always-visible field opens the picker for that node.
         None => {
           self.facility_picker = Some(FacilityPickerState {
+            anchor: self.cursor.unwrap_or_default(),
             path,
             query,
           })
@@ -450,6 +521,14 @@ impl Planner {
         }
         self.menu = None;
       }
+      Message::PaneDrag(x) => {
+        self.detail_pane.drag_to(x);
+      }
+      Message::PaneDragEnd => self.detail_pane.end(),
+      Message::PaneDragStart => self.detail_pane.start(),
+      Message::PickerScrolled {
+        absolute,
+      } => self.picker_scroll_offset = absolute,
       Message::PickerToggled => self.picker_open = !self.picker_open,
       // The DB round trips for save/load/delete are performed by the parent industry::update, which
       // owns the database handle; here only the resolved list and restored tree touch planner state.
@@ -469,7 +548,10 @@ impl Planner {
       Message::RightTabSelected(tab) => self.right_tab = tab,
       Message::RunsChanged(runs) => self.set_runs(runs),
       Message::RunsInputChanged(raw) => self.edit_runs(raw),
-      Message::SearchChanged(query) => self.search = query,
+      Message::SearchChanged(query) => {
+        self.search = query;
+        self.picker_scroll_offset = 0.0;
+      }
       // Clipboard write is handled by the parent industry::update; nothing to do here.
       Message::ShoppingListCopied => {}
       Message::TimeEfficiencyChanged {
@@ -644,6 +726,7 @@ impl Planner {
       self.facility_picker = None;
     } else {
       self.facility_picker = Some(FacilityPickerState {
+        anchor: self.cursor.unwrap_or_default(),
         path,
         query: String::new(),
       });
@@ -803,7 +886,7 @@ mod view {
   use iced::{
     Background, Border, ContentFit, Element, Length, Padding,
     alignment::{Horizontal, Vertical},
-    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, slider, text},
+    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, slider, text, text_input},
   };
 
   use super::{Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time};
@@ -820,8 +903,9 @@ mod view {
         clip::clip_layer,
         icon::Icon,
         icon_tile::icon_tile,
+        resizable_pane::pane_handle,
         rule,
-        text_input::TextInput,
+        text_input::{TextInput, inner_style as text_input_inner_style},
         virtual_list::{self, VirtualList, VirtualListConfig},
       },
       style::{color, radius, spacing, typography},
@@ -829,11 +913,14 @@ mod view {
   };
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
+  const FACILITY_PICKER_GAP: f32 = 6.0;
   const FACILITY_PICKER_LIST_HEIGHT: f32 = 230.0;
   const FACILITY_PICKER_WIDTH: f32 = 320.0;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
-  const RIGHT_PANE_WIDTH: f32 = 340.0;
+  const RUNS_FIELD_WIDTH: f32 = 34.0;
+  const RUNS_STEPPER_HEIGHT: f32 = 34.0;
+  const RUNS_STEP_WIDTH: f32 = 30.0;
   const TILE_BOX: f32 = 30.0;
   /// Must be S64 — `resolve_type_icon` only returns a bundled icon at this size; smaller sizes fall back to a placeholder glyph.
   const TILE_ICON: Size = Size::S64;
@@ -867,6 +954,7 @@ mod view {
 
     Row::with_children(vec![
       container(left).width(Length::Fill).height(Length::Fill).into(),
+      pane_handle(Message::PaneDragStart),
       right_pane(planner, product),
     ])
     .width(Length::Fill)
@@ -1020,13 +1108,19 @@ mod view {
         Column::with_children(rows).width(Length::Fill).into()
       }
     } else {
+      let offset = planner.picker_scroll_offset();
       virtual_list::responsive_window(move |height| {
-        let config = VirtualListConfig::new(matches.len(), ESTIMATED_PICKER_ROW).viewport_height(height);
+        let config = VirtualListConfig::new(matches.len(), ESTIMATED_PICKER_ROW)
+          .viewport_height(height)
+          .scroll_offset(offset);
         let windowed = VirtualList::new(config, |index| picker_row(planner, matches[index])).view();
         scrollable(windowed)
           .style(crate::ui::style::control::scrollbar)
           .width(Length::Fill)
           .height(Length::Fill)
+          .on_scroll(|viewport| Message::PickerScrolled {
+            absolute: viewport.absolute_offset().y,
+          })
           .into()
       })
     };
@@ -1313,19 +1407,7 @@ mod view {
       .align_y(Vertical::Center)
       .into()
     } else {
-      let field = TextInput::new("1", runs_text, Message::RunsInputChanged)
-        .background(color::surface::SUNKEN)
-        .width(Length::Fixed(72.0))
-        .render();
-
-      Row::with_children(vec![
-        stepper_button("\u{2212}", (runs > 1).then(|| Message::RunsChanged(runs - 1))),
-        field,
-        stepper_button("+", Some(Message::RunsChanged(runs + 1))),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center)
-      .into()
+      runs_stepper(runs, runs_text)
     };
 
     Column::with_children(vec![micro_label(&label), value])
@@ -1333,29 +1415,92 @@ mod view {
       .into()
   }
 
-  fn stepper_button<'a>(glyph: &str, on_press: Option<Message>) -> Element<'a, Message> {
-    let mut control = button(
-      text(glyph.to_owned())
-        .font(typography::mono::REGULAR)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::secondary())),
-    )
-    .padding(Padding {
-      top: 0.0,
-      bottom: 0.0,
-      left: spacing::SPACE_2,
-      right: spacing::SPACE_2,
-    });
-    if let Some(message) = on_press {
-      control = control.on_press(message);
-    }
-    control
-      .style(|_, _| button::Style {
+  /// The runs control as one cohesive segmented box: a left `−` step, a narrow centered editable field, and
+  /// a right `+` step share a single rounded border and sunken background, divided only by hairline rules
+  /// (mirroring the design's `NumberStepper`). The field is capped to roughly three digits.
+  fn runs_stepper<'a>(runs: i64, runs_text: &'a str) -> Element<'a, Message> {
+    let field = text_input("1", runs_text)
+      .on_input(Message::RunsInputChanged)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .align_x(Horizontal::Center)
+      .padding(Padding {
+        top: 0.0,
+        bottom: 0.0,
+        left: spacing::UNIT,
+        right: spacing::UNIT,
+      })
+      .width(Length::Fixed(RUNS_FIELD_WIDTH))
+      .style(text_input_inner_style());
+
+    let segments = Row::with_children(vec![
+      segment_button("\u{2212}", (runs > 1).then(|| Message::RunsChanged(runs - 1)), false),
+      divider(),
+      container(field)
+        .height(Length::Fixed(RUNS_STEPPER_HEIGHT))
+        .align_y(Vertical::Center)
+        .into(),
+      divider(),
+      segment_button("+", Some(Message::RunsChanged(runs + 1)), true),
+    ])
+    .align_y(Vertical::Center);
+
+    container(segments)
+      .height(Length::Fixed(RUNS_STEPPER_HEIGHT))
+      .style(|_| container::Style {
         background: Some(Background::Color(color::surface::SUNKEN)),
         border: Border {
           color: color::rule_strong(),
           radius: radius::CONTROL.into(),
           width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+
+  fn divider<'a>() -> Element<'a, Message> {
+    container(
+      Space::new()
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(RUNS_STEPPER_HEIGHT)),
+    )
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+  }
+
+  fn segment_button<'a>(glyph: &str, on_press: Option<Message>, right: bool) -> Element<'a, Message> {
+    let mut control = button(
+      container(
+        text(glyph.to_owned())
+          .font(typography::mono::REGULAR)
+          .size(typography::size::LG)
+          .style(typography::colored(color::text::secondary())),
+      )
+      .width(Length::Fixed(RUNS_STEP_WIDTH))
+      .height(Length::Fixed(RUNS_STEPPER_HEIGHT))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+    )
+    .padding(Padding::ZERO);
+    if let Some(message) = on_press {
+      control = control.on_press(message);
+    }
+
+    let radius = if right {
+      iced::border::Radius::default().right(radius::CONTROL)
+    } else {
+      iced::border::Radius::default().left(radius::CONTROL)
+    };
+    control
+      .style(move |_, _| button::Style {
+        background: Some(Background::Color(iced::Color::TRANSPARENT)),
+        border: Border {
+          radius,
+          ..Border::default()
         },
         text_color: color::text::secondary(),
         ..button::Style::default()
@@ -1436,34 +1581,6 @@ mod view {
     .width(Length::Fill)
     .render();
 
-    let toggle = button(
-      Icon::chevron()
-        .color(if open {
-          color::accent::PLASMA
-        } else {
-          color::text::secondary()
-        })
-        .size(14.0)
-        .render::<Message>(),
-    )
-    .padding(spacing::SPACE_2)
-    .on_press(Message::FacilityPickerToggled {
-      path: path.to_vec(),
-    })
-    .style(move |_, _| button::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: if open {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      ..button::Style::default()
-    });
-
     let percent: Element<'a, Message> = match selected {
       Some(facility) => text(format!(
         "{:.2}% index",
@@ -1476,23 +1593,25 @@ mod view {
       None => Space::new().into(),
     };
 
-    let field = Row::with_children(vec![container(input).width(Length::Fill).into(), toggle.into()])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center);
-
-    Column::with_children(vec![micro_label("Build at"), field.into(), percent])
-      .spacing(spacing::SPACE_2)
-      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-      .into()
+    Column::with_children(vec![
+      micro_label("Build at"),
+      container(input).width(Length::Fill).into(),
+      percent,
+    ])
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+    .into()
   }
 
-  /// Floating results for the open "Build at" picker. Rendered in the planner's overlay Stack (right-aligned,
-  /// over the card) rather than inline, so the card never resizes when the picker opens. The search input
-  /// lives in the always-visible field; this panel only carries the filtered, selectable facility rows.
+  /// Floating results for the open "Build at" picker. Rendered in the planner's overlay Stack and anchored
+  /// directly under the always-visible facility input (right-aligned and width-matched to it) so it reads as
+  /// the input's popover. Keeping it in the overlay rather than inline means the card never resizes when the
+  /// picker opens.
   pub(super) fn facility_picker_panel(planner: &Planner) -> Element<'_, Message> {
     let Some(state) = planner.facility_picker() else {
       return Space::new().into();
     };
+    let anchor_top = (state.anchor.y + FACILITY_PICKER_GAP).max(0.0);
     let path = state.path.as_slice();
     let is_reaction = planner
       .product()
@@ -1537,23 +1656,24 @@ mod view {
         .into()
     };
 
-    let panel = container(
-      Column::with_children(vec![micro_label("Build at"), rule::horizontal(), list]).spacing(spacing::SPACE_2),
-    )
-    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-    .padding(spacing::SPACE_2)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::rule_strong(),
-        radius: radius::CARD.into(),
-        width: 1.0,
-      },
-      shadow: crate::ui::style::shadow::CARD,
-      ..container::Style::default()
-    });
+    let panel = container(list)
+      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+      .padding(spacing::SPACE_2)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::RAISED)),
+        border: Border {
+          color: color::rule_strong(),
+          radius: radius::CARD.into(),
+          width: 1.0,
+        },
+        shadow: crate::ui::style::shadow::CARD,
+        ..container::Style::default()
+      });
 
-    crate::ui::components::positioned_dropdown::positioned_dropdown_right(panel.into(), PANE_PADDING, PANE_PADDING)
+    // Right padding clears the detail pane and the card/pane gutters so the panel's right edge lines up with
+    // the right-floated facility input rather than the planner's right edge.
+    let right = planner.detail_pane_width() + PANE_PADDING + spacing::SPACE_3_5;
+    crate::ui::components::positioned_dropdown::positioned_dropdown_right(panel.into(), anchor_top, right)
   }
 
   fn facility_row<'a>(
@@ -2019,7 +2139,7 @@ mod view {
     .height(Length::Fill);
 
     container(column)
-      .width(Length::Fixed(RIGHT_PANE_WIDTH))
+      .width(Length::Fixed(planner.detail_pane_width()))
       .height(Length::Fill)
       .style(|_| container::Style {
         background: Some(Background::Color(color::surface::SUNKEN)),
@@ -3104,6 +3224,33 @@ mod tests {
       let with_menu = super::super::view(&planner, Scope::All);
       assert_eq!(Tree::new(with_menu.as_widget()).children.len(), idle_children);
     }
+
+    #[test]
+    fn it_renders_the_product_picker_windowed_to_a_deep_scroll_offset() {
+      let mut planner = planner();
+      for type_id in 1_000..1_500 {
+        planner.data.catalog.push(CatalogEntry {
+          category: Category::Module,
+          group_name: "Filler".to_owned(),
+          is_reaction: false,
+          name: format!("Filler {type_id}"),
+          type_id,
+          volume: 1.0,
+        });
+        planner.data.prices.insert(type_id, 1.0);
+        planner.data.names.insert(type_id, format!("Filler {type_id}"));
+      }
+      // Open the picker on a query that matches the whole filler block, then scroll far past the first window.
+      planner.update(Message::SearchChanged("filler".to_owned()));
+      planner.update(Message::PickerScrolled {
+        absolute: 4_000.0,
+      });
+
+      // The picker materializes the windowed rows for the recorded offset rather than only the first screenful.
+      let rendered = super::super::view(&planner, Scope::All);
+      let _ = Tree::new(rendered.as_widget());
+      assert_eq!(planner.picker_scroll_offset(), 4_000.0);
+    }
   }
 
   mod facility_picker {
@@ -3134,6 +3281,37 @@ mod tests {
         path: vec![],
       });
       assert!(planner.facility_picker().is_none());
+    }
+
+    #[test]
+    fn it_anchors_the_popover_at_the_cursor_when_the_picker_opens() {
+      let mut planner = planner();
+      planner.update(Message::CursorMoved(Point::new(640.0, 215.0)));
+
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+
+      assert_eq!(
+        planner.facility_picker().map(|state| state.anchor),
+        Some(Point::new(640.0, 215.0))
+      );
+    }
+
+    #[test]
+    fn it_anchors_the_popover_when_typing_opens_the_picker() {
+      let mut planner = planner();
+      planner.update(Message::CursorMoved(Point::new(120.0, 88.0)));
+
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "cheap".to_owned(),
+      });
+
+      assert_eq!(
+        planner.facility_picker().map(|state| state.anchor),
+        Some(Point::new(120.0, 88.0))
+      );
     }
 
     #[test]
@@ -3258,6 +3436,102 @@ mod tests {
 
       assert_eq!(planner.node(&[]).me, 8);
       assert_eq!(planner.node(&[]).te, 16);
+    }
+  }
+
+  mod detail_pane {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::window_state::UiState;
+
+    const HOST: f32 = 1_200.0;
+
+    #[test]
+    fn it_restores_the_detail_pane_width_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.3);
+
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
+
+      assert_eq!(planner.detail_pane_width(), 360.0);
+    }
+
+    #[test]
+    fn it_settles_and_round_trips_a_dragged_width_through_the_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
+
+      // The handle sits on the left edge of a right-anchored pane: dragging left grows it.
+      planner.update(Message::PaneDragStart);
+      planner.update(Message::PaneDrag(800.0));
+      planner.update(Message::PaneDrag(760.0));
+      planner.update(Message::PaneDragEnd);
+      let settled = planner.detail_pane_width();
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), planner.detail_pane_ratio());
+
+      let mut restored = Planner::new().with_restored_panes(&ui);
+      restored.set_pane_host_width(HOST);
+
+      assert_eq!(settled, 380.0);
+      assert_eq!(restored.detail_pane_width(), settled);
+    }
+
+    #[test]
+    fn it_clamps_a_stored_width_below_the_minimum() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.01);
+
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
+
+      assert_eq!(planner.detail_pane_width(), DETAIL_PANE_MIN_WIDTH);
+    }
+  }
+
+  mod picker_scroll {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_records_the_absolute_picker_scroll_offset() {
+      let mut planner = planner();
+
+      planner.update(Message::PickerScrolled {
+        absolute: 640.0,
+      });
+
+      assert_eq!(planner.picker_scroll_offset(), 640.0);
+    }
+
+    #[test]
+    fn it_resets_the_scroll_offset_when_the_search_query_changes() {
+      let mut planner = planner();
+      planner.update(Message::PickerScrolled {
+        absolute: 640.0,
+      });
+
+      planner.update(Message::SearchChanged("hulk".to_owned()));
+
+      assert_eq!(planner.picker_scroll_offset(), 0.0);
+    }
+
+    #[test]
+    fn it_resets_the_scroll_offset_when_the_category_changes() {
+      let mut planner = planner();
+      planner.update(Message::PickerScrolled {
+        absolute: 640.0,
+      });
+
+      planner.update(Message::CategorySelected(Category::Ship));
+
+      assert_eq!(planner.picker_scroll_offset(), 0.0);
     }
   }
 

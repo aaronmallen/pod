@@ -1156,6 +1156,9 @@ fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
       if let Some(state) = app.assets.as_mut() {
         state.set_pane_host_width(width);
       }
+      if let Some(state) = app.industry.as_mut() {
+        state.set_pane_host_width(width);
+      }
     }
     Some(Window::SkillPlanEditor) => {
       if let Some((_, state)) = app.editor.as_mut() {
@@ -1266,7 +1269,7 @@ fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Industry);
   let required = industry_required_scopes();
   let selection = target.unwrap_or(industry::EMPTY_INDUSTRY_SELECTION);
-  app.industry = Some(industry::State::new(selection, required.clone()));
+  app.industry = Some(industry::State::new(selection, required.clone()).with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => industry::load(&runtime.db, selection, &required).map(Message::Industry),
     None => Task::none(),
@@ -3713,6 +3716,10 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
 }
 
 fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
+  if let industry::Message::PaneSettled(key, ratio) = msg {
+    record_pane_ratio(app, key, ratio);
+    return Task::none();
+  }
   if let industry::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }

@@ -94,6 +94,7 @@ pub enum Message {
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
   Loaded(Box<Loaded>),
+  PaneSettled(&'static str, f32),
   PickerToggled,
   Planner(planner::Message),
   PlannerLoaded(Box<planner_loaders::PlannerData>),
@@ -149,6 +150,10 @@ impl State {
     self.active
   }
 
+  pub fn set_pane_host_width(&mut self, host_width: f32) {
+    self.planner.set_pane_host_width(host_width);
+  }
+
   pub fn set_required_scopes(&mut self, scopes: Vec<&'static str>) {
     self.required_scopes = scopes;
   }
@@ -161,6 +166,11 @@ impl State {
       .filter_map(images::ImageState::stale_key)
       .filter(|(_, id)| *id > 0)
       .collect()
+  }
+
+  pub fn with_restored_panes(mut self, ui: &crate::window_state::UiState) -> Self {
+    self.planner = self.planner.with_restored_panes(ui);
+    self
   }
 
   pub(super) fn blueprint_kind(&self) -> BlueprintKind {
@@ -357,8 +367,19 @@ fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::Pl
   )
 }
 
-pub fn subscription(_state: &State) -> Subscription<Message> {
-  iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
+pub fn subscription(state: &State) -> Subscription<Message> {
+  let tick = iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick);
+  if !state.planner.is_dragging_pane() {
+    return tick;
+  }
+  let drag = iced::event::listen_with(|event, _status, _id| {
+    crate::ui::components::resizable_pane::drag_event(
+      event,
+      |x| Message::Planner(planner::Message::PaneDrag(x)),
+      Message::Planner(planner::Message::PaneDragEnd),
+    )
+  });
+  Subscription::batch([tick, drag])
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime<Utc>) -> Task<Message> {
@@ -411,6 +432,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       state.picker_open = !state.picker_open;
       Task::none()
     }
+    Message::PaneSettled(..) => Task::none(),
     Message::Planner(planner_message) => match planner_message {
       planner::Message::ShoppingListCopied => {
         state.planner.update(planner_message);
@@ -422,6 +444,14 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       },
       planner::Message::PlanLoadRequested(id) => load_plan(db, id),
       planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
+      // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
+      planner::Message::PaneDragEnd => {
+        state.planner.update(planner_message);
+        Task::done(Message::PaneSettled(
+          planner::DETAIL_PANE_KEY,
+          state.planner.detail_pane_ratio(),
+        ))
+      }
       other => {
         state.planner.update(other);
         Task::none()

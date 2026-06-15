@@ -1121,7 +1121,7 @@ servers are unaffected. You can re-add it later via Add corporation.",
 fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
   let mut items = Vec::new();
   if menu.needs_fix {
-    items.push(Item::warning(
+    items.push(Item::danger(
       "Fix Permissions",
       Message::ReauthCharacterRequested(menu.character_id),
     ));
@@ -1146,7 +1146,7 @@ fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
 fn corp_context_menu_view(menu: &CorpContextMenu) -> Element<'_, Message> {
   let mut items = Vec::new();
   if menu.needs_reauth {
-    items.push(Item::warning(
+    items.push(Item::danger(
       "Re-authorize",
       Message::ReauthCorporationRequested(menu.corporation_id),
     ));
@@ -1552,11 +1552,16 @@ async fn load_roster_at(
   let tag_memberships = infra::memberships(db, ENTITY_TYPE_CHARACTER).await?;
 
   let required_scopes = auth_feature::scopes_for(enabled_features);
-  let granted_by_id: HashMap<i64, Option<String>> = infra::all(db)
-    .await?
-    .into_iter()
+  let credentials = infra::all(db).await?;
+  let granted_by_id: HashMap<i64, Option<String>> = credentials
+    .iter()
     .filter(|cred| cred.owner_type() == OwnerType::Character)
     .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+  let reauth_flag_by_id: HashMap<i64, bool> = credentials
+    .iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Character)
+    .map(|cred| (cred.owner_id(), cred.needs_reauth()))
     .collect();
 
   let store = images::default_store();
@@ -1587,6 +1592,7 @@ async fn load_roster_at(
       CardInputs {
         corp: corp_by_id.get(&character.corporation_id()).copied(),
         granted_scopes: granted_by_id.get(&id).and_then(Option::as_deref),
+        persisted_reauth: reauth_flag_by_id.get(&id).copied().unwrap_or(false),
         position: position_of.get(&id).copied().unwrap_or(0),
         required_scopes: &required_scopes,
         squad_accent: squad_of
@@ -1620,6 +1626,7 @@ async fn load_roster_at(
 struct CardInputs<'a> {
   corp: Option<&'a Corporation>,
   granted_scopes: Option<&'a str>,
+  persisted_reauth: bool,
   position: i64,
   required_scopes: &'a [&'a str],
   squad_accent: Option<Color>,
@@ -1652,7 +1659,7 @@ async fn build_card(
     docked,
     location,
     name: character.name().to_owned(),
-    needs_reauth: needs_reauthorization(inputs.granted_scopes, inputs.required_scopes),
+    needs_reauth: inputs.persisted_reauth || needs_reauthorization(inputs.granted_scopes, inputs.required_scopes),
     portrait: images::resolve(inputs.store, images::ImageKind::CharacterPortrait, id),
     position: inputs.position,
     tags: inputs.tags,
@@ -1762,11 +1769,16 @@ async fn load_corps(db: &Database, enabled_features: &[Feature]) -> Result<Vec<C
   let mut tags_by_corp = tag_chips_by_entity(&tags, &tag_memberships);
 
   let required_scopes = auth_feature::corp_scopes_for(enabled_features);
-  let granted_by_id: HashMap<i64, Option<String>> = infra::all(db)
-    .await?
-    .into_iter()
+  let credentials = infra::all(db).await?;
+  let granted_by_id: HashMap<i64, Option<String>> = credentials
+    .iter()
     .filter(|cred| cred.owner_type() == OwnerType::Corporation)
     .map(|cred| (cred.owner_id(), cred.scopes().clone()))
+    .collect();
+  let reauth_flag_by_id: HashMap<i64, bool> = credentials
+    .iter()
+    .filter(|cred| cred.owner_type() == OwnerType::Corporation)
+    .map(|cred| (cred.owner_id(), cred.needs_reauth()))
     .collect();
 
   let mut corps = Vec::with_capacity(owned.len());
@@ -1790,7 +1802,8 @@ async fn load_corps(db: &Database, enabled_features: &[Feature]) -> Result<Vec<C
       alliance_ticker: alliance.as_ref().map(|a| a.ticker().to_owned()),
       ceo,
       corporation_id: id,
-      needs_reauth: needs_reauthorization(granted.as_deref(), &required_scopes),
+      needs_reauth: reauth_flag_by_id.get(&id).copied().unwrap_or(false)
+        || needs_reauthorization(granted.as_deref(), &required_scopes),
       granted_scopes: granted,
       hq,
       logo: images::resolve(&store, images::ImageKind::CorporationLogo, id),
@@ -1907,6 +1920,20 @@ pub fn needs_reauthorization(granted: Option<&str>, required: &[&str]) -> bool {
   required.iter().any(|scope| !granted.contains(scope))
 }
 
+/// Persisted needs-reauth flag per owner id for the given owner type, sourced from the
+/// credentials store. Used to overlay the flag onto cards built from the search/finder
+/// projections, which carry no credential columns.
+async fn reauth_flags(db: &Database, owner_type: OwnerType) -> Result<HashMap<i64, bool>, crate::store::Error> {
+  Ok(
+    infra::all(db)
+      .await?
+      .into_iter()
+      .filter(|cred| cred.owner_type() == owner_type)
+      .map(|cred| (cred.owner_id(), cred.needs_reauth()))
+      .collect(),
+  )
+}
+
 const SEARCH_INPUT_ID: &str = "roster-search-input";
 
 fn append_query(state: &mut State, fragment: &str) {
@@ -1921,7 +1948,12 @@ fn append_query(state: &mut State, fragment: &str) {
   }
 }
 
+#[cfg(test)]
 fn card_from_row(row: character_card::CardRow, now: DateTime<Utc>) -> CardModel {
+  card_from_row_with_reauth(row, now, false)
+}
+
+fn card_from_row_with_reauth(row: character_card::CardRow, now: DateTime<Utc>, needs_reauth: bool) -> CardModel {
   let store = images::default_store();
   CardModel {
     accent: parse_hex(row.squad_accent_hex.as_deref()),
@@ -1930,7 +1962,7 @@ fn card_from_row(row: character_card::CardRow, now: DateTime<Utc>) -> CardModel 
     docked: row.docked,
     location: row.location,
     name: row.name,
-    needs_reauth: false,
+    needs_reauth,
     portrait: images::resolve(&store, images::ImageKind::CharacterPortrait, row.character_id),
     position: row.position.unwrap_or(0),
     tags: row
@@ -1948,21 +1980,26 @@ fn card_from_row(row: character_card::CardRow, now: DateTime<Utc>) -> CardModel 
   }
 }
 
+#[cfg(test)]
 fn corp_card_from_row(row: corporation_card::CardRow) -> CorpCardModel {
+  corp_card_from_row_with_reauth(row, false)
+}
+
+fn corp_card_from_row_with_reauth(row: corporation_card::CardRow, needs_reauth: bool) -> CorpCardModel {
   let store = images::default_store();
   CorpCardModel {
     alliance: row.alliance_name,
     alliance_ticker: row.alliance_ticker,
     ceo: row.ceo_name,
     corporation_id: row.corporation_id,
-    // The corp finder projection carries no credential scopes; proactive drift is derived
-    // only on the owned-corp load path. The full grid reflects the flag.
+    // The corp finder projection carries no credential scopes; proactive scope drift is not
+    // recomputed here, but the persisted needs-reauth flag is overlaid from the credentials store.
     granted_scopes: None,
     hq: row.hq_name,
     logo: images::resolve(&store, images::ImageKind::CorporationLogo, row.corporation_id),
     members: Some(row.member_count),
     name: row.name,
-    needs_reauth: false,
+    needs_reauth,
     tags: row
       .tags
       .into_iter()
@@ -1984,7 +2021,18 @@ fn run_corp_search(db: Database, query: String, generation: u64) -> Task<Message
       let rows = org::search_corporations(&db, &parse(&query))
         .await
         .map_err(|err| err.to_string())?;
-      Ok(rows.into_iter().map(corp_card_from_row).collect::<Vec<_>>())
+      let reauth_by_id = reauth_flags(&db, OwnerType::Corporation)
+        .await
+        .map_err(|err| err.to_string())?;
+      Ok(
+        rows
+          .into_iter()
+          .map(|row| {
+            let needs_reauth = reauth_by_id.get(&row.corporation_id).copied().unwrap_or(false);
+            corp_card_from_row_with_reauth(row, needs_reauth)
+          })
+          .collect::<Vec<_>>(),
+      )
     },
     move |result| Message::CorpSearchResults {
       generation,
@@ -2001,7 +2049,18 @@ fn run_search(db: Database, query: String, generation: u64) -> Task<Message> {
       let rows = character::search(&db, &parse(&query), &now.to_rfc3339())
         .await
         .map_err(|err| err.to_string())?;
-      Ok(rows.into_iter().map(|row| card_from_row(row, now)).collect::<Vec<_>>())
+      let reauth_by_id = reauth_flags(&db, OwnerType::Character)
+        .await
+        .map_err(|err| err.to_string())?;
+      Ok(
+        rows
+          .into_iter()
+          .map(|row| {
+            let needs_reauth = reauth_by_id.get(&row.character_id).copied().unwrap_or(false);
+            card_from_row_with_reauth(row, now, needs_reauth)
+          })
+          .collect::<Vec<_>>(),
+      )
     },
     move |result| Message::SearchResults {
       generation,

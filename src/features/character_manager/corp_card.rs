@@ -1,5 +1,5 @@
 use iced::{
-  Background, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::Vertical,
   widget::{Column, Row, Space, Stack, container, mouse_area, text},
 };
@@ -9,10 +9,12 @@ use crate::{
   store::images,
   sync::Phase,
   ui::{
-    components::{avatar::Avatar, chip::chip, eyebrow::eyebrow, rule},
+    components::{avatar::Avatar, chip::chip, eyebrow::eyebrow, rule, status},
     style::{color, radius, spacing, typography},
   },
 };
+
+const REAUTH_BADGE_RADIUS: f32 = 4.0;
 
 const CHIP_GAP: f32 = 5.0;
 const HAIRLINE: f32 = 1.0;
@@ -55,8 +57,12 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
   ];
 
-  // Re-authorization is offered through the right-click context menu (see corp_context_menu_view),
-  // matching the character cards — the card itself carries no re-auth button.
+  // A single red "Needs re-authorization" badge surfaces a revoked/expired/scope-short token; the
+  // re-auth action lives in the right-click context menu (see corp_context_menu_view), matching the
+  // character cards.
+  if model.needs_reauth {
+    sections.push(reauth_badge());
+  }
   if let Some(indicator) = sync_failure_indicator(failure) {
     sections.push(indicator);
   }
@@ -240,6 +246,44 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
     .into()
 }
 
+/// The single red "Needs re-authorization" badge — an uppercase mono pill on a danger-colored
+/// background, mirroring the collapsed one-state TokenAlertBadge in the design mock.
+fn reauth_badge<'a>() -> Element<'a, Message> {
+  let on_danger = color::on_fill(color::status::DANGER);
+  let pill = container(
+    Row::with_children(vec![
+      status::dot(on_danger).into(),
+      text("Needs re-authorization")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(move |_| text::Style {
+          color: Some(on_danger),
+        })
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .padding([spacing::UNIT, spacing::SPACE_2])
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::status::DANGER)),
+    border: Border {
+      radius: REAUTH_BADGE_RADIUS.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  container(pill)
+    .padding(Padding {
+      top: 0.0,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .into()
+}
+
 fn sync_failure_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   match failure? {
     Phase::BackingOff | Phase::Failed => {}
@@ -398,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_proactive_scope_drift_treatment_without_a_sync_failure() {
+    fn it_renders_a_needs_reauth_badge_on_a_flagged_corp_without_a_sync_failure() {
       let mut model = base_model();
       model.needs_reauth = true;
 

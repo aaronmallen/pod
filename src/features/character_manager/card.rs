@@ -79,8 +79,11 @@ pub(super) fn card<'a>(
     stats_row(model),
   ];
 
-  // Re-authorization is offered through the right-click context menu (context_menu_view), not a
-  // card button.
+  // A single red "Needs re-authorization" badge surfaces a revoked/expired/scope-short token; the
+  // actual re-auth action is offered through the right-click context menu (context_menu_view).
+  if model.needs_reauth {
+    sections.push(reauth_badge());
+  }
   if let Some(indicator) = sync_indicator(failure) {
     sections.push(indicator);
   }
@@ -454,6 +457,44 @@ fn stat<'a>(label: &'a str, value: String, value_font: iced::Font) -> Element<'a
     .into()
 }
 
+/// The single red "Needs re-authorization" badge — an uppercase mono pill on a danger-colored
+/// background, mirroring the collapsed one-state TokenAlertBadge in the design mock.
+fn reauth_badge<'a>() -> Element<'a, Message> {
+  let on_danger = color::on_fill(color::status::DANGER);
+  let pill = container(
+    Row::with_children(vec![
+      status::dot(on_danger).into(),
+      text("Needs re-authorization")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(move |_| text::Style {
+          color: Some(on_danger),
+        })
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .padding([spacing::UNIT, spacing::SPACE_2])
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::status::DANGER)),
+    border: Border {
+      radius: STATUS_PILL_RADIUS.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  container(pill)
+    .padding(Padding {
+      top: 0.0,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .into()
+}
+
 fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   let label = match failure? {
     Phase::BackingOff => "Sync backing off",
@@ -728,13 +769,14 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_a_needs_reauth_character_without_a_card_affordance() {
-      // needs_reauth no longer paints anything on the card itself (re-auth lives in the
-      // right-click context menu); the card still renders normally.
+    fn it_renders_a_needs_reauth_badge_on_a_flagged_character() {
+      // A flagged credential paints the single red "Needs re-authorization" badge on the card;
+      // the re-auth action itself still lives in the right-click context menu.
       let mut model = base_model();
       model.needs_reauth = true;
 
-      let _el: Element<'_, Message> = card(&model, Some(Phase::Failed), false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _with_failure: Element<'_, Message> = card(&model, Some(Phase::Failed), false, true);
     }
 
     #[test]

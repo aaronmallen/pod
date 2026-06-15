@@ -528,6 +528,55 @@ mod tests {
         assert!(JobKind::AssetSync.is_scope_granted(Subject::Corporation(2), &corp_grant));
       }
     }
+
+    mod required_scope {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_resolves_a_static_scope_list_for_every_job_kind() {
+        for kind in JobKind::ALL.iter().copied() {
+          let scopes = kind.required_scope();
+          // Public kinds run without any granted scope; everything else lists at least one.
+          let is_public = matches!(
+            kind,
+            JobKind::CharacterAbyssals
+              | JobKind::CharacterProfile
+              | JobKind::IndustryCostIndices
+              | JobKind::KillmailDetailBackfill
+              | JobKind::KillmailReconcile
+              | JobKind::MarketPrices
+              | JobKind::NetWorthSnapshot
+          );
+
+          assert_eq!(
+            scopes.is_empty(),
+            is_public,
+            "{kind:?} scope-emptiness must match its public status"
+          );
+        }
+      }
+
+      #[test]
+      fn it_pairs_corporation_jobs_with_the_roles_scope() {
+        assert!(
+          JobKind::CorporationWallet
+            .required_scope()
+            .contains(&scopes::CORPORATION_ROLES)
+        );
+        assert!(
+          JobKind::CorporationBlueprints
+            .required_scope()
+            .contains(&scopes::CORPORATION_ROLES)
+        );
+        assert!(
+          JobKind::CharacterWallet
+            .required_scope()
+            .contains(&scopes::CHARACTER_WALLET)
+        );
+      }
+    }
   }
 
   mod run {

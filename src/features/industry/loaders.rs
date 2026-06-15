@@ -1129,4 +1129,38 @@ mod tests {
       assert!(!reference.reaction);
     }
   }
+
+  mod build_blueprint {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_falls_back_to_placeholder_labels_when_nothing_resolves() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut resolvers = BlueprintResolvers::new();
+      let input = BlueprintInput {
+        item_id: 100,
+        location_id: 60_003_760,
+        material_efficiency: 10,
+        owner: Owner::Character(7),
+        runs: 5,
+        time_efficiency: 20,
+        type_id: 587,
+      };
+
+      let blueprint = super::build_blueprint(&db, &mut resolvers, input).await;
+
+      assert_eq!(blueprint.name, "Type 587");
+      assert_eq!(blueprint.location, "Location 60003760");
+      assert!(blueprint.product_name.is_none());
+      assert!(blueprint.group_name.is_empty());
+      assert!(!blueprint.reaction);
+      assert_eq!(blueprint.item_id, 100);
+      assert_eq!(blueprint.material_efficiency, 10);
+      assert_eq!(blueprint.time_efficiency, 20);
+      assert_eq!(blueprint.runs, 5);
+      assert_eq!(blueprint.owner, Owner::Character(7));
+    }
+  }
 }

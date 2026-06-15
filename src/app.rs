@@ -5182,20 +5182,60 @@ mod tests {
       let _ = status_bar_view(&app);
     }
 
-    #[test]
-    fn it_builds_the_subscription_set_for_each_live_screen() {
+    #[tokio::test]
+    async fn it_builds_the_subscription_set_for_each_live_screen() {
       let app = test_app();
       let _ = subscription(&app);
 
       let mut app = ready_app();
+      let runtime = test_runtime().await;
       app.splash = Some(splash::State::default());
-      app.settings = None;
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.calendar = Some(calendar::State::new(1, app.now, calendar_features(&app)));
+      app.industry = Some(industry::State::new(1, industry_required_scopes()));
+      app.runtime = Some(runtime);
       app.sync_popover_open = true;
       app.status.apply(&crate::sync::Event::Started {
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
       });
       app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(1)));
+
+      // Holding the lease arms the heartbeat, periodic-pull, and periodic-push timers.
+      let (_dir, session) = temp_sync_session();
+      app.sync_session = Some(session);
+      app.read_only = None;
       let _ = subscription(&app);
+
+      // A parked (read-only) session arms the re-acquire timer instead.
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+      let _ = subscription(&app);
+    }
+
+    #[tokio::test]
+    async fn it_drives_character_detail_through_the_runtime_backed_handler() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+
+      // CharacterChanged navigates, selects the pilot, and batches an update with a reload.
+      let _ = handle_character_detail(&mut app, character_detail::Message::CharacterChanged(7));
+      assert_eq!(app.route, Route::CharacterDetail(7));
+      assert_eq!(app.selected_character, Some(7));
+
+      // ReauthRequested reroutes to the app-level reauth flow.
+      let _ = handle_character_detail(&mut app, character_detail::Message::ReauthRequested(7));
+
+      // ContactEntityInput batches the modal update with a debounced entity search task.
+      let _ = handle_character_detail(
+        &mut app,
+        character_detail::Message::ContactEntityInput("jita".to_owned()),
+      );
+
+      // Any other message falls through to the plain feature update.
+      let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
     }
   }
 

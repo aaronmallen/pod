@@ -467,60 +467,30 @@ impl Planner {
       }
       Message::CursorMoved(point) => self.cursor = Some(point),
       Message::FacilityPickerToggled {
-        path,
-      } => self.toggle_facility_picker(path),
-      Message::FacilitySearchChanged {
-        path,
-        query,
-      } => match self.facility_picker.as_mut().filter(|state| state.path == path) {
-        Some(state) => state.query = query,
-        // Typing into the always-visible field opens the picker for that node.
-        None => {
-          self.facility_picker = Some(FacilityPickerState {
-            anchor: self.cursor.unwrap_or_default(),
-            path,
-            query,
-          })
-        }
-      },
-      Message::FacilitySelected {
-        path,
-        solar_system_id,
-      } => {
-        if let Some(node) = self.tree.at_mut(&path) {
-          node.facility_system = Some(solar_system_id);
-        }
-        self.facility_picker = None;
+        ..
       }
+      | Message::FacilitySearchChanged {
+        ..
+      }
+      | Message::FacilitySelected {
+        ..
+      } => self.update_facility(message),
       Message::MaterialEfficiencyChanged {
-        me,
-        path,
-      } => {
-        if let Some(node) = self.tree.at_mut(&path) {
-          node.me = me.clamp(0, ME_MAX);
-        }
+        ..
       }
+      | Message::TimeEfficiencyChanged {
+        ..
+      } => self.update_efficiency(message),
       Message::MaterialRightPressed {
-        mat,
-        parent,
-      } => self.open_menu(parent, mat),
-      Message::MenuClosed => self.menu = None,
-      Message::NodeBrokenDown {
-        mat,
-        parent,
-      } => {
-        self.break_down(&parent, mat);
-        self.menu = None;
+        ..
       }
-      Message::NodeCollapsed {
-        mat,
-        parent,
-      } => {
-        if let Some(node) = self.tree.at_mut(&parent) {
-          node.children.remove(&mat);
-        }
-        self.menu = None;
+      | Message::MenuClosed
+      | Message::NodeBrokenDown {
+        ..
       }
+      | Message::NodeCollapsed {
+        ..
+      } => self.update_menu(message),
       Message::PaneDrag(x) => {
         self.detail_pane.drag_to(x);
       }
@@ -554,6 +524,53 @@ impl Planner {
       }
       // Clipboard write is handled by the parent industry::update; nothing to do here.
       Message::ShoppingListCopied => {}
+    }
+  }
+
+  /// Facility-picker message arms split out of [`update`] to keep its cyclomatic complexity in check.
+  fn update_facility(&mut self, message: Message) {
+    match message {
+      Message::FacilityPickerToggled {
+        path,
+      } => self.toggle_facility_picker(path),
+      Message::FacilitySearchChanged {
+        path,
+        query,
+      } => match self.facility_picker.as_mut().filter(|state| state.path == path) {
+        Some(state) => state.query = query,
+        // Typing into the always-visible field opens the picker for that node.
+        None => {
+          self.facility_picker = Some(FacilityPickerState {
+            anchor: self.cursor.unwrap_or_default(),
+            path,
+            query,
+          })
+        }
+      },
+      Message::FacilitySelected {
+        path,
+        solar_system_id,
+      } => {
+        if let Some(node) = self.tree.at_mut(&path) {
+          node.facility_system = Some(solar_system_id);
+        }
+        self.facility_picker = None;
+      }
+      _ => {}
+    }
+  }
+
+  /// ME/TE slider message arms split out of [`update`] to keep its cyclomatic complexity in check.
+  fn update_efficiency(&mut self, message: Message) {
+    match message {
+      Message::MaterialEfficiencyChanged {
+        me,
+        path,
+      } => {
+        if let Some(node) = self.tree.at_mut(&path) {
+          node.me = me.clamp(0, ME_MAX);
+        }
+      }
       Message::TimeEfficiencyChanged {
         path,
         te,
@@ -562,6 +579,36 @@ impl Planner {
           node.te = te.clamp(0, TE_MAX);
         }
       }
+      _ => {}
+    }
+  }
+
+  /// Material context-menu / break-down message arms split out of [`update`] to keep its cyclomatic
+  /// complexity in check.
+  fn update_menu(&mut self, message: Message) {
+    match message {
+      Message::MaterialRightPressed {
+        mat,
+        parent,
+      } => self.open_menu(parent, mat),
+      Message::MenuClosed => self.menu = None,
+      Message::NodeBrokenDown {
+        mat,
+        parent,
+      } => {
+        self.break_down(&parent, mat);
+        self.menu = None;
+      }
+      Message::NodeCollapsed {
+        mat,
+        parent,
+      } => {
+        if let Some(node) = self.tree.at_mut(&parent) {
+          node.children.remove(&mat);
+        }
+        self.menu = None;
+      }
+      _ => {}
     }
   }
 
@@ -3250,6 +3297,60 @@ mod tests {
       let rendered = super::super::view(&planner, Scope::All);
       let _ = Tree::new(rendered.as_widget());
       assert_eq!(planner.picker_scroll_offset(), 4_000.0);
+    }
+
+    #[test]
+    fn it_renders_the_product_picker_across_empty_and_populated_result_states() {
+      // Picker open with no query — the seeded catalog (Hulk) yields a populated result list.
+      let mut populated = planner();
+      populated.update(Message::PickerToggled);
+      let _ = Tree::new(super::super::view(&populated, Scope::All).as_widget());
+
+      // A query that matches nothing renders the "No products match <query>" empty state.
+      let mut no_match = planner();
+      no_match.update(Message::SearchChanged("zzzznomatch".to_owned()));
+      let _ = Tree::new(super::super::view(&no_match, Scope::All).as_widget());
+
+      // A fresh planner with the picker open and no recent products renders the bare empty state.
+      let mut empty = Planner::new();
+      empty.update(Message::PickerToggled);
+      let _ = Tree::new(super::super::view(&empty, Scope::All).as_widget());
+
+      // No catalog matches under the chosen category, but a recently picked product backfills the list.
+      let mut recent = planner();
+      recent.update(Message::PickerToggled);
+      recent.update(Message::CategorySelected(Category::Module));
+      let _ = Tree::new(super::super::view(&recent, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_facility_picker_panel_across_match_states() {
+      // Open the facility picker on the root node — renders a row per eligible seeded facility.
+      let mut root = planner();
+      root.update(Message::CursorMoved(Point::new(120.0, 80.0)));
+      root.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
+
+      // A query that matches no facility renders the "No facilities match." empty state.
+      root.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "zzzznomatch".to_owned(),
+      });
+      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
+
+      // Opening the picker on a sub-node resolves the reaction flag from the node's own recipe.
+      let mut nested = planner();
+      nested.update(Message::CursorMoved(Point::new(120.0, 80.0)));
+      nested.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+      nested.update(Message::FacilityPickerToggled {
+        path: vec![RETRIEVER],
+      });
+      let _ = Tree::new(super::super::view(&nested, Scope::All).as_widget());
     }
   }
 

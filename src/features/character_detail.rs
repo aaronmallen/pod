@@ -551,32 +551,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StandingsScrolled {
       ..
     } => update_pagination(state, message, db),
-    Message::KilllogFilterChanged(filter) => {
-      state.killlog_filter = filter;
-      Task::none()
-    }
-    Message::KillmailSelected(killmail_id) => {
-      let viewing = state.active;
-      Task::perform(load_killmail_detail(db.clone(), viewing, killmail_id), |detail| {
-        Message::KillmailDetailLoaded(Box::new(detail))
-      })
-    }
-    Message::KillmailDetailLoaded(detail) => {
-      state.selected_killmail = *detail;
-      Task::none()
-    }
-    Message::CloseKillmailDetail => {
-      state.selected_killmail = None;
-      Task::none()
-    }
-    Message::NotificationsFilterChanged(filter) => {
-      state.notifications_filter = filter;
-      Task::none()
-    }
-    Message::NotificationRead(notification_id) => Task::perform(
-      mark_notification_read(db.clone(), state.active, notification_id),
-      |reloaded| Message::Reloaded(Box::new(reloaded)),
-    ),
+    Message::CloseKillmailDetail
+    | Message::KilllogFilterChanged(_)
+    | Message::KillmailDetailLoaded(_)
+    | Message::KillmailSelected(_)
+    | Message::NotificationRead(_)
+    | Message::NotificationsFilterChanged(_) => update_killlog(state, message, db),
     Message::Loaded(loaded) => {
       let Loaded {
         clones,
@@ -624,6 +604,55 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       Task::none()
     }
     Message::ReauthRequested(_) => Task::none(),
+    Message::StandingsClearSearch
+    | Message::StandingsFilterChanged(_)
+    | Message::StandingsInsertQuery(_)
+    | Message::StandingsResults(_)
+    | Message::StandingsSearchChanged(_)
+    | Message::StandingsToggleHelp => update_standings(state, message, db),
+    Message::TabChanged(tab) => {
+      state.active_tab = tab;
+      Task::none()
+    }
+  }
+}
+
+/// Kill-log and notification message arms split out of [`update`] to keep its cyclomatic complexity in check.
+fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::KilllogFilterChanged(filter) => {
+      state.killlog_filter = filter;
+      Task::none()
+    }
+    Message::KillmailSelected(killmail_id) => {
+      let viewing = state.active;
+      Task::perform(load_killmail_detail(db.clone(), viewing, killmail_id), |detail| {
+        Message::KillmailDetailLoaded(Box::new(detail))
+      })
+    }
+    Message::KillmailDetailLoaded(detail) => {
+      state.selected_killmail = *detail;
+      Task::none()
+    }
+    Message::CloseKillmailDetail => {
+      state.selected_killmail = None;
+      Task::none()
+    }
+    Message::NotificationsFilterChanged(filter) => {
+      state.notifications_filter = filter;
+      Task::none()
+    }
+    Message::NotificationRead(notification_id) => Task::perform(
+      mark_notification_read(db.clone(), state.active, notification_id),
+      |reloaded| Message::Reloaded(Box::new(reloaded)),
+    ),
+    _ => Task::none(),
+  }
+}
+
+/// Standings search/filter/help message arms split out of [`update`] to keep its cyclomatic complexity in check.
+fn update_standings(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::StandingsClearSearch => {
       state.standings_query.clear();
       Task::batch([
@@ -669,10 +698,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.standings_help_open = !state.standings_help_open;
       Task::none()
     }
-    Message::TabChanged(tab) => {
-      state.active_tab = tab;
-      Task::none()
-    }
+    _ => Task::none(),
   }
 }
 

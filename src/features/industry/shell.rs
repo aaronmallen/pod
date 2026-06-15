@@ -5,7 +5,7 @@ use iced::{
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
-use super::{IndustryJob, Message, Owner, Scope, State, Tab, blueprints, jobs, switcher};
+use super::{IndustryJob, Message, Owner, Scope, State, Tab, blueprints, jobs, planner, switcher};
 use crate::ui::{
   components::{
     backdrop, forbidden,
@@ -299,6 +299,11 @@ fn tab_count(state: &State, tab: Tab) -> String {
   match tab {
     Tab::Blueprints => state.visible_blueprints().len().to_string(),
     Tab::Jobs => state.visible_jobs().len().to_string(),
+    Tab::Planner => state
+      .planner()
+      .plan()
+      .map(|plan| plan.node_count().to_string())
+      .unwrap_or_default(),
   }
 }
 
@@ -306,6 +311,7 @@ fn tab_icon(tab: Tab) -> Icon {
   match tab {
     Tab::Blueprints => Icon::doc(),
     Tab::Jobs => Icon::industry(),
+    Tab::Planner => Icon::planner(),
   }
 }
 
@@ -313,6 +319,7 @@ fn tab_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   match state.tab() {
     Tab::Blueprints => blueprints::tab(state),
     Tab::Jobs => jobs::tab(state, now),
+    Tab::Planner => planner::view(state.planner(), state.active()).map(Message::Planner),
   }
 }
 

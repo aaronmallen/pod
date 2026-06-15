@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{
   Scope,
@@ -21,6 +21,74 @@ pub struct BlueprintRecipe {
   pub product_type_id: i64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogEntry {
+  pub category: Category,
+  pub group_name: String,
+  pub is_reaction: bool,
+  pub name: String,
+  pub type_id: i64,
+  pub volume: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Category {
+  Ammo,
+  Component,
+  Fuel,
+  Module,
+  #[default]
+  Other,
+  Reaction,
+  Ship,
+}
+
+impl Category {
+  pub const PICKER: [Category; 6] = [
+    Category::Ship,
+    Category::Module,
+    Category::Ammo,
+    Category::Component,
+    Category::Fuel,
+    Category::Reaction,
+  ];
+
+  /// Maps EVE category/group names to a coarse picker facet; `is_reaction` overrides the category entirely,
+  /// and fuel/component fall back on group-name substrings because those items live under generic EVE categories.
+  fn classify(category_name: &str, group_name: &str, is_reaction: bool) -> Self {
+    if is_reaction {
+      return Category::Reaction;
+    }
+    let category = category_name.to_lowercase();
+    let group = group_name.to_lowercase();
+    if category == "ship" {
+      Category::Ship
+    } else if category == "module" {
+      Category::Module
+    } else if category == "charge" {
+      Category::Ammo
+    } else if group.contains("fuel") || group.contains("ice product") {
+      Category::Fuel
+    } else if category == "commodity" || category == "material" || group.contains("component") {
+      Category::Component
+    } else {
+      Category::Other
+    }
+  }
+
+  pub fn label(self) -> &'static str {
+    match self {
+      Category::Ammo => "Charges",
+      Category::Component => "Components",
+      Category::Fuel => "Fuel",
+      Category::Module => "Modules",
+      Category::Other => "Other",
+      Category::Reaction => "Reactions",
+      Category::Ship => "Ships",
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OwnedBlueprint {
   pub in_scope: bool,
@@ -34,6 +102,75 @@ impl OwnedBlueprint {
   pub fn is_original(&self) -> bool {
     self.runs < 0
   }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OwnedSummary {
+  pub in_scope: bool,
+  pub is_original: bool,
+  pub material_efficiency: i64,
+  pub time_efficiency: i64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PlannerData {
+  pub catalog: Vec<CatalogEntry>,
+  pub facilities: Vec<PlannerFacility>,
+  pub names: HashMap<i64, String>,
+  pub owned: HashMap<i64, OwnedSummary>,
+  pub prices: HashMap<i64, f64>,
+  pub recipes: HashMap<i64, Recipe>,
+  pub volumes: HashMap<i64, f64>,
+}
+
+impl PlannerData {
+  pub fn name(&self, type_id: i64) -> String {
+    self
+      .names
+      .get(&type_id)
+      .cloned()
+      .unwrap_or_else(|| format!("Type {type_id}"))
+  }
+
+  pub fn price(&self, type_id: i64) -> f64 {
+    self.prices.get(&type_id).copied().unwrap_or(0.0)
+  }
+
+  pub fn recipe(&self, type_id: i64) -> Option<&Recipe> {
+    self.recipes.get(&type_id)
+  }
+
+  pub fn volume(&self, type_id: i64) -> f64 {
+    self.volumes.get(&type_id).copied().unwrap_or(0.0)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlannerFacility {
+  pub manufacturing_index: Option<f64>,
+  pub reaction_index: Option<f64>,
+  pub solar_system_id: i64,
+}
+
+impl PlannerFacility {
+  pub fn index_for(&self, is_reaction: bool) -> Option<f64> {
+    if is_reaction {
+      self.reaction_index
+    } else {
+      self.manufacturing_index
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recipe {
+  pub activity_id: i64,
+  pub blueprint_type_id: i64,
+  pub is_reaction: bool,
+  pub materials: Vec<Material>,
+  pub output_per_run: i64,
+  /// Duration of one run/cycle in seconds, before time-efficiency reduction.
+  pub time_per_run: i64,
 }
 
 pub async fn average_price(db: &Database, type_id: i64) -> Option<f64> {
@@ -150,6 +287,235 @@ fn rank_best_owned(mut owned: Vec<OwnedBlueprint>) -> Option<OwnedBlueprint> {
       .then(a.item_id.cmp(&b.item_id))
   });
   owned.into_iter().next()
+}
+
+pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
+  let recipes = recipes(db).await;
+  let names = type_names(db, &recipes).await;
+  let volumes = type_volumes(db, &recipes).await;
+  let catalog = catalog(db, &recipes, &names, &volumes).await;
+  let owned = owned_index(db, &recipes, scope).await;
+  let facilities = planner_facilities(db).await;
+  let prices = prices(db).await;
+
+  PlannerData {
+    catalog,
+    facilities,
+    names,
+    owned,
+    prices,
+    recipes,
+    volumes,
+  }
+}
+
+async fn catalog(
+  db: &Database,
+  recipes: &HashMap<i64, Recipe>,
+  names: &HashMap<i64, String>,
+  volumes: &HashMap<i64, f64>,
+) -> Vec<CatalogEntry> {
+  let categories = product_categories(db, recipes).await;
+  let mut catalog: Vec<CatalogEntry> = recipes
+    .iter()
+    .map(|(&type_id, recipe)| {
+      let (group_name, category_name) = categories
+        .get(&type_id)
+        .cloned()
+        .unwrap_or_else(|| (String::new(), String::new()));
+      CatalogEntry {
+        category: Category::classify(&category_name, &group_name, recipe.is_reaction),
+        group_name,
+        is_reaction: recipe.is_reaction,
+        name: names
+          .get(&type_id)
+          .cloned()
+          .unwrap_or_else(|| format!("Type {type_id}")),
+        type_id,
+        volume: volumes.get(&type_id).copied().unwrap_or(0.0),
+      }
+    })
+    .collect();
+  catalog.sort_by(|a, b| {
+    a.name
+      .to_lowercase()
+      .cmp(&b.name.to_lowercase())
+      .then(a.type_id.cmp(&b.type_id))
+  });
+  catalog
+}
+
+async fn owned_index(db: &Database, recipes: &HashMap<i64, Recipe>, scope: Scope) -> HashMap<i64, OwnedSummary> {
+  let blueprint_to_products = blueprint_products(recipes);
+  let all = blueprints::list_all(db).await.unwrap_or_default();
+  let mut owned: HashMap<i64, OwnedSummary> = HashMap::new();
+
+  let mut absorb = |blueprint_type_id: i64, in_scope: bool, is_original: bool, me: i64, te: i64| {
+    let Some(products) = blueprint_to_products.get(&blueprint_type_id) else {
+      return;
+    };
+    for &product in products {
+      let candidate = OwnedSummary {
+        in_scope,
+        is_original,
+        material_efficiency: me,
+        time_efficiency: te,
+      };
+      owned
+        .entry(product)
+        .and_modify(|current| {
+          if owned_rank(&candidate) > owned_rank(current) {
+            *current = candidate;
+          }
+        })
+        .or_insert(candidate);
+    }
+  };
+
+  for row in all.character_blueprints {
+    let in_scope = matches!(scope, Scope::All) || matches!(scope, Scope::Char(id) if id == row.character_id());
+    absorb(
+      row.type_id(),
+      in_scope,
+      row.runs() < 0,
+      row.material_efficiency(),
+      row.time_efficiency(),
+    );
+  }
+  for row in all.corporation_blueprints {
+    let in_scope = matches!(scope, Scope::All) || matches!(scope, Scope::Corp(id) if id == row.corporation_id());
+    absorb(
+      row.type_id(),
+      in_scope,
+      row.runs() < 0,
+      row.material_efficiency(),
+      row.time_efficiency(),
+    );
+  }
+  owned
+}
+
+async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
+  let mut by_system: BTreeMap<i64, PlannerFacility> = BTreeMap::new();
+  for facility in facilities(db).await {
+    let system = facility.solar_system_id();
+    if by_system.contains_key(&system) {
+      continue;
+    }
+    let manufacturing_index = facility.manufacturing_index();
+    let reaction_index = cost_index(db, system, REACTION_ACTIVITY_ID).await;
+    by_system.insert(
+      system,
+      PlannerFacility {
+        manufacturing_index,
+        reaction_index,
+        solar_system_id: system,
+      },
+    );
+  }
+  by_system.into_values().collect()
+}
+
+async fn product_categories(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, (String, String)> {
+  let mut out: HashMap<i64, (String, String)> = HashMap::new();
+  let rows: Vec<(i64, String, String)> = sqlx::query_as(
+    "SELECT t.id, g.name, c.name FROM item_types t \
+    JOIN item_groups g ON g.id = t.group_id \
+    JOIN item_categories c ON c.id = g.category_id",
+  )
+  .fetch_all(&db.0)
+  .await
+  .unwrap_or_default();
+  for (type_id, group_name, category_name) in rows {
+    if recipes.contains_key(&type_id) {
+      out.insert(type_id, (group_name, category_name));
+    }
+  }
+  out
+}
+
+/// Builds the product→Recipe map; rows are fetched ORDER BY activity_id so manufacturing (1) arrives before
+/// reaction (11) — the early-continue guard then silently drops any reaction row for a product that already has
+/// a manufacturing recipe, making manufacturing the canonical path wherever both exist.
+async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
+  let products: Vec<(i64, i64, i64, i64)> = sqlx::query_as(
+    "SELECT product_type_id, blueprint_type_id, activity_id, quantity FROM blueprint_activity_products \
+    WHERE activity_id IN (?, ?) ORDER BY product_type_id, activity_id",
+  )
+  .bind(MANUFACTURING_ACTIVITY_ID)
+  .bind(REACTION_ACTIVITY_ID)
+  .fetch_all(&db.0)
+  .await
+  .unwrap_or_default();
+
+  let mut recipes: HashMap<i64, Recipe> = HashMap::new();
+  for (product_type_id, blueprint_type_id, activity_id, quantity) in products {
+    if activity_id == REACTION_ACTIVITY_ID && recipes.contains_key(&product_type_id) {
+      continue;
+    }
+    let materials = materials_for(db, blueprint_type_id, activity_id).await;
+    let time_per_run = build_time(db, blueprint_type_id, activity_id)
+      .await
+      .map(|(time, _)| time)
+      .unwrap_or(0);
+    recipes.insert(
+      product_type_id,
+      Recipe {
+        activity_id,
+        blueprint_type_id,
+        is_reaction: activity_id == REACTION_ACTIVITY_ID,
+        materials,
+        output_per_run: quantity.max(1),
+        time_per_run,
+      },
+    );
+  }
+  recipes
+}
+
+async fn type_names(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, String> {
+  let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, name FROM item_types")
+    .fetch_all(&db.0)
+    .await
+    .unwrap_or_default();
+  let referenced = referenced_type_ids(recipes);
+  rows.into_iter().filter(|(id, _)| referenced.contains(id)).collect()
+}
+
+async fn type_volumes(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, f64> {
+  let rows: Vec<(i64, Option<f64>, Option<f64>)> = sqlx::query_as("SELECT id, packaged_volume, volume FROM item_types")
+    .fetch_all(&db.0)
+    .await
+    .unwrap_or_default();
+  let referenced = referenced_type_ids(recipes);
+  rows
+    .into_iter()
+    .filter(|(id, _, _)| referenced.contains(id))
+    .map(|(id, packaged, volume)| (id, packaged.or(volume).unwrap_or(0.0)))
+    .collect()
+}
+
+fn blueprint_products(recipes: &HashMap<i64, Recipe>) -> HashMap<i64, Vec<i64>> {
+  let mut out: HashMap<i64, Vec<i64>> = HashMap::new();
+  for (&product, recipe) in recipes {
+    out.entry(recipe.blueprint_type_id).or_default().push(product);
+  }
+  out
+}
+
+fn owned_rank(summary: &OwnedSummary) -> (bool, bool, i64) {
+  (summary.in_scope, summary.is_original, summary.material_efficiency)
+}
+
+fn referenced_type_ids(recipes: &HashMap<i64, Recipe>) -> std::collections::HashSet<i64> {
+  let mut ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+  for (&product, recipe) in recipes {
+    ids.insert(product);
+    for material in &recipe.materials {
+      ids.insert(material.type_id);
+    }
+  }
+  ids
 }
 
 async fn recipe_for_activity(db: &Database, product_type_id: i64, activity_id: i64) -> Option<BlueprintRecipe> {
@@ -517,6 +883,113 @@ mod tests {
       let db = store::open_test().await.unwrap();
 
       assert_eq!(super::best_owned_blueprint(&db, HULK_BLUEPRINT, Scope::All).await, None);
+    }
+  }
+
+  mod category {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_classifies_a_reaction_regardless_of_its_category() {
+      assert_eq!(
+        Category::classify("Commodity", "Composite Reaction", true),
+        Category::Reaction
+      );
+    }
+
+    #[test]
+    fn it_maps_named_categories_to_picker_facets() {
+      assert_eq!(Category::classify("Ship", "Mining Barge", false), Category::Ship);
+      assert_eq!(Category::classify("Module", "Mining Laser", false), Category::Module);
+      assert_eq!(Category::classify("Charge", "Mining Crystal", false), Category::Ammo);
+    }
+
+    #[test]
+    fn it_falls_back_to_group_hints_for_fuel_and_components() {
+      assert_eq!(Category::classify("Commodity", "Fuel Block", false), Category::Fuel);
+      assert_eq!(
+        Category::classify("Commodity", "Construction Component", false),
+        Category::Component
+      );
+    }
+  }
+
+  mod owned_rank {
+
+    use super::*;
+
+    fn summary(in_scope: bool, is_original: bool, me: i64) -> OwnedSummary {
+      OwnedSummary {
+        in_scope,
+        is_original,
+        material_efficiency: me,
+        time_efficiency: 0,
+      }
+    }
+
+    #[test]
+    fn it_orders_scope_then_originality_then_efficiency() {
+      let in_scope_bpc = summary(true, false, 0);
+      let out_scope_bpo = summary(false, true, 10);
+      let in_scope_bpo_low = summary(true, true, 5);
+      let in_scope_bpo_high = summary(true, true, 8);
+
+      assert!(super::owned_rank(&in_scope_bpc) > super::owned_rank(&out_scope_bpo));
+      assert!(super::owned_rank(&in_scope_bpo_low) > super::owned_rank(&in_scope_bpc));
+      assert!(super::owned_rank(&in_scope_bpo_high) > super::owned_rank(&in_scope_bpo_low));
+    }
+  }
+
+  mod load_data {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_builds_recipes_owned_index_and_catalog() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
+      insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
+      sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (463, 6, 'Mining Barge', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, volume) VALUES \
+        (?, 463, 'A Hulk.', 'Hulk', 1, 3750.0)",
+      )
+      .bind(HULK)
+      .execute(&db.0)
+      .await
+      .unwrap();
+      blueprints::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_blueprint(CHARACTER_ID, 1, HULK_BLUEPRINT, -1, 9)],
+      )
+      .await
+      .unwrap();
+
+      let data = super::load_data(&db, Scope::All).await;
+
+      let recipe = data.recipe(HULK).unwrap();
+      assert_eq!(recipe.blueprint_type_id, HULK_BLUEPRINT);
+      assert_eq!(recipe.materials, vec![Material::new(TRITANIUM, 100)]);
+
+      let owned = data.owned.get(&HULK).unwrap();
+      assert_eq!(owned.material_efficiency, 9);
+      assert!(owned.is_original);
+
+      let entry = data.catalog.iter().find(|entry| entry.type_id == HULK).unwrap();
+      assert_eq!(entry.category, Category::Ship);
+      assert_eq!(entry.name, "Hulk");
     }
   }
 }

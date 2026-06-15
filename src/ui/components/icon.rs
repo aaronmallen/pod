@@ -254,6 +254,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pin.svg"))
   }
 
+  pub fn planner() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/planner.svg"))
+  }
+
   pub fn plus() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
   }

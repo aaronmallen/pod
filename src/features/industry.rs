@@ -1,6 +1,7 @@
 mod blueprints;
 mod jobs;
 mod loaders;
+mod planner;
 #[allow(dead_code)]
 mod planner_loaders;
 #[allow(dead_code)]
@@ -15,6 +16,7 @@ use chrono::{DateTime, Utc};
 use iced::{Element, Subscription, Task};
 
 pub use self::loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner};
+use self::planner::Planner;
 use crate::store::{Database, images};
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
@@ -50,15 +52,17 @@ pub enum Tab {
   Blueprints,
   #[default]
   Jobs,
+  Planner,
 }
 
 impl Tab {
-  pub const ALL: [Tab; 2] = [Tab::Jobs, Tab::Blueprints];
+  pub const ALL: [Tab; 3] = [Tab::Jobs, Tab::Blueprints, Tab::Planner];
 
   pub fn label(self) -> &'static str {
     match self {
       Tab::Blueprints => "Blueprints",
       Tab::Jobs => "Jobs",
+      Tab::Planner => "Planner",
     }
   }
 }
@@ -91,6 +95,8 @@ pub enum Message {
   GroupBySelected(GroupBy),
   Loaded(Box<Loaded>),
   PickerToggled,
+  Planner(planner::Message),
+  PlannerLoaded(Box<planner_loaders::PlannerData>),
   ReauthRequested(i64),
   ScopeSelected(Scope),
   TabSelected(Tab),
@@ -109,6 +115,7 @@ pub struct State {
   group_by: GroupBy,
   jobs: Vec<IndustryJob>,
   picker_open: bool,
+  planner: Planner,
   required_scopes: Vec<&'static str>,
   roster: Vec<RosterOwner>,
   tab: Tab,
@@ -131,6 +138,7 @@ impl State {
       group_by: GroupBy::default(),
       jobs: Vec::new(),
       picker_open: false,
+      planner: Planner::new(),
       required_scopes,
       roster: Vec::new(),
       tab: Tab::default(),
@@ -199,6 +207,10 @@ impl State {
 
   pub(super) fn picker_open(&self) -> bool {
     self.picker_open
+  }
+
+  pub(super) fn planner(&self) -> &Planner {
+    &self.planner
   }
 
   pub(super) fn required_scopes(&self) -> &[&'static str] {
@@ -283,6 +295,10 @@ pub fn reload(db: &Database, scope: Scope, required_scopes: &[&'static str]) -> 
   })
 }
 
+fn load_planner(db: &Database, scope: Scope) -> Task<Message> {
+  planner::load(db.clone(), scope).map(|data| Message::PlannerLoaded(Box::new(data)))
+}
+
 pub fn subscription(_state: &State) -> Subscription<Message> {
   iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
 }
@@ -337,15 +353,34 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       state.picker_open = !state.picker_open;
       Task::none()
     }
+    Message::Planner(planner_message) => {
+      let copy = matches!(planner_message, planner::Message::ShoppingListCopied);
+      state.planner.update(planner_message);
+      if copy {
+        return iced::clipboard::write(state.planner.shopping_list());
+      }
+      Task::none()
+    }
+    Message::PlannerLoaded(data) => {
+      state.planner.apply_data(*data);
+      Task::none()
+    }
     Message::ReauthRequested(_) => Task::none(),
     Message::ScopeSelected(scope) => {
       state.active = scope;
       state.picker_open = false;
       state.blueprint_scroll_offset = 0.0;
-      reload(db, scope, &state.required_scopes)
+      let mut tasks = vec![reload(db, scope, &state.required_scopes)];
+      if state.planner.is_loaded() {
+        tasks.push(load_planner(db, scope));
+      }
+      Task::batch(tasks)
     }
     Message::TabSelected(tab) => {
       state.tab = tab;
+      if tab == Tab::Planner && !state.planner.is_loaded() {
+        return load_planner(db, state.active);
+      }
       Task::none()
     }
     Message::Tick => Task::none(),
@@ -599,6 +634,86 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_planner_tab_loading_and_loaded() {
+      use planner_loaders::{CatalogEntry, Category, PlannerData, Recipe};
+      use planner_model::Material;
+
+      let mut state = populated();
+      state.tab = Tab::Planner;
+
+      {
+        let _loading: Element<'_, Message> = view(&state, &required(), now());
+      }
+
+      let mut data = PlannerData::default();
+      data.recipes.insert(
+        22_544,
+        Recipe {
+          activity_id: 1,
+          blueprint_type_id: 22_545,
+          is_reaction: false,
+          materials: vec![Material::new(17_478, 2), Material::new(34, 100)],
+          output_per_run: 1,
+          time_per_run: 3_600,
+        },
+      );
+      data.recipes.insert(
+        17_478,
+        Recipe {
+          activity_id: 1,
+          blueprint_type_id: 17_479,
+          is_reaction: false,
+          materials: vec![Material::new(34, 50)],
+          output_per_run: 1,
+          time_per_run: 600,
+        },
+      );
+      data.names.insert(22_544, "Hulk".to_owned());
+      data.names.insert(17_478, "Retriever".to_owned());
+      data.names.insert(34, "Tritanium".to_owned());
+      data.prices.insert(22_544, 200_000_000.0);
+      data.prices.insert(17_478, 30_000_000.0);
+      data.prices.insert(34, 5.0);
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Mining Barge".to_owned(),
+        is_reaction: false,
+        name: "Hulk".to_owned(),
+        type_id: 22_544,
+        volume: 3_750.0,
+      });
+      state.planner.apply_data(data);
+
+      // Exercise the loaded body, a breakdown, the Plans stub, and a context menu.
+      {
+        let _loaded: Element<'_, Message> = view(&state, &required(), now());
+      }
+      state.planner.update(planner::Message::NodeBrokenDown {
+        mat: 17_478,
+        parent: Vec::new(),
+      });
+      state
+        .planner
+        .update(planner::Message::RightTabSelected(planner::RightTab::Plans));
+      {
+        let _plans: Element<'_, Message> = view(&state, &required(), now());
+      }
+      state
+        .planner
+        .update(planner::Message::RightTabSelected(planner::RightTab::Detail));
+      state
+        .planner
+        .update(planner::Message::CursorMoved(iced::Point::new(20.0, 40.0)));
+      state.planner.update(planner::Message::MaterialRightPressed {
+        mat: 34,
+        parent: Vec::new(),
+      });
+      {
+        let _menu: Element<'_, Message> = view(&state, &required(), now());
+      }
+    }
+
+    #[test]
     fn it_renders_the_scope_picker_overlay() {
       let mut state = populated();
       state.picker_open = true;
@@ -648,6 +763,15 @@ mod tests {
         Message::BlueprintScrolled {
           absolute: 240.0,
         },
+        &db,
+        n,
+      );
+      let _ = update(&mut state, Message::TabSelected(Tab::Planner), &db, n);
+      let _ = update(&mut state, Message::PlannerLoaded(Box::default()), &db, n);
+      let _ = update(&mut state, Message::Planner(planner::Message::RunsChanged(5)), &db, n);
+      let _ = update(
+        &mut state,
+        Message::Planner(planner::Message::ShoppingListCopied),
         &db,
         n,
       );

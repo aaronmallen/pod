@@ -39,16 +39,27 @@ pub struct Panel<'a> {
   pub browse: &'a browser_tab::State,
   pub now: DateTime<Utc>,
   pub plans: &'a plans_tab::State,
+  pub selection_count: usize,
   pub tab: RightTab,
 }
 
 impl<'a> Panel<'a> {
   pub fn render(self) -> Element<'a, Message> {
+    let plans_count = if self.selection_count > 0 {
+      self.selection_count.to_string()
+    } else {
+      String::new()
+    };
     let strip = container(tab_select_with(
       vec![
-        tab("Browse", self.tab == RightTab::Browse, RightTab::Browse),
-        tab("Attributes", self.tab == RightTab::Attributes, RightTab::Attributes),
-        tab("Plans", self.tab == RightTab::Plans, RightTab::Plans),
+        tab("Browse", self.tab == RightTab::Browse, RightTab::Browse, String::new()),
+        tab(
+          "Attributes",
+          self.tab == RightTab::Attributes,
+          RightTab::Attributes,
+          String::new(),
+        ),
+        tab("Plans", self.tab == RightTab::Plans, RightTab::Plans, plans_count),
       ],
       TabLayout::Fill,
     ))
@@ -58,7 +69,7 @@ impl<'a> Panel<'a> {
     let body: Element<'a, Message> = match self.tab {
       RightTab::Attributes => attributes_tab::view::<Message>(self.attributes, self.now),
       RightTab::Browse => browser_tab::view(self.browse).map(Message::Browse),
-      RightTab::Plans => plans_tab::view(self.plans).map(Message::Plans),
+      RightTab::Plans => plans_tab::view(self.plans, self.selection_count).map(Message::Plans),
     };
 
     let panel = Column::with_children(vec![strip.into(), rule::horizontal(), body])
@@ -81,9 +92,9 @@ impl<'a> Panel<'a> {
   }
 }
 
-fn tab<'a>(label: &'a str, selected: bool, target: RightTab) -> Tab<'a, Message> {
+fn tab<'a>(label: &'a str, selected: bool, target: RightTab, count: String) -> Tab<'a, Message> {
   Tab {
-    count: String::new(),
+    count,
     icon: None,
     label,
     on_press: Some(Message::TabSelected(target)),

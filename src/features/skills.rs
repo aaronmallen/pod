@@ -18,6 +18,7 @@ use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{
   Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
+  keyboard,
   widget::{Column, Row, Stack, container, scrollable, text},
 };
 
@@ -67,7 +68,9 @@ pub struct Loaded {
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
+  CreatePlanFromSelection,
   Loaded(Box<Loaded>),
+  ModifiersChanged(keyboard::Modifiers),
   OpenCompare,
   OpenPlanEditor(EditorSeed),
   PaneDrag(f32),
@@ -75,7 +78,9 @@ pub enum Message {
   PaneDragStart,
   PaneSettled(&'static str, f32),
   PickerToggled,
+  QueueRowClicked(i64),
   RightPanel(right_panel::Message),
+  SelectionCleared,
 }
 
 #[derive(Debug)]
@@ -85,10 +90,12 @@ pub struct State {
   browse: right_panel::browser_tab::State,
   computed: queue::ComputedQueue,
   left_pane: PaneDrag,
+  modifiers: keyboard::Modifiers,
   picker_open: bool,
   plans: right_panel::plans_tab::State,
   queue: Vec<CharacterSkillqueue>,
   roster: Vec<PickerPilot>,
+  selection: queue::QueueSelection,
   tab: RightTab,
 }
 
@@ -100,10 +107,12 @@ impl State {
       browse: right_panel::browser_tab::State::new(),
       computed: queue::ComputedQueue::default(),
       left_pane: PaneDrag::new(LEFT_PANE_DEFAULT, spacing::layout::WINDOW_DEFAULT_WIDTH),
+      modifiers: keyboard::Modifiers::default(),
       plans: right_panel::plans_tab::State::new(),
       queue: Vec::new(),
       picker_open: false,
       roster: Vec::new(),
+      selection: queue::QueueSelection::default(),
       tab: RightTab::default(),
     }
   }
@@ -120,6 +129,20 @@ impl State {
 
   pub fn active(&self) -> i64 {
     self.active
+  }
+
+  /// The queue positions of every computed row, in queue order. Used as the
+  /// stable key space for the multi-selection.
+  fn queue_order(&self) -> Vec<i64> {
+    self.computed.items.iter().map(|item| item.queue_position).collect()
+  }
+
+  fn command_pressed(&self) -> bool {
+    self.modifiers.command()
+  }
+
+  fn shift_pressed(&self) -> bool {
+    self.modifiers.shift()
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -159,7 +182,15 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::CharacterChanged(id) => {
       state.active = id;
       state.picker_open = false;
+      state.selection.clear();
       Task::none()
+    }
+    Message::CreatePlanFromSelection => {
+      if state.selection.is_empty() {
+        return Task::none();
+      }
+      let positions = state.selection.ordered(&state.queue_order());
+      Task::done(Message::OpenPlanEditor(EditorSeed::FromQueueSelection(positions)))
     }
     Message::Loaded(loaded) => {
       let Loaded {
@@ -172,6 +203,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.computed = computed;
       state.queue = queue;
       state.roster = roster;
+      state.selection.prune(&state.queue_order());
+      Task::none()
+    }
+    Message::ModifiersChanged(modifiers) => {
+      state.modifiers = modifiers;
       Task::none()
     }
     Message::OpenCompare => Task::none(),
@@ -193,17 +229,37 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = !state.picker_open;
       Task::none()
     }
+    Message::QueueRowClicked(position) => {
+      let order = state.queue_order();
+      let kind = queue::ClickKind::from_modifiers(state.command_pressed(), state.shift_pressed());
+      state.selection.apply(position, kind, &order);
+      Task::none()
+    }
     Message::RightPanel(msg) => update_right_panel(state, msg, db),
+    Message::SelectionCleared => {
+      state.selection.clear();
+      Task::none()
+    }
   }
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  if !state.left_pane.is_active() {
-    return iced::Subscription::none();
+  let mut subs = vec![iced::event::listen_with(|event, _status, _id| match event {
+    iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => Some(Message::ModifiersChanged(modifiers)),
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+      key: keyboard::Key::Named(keyboard::key::Named::Escape),
+      ..
+    }) => Some(Message::SelectionCleared),
+    _ => None,
+  })];
+
+  if state.left_pane.is_active() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+    }));
   }
-  iced::event::listen_with(|event, _status, _id| {
-    resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
-  })
+
+  iced::Subscription::batch(subs)
 }
 
 pub fn reload_plans(db: &Database, character_id: i64) -> Task<Message> {
@@ -222,6 +278,9 @@ fn update_right_panel(state: &mut State, message: right_panel::Message, db: &Dat
     }
     right_panel::Message::Plans(right_panel::plans_tab::Message::FromQueue) => {
       Task::done(Message::OpenPlanEditor(EditorSeed::FromQueue))
+    }
+    right_panel::Message::Plans(right_panel::plans_tab::Message::FromSelected) => {
+      Task::done(Message::CreatePlanFromSelection)
     }
     right_panel::Message::Plans(right_panel::plans_tab::Message::OpenPlan(plan_id)) => {
       Task::done(Message::OpenPlanEditor(EditorSeed::Existing(plan_id)))
@@ -448,7 +507,12 @@ fn panes<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   if let Some(strip) = warning_strip::warning_strip(&state.computed, head) {
     left_children.push(strip);
   }
-  left_children.push(queue_section::queue_section(&state.computed, head, now));
+  left_children.push(queue_section::queue_section(
+    &state.computed,
+    head,
+    &state.selection,
+    now,
+  ));
 
   let left = scrollable(
     Column::with_children(left_children)
@@ -475,6 +539,7 @@ fn right_panel<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message>
     browse: &state.browse,
     now,
     plans: &state.plans,
+    selection_count: state.selection.len(),
     tab: state.tab,
   }
   .render()
@@ -785,6 +850,104 @@ mod tests {
       let _ = update(&mut state, Message::OpenPlanEditor(EditorSeed::New), &db);
 
       assert_eq!(state.active, 42);
+    }
+
+    fn computed_item(position: i64) -> queue::ComputedQueueItem {
+      queue::ComputedQueueItem {
+        cum_start_secs: 0.0,
+        duration_secs: 0.0,
+        from_level: 0,
+        group_name: String::new(),
+        primary: queue::Attr::Perception,
+        progress: 0.0,
+        queue_position: position,
+        rank: 1,
+        secondary: queue::Attr::Willpower,
+        skill_name: format!("Skill {position}"),
+        sp_needed: 0,
+        sp_now: 0,
+        sp_to: 0,
+        to_level: 1,
+      }
+    }
+
+    fn state_with_queue(positions: &[i64]) -> State {
+      let mut state = State::new(42);
+      state.computed = queue::ComputedQueue {
+        items: positions.iter().map(|p| computed_item(*p)).collect(),
+        sp_rate: 1.0,
+        total_secs: 0.0,
+        total_sp: 0,
+      };
+      state
+    }
+
+    #[tokio::test]
+    async fn a_plain_row_click_selects_a_single_row() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn a_shift_click_extends_a_range_after_the_anchor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2, 3]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::SHIFT), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(3), &db);
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn escape_clears_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+
+      let _ = update(&mut state, Message::SelectionCleared, &db);
+
+      assert!(state.selection.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_character_change_clears_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
+
+      let _ = update(&mut state, Message::CharacterChanged(7), &db);
+
+      assert!(state.selection.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_plan_from_selection_emits_the_seed_for_the_chosen_positions() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::COMMAND), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
+
+      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
+
+      // The selection survives the action; the seed carries queue-ordered positions.
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 2]);
+    }
+
+    #[tokio::test]
+    async fn create_plan_from_an_empty_selection_is_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1]);
+
+      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
+
+      assert!(state.selection.is_empty());
     }
   }
 

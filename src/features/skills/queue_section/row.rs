@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
 use iced::{
-  Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, container, text},
+  border::Radius,
+  widget::{Column, Row, container, mouse_area, text},
 };
 
 use super::super::{
@@ -25,9 +26,15 @@ use crate::ui::{
 
 const COMPLETES_WIDTH: f32 = 135.0;
 const DURATION_WIDTH: f32 = 110.0;
+const SELECTED_BAR_WIDTH: f32 = 3.0;
 const SP_WIDTH: f32 = 80.0;
 
-pub(super) fn row<'a>(item: &'a ComputedQueueItem, display_index: usize, now: DateTime<Utc>) -> Element<'a, Message> {
+pub(super) fn row<'a>(
+  item: &'a ComputedQueueItem,
+  display_index: usize,
+  selected: bool,
+  now: DateTime<Utc>,
+) -> Element<'a, Message> {
   let row_secs = item.duration_secs.round() as i64;
   let cum_end_secs = (item.cum_start_secs + item.duration_secs).round() as i64;
 
@@ -51,12 +58,55 @@ pub(super) fn row<'a>(item: &'a ComputedQueueItem, display_index: usize, now: Da
     })
     .align_y(Vertical::Center);
 
+  let framed = container(Row::with_children(vec![selected_bar(selected), body.into()]).width(Length::Fill))
+    .width(Length::Fill)
+    .style(move |_| selected_fill(selected));
+
+  let pressable: Element<'a, Message> = mouse_area(framed)
+    .on_press(Message::QueueRowClicked(item.queue_position))
+    .into();
+
   if display_index == 0 {
-    return body.into();
+    return pressable;
   }
-  Column::with_children(vec![rule::horizontal(), body.into()])
+  Column::with_children(vec![rule::horizontal(), pressable])
     .width(Length::Fill)
     .into()
+}
+
+fn selected_bar<'a>(selected: bool) -> Element<'a, Message> {
+  let color = if selected {
+    color::accent::PLASMA
+  } else {
+    iced::Color::TRANSPARENT
+  };
+  container(text(""))
+    .width(Length::Fixed(SELECTED_BAR_WIDTH))
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color)),
+      border: Border {
+        radius: Radius {
+          top_left: 0.0,
+          top_right: SELECTED_BAR_WIDTH,
+          bottom_right: SELECTED_BAR_WIDTH,
+          bottom_left: 0.0,
+        },
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn selected_fill(selected: bool) -> container::Style {
+  if !selected {
+    return container::Style::default();
+  }
+  container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+    ..container::Style::default()
+  }
 }
 
 fn completes_col<'a>(

@@ -9,7 +9,10 @@ use iced::{
   widget::{Column, container},
 };
 
-use super::{Message, queue::ComputedQueue};
+use super::{
+  Message,
+  queue::{ComputedQueue, QueueSelection},
+};
 use crate::{
   store::model::CharacterSkillqueue,
   ui::style::{color, radius},
@@ -20,6 +23,7 @@ const QUEUE_SIDE_MARGIN: f32 = 28.0;
 pub fn queue_section<'a>(
   computed: &'a ComputedQueue,
   head: Option<&'a CharacterSkillqueue>,
+  selection: &'a QueueSelection,
   now: DateTime<Utc>,
 ) -> Element<'a, Message> {
   let has_active = head.is_some_and(|entry| entry.start_date().is_some() && entry.finish_date().is_some());
@@ -29,18 +33,24 @@ pub fn queue_section<'a>(
     return empty_state::empty_state();
   }
 
-  queue_list(computed, skip_n, now)
+  queue_list(computed, skip_n, selection, now)
 }
 
-fn queue_list<'a>(computed: &'a ComputedQueue, skip_n: usize, now: DateTime<Utc>) -> Element<'a, Message> {
+fn queue_list<'a>(
+  computed: &'a ComputedQueue,
+  skip_n: usize,
+  selection: &'a QueueSelection,
+  now: DateTime<Utc>,
+) -> Element<'a, Message> {
   let total_n = computed.items.len() - skip_n;
 
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(computed.items.len() + 2);
   children.push(col_header::col_header());
   for (display_index, item) in computed.items.iter().skip(skip_n).enumerate() {
-    children.push(row::row(item, display_index, now));
+    let selected = selection.contains(item.queue_position);
+    children.push(row::row(item, display_index, selected, now));
   }
-  children.push(footer::footer(total_n, computed.total_secs, now));
+  children.push(footer::footer(total_n, computed.total_secs, selection.len(), now));
 
   let card = container(Column::with_children(children).width(Length::Fill))
     .width(Length::Fill)
@@ -84,6 +94,7 @@ mod tests {
       group_name: "Gunnery".to_owned(),
       primary: Attr::Perception,
       progress: 0.0,
+      queue_position: 0,
       rank: 1,
       secondary: Attr::Willpower,
       skill_name: skill_name.to_owned(),
@@ -130,27 +141,31 @@ mod tests {
   fn it_renders_the_empty_state_when_only_the_active_head_remains() {
     let computed = computed(1);
     let head = active_head();
-    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), now());
+    let selection = QueueSelection::default();
+    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
 
   #[test]
   fn it_renders_the_empty_state_for_an_empty_queue() {
     let computed = ComputedQueue::default();
-    let _el: Element<'_, Message> = queue_section(&computed, None, now());
+    let selection = QueueSelection::default();
+    let _el: Element<'_, Message> = queue_section(&computed, None, &selection, now());
   }
 
   #[test]
   fn it_renders_the_list_excluding_the_active_head() {
     let computed = computed(2);
     let head = active_head();
-    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), now());
+    let selection = QueueSelection::default();
+    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
 
   #[test]
   fn it_includes_every_row_when_the_head_is_paused() {
     let computed = computed(2);
     let head = paused_head();
-    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), now());
+    let selection = QueueSelection::default();
+    let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
 
   mod skip_n {

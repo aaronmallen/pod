@@ -82,6 +82,7 @@ pub struct ComputedQueueItem {
   pub group_name: String,
   pub primary: Attr,
   pub progress: f32,
+  pub queue_position: i64,
   pub rank: u8,
   pub secondary: Attr,
   pub skill_name: String,
@@ -89,6 +90,127 @@ pub struct ComputedQueueItem {
   pub sp_now: u64,
   pub sp_to: u64,
   pub to_level: u8,
+}
+
+/// The keyboard modifier intent applied to a queue-row click.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ClickKind {
+  /// No modifier: select only this row (or toggle off if it is the lone selection).
+  #[default]
+  Plain,
+  /// Ctrl/Cmd: toggle this row, keeping the rest of the selection.
+  Toggle,
+  /// Shift: select a contiguous range from the anchor, replacing the selection.
+  Range,
+  /// Shift + Ctrl/Cmd: merge the contiguous range from the anchor into the selection.
+  RangeMerge,
+}
+
+impl ClickKind {
+  /// Derives the click intent from the active modifier flags. `command` is
+  /// Cmd on macOS and Ctrl on Windows/Linux.
+  pub fn from_modifiers(command: bool, shift: bool) -> Self {
+    match (command, shift) {
+      (true, true) => ClickKind::RangeMerge,
+      (false, true) => ClickKind::Range,
+      (true, false) => ClickKind::Toggle,
+      (false, false) => ClickKind::Plain,
+    }
+  }
+}
+
+/// Ephemeral multi-selection over queue rows, keyed on the stable
+/// [`CharacterSkillqueue::queue_position`]. The set is kept in queue order
+/// whenever it is read back out so a derived plan preserves training order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QueueSelection {
+  anchor: Option<i64>,
+  selected: Vec<i64>,
+}
+
+impl QueueSelection {
+  pub fn len(&self) -> usize {
+    self.selected.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.selected.is_empty()
+  }
+
+  pub fn contains(&self, position: i64) -> bool {
+    self.selected.contains(&position)
+  }
+
+  pub fn clear(&mut self) {
+    self.selected.clear();
+    self.anchor = None;
+  }
+
+  /// The selected queue positions, ordered to match `order` (queue order).
+  pub fn ordered(&self, order: &[i64]) -> Vec<i64> {
+    order.iter().copied().filter(|p| self.selected.contains(p)).collect()
+  }
+
+  /// Drops any selected positions that no longer appear in the live queue,
+  /// and resets the anchor if it vanished.
+  pub fn prune(&mut self, order: &[i64]) {
+    self.selected.retain(|p| order.contains(p));
+    if self.anchor.is_some_and(|a| !order.contains(&a)) {
+      self.anchor = None;
+    }
+  }
+
+  /// Applies a click on `position` given the modifier intent. `order` is the
+  /// full list of queue positions in queue order (used for range selection).
+  pub fn apply(&mut self, position: i64, kind: ClickKind, order: &[i64]) {
+    match kind {
+      ClickKind::Plain => {
+        if self.selected.len() == 1 && self.selected[0] == position {
+          self.clear();
+        } else {
+          self.selected = vec![position];
+          self.anchor = Some(position);
+        }
+      }
+      ClickKind::Toggle => {
+        if let Some(idx) = self.selected.iter().position(|p| *p == position) {
+          self.selected.remove(idx);
+        } else {
+          self.selected.push(position);
+        }
+        self.anchor = Some(position);
+      }
+      ClickKind::Range => {
+        self.selected = range_positions(self.anchor, position, order);
+      }
+      ClickKind::RangeMerge => {
+        for pos in range_positions(self.anchor, position, order) {
+          if !self.selected.contains(&pos) {
+            self.selected.push(pos);
+          }
+        }
+      }
+    }
+  }
+}
+
+/// The contiguous run of queue positions between the anchor and `position`
+/// (inclusive), in queue order. Falls back to just `position` when there is no
+/// anchor or either endpoint is absent from the queue.
+fn range_positions(anchor: Option<i64>, position: i64, order: &[i64]) -> Vec<i64> {
+  let target = match order.iter().position(|p| *p == position) {
+    Some(idx) => idx,
+    None => return vec![position],
+  };
+  let start = anchor
+    .and_then(|a| order.iter().position(|p| *p == a))
+    .unwrap_or(target);
+  let (lo, hi) = if start <= target {
+    (start, target)
+  } else {
+    (target, start)
+  };
+  order[lo..=hi].to_vec()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,6 +293,7 @@ pub fn compute_queue(
       group_name,
       primary,
       progress: sp.progress,
+      queue_position: entry.queue_position(),
       rank,
       secondary,
       skill_name,
@@ -432,6 +555,124 @@ mod tests {
     )
     .await
     .unwrap();
+  }
+
+  mod click_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_modifier_flags_to_intents() {
+      assert_eq!(ClickKind::from_modifiers(false, false), ClickKind::Plain);
+      assert_eq!(ClickKind::from_modifiers(true, false), ClickKind::Toggle);
+      assert_eq!(ClickKind::from_modifiers(false, true), ClickKind::Range);
+      assert_eq!(ClickKind::from_modifiers(true, true), ClickKind::RangeMerge);
+    }
+  }
+
+  mod queue_selection {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn order() -> Vec<i64> {
+      vec![0, 1, 2, 3, 4]
+    }
+
+    #[test]
+    fn a_plain_click_selects_only_that_row() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      assert_eq!(sel.ordered(&order()), vec![2]);
+    }
+
+    #[test]
+    fn a_plain_re_click_on_the_lone_selection_clears_it() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(2, ClickKind::Plain, &order());
+      assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn a_plain_click_elsewhere_replaces_the_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(4, ClickKind::Plain, &order());
+      assert_eq!(sel.ordered(&order()), vec![4]);
+    }
+
+    #[test]
+    fn a_toggle_click_adds_and_removes_keeping_the_rest() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(3, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 3]);
+      sel.apply(1, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![3]);
+    }
+
+    #[test]
+    fn a_range_click_selects_a_contiguous_run_from_the_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Plain, &order());
+      sel.apply(3, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_range_click_replaces_the_prior_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(0, ClickKind::Toggle, &order());
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(4, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn a_range_handles_a_reversed_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(3, ClickKind::Plain, &order());
+      sel.apply(1, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_range_merge_unions_the_run_into_the_existing_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(0, ClickKind::Toggle, &order());
+      sel.apply(2, ClickKind::Toggle, &order());
+      sel.apply(4, ClickKind::RangeMerge, &order());
+      assert_eq!(sel.ordered(&order()), vec![0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ordered_returns_queue_order_regardless_of_click_order() {
+      let mut sel = QueueSelection::default();
+      sel.apply(4, ClickKind::Toggle, &order());
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(3, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 3, 4]);
+    }
+
+    #[test]
+    fn prune_drops_positions_that_left_the_queue() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(4, ClickKind::Toggle, &order());
+      sel.prune(&[0, 1, 2]);
+      assert_eq!(sel.ordered(&[0, 1, 2]), vec![1]);
+    }
+
+    #[test]
+    fn clear_empties_the_selection_and_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.clear();
+      assert!(sel.is_empty());
+      assert_eq!(sel.len(), 0);
+    }
   }
 
   mod active_attr_pair {
@@ -904,6 +1145,7 @@ mod tests {
           group_name: String::new(),
           primary: Attr::Perception,
           progress: 0.0,
+          queue_position: i as i64,
           rank: 1,
           secondary: Attr::Willpower,
           skill_name: format!("Skill {i}"),

@@ -120,6 +120,7 @@ pub struct Loaded {
   catalog: SkillCatalog,
   cert_proficiency: HashMap<i64, usize>,
   character_total_sp: u64,
+  draft_name: Option<String>,
   entries: Vec<EditEntry>,
   plan: Option<SkillPlan>,
   remap_availability: u32,
@@ -220,10 +221,11 @@ impl Priority {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Seed {
   Existing(i64),
   FromQueue,
+  FromQueueSelection(Vec<i64>),
   New,
 }
 
@@ -1172,6 +1174,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
     catalog,
     cert_proficiency,
     character_total_sp,
+    draft_name,
     entries,
     plan,
     remap_availability,
@@ -1210,7 +1213,12 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
     })
     .collect();
   state.sort = sort;
-  state.name = state.plan.as_ref().map(|p| p.name().to_owned()).unwrap_or_default();
+  state.name = state
+    .plan
+    .as_ref()
+    .map(|p| p.name().to_owned())
+    .or(draft_name)
+    .unwrap_or_default();
   state.note_open = None;
   state.dragging = None;
   state.drop_index = None;
@@ -1538,9 +1546,9 @@ async fn persist(
 }
 
 async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<Utc>) -> Loaded {
-  let plan = match seed {
-    Seed::Existing(id) => skills::get(&db, id).await.ok().flatten(),
-    Seed::New | Seed::FromQueue => None,
+  let plan = match &seed {
+    Seed::Existing(id) => skills::get(&db, *id).await.ok().flatten(),
+    Seed::New | Seed::FromQueue | Seed::FromQueueSelection(_) => None,
   };
 
   let catalog = skills::skill_catalog(&db).await.unwrap_or(SkillCatalog {
@@ -1604,7 +1612,7 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
     reason,
   } = load_character_attrs(&db, character_id, now).await;
 
-  let entries = match seed {
+  let entries = match &seed {
     Seed::Existing(_) => {
       let raw_entries = match plan.as_ref() {
         Some(plan) => skills::entries(&db, plan.id()).await.unwrap_or_default(),
@@ -1625,8 +1633,16 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
       }
       entries
     }
-    Seed::FromQueue => entries_from_queue(&db, character_id, &catalog, &trained_levels).await,
+    Seed::FromQueue => entries_from_queue(&db, character_id, &catalog, &trained_levels, None).await,
+    Seed::FromQueueSelection(positions) => {
+      entries_from_queue(&db, character_id, &catalog, &trained_levels, Some(positions)).await
+    }
     Seed::New => Vec::new(),
+  };
+
+  let draft_name = match &seed {
+    Seed::FromQueueSelection(_) => Some("Plan from selection".to_owned()),
+    Seed::Existing(_) | Seed::FromQueue | Seed::New => None,
   };
 
   Loaded {
@@ -1635,6 +1651,7 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
     catalog,
     cert_proficiency,
     character_total_sp,
+    draft_name,
     entries,
     plan,
     remap_availability: availability,
@@ -1652,10 +1669,12 @@ async fn entries_from_queue(
   character_id: i64,
   catalog: &SkillCatalog,
   trained_levels: &HashMap<i64, u8>,
+  selection: Option<&[i64]>,
 ) -> Vec<EditEntry> {
   let queue = character::skillqueue(db, character_id).await.unwrap_or_default();
   let wishes: Vec<Wish> = queue
     .iter()
+    .filter(|entry| selection.is_none_or(|positions| positions.contains(&entry.queue_position())))
     .map(|entry| Wish {
       skill_id: entry.skill_id(),
       to_level: entry.finished_level().clamp(0, i64::from(plan_math::MAX_SKILL_LEVEL)) as u8,
@@ -4034,6 +4053,49 @@ mod tests {
         loaded.entries[0].meta.skill_name, "Gunnery",
         "metadata resolved off the DB"
       );
+    }
+
+    #[tokio::test]
+    async fn from_queue_selection_only_seeds_the_chosen_queue_positions() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      seed_skill(&db, 3301, "Small Hybrid Turret").await;
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3), queued(42, 1, 3301, 2)])
+        .await
+        .unwrap();
+
+      let loaded = async_load(db, 42, Seed::FromQueueSelection(vec![1]), now()).await;
+
+      assert!(loaded.plan.is_none(), "a from-selection plan is unsaved until Save");
+      let skill_ids: Vec<i64> = loaded.entries.iter().map(|e| e.skill_id).collect();
+      assert!(
+        skill_ids.iter().all(|id| *id == 3301),
+        "only the selected queue entry (and its prereqs) is seeded, got {skill_ids:?}"
+      );
+      let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(rows, vec![(3301, 1), (3301, 2)]);
+    }
+
+    #[tokio::test]
+    async fn from_queue_selection_titles_the_draft_plan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3)])
+        .await
+        .unwrap();
+
+      let mut state = State::new(42);
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(
+          async_load(db.clone(), 42, Seed::FromQueueSelection(vec![0]), now()).await,
+        )),
+        &db,
+      );
+
+      assert_eq!(state.name, "Plan from selection");
     }
 
     #[tokio::test]

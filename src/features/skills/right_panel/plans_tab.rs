@@ -1,5 +1,6 @@
 pub mod empty_state;
 pub mod from_queue_button;
+pub mod from_selected_button;
 pub mod new_plan_button;
 pub mod plan_card;
 
@@ -34,6 +35,7 @@ pub enum Message {
   DeleteConfirmed(i64),
   DeleteRequested(i64),
   FromQueue,
+  FromSelected,
   Loaded(Vec<PlanRow>),
   NewPlan,
   OpenPlan(i64),
@@ -80,6 +82,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, character_id: 
       iced::Task::none()
     }
     Message::FromQueue => iced::Task::none(),
+    Message::FromSelected => iced::Task::none(),
     Message::Loaded(plans) => {
       state.plans = plans;
       state.loaded = true;
@@ -95,13 +98,18 @@ pub fn update(state: &mut State, message: Message, db: &Database, character_id: 
   }
 }
 
-pub fn view(state: &State) -> Element<'_, Message> {
+pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
   if !state.loaded {
     return load_state_view(LoadStateView::Loading("Loading plans\u{2026}"));
   }
 
   if state.plans.is_empty() {
-    return empty_state::empty_state();
+    if selection_count == 0 {
+      return empty_state::empty_state();
+    }
+    return Column::with_children(vec![empty_state::empty_state(), footer(selection_count)])
+      .width(Length::Fill)
+      .into();
   }
 
   let cards: Vec<Element<'_, Message>> = state
@@ -114,26 +122,34 @@ pub fn view(state: &State) -> Element<'_, Message> {
     })
     .collect();
 
-  let mut items: Vec<Element<'_, Message>> = vec![card(Column::with_children(cards).width(Length::Fill))];
-
-  let footer = container(
-    Row::with_children(vec![
-      new_plan_button::new_plan_button(),
-      Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
-      from_queue_button::from_queue_button(),
-    ])
-    .align_y(Vertical::Center),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: spacing::SPACE_3,
-    bottom: spacing::SPACE_3,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  });
-  items.push(footer.into());
+  let items: Vec<Element<'_, Message>> = vec![
+    card(Column::with_children(cards).width(Length::Fill)),
+    footer(selection_count),
+  ];
 
   Column::with_children(items).width(Length::Fill).into()
+}
+
+fn footer<'a>(selection_count: usize) -> Element<'a, Message> {
+  let mut row: Vec<Element<'a, Message>> = vec![
+    new_plan_button::new_plan_button(),
+    Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
+    from_queue_button::from_queue_button(),
+  ];
+  if selection_count > 0 {
+    row.push(Space::new().width(Length::Fixed(spacing::SPACE_2)).into());
+    row.push(from_selected_button::from_selected_button(selection_count));
+  }
+
+  container(Row::with_children(row).align_y(Vertical::Center))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .into()
 }
 
 async fn load_plans(db: Database, character_id: i64) -> Vec<PlanRow> {
@@ -236,6 +252,7 @@ mod tests {
 
       let _ = update(&mut state, Message::NewPlan, &db, 42);
       let _ = update(&mut state, Message::FromQueue, &db, 42);
+      let _ = update(&mut state, Message::FromSelected, &db, 42);
       let _ = update(&mut state, Message::OpenPlan(3), &db, 42);
 
       assert!(state.plans.is_empty());
@@ -250,7 +267,7 @@ mod tests {
     fn it_renders_the_loading_state_before_first_load() {
       let state = State::new();
 
-      let _el: Element<'_, Message> = view(&state);
+      let _el: Element<'_, Message> = view(&state, 0);
     }
 
     #[test]
@@ -258,7 +275,15 @@ mod tests {
       let mut state = State::new();
       state.loaded = true;
 
-      let _el: Element<'_, Message> = view(&state);
+      let _el: Element<'_, Message> = view(&state, 0);
+    }
+
+    #[test]
+    fn it_renders_the_from_selected_button_over_the_empty_state_with_a_selection() {
+      let mut state = State::new();
+      state.loaded = true;
+
+      let _el: Element<'_, Message> = view(&state, 3);
     }
 
     #[test]
@@ -268,7 +293,7 @@ mod tests {
       state.plans = vec![row(1, "Combat", 5), row(2, "Industry", 0)];
       state.confirm_delete = Some(2);
 
-      let _el: Element<'_, Message> = view(&state);
+      let _el: Element<'_, Message> = view(&state, 2);
     }
   }
 }

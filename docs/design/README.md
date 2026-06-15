@@ -35,6 +35,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0023] | Industry Feature                                | ![Active][badge-active] | 2026-06-13 |
 | [0024] | Forceful Lease-Takeover Safety Protocol         | ![Active][badge-active] | 2026-06-13 |
 | [0025] | Virtualized Table Rendering                     | ![Active][badge-active] | 2026-06-13 |
+| [0026] | Saved Build-Plan Node Identity                  | ![Active][badge-active] | 2026-06-14 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -64,5 +65,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0023]: 0023-industry-feature.md
 [0024]: 0024-forceful-lease-takeover.md
 [0025]: 0025-virtualized-table-rendering.md
+[0026]: 0026-saved-build-plan-node-identity.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

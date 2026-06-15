@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
-  model::{CharacterIndustryJob, CorporationIndustryJob, Facility, IndustryCostIndex},
+  model::{CharacterIndustryJob, CorporationIndustryJob, Facility, IndustryCostIndex, IndustryPlan},
   repo::org,
 };
 
@@ -14,9 +14,33 @@ pub struct AllIndustryJobs {
   pub corporation_jobs: Vec<CorporationIndustryJob>,
 }
 
+// The saved-build-plans CRUD below is consumed by the Industry Planner UI in a follow-up; the
+// storage layer lands first.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanNode {
+  pub facility_system: Option<i64>,
+  pub me: i64,
+  /// Materialized path of ancestor material type-ids from the root; empty = root node.
+  pub path: Vec<i64>,
+  pub te: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanTree {
+  pub nodes: Vec<PlanNode>,
+  pub product_type_id: i64,
+  pub root_facility_system: Option<i64>,
+  pub runs: i64,
+}
+
 const FACILITY_MANAGER_ROLES: &[&str] = &["Director", "Factory_Manager"];
 
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
+
+#[allow(dead_code)]
+const PLAN_NODE_PATH_SEPARATOR: char = '/';
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
@@ -140,6 +164,99 @@ pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) 
   Ok(())
 }
 
+#[allow(dead_code)]
+pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<IndustryPlan, Error> {
+  let saved_at = chrono::Utc::now().to_rfc3339();
+  let mut tx = db.0.begin().await?;
+
+  let plan = sqlx::query_as::<_, IndustryPlan>(
+    "INSERT INTO industry_plans (name, product_type_id, runs, root_facility_system, saved_at) \
+    VALUES (?, ?, ?, ?, ?) \
+    RETURNING id, name, product_type_id, root_facility_system, runs, saved_at",
+  )
+  .bind(name)
+  .bind(tree.product_type_id)
+  .bind(tree.runs)
+  .bind(tree.root_facility_system)
+  .bind(&saved_at)
+  .fetch_one(&mut *tx)
+  .await?;
+
+  for chunk in tree.nodes.chunks(SQLITE_MAX_BIND_PARAMS / 5) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("INSERT INTO industry_plan_nodes (plan_id, path, me, te, facility_system) ");
+    builder.push_values(chunk, |mut row, node| {
+      row
+        .push_bind(plan.id())
+        .push_bind(encode_path(&node.path))
+        .push_bind(node.me)
+        .push_bind(node.te)
+        .push_bind(node.facility_system);
+    });
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
+  Ok(plan)
+}
+
+#[allow(dead_code)]
+pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM industry_plans WHERE id = ?")
+    .bind(id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn list_plans(db: &Database) -> Result<Vec<IndustryPlan>, Error> {
+  let rows = sqlx::query_as::<_, IndustryPlan>(
+    "SELECT id, name, product_type_id, root_facility_system, runs, saved_at FROM industry_plans \
+    ORDER BY saved_at DESC, id DESC",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[allow(dead_code)]
+pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error> {
+  let Some(plan) = sqlx::query_as::<_, IndustryPlan>(
+    "SELECT id, name, product_type_id, root_facility_system, runs, saved_at FROM industry_plans WHERE id = ?",
+  )
+  .bind(id)
+  .fetch_optional(&db.0)
+  .await?
+  else {
+    return Ok(None);
+  };
+
+  let rows = sqlx::query_as::<_, (String, i64, i64, Option<i64>)>(
+    "SELECT path, me, te, facility_system FROM industry_plan_nodes WHERE plan_id = ? ORDER BY path",
+  )
+  .bind(id)
+  .fetch_all(&db.0)
+  .await?;
+
+  let nodes = rows
+    .into_iter()
+    .map(|(path, me, te, facility_system)| PlanNode {
+      facility_system,
+      me,
+      path: decode_path(&path),
+      te,
+    })
+    .collect();
+
+  Ok(Some(PlanTree {
+    nodes,
+    product_type_id: plan.product_type_id(),
+    root_facility_system: plan.root_facility_system(),
+    runs: plan.runs(),
+  }))
+}
+
 pub async fn replace_for_character(
   db: &Database,
   character_id: i64,
@@ -154,6 +271,27 @@ pub async fn replace_for_corporation(
   jobs: &[CorporationIndustryJob],
 ) -> Result<(), Error> {
   replace_for_corporation_batched(db, corporation_id, jobs, INDUSTRY_WRITE_BATCH_SIZE).await
+}
+
+/// Empty string encodes the root node (sentinel); unparseable segments are silently dropped.
+#[allow(dead_code)]
+fn decode_path(path: &str) -> Vec<i64> {
+  if path.is_empty() {
+    return Vec::new();
+  }
+  path
+    .split(PLAN_NODE_PATH_SEPARATOR)
+    .filter_map(|step| step.parse::<i64>().ok())
+    .collect()
+}
+
+#[allow(dead_code)]
+fn encode_path(path: &[i64]) -> String {
+  path
+    .iter()
+    .map(i64::to_string)
+    .collect::<Vec<_>>()
+    .join(&PLAN_NODE_PATH_SEPARATOR.to_string())
 }
 
 async fn delete_character_jobs(db: &Database, character_id: i64, job_ids: &[i64]) -> Result<(), Error> {
@@ -768,6 +906,108 @@ mod tests {
         super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
         Some(cost_index(30_002_187, 0.09, 0.03))
       );
+    }
+  }
+
+  mod plans {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn sample_tree() -> PlanTree {
+      PlanTree {
+        nodes: vec![
+          PlanNode {
+            facility_system: Some(30_000_142),
+            me: 10,
+            path: vec![],
+            te: 20,
+          },
+          PlanNode {
+            facility_system: None,
+            me: 8,
+            path: vec![17_478],
+            te: 16,
+          },
+          PlanNode {
+            facility_system: Some(30_002_187),
+            me: 5,
+            path: vec![17_478, 34],
+            te: 0,
+          },
+          PlanNode {
+            facility_system: None,
+            me: 9,
+            path: vec![11_399],
+            te: 18,
+          },
+        ],
+        product_type_id: 22_544,
+        root_facility_system: Some(30_000_142),
+        runs: 7,
+      }
+    }
+
+    fn sorted_by_path(mut tree: PlanTree) -> PlanTree {
+      tree.nodes.sort_by(|a, b| a.path.cmp(&b.path));
+      tree
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_saved_tree() {
+      let db = store::open_test().await.unwrap();
+      let tree = sample_tree();
+
+      let plan = create_plan(&db, "Hulk run", &tree).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      assert_eq!(sorted_by_path(loaded), sorted_by_path(tree));
+    }
+
+    #[tokio::test]
+    async fn it_records_the_parent_metadata() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      assert_eq!(plan.name(), "Hulk run");
+      assert_eq!(plan.product_type_id(), 22_544);
+      assert_eq!(plan.runs(), 7);
+      assert_eq!(plan.root_facility_system(), Some(30_000_142));
+    }
+
+    #[tokio::test]
+    async fn it_lists_saved_plans() {
+      let db = store::open_test().await.unwrap();
+      create_plan(&db, "First", &sample_tree()).await.unwrap();
+      create_plan(&db, "Second", &sample_tree()).await.unwrap();
+
+      let plans = list_plans(&db).await.unwrap();
+
+      assert_eq!(plans.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_loading_a_missing_plan() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(load_plan(&db, 404).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_plan_and_cascades_its_nodes() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      delete_plan(&db, plan.id()).await.unwrap();
+
+      assert!(load_plan(&db, plan.id()).await.unwrap().is_none());
+      let node_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_nodes WHERE plan_id = ?")
+        .bind(plan.id())
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(node_count, 0);
     }
   }
 

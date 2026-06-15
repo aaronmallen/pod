@@ -7,6 +7,7 @@ use super::{
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
   planner_model::{BuildNode, BuildPlan, Material},
 };
+use crate::store::repo::industry::{PlanNode, PlanTree};
 
 const DEFAULT_ME: i64 = 10;
 const DEFAULT_TE: i64 = 20;
@@ -85,6 +86,36 @@ pub struct NodeConfig {
 }
 
 impl NodeConfig {
+  #[allow(dead_code)]
+  fn rebuild(nodes: &[PlanNode]) -> NodeConfig {
+    let mut root = NodeConfig::default();
+    let mut ordered: Vec<&PlanNode> = nodes.iter().collect();
+    // Shortest path first guarantees each parent node exists before its children are inserted.
+    ordered.sort_by_key(|node| node.path.len());
+
+    for node in ordered {
+      let config = NodeConfig {
+        children: BTreeMap::new(),
+        facility_system: node.facility_system,
+        me: node.me,
+        te: node.te,
+      };
+      match node.path.split_last() {
+        None => {
+          root.facility_system = config.facility_system;
+          root.me = config.me;
+          root.te = config.te;
+        }
+        Some((&mat, parent)) => {
+          if let Some(target) = root.at_mut(parent) {
+            target.children.insert(mat, config);
+          }
+        }
+      }
+    }
+    root
+  }
+
   fn at(&self, path: &[i64]) -> Option<&NodeConfig> {
     let mut node = self;
     for step in path {
@@ -99,6 +130,21 @@ impl NodeConfig {
       node = node.children.get_mut(step)?;
     }
     Some(node)
+  }
+
+  #[allow(dead_code)]
+  fn flatten(&self, path: &mut Vec<i64>, out: &mut Vec<PlanNode>) {
+    out.push(PlanNode {
+      facility_system: self.facility_system,
+      me: self.me,
+      path: path.clone(),
+      te: self.te,
+    });
+    for (&mat, child) in &self.children {
+      path.push(mat);
+      child.flatten(path, out);
+      path.pop();
+    }
   }
 }
 
@@ -243,6 +289,14 @@ impl Planner {
     &self.recent
   }
 
+  #[allow(dead_code)]
+  pub fn restore(&mut self, tree: &PlanTree) {
+    self.product = Some(tree.product_type_id);
+    self.runs = tree.runs.clamp(1, RUNS_MAX);
+    self.tree = NodeConfig::rebuild(&tree.nodes);
+    self.push_recent(tree.product_type_id);
+  }
+
   pub fn right_tab(&self) -> RightTab {
     self.right_tab
   }
@@ -284,6 +338,19 @@ impl Planner {
       .map(|total| format!("{}\t{}", total.qty, self.data.name(total.type_id)))
       .collect::<Vec<_>>()
       .join("\n")
+  }
+
+  #[allow(dead_code)]
+  pub fn snapshot(&self) -> Option<PlanTree> {
+    let product = self.product?;
+    let mut nodes = Vec::new();
+    self.tree.flatten(&mut Vec::new(), &mut nodes);
+    Some(PlanTree {
+      nodes,
+      product_type_id: product,
+      root_facility_system: self.tree.facility_system,
+      runs: self.runs,
+    })
   }
 
   pub fn update(&mut self, message: Message) {
@@ -2498,6 +2565,76 @@ mod tests {
 
       assert!(list.contains("25\tTritanium"));
       assert!(!list.contains("Retriever"));
+    }
+  }
+
+  mod snapshot {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn configured_planner() -> Planner {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(3));
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 7,
+        path: vec![],
+      });
+      planner.update(Message::TimeEfficiencyChanged {
+        path: vec![],
+        te: 14,
+      });
+      planner.update(Message::FacilitySelected {
+        path: vec![],
+        solar_system_id: 30_000_142,
+      });
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 4,
+        path: vec![RETRIEVER],
+      });
+      planner.update(Message::FacilitySelected {
+        path: vec![RETRIEVER],
+        solar_system_id: 30_002_187,
+      });
+      planner
+    }
+
+    #[test]
+    fn it_returns_none_without_a_selected_product() {
+      let planner = Planner::new();
+
+      assert_eq!(planner.snapshot(), None);
+    }
+
+    #[test]
+    fn it_captures_the_root_and_per_node_configuration() {
+      let snapshot = configured_planner().snapshot().unwrap();
+
+      assert_eq!(snapshot.product_type_id, HULK);
+      assert_eq!(snapshot.runs, 3);
+      assert_eq!(snapshot.root_facility_system, Some(30_000_142));
+
+      let root = snapshot.nodes.iter().find(|node| node.path.is_empty()).unwrap();
+      assert_eq!((root.me, root.te), (7, 14));
+
+      let child = snapshot.nodes.iter().find(|node| node.path == vec![RETRIEVER]).unwrap();
+      assert_eq!((child.me, child.facility_system), (4, Some(30_002_187)));
+    }
+
+    #[test]
+    fn it_round_trips_through_snapshot_and_restore() {
+      let original = configured_planner();
+      let snapshot = original.snapshot().unwrap();
+
+      let mut restored = planner();
+      restored.restore(&snapshot);
+
+      assert_eq!(restored.snapshot(), Some(snapshot));
+      assert_eq!(restored.plan(), original.plan());
     }
   }
 }

@@ -65,6 +65,9 @@ mod faction;
 mod http_cache_entry;
 mod inaccessible_structure;
 mod industry_cost_index;
+// Consumed by the saved-build-plans UI in a follow-up; the storage layer lands first.
+#[allow(dead_code)]
+mod industry_plan;
 mod item_category;
 mod item_group;
 mod item_type;
@@ -197,6 +200,7 @@ pub use http_cache_entry::Model as HttpCacheEntry;
 #[allow(unused_imports)]
 pub use inaccessible_structure::Model as InaccessibleStructure;
 pub use industry_cost_index::Model as IndustryCostIndex;
+pub use industry_plan::Model as IndustryPlan;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;
 pub use item_type::Model as ItemType;

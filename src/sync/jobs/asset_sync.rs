@@ -9,7 +9,7 @@ use crate::{
   },
   store::{
     model::{CharacterAsset, CorporationAsset},
-    repo::{assets, character},
+    repo::{assets, character, org},
   },
   sync::{job::JobCtx, outcome::Outcome, structure_resolution, subject::Subject},
 };
@@ -202,6 +202,9 @@ async fn run_corporation(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<Outcom
       "corporation asset job for {corporation_id} requires a grant"
     )));
   };
+  if org::get_corporation(ctx.db, corporation_id).await?.is_none() {
+    return Err(Error::NotReady);
+  }
   let authenticated = ctx.esi.corporation_authenticated(grant);
   let esi_assets = authenticated.assets(corporation_id).await?;
   let mut nodes: Vec<AssetNode> = esi_assets.iter().map(AssetNode::from).collect();
@@ -1266,6 +1269,43 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_short_retries_without_an_esi_call_when_the_corporation_row_is_absent() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/90000001/assets/"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "1")
+            .set_body_json(serde_json::json!([])),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a re-added corp whose parent row has not yet landed must guard with NotReady, not 787"
+      );
     }
 
     #[tokio::test]

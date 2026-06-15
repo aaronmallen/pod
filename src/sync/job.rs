@@ -518,4 +518,69 @@ mod tests {
       }
     }
   }
+
+  mod run {
+    use wiremock::MockServer;
+
+    use super::*;
+    use crate::{
+      clients::{eve_image, eve_sso::Grant, http},
+      store::{self, images},
+    };
+
+    const SUBJECT_ID: i64 = 42;
+
+    const PROFILE_CREATORS: [JobKind; 2] = [JobKind::CharacterProfile, JobKind::CorporationProfile];
+
+    fn subject_bound_jobs() -> Vec<(JobKind, Subject)> {
+      let mut jobs = Vec::new();
+      for kind in JobKind::ALL.iter().copied() {
+        if PROFILE_CREATORS.contains(&kind) {
+          continue;
+        }
+        for subject in [Subject::Character(SUBJECT_ID), Subject::Corporation(SUBJECT_ID)] {
+          if kind.applies_to(subject) {
+            jobs.push((kind, subject));
+          }
+        }
+      }
+      jobs
+    }
+
+    #[tokio::test]
+    async fn it_returns_not_ready_for_every_subject_bound_job_when_the_parent_is_absent() {
+      let server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", SUBJECT_ID);
+
+      let jobs = subject_bound_jobs();
+      assert!(
+        !jobs.is_empty(),
+        "the enumeration must cover at least one subject-bound job"
+      );
+
+      for (kind, subject) in jobs {
+        let ctx = JobCtx {
+          db: &db,
+          esi: &esi,
+          grant: Some(&grant),
+          image: &image,
+          image_store: &image_store,
+          key: JobKey::new(kind, subject),
+        };
+
+        let result = run(&ctx).await;
+
+        assert!(
+          matches!(result, Err(clients::Error::NotReady)),
+          "{kind:?} on {subject:?} must guard the missing parent with NotReady, got {result:?}"
+        );
+      }
+    }
+  }
 }

@@ -316,7 +316,15 @@ pub(crate) async fn ensure_character_present(ctx: &JobCtx<'_>, character_id: i64
 // plain integers with no FK, so a corp row alone satisfies a referencing characters.corporation_id,
 // which bounds the work to one extra (cache-friendly) ESI corp fetch and avoids CEO-of-CEO cycles.
 pub(crate) async fn ensure_corporation_present(ctx: &JobCtx<'_>, corporation_id: i64) -> Result<(), Error> {
-  if org::get_corporation(ctx.db, corporation_id).await?.is_some() {
+  if let Some(existing) = org::get_corporation(ctx.db, corporation_id).await? {
+    // A leftover corp row from a removed character can reference an alliance that's since been
+    // deleted; re-seed it and re-upsert so the deferred alliance_id FK doesn't 787 at commit.
+    if let Some(alliance_id) = existing.alliance_id()
+      && org::get_alliance(ctx.db, alliance_id).await?.is_none()
+    {
+      ensure_alliance(ctx, alliance_id).await?;
+      org::upsert_corporation(ctx.db, &existing).await?;
+    }
     return Ok(());
   }
   let corporation = Corporation::from((corporation_id, ctx.esi.corporation().info(corporation_id).await?));
@@ -1291,6 +1299,99 @@ mod tests {
           .unwrap()
           .is_none(),
         "the CEO's corp is persisted corp-row-only, not recursively expanded into a CEO character"
+      );
+    }
+  }
+
+  mod ensure_corporation_present {
+    use super::*;
+
+    const STALE_CORP_ID: i64 = 98_000_001;
+    const STALE_ALLIANCE_ID: i64 = 99_000_009;
+
+    async fn seed_stale_corp_with_dangling_alliance(db: &store::Database) {
+      let alliance = Alliance::new(
+        STALE_ALLIANCE_ID,
+        STALE_CORP_ID,
+        1,
+        "2003-01-01",
+        "Gone Alliance",
+        "GONE",
+      );
+      org::upsert_alliance(db, &alliance).await.unwrap();
+      let mut corp = Corporation::new(STALE_CORP_ID, "Stale Corp", "STAL");
+      corp.set_alliance_id(STALE_ALLIANCE_ID);
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(db, &corp).await.unwrap();
+      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
+      sqlx::query("DELETE FROM alliances WHERE id = ?")
+        .bind(STALE_ALLIANCE_ID)
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_re_seeds_a_dangling_alliance_on_a_present_corp_without_refetching_it() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/alliances/{STALE_ALLIANCE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": STALE_CORP_ID, "creator_id": 1, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": STALE_CORP_ID, "name": "Gone Alliance", "ticker": "GONE",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{STALE_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_stale_corp_with_dangling_alliance(&harness.db).await;
+      let ctx = ctx_no_grant(&harness);
+
+      ensure_corporation_present(&ctx, STALE_CORP_ID)
+        .await
+        .expect("a present-but-stale corp re-seeds its alliance instead of 787-ing at commit");
+
+      assert!(
+        org::get_alliance(&harness.db, STALE_ALLIANCE_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the dangling alliance_id is re-seeded so the deferred FK holds"
+      );
+      assert!(
+        org::get_corporation(&harness.db, STALE_CORP_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the stale corp row is preserved, never deleted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_present_corp_untouched_when_its_alliance_is_intact() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_character(&harness.db, 100).await;
+      let ctx = ctx_no_grant(&harness);
+
+      ensure_corporation_present(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("a present corp with a live alliance needs no ESI and no re-upsert");
+
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_some()
       );
     }
   }

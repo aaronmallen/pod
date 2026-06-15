@@ -2413,6 +2413,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_re_adds_a_character_cleanly_after_a_remove() {
+      let db = store::open_test().await.unwrap();
+      let corporation = make_corporation();
+      let character = make_character();
+      let id = character.id();
+      insert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .unwrap();
+      infra::upsert(&db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+
+      delete(&db, id).await.unwrap();
+      upsert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .expect("re-adding a character whose corp row survived the remove must not 787");
+
+      assert!(get(&db, id).await.unwrap().is_some());
+      assert!(org::get_corporation(&db, corporation.id()).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
     async fn it_is_a_noop_for_an_unknown_character() {
       let db = store::open_test().await.unwrap();
 

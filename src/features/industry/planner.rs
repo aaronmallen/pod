@@ -5,7 +5,7 @@ use iced::Point;
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan, Material},
+  planner_model::{BuildNode, BuildPlan, BuildableLookup, Material},
 };
 use crate::{
   store::repo::industry::{PlanNode, PlanTree},
@@ -70,6 +70,7 @@ pub struct MaterialMenu {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
+  BreakDownAll,
   CategorySelected(Category),
   CursorMoved(Point),
   FacilityPickerToggled { path: Vec<i64> },
@@ -174,6 +175,56 @@ impl NodeConfig {
   }
 }
 
+/// A fresh, un-expanded node config for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
+/// blueprint's ME/TE or the planner defaults. Shared by [`Planner::fresh_node`] and the recursive break-down
+/// adapter so both seed identical defaults.
+fn fresh_node_config(data: &PlannerData, type_id: i64) -> NodeConfig {
+  let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
+  let owned = data.owned.get(&type_id);
+  let (me, te) = if is_reaction {
+    (0, 0)
+  } else {
+    (
+      owned.map(|bp| bp.material_efficiency).unwrap_or(DEFAULT_ME),
+      owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
+    )
+  };
+  NodeConfig {
+    children: BTreeMap::new(),
+    facility_system: None,
+    me,
+    te,
+  }
+}
+
+/// Adapts the planner's loaded recipe data into the pure [`planner_model::expand_to_raw`] lookup, exposing
+/// each type's buildable inputs (materials that have their own recipe) and fresh child configs.
+struct BuildableAdapter<'a> {
+  data: &'a PlannerData,
+}
+
+impl BuildableLookup<NodeConfig> for BuildableAdapter<'_> {
+  fn buildable_inputs(&self, type_id: i64) -> Vec<i64> {
+    let Some(recipe) = self.data.recipe(type_id) else {
+      return Vec::new();
+    };
+    recipe
+      .materials
+      .iter()
+      .map(|material| material.type_id)
+      .filter(|&mat| self.data.recipe(mat).is_some())
+      .collect()
+  }
+
+  fn fresh_child(&self, type_id: i64) -> NodeConfig {
+    fresh_node_config(self.data, type_id)
+  }
+
+  fn children_of<'a>(&self, child: &'a mut NodeConfig) -> &'a mut BTreeMap<i64, NodeConfig> {
+    &mut child.children
+  }
+}
+
 #[derive(Debug)]
 pub struct Planner {
   category: Category,
@@ -183,6 +234,9 @@ pub struct Planner {
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
+  /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
+  /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
+  pending_blueprint_seed: Option<i64>,
   picker_open: bool,
   picker_scroll_offset: f32,
   placeholder: String,
@@ -211,6 +265,7 @@ impl Planner {
       facility_picker: None,
       loaded: false,
       menu: None,
+      pending_blueprint_seed: None,
       picker_open: false,
       picker_scroll_offset: 0.0,
       placeholder: String::new(),
@@ -234,6 +289,12 @@ impl Planner {
     );
     if self.recent.is_empty() {
       self.recent = self.seed_recent();
+    }
+    // A "Plan Build" queued before the catalog loaded wins over the default recent selection.
+    if let Some(blueprint_type_id) = self.pending_blueprint_seed.take()
+      && self.seed_from_blueprint(blueprint_type_id)
+    {
+      return;
     }
     if self.product.is_none()
       && let Some(first) = self.recent.first().copied()
@@ -353,6 +414,50 @@ impl Planner {
     self.product
   }
 
+  /// Whether the current root product has at least one buildable input (a material that itself has a
+  /// recipe). Gates the "Break down all" affordance — there is nothing to expand otherwise.
+  pub fn has_buildable_inputs(&self) -> bool {
+    let lookup = BuildableAdapter {
+      data: &self.data,
+    };
+    self
+      .product
+      .map(|product| !lookup.buildable_inputs(product).is_empty())
+      .unwrap_or(false)
+  }
+
+  /// Resolves the product a blueprint type makes (via the loaded recipe table) and seeds it as the planner
+  /// root with a fresh breakdown tree. Returns whether a product was found and seeded. The reseed is silent:
+  /// any in-progress tree is discarded.
+  pub fn seed_from_blueprint(&mut self, blueprint_type_id: i64) -> bool {
+    let Some(product) = self.product_for_blueprint(blueprint_type_id) else {
+      return false;
+    };
+    self.select_product(product);
+    self.picker_open = false;
+    self.search.clear();
+    self.category = Category::Other;
+    self.push_recent(product);
+    true
+  }
+
+  /// Queues a blueprint type to seed as the planner root once the catalog finishes loading. Used by
+  /// "Plan Build" when the Planner tab has not loaded its data yet; [`Planner::apply_data`] consumes it.
+  pub fn queue_blueprint_seed(&mut self, blueprint_type_id: i64) {
+    self.pending_blueprint_seed = Some(blueprint_type_id);
+  }
+
+  /// The product type id a blueprint type manufactures (or reacts into), looked up in the loaded recipe
+  /// table whose keys are product type ids carrying their producing `blueprint_type_id`.
+  pub fn product_for_blueprint(&self, blueprint_type_id: i64) -> Option<i64> {
+    self
+      .data
+      .recipes
+      .iter()
+      .find(|(_, recipe)| recipe.blueprint_type_id == blueprint_type_id)
+      .map(|(&product, _)| product)
+  }
+
   pub fn recent(&self) -> &[i64] {
     &self.recent
   }
@@ -461,6 +566,7 @@ impl Planner {
 
   pub fn update(&mut self, message: Message) {
     match message {
+      Message::BreakDownAll => self.break_down_all(),
       Message::CategorySelected(category) => {
         self.category = category;
         self.picker_scroll_offset = 0.0;
@@ -651,6 +757,20 @@ impl Planner {
     }
   }
 
+  /// Recursively breaks down every buildable input across the whole tree down to raw materials in one
+  /// action (manufacturing + reactions). Already-broken-down branches are kept and deepened rather than
+  /// reset. Pure expansion logic lives in [`planner_model::expand_to_raw`]; this only wires the planner's
+  /// recipe/blueprint data into it.
+  fn break_down_all(&mut self) {
+    let Some(product) = self.product else {
+      return;
+    };
+    let lookup = BuildableAdapter {
+      data: &self.data,
+    };
+    super::planner_model::expand_to_raw(&mut self.tree.children, product, &lookup);
+  }
+
   /// Resolves a facility cost index for a node pinned (or not) to `facility_system`, falling back to the
   /// cheapest available default when the system is absent from current data.
   fn cost_index_for(&self, facility_system: Option<i64>, is_reaction: bool) -> f64 {
@@ -676,22 +796,7 @@ impl Planner {
   }
 
   fn fresh_node(&self, type_id: i64) -> NodeConfig {
-    let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
-    let owned = self.data.owned.get(&type_id);
-    let (me, te) = if is_reaction {
-      (0, 0)
-    } else {
-      (
-        owned.map(|bp| bp.material_efficiency).unwrap_or(DEFAULT_ME),
-        owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
-      )
-    };
-    NodeConfig {
-      children: BTreeMap::new(),
-      facility_system: None,
-      me,
-      te,
-    }
+    fresh_node_config(&self.data, type_id)
   }
 
   fn open_menu(&mut self, parent: Vec<i64>, mat: i64) {
@@ -1039,9 +1144,9 @@ mod view {
     } else {
       format!("ME {} applied", planner.node(&[]).me)
     };
-    children.push(section_label(
-      "Material plan",
-      Some(format!("{me_hint} \u{00B7} right-click an item to break it down")),
+    children.push(material_plan_header(
+      planner,
+      format!("{me_hint} \u{00B7} break down an item or right-click for options"),
     ));
     children.push(material_plan(planner, recipe));
 
@@ -1825,6 +1930,60 @@ mod view {
     .into()
   }
 
+  /// The Material Plan section heading: the label/hint on the left and, when the plan has at least one
+  /// buildable input, a warning-tinted "Break down all" button floated right that recursively builds every
+  /// buildable input down to raw materials in one action.
+  fn material_plan_header(planner: &Planner, hint: String) -> Element<'_, Message> {
+    let label = section_label("Material plan", Some(hint));
+    if !planner.has_buildable_inputs() {
+      return label;
+    }
+    Row::with_children(vec![
+      container(label).width(Length::Fill).into(),
+      break_down_all_button(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill)
+    .into()
+  }
+
+  fn break_down_all_button<'a>() -> Element<'a, Message> {
+    let inner = Row::with_children(vec![
+      Icon::flask()
+        .color(color::status::WARNING)
+        .size(13.0)
+        .render::<Message>(),
+      text("Break down all")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center);
+
+    button(inner)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .on_press(Message::BreakDownAll)
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.1))),
+        border: Border {
+          color: color::with_alpha(color::status::WARNING, 0.34),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::status::WARNING,
+        ..button::Style::default()
+      })
+      .into()
+  }
+
   fn material_plan<'a>(planner: &'a Planner, recipe: &'a Recipe) -> Element<'a, Message> {
     let mut rows: Vec<Element<'a, Message>> = vec![grid_header()];
     let mut total = 0.0;
@@ -1880,6 +2039,47 @@ mod view {
     }
   }
 
+  /// Inline "Breakdown" button shown on a buildable material-plan row that has not yet been broken down.
+  /// Fires the same `NodeBrokenDown` message the row-click and context menu use, so all three coexist.
+  fn breakdown_button<'a>(type_id: i64, parent: &[i64]) -> Element<'a, Message> {
+    let inner = Row::with_children(vec![
+      Icon::flask()
+        .color(color::status::WARNING)
+        .size(11.0)
+        .render::<Message>(),
+      text("Breakdown")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+    ])
+    .spacing(spacing::UNIT + 1.0)
+    .align_y(Vertical::Center);
+
+    button(inner)
+      .padding(Padding {
+        top: spacing::UNIT,
+        bottom: spacing::UNIT,
+        left: spacing::SPACE_2,
+        right: spacing::SPACE_2,
+      })
+      .on_press(Message::NodeBrokenDown {
+        mat: type_id,
+        parent: parent.to_vec(),
+      })
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.1))),
+        border: Border {
+          color: color::with_alpha(color::status::WARNING, 0.3),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::status::WARNING,
+        ..button::Style::default()
+      })
+      .into()
+  }
+
   fn material_row<'a>(planner: &'a Planner, type_id: i64, line: MaterialLine, parent: &[i64]) -> Element<'a, Message> {
     let MaterialLine {
       building,
@@ -1903,12 +2103,7 @@ mod view {
     if building {
       name_row = name_row.push(badge("BUILDING", Some(color::status::WARNING)));
     } else if buildable {
-      name_row = name_row.push(
-        text("buildable")
-          .font(typography::mono::REGULAR)
-          .size(typography::size::XS)
-          .style(typography::colored(color::text::tertiary())),
-      );
+      name_row = name_row.push(breakdown_button(type_id, parent));
     }
 
     let name_cell = container(name_row).padding(Padding {
@@ -3158,6 +3353,135 @@ mod tests {
       // 5 direct + 2 retrievers × 10 = 25.
       assert_eq!(tritanium.qty, 25);
       assert!(totals.iter().all(|t| t.type_id != RETRIEVER));
+    }
+  }
+
+  mod break_down_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_recursively_breaks_down_every_buildable_input_to_raw() {
+      let mut planner = planner();
+
+      planner.update(Message::BreakDownAll);
+
+      // The buildable RETRIEVER input is built in-house; raw TRITANIUM is left to buy.
+      let root = planner.node(&[]);
+      assert!(root.children.contains_key(&RETRIEVER));
+      assert!(!root.children.contains_key(&TRITANIUM));
+      // RETRIEVER's only input is raw TRITANIUM, so it has no further sub-builds.
+      assert!(root.children[&RETRIEVER].children.is_empty());
+    }
+
+    #[test]
+    fn it_is_idempotent_and_keeps_existing_breakdowns() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+      let before = planner.node(&[]).clone();
+
+      planner.update(Message::BreakDownAll);
+
+      assert_eq!(planner.node(&[]), &before);
+    }
+
+    #[test]
+    fn it_breaks_down_a_reaction_input() {
+      const FUEL: i64 = 4051;
+      const COMPOSITE: i64 = 16_670;
+      const GAS: i64 = 25_268;
+      let mut data = PlannerData::default();
+      // FUEL reaction consumes a buildable COMPOSITE reaction, which consumes raw GAS.
+      data
+        .recipes
+        .insert(FUEL, recipe(FUEL + 1, 40, true, vec![Material::new(COMPOSITE, 25)]));
+      data.recipes.insert(
+        COMPOSITE,
+        recipe(COMPOSITE + 1, 100, true, vec![Material::new(GAS, 50)]),
+      );
+      data.names.insert(FUEL, "Fuel Block".to_owned());
+      data.names.insert(COMPOSITE, "Composite".to_owned());
+      data.names.insert(GAS, "Gas".to_owned());
+      let mut planner = Planner::new();
+      planner.apply_data(data);
+      planner.update(Message::ProductPicked(FUEL));
+
+      planner.update(Message::BreakDownAll);
+
+      let root = planner.node(&[]);
+      assert!(root.children.contains_key(&COMPOSITE));
+      assert!(root.children[&COMPOSITE].children.is_empty());
+    }
+
+    #[test]
+    fn it_reports_buildable_inputs_only_when_present() {
+      let planner = planner();
+      assert!(planner.has_buildable_inputs());
+
+      // A product whose only inputs are raw has nothing to break down.
+      let mut data = PlannerData::default();
+      data.recipes.insert(
+        TRITANIUM,
+        recipe(TRITANIUM + 1, 1, false, vec![Material::new(99_999, 1)]),
+      );
+      data.names.insert(TRITANIUM, "Tritanium".to_owned());
+      let mut raw_only = Planner::new();
+      raw_only.apply_data(data);
+      raw_only.update(Message::ProductPicked(TRITANIUM));
+      assert!(!raw_only.has_buildable_inputs());
+    }
+  }
+
+  mod seed_from_blueprint {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_seeds_the_product_a_blueprint_makes() {
+      let mut planner = planner();
+      planner.update(Message::ProductPicked(RETRIEVER));
+
+      // The Hulk blueprint type is HULK + 1 (see the `planner()` recipe helper).
+      let seeded = planner.seed_from_blueprint(HULK + 1);
+
+      assert!(seeded);
+      assert_eq!(planner.product(), Some(HULK));
+      assert!(planner.node(&[]).children.is_empty());
+    }
+
+    #[test]
+    fn it_reports_no_seed_for_an_unknown_blueprint() {
+      let mut planner = planner();
+
+      assert!(!planner.seed_from_blueprint(123_456));
+    }
+
+    #[test]
+    fn it_applies_a_queued_seed_once_data_loads() {
+      let mut planner = Planner::new();
+      planner.queue_blueprint_seed(HULK + 1);
+
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
+      data.names.insert(HULK, "Hulk".to_owned());
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Mining Barge".to_owned(),
+        is_reaction: false,
+        name: "Hulk".to_owned(),
+        type_id: HULK,
+        volume: 3_750.0,
+      });
+      planner.apply_data(data);
+
+      assert_eq!(planner.product(), Some(HULK));
     }
   }
 

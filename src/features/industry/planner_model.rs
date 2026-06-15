@@ -200,6 +200,36 @@ pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {
   ((demand + per_run - 1) / per_run).max(1)
 }
 
+/// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
+/// [`expand_to_raw`] can be exercised without any database or UI.
+pub trait BuildableLookup<C> {
+  /// The buildable input materials of `type_id` (raw, non-producible materials are omitted), in the order
+  /// they should be inserted as children.
+  fn buildable_inputs(&self, type_id: i64) -> Vec<i64>;
+
+  /// A fresh, un-expanded build config for `type_id` (its own ME/TE/facility defaults, no children).
+  fn fresh_child(&self, type_id: i64) -> C;
+
+  /// Mutable access to a child node's own child map, so the expansion can descend.
+  fn children_of<'a>(&self, child: &'a mut C) -> &'a mut BTreeMap<i64, C>;
+}
+
+/// Recursively breaks down every buildable input of `type_id` across the whole subtree rooted at
+/// `children`, down to raw materials. Pure: it touches no database or UI and reads all recipe/buildable
+/// facts through `lookup`. Existing children are kept (and themselves expanded) rather than replaced, so an
+/// in-progress tree deepens instead of resetting. Manufacturing and reaction nodes are treated alike — both
+/// surface buildable inputs through [`BuildableLookup::buildable_inputs`].
+pub fn expand_to_raw<C, L>(children: &mut BTreeMap<i64, C>, type_id: i64, lookup: &L)
+where
+  L: BuildableLookup<C>,
+{
+  for mat in lookup.buildable_inputs(type_id) {
+    let child = children.entry(mat).or_insert_with(|| lookup.fresh_child(mat));
+    let grandchildren = lookup.children_of(child);
+    expand_to_raw(grandchildren, mat, lookup);
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -434,6 +464,118 @@ mod tests {
       let result = runs_for(11, 4);
 
       assert_eq!(result, 3);
+    }
+  }
+
+  mod expand_to_raw {
+    use std::collections::BTreeMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// A minimal stand-in for the planner's `NodeConfig`: just a child map, so the pure expansion can be
+    /// exercised without any UI or planner state.
+    #[derive(Clone, Debug, Default, PartialEq)]
+    struct TestNode {
+      children: BTreeMap<i64, TestNode>,
+    }
+
+    /// A buildable lookup backed by a fixed bill-of-materials table keyed by product type id. Any type
+    /// absent from the table is treated as a raw material (no buildable inputs).
+    struct Bom {
+      inputs: BTreeMap<i64, Vec<i64>>,
+    }
+
+    impl BuildableLookup<TestNode> for Bom {
+      fn buildable_inputs(&self, type_id: i64) -> Vec<i64> {
+        self.inputs.get(&type_id).cloned().unwrap_or_default()
+      }
+
+      fn fresh_child(&self, _type_id: i64) -> TestNode {
+        TestNode::default()
+      }
+
+      fn children_of<'a>(&self, child: &'a mut TestNode) -> &'a mut BTreeMap<i64, TestNode> {
+        &mut child.children
+      }
+    }
+
+    /// Collects every type id that ends up built in-house across the tree, depth-first.
+    fn built_ids(children: &BTreeMap<i64, TestNode>, out: &mut Vec<i64>) {
+      for (&id, node) in children {
+        out.push(id);
+        built_ids(&node.children, out);
+      }
+    }
+
+    #[test]
+    fn it_breaks_down_a_multi_level_tree_to_raw_inputs() {
+      // HULK -> RETRIEVER (buildable) + TRITANIUM (raw); RETRIEVER -> TRITANIUM (raw).
+      let bom = Bom {
+        inputs: BTreeMap::from([(HULK, vec![RETRIEVER]), (RETRIEVER, vec![])]),
+      };
+      let mut children = BTreeMap::new();
+
+      expand_to_raw(&mut children, HULK, &bom);
+
+      let mut ids = Vec::new();
+      built_ids(&children, &mut ids);
+      // Only the buildable RETRIEVER becomes a child; raw TRITANIUM is left to buy.
+      assert_eq!(ids, vec![RETRIEVER]);
+      assert!(children[&RETRIEVER].children.is_empty());
+    }
+
+    #[test]
+    fn it_descends_through_a_buildable_intermediate() {
+      // WIDGET -> GADGET (buildable) -> COG (buildable) -> raw.
+      const WIDGET: i64 = 900;
+      const GADGET: i64 = 901;
+      const COG: i64 = 902;
+      let bom = Bom {
+        inputs: BTreeMap::from([(WIDGET, vec![GADGET]), (GADGET, vec![COG]), (COG, vec![])]),
+      };
+      let mut children = BTreeMap::new();
+
+      expand_to_raw(&mut children, WIDGET, &bom);
+
+      let mut ids = Vec::new();
+      built_ids(&children, &mut ids);
+      assert_eq!(ids, vec![GADGET, COG]);
+    }
+
+    #[test]
+    fn it_expands_a_reaction_input() {
+      // A fuel block reaction whose buildable input is a composite that itself reacts down to raw gas.
+      const FUEL: i64 = 4051;
+      const COMPOSITE: i64 = 16_670;
+      let bom = Bom {
+        inputs: BTreeMap::from([(FUEL, vec![COMPOSITE]), (COMPOSITE, vec![])]),
+      };
+      let mut children = BTreeMap::new();
+
+      expand_to_raw(&mut children, FUEL, &bom);
+
+      let mut ids = Vec::new();
+      built_ids(&children, &mut ids);
+      assert_eq!(ids, vec![COMPOSITE]);
+    }
+
+    #[test]
+    fn it_keeps_and_deepens_an_existing_partial_breakdown() {
+      const WIDGET: i64 = 900;
+      const GADGET: i64 = 901;
+      const COG: i64 = 902;
+      let bom = Bom {
+        inputs: BTreeMap::from([(WIDGET, vec![GADGET]), (GADGET, vec![COG]), (COG, vec![])]),
+      };
+      // GADGET is already a child but its own COG sub-build is not yet expanded.
+      let mut children = BTreeMap::from([(GADGET, TestNode::default())]);
+
+      expand_to_raw(&mut children, WIDGET, &bom);
+
+      // The pre-existing GADGET node is kept and gains its COG child rather than being replaced.
+      assert!(children[&GADGET].children.contains_key(&COG));
     }
   }
 }

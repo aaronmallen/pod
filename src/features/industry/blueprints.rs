@@ -32,7 +32,8 @@ const TE_MAX: i64 = 20;
 const TILE_BOX: f32 = 34.0;
 const TILE_ICON: Size = Size::S64;
 
-// Column widths mirror the design grid `1fr 96px 96px 130px 150px`.
+// Column widths mirror the design grid `1fr 96px 96px 130px 150px` plus a trailing action column.
+const COL_ACTION: f32 = 130.0;
 const COL_LOCATION: f32 = 150.0;
 const COL_ME: f32 = 96.0;
 const COL_RUNS: f32 = 130.0;
@@ -260,6 +261,7 @@ fn column_header<'a>() -> Element<'a, Message> {
     column(head("TIME EFF.", false), COL_TE),
     column(head("RUNS", true), COL_RUNS),
     column(head("LOCATION", true), COL_LOCATION),
+    column(Space::new().into(), COL_ACTION),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center);
@@ -298,6 +300,7 @@ fn blueprint_row<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
     ),
     column(runs_cell(blueprint), COL_RUNS),
     column(location_cell(blueprint), COL_LOCATION),
+    column(plan_build_cell(blueprint), COL_ACTION),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
@@ -505,6 +508,55 @@ fn location_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
     .align_x(Horizontal::Right)
     .width(Length::Fill)
     .into()
+}
+
+/// The trailing "Plan Build" action: a flask-iconed button that seeds this blueprint's product into the
+/// Planner tab. Subdued by default and brightened to plasma on hover (the design's hover-reveal), it carries
+/// the blueprint type id so the planner can resolve the product it manufactures.
+fn plan_build_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
+  let type_id = blueprint.type_id;
+  let inner = Row::with_children(vec![
+    Icon::flask().size(13.0).render::<Message>(),
+    text("Plan Build")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let action = button(inner)
+    .padding(Padding {
+      top: spacing::UNIT + 2.0,
+      bottom: spacing::UNIT + 2.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(Message::PlanBuild(type_id))
+    .style(|_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      let accent = if hovered {
+        color::accent::PLASMA
+      } else {
+        color::text::tertiary()
+      };
+      button::Style {
+        background: hovered.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+        border: Border {
+          color: if hovered {
+            color::accent::PLASMA
+          } else {
+            color::rule_strong()
+          },
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: accent,
+        ..button::Style::default()
+      }
+    });
+
+  container(action).align_x(Horizontal::Right).width(Length::Fill).into()
 }
 
 fn empty_state<'a>() -> Element<'a, Message> {

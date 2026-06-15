@@ -55,6 +55,7 @@ pub struct Model {
 pub enum RowState {
   Attention,
   Done,
+  Empty,
   Error,
   Queued,
   Syncing,
@@ -348,6 +349,7 @@ where
   let (glyph, glyph_color) = match row.state {
     RowState::Attention => ("∅", color::status::WARNING),
     RowState::Done => ("✓", color::text::secondary()),
+    RowState::Empty => ("∅", color::text::secondary()),
     RowState::Error => ("!", color::status::DANGER),
     RowState::Queued => ("··", color::text::tertiary()),
     RowState::Syncing => ("~", color::text::secondary()),
@@ -388,6 +390,7 @@ where
     (RowState::Error, None) => (row.character_name.to_uppercase(), color::status::DANGER),
     (RowState::Attention, Some(message)) => (message.to_uppercase(), color::status::WARNING),
     (RowState::Attention, None) => (row.character_name.to_uppercase(), color::status::WARNING),
+    (RowState::Empty, Some(message)) => (message.to_uppercase(), color::text::tertiary()),
     _ => (row.character_name.to_uppercase(), color::text::tertiary()),
   };
 
@@ -410,6 +413,7 @@ where
   let dot_color = match row.state {
     RowState::Attention => color::status::WARNING,
     RowState::Done => color::status::ONLINE,
+    RowState::Empty => color::status::ONLINE,
     RowState::Error => color::status::DANGER,
     RowState::Queued => color::text::tertiary(),
     RowState::Syncing => {
@@ -440,6 +444,7 @@ where
   let (fill_portion, fill_color) = match row.state {
     RowState::Attention => (1.0, color::status::WARNING),
     RowState::Done => (1.0, color::status::ONLINE),
+    RowState::Empty => (1.0, color::status::ONLINE),
     RowState::Error => (1.0, color::status::DANGER),
     RowState::Queued => (0.0, color::accent::PLASMA),
     RowState::Syncing => {

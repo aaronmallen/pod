@@ -1977,7 +1977,7 @@ fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<Strin
         .map(str::to_owned)
         .or_else(|| Some("Blocked".to_owned())),
     ),
-    Some(Phase::Empty) => (RowState::Attention, Some("No data".to_owned())),
+    Some(Phase::Empty) => (RowState::Empty, Some("No data".to_owned())),
     Some(Phase::NotReady) => (RowState::Attention, Some("Waiting on dependencies".to_owned())),
   }
 }
@@ -2000,7 +2000,7 @@ fn expected_job_stats(app: &App) -> JobStats {
       stats.total += 1;
       match state {
         RowState::Attention => stats.attention += 1,
-        RowState::Done => stats.done += 1,
+        RowState::Done | RowState::Empty => stats.done += 1,
         RowState::Error => stats.errors += 1,
         RowState::Syncing => stats.active += 1,
         RowState::Queued => {}
@@ -6481,7 +6481,7 @@ mod tests {
     }
 
     #[test]
-    fn it_surfaces_empty_and_blocked_outcomes_as_attention_with_a_reason() {
+    fn it_surfaces_an_empty_outcome_as_benign_and_a_blocked_outcome_as_attention() {
       let mut status = sync::SyncStatus::new();
 
       status.apply(&Event::Finished {
@@ -6490,7 +6490,8 @@ mod tests {
       });
       assert_eq!(
         row_state(&status, &key()),
-        (RowState::Attention, Some("No data".to_owned()))
+        (RowState::Empty, Some("No data".to_owned())),
+        "a successful empty sync is benign, not an amber attention chip"
       );
 
       status.apply(&Event::Finished {

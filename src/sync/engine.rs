@@ -211,7 +211,7 @@ impl Engine {
     let attempt_at = Utc::now().to_rfc3339();
     let outcome = match result {
       Ok(outcome) => {
-        if matches!(&outcome, Outcome::Blocked { .. } | Outcome::Empty | Outcome::NotReady) {
+        if is_pending_outcome(&outcome) {
           self
             .schedule
             .reschedule_throttle(key, now, PENDING_RETRY.min(key.kind.interval()));
@@ -766,6 +766,10 @@ async fn run_job(
     grant: grant.as_ref(),
   };
   job::run(&ctx).await
+}
+
+fn is_pending_outcome(outcome: &Outcome) -> bool {
+  matches!(outcome, Outcome::Blocked { .. } | Outcome::NotReady)
 }
 
 fn is_permanent_failure(error: &Error) -> bool {
@@ -1541,6 +1545,29 @@ mod tests {
     }
   }
 
+  mod is_pending_outcome {
+    use super::*;
+
+    #[test]
+    fn it_treats_blocked_and_not_ready_as_pending() {
+      assert!(super::super::is_pending_outcome(&Outcome::Blocked {
+        reason: "no scope".to_owned()
+      }));
+      assert!(super::super::is_pending_outcome(&Outcome::NotReady));
+    }
+
+    #[test]
+    fn it_does_not_treat_a_benign_empty_or_synced_outcome_as_pending() {
+      assert!(
+        !super::super::is_pending_outcome(&Outcome::Empty),
+        "a benign empty result is a success, not a pending retry"
+      );
+      assert!(!super::super::is_pending_outcome(&Outcome::Synced {
+        rows_touched: 3
+      }));
+    }
+  }
+
   mod is_permanent_failure {
     use super::*;
 
@@ -2017,7 +2044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_reschedules_a_pending_outcome_sooner_than_its_interval() {
+    async fn it_reschedules_an_empty_outcome_at_its_normal_interval() {
       let server = MockServer::start().await;
       mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let (_handle, mut events, _db, _images) = spawn_engine(server.uri()).await;
@@ -2035,12 +2062,12 @@ mod tests {
       };
 
       assert!(
-        next_in_secs > 0 && next_in_secs <= PENDING_RETRY.as_secs(),
-        "an empty (pending) job re-checks within the pending window, got {next_in_secs}s"
-      );
-      assert!(
         JobKind::MarketPrices.interval().as_secs() > PENDING_RETRY.as_secs(),
         "the pending retry is meaningfully shorter than the job's normal interval"
+      );
+      assert!(
+        next_in_secs > PENDING_RETRY.as_secs(),
+        "a benign empty result settles to the normal interval, not the pending window, got {next_in_secs}s"
       );
     }
 

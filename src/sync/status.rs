@@ -163,11 +163,11 @@ impl SyncStatus {
   }
 
   pub fn attention(&self) -> usize {
-    self.count(Phase::Blocked) + self.count(Phase::Empty) + self.count(Phase::NotReady)
+    self.count(Phase::Blocked) + self.count(Phase::NotReady)
   }
 
   pub fn done(&self) -> usize {
-    self.count(Phase::Done)
+    self.count(Phase::Done) + self.count(Phase::Empty)
   }
 
   pub fn errors(&self) -> usize {
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn it_does_not_count_empty_or_blocked_as_a_clean_success_or_error() {
+    fn it_counts_an_empty_outcome_as_a_benign_success_not_attention() {
       let mut status = SyncStatus::new();
 
       status.apply(&finished(
@@ -347,17 +347,13 @@ mod tests {
       ));
       status.apply(&finished(key(4), Outcome::NotReady));
 
-      assert_eq!(status.done(), 1, "only the synced job is a clean success");
-      assert_eq!(
-        status.attention(),
-        3,
-        "empty, blocked, and not-ready all need attention"
-      );
+      assert_eq!(status.done(), 2, "synced and empty are both up-to-date successes");
+      assert_eq!(status.attention(), 2, "only blocked and not-ready need attention");
       assert_eq!(status.errors(), 0, "an empty/blocked job is not an error");
       assert_eq!(
         status.percent(),
-        25,
-        "percent reflects only the one synced job out of four"
+        50,
+        "percent reflects the synced and empty jobs out of four"
       );
     }
 

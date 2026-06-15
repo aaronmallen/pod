@@ -16,6 +16,22 @@ pub struct AllBlueprints {
 
 const BLUEPRINT_WRITE_BATCH_SIZE: usize = 500;
 
+pub async fn activity_meta(
+  db: &Database,
+  blueprint_type_id: i64,
+  activity_id: i64,
+) -> Result<Option<(i64, i64)>, Error> {
+  let row: Option<(i64, i64)> = sqlx::query_as(
+    "SELECT time, max_production_limit FROM blueprint_activity_meta \
+    WHERE blueprint_type_id = ? AND activity_id = ?",
+  )
+  .bind(blueprint_type_id)
+  .bind(activity_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row)
+}
+
 pub async fn list_all(db: &Database) -> Result<AllBlueprints, Error> {
   let character_blueprints = list_all_character(db).await?;
   let corporation_blueprints = list_all_corporation(db).await?;
@@ -467,6 +483,46 @@ mod tests {
           .unwrap()
           .is_empty()
       );
+    }
+  }
+
+  mod activity_meta {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
+      sqlx::query(
+        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
+        VALUES (?, ?, ?, ?)",
+      )
+      .bind(blueprint_type_id)
+      .bind(activity_id)
+      .bind(time)
+      .bind(max)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_time_and_max_run_limit_for_a_blueprint_activity() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+
+      let meta = super::activity_meta(&db, 939, 1).await.unwrap();
+
+      assert_eq!(meta, Some((600, 300)));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_activity_is_absent() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+
+      let meta = super::activity_meta(&db, 939, 11).await.unwrap();
+
+      assert_eq!(meta, None);
     }
   }
 

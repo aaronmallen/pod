@@ -20,7 +20,7 @@ use crate::{
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 4;
+const SEED_FORMAT_REVISION: u32 = 5;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 const SKILL_RANK_ATTR_ID: i32 = 275;
@@ -355,8 +355,12 @@ struct SdeBlueprintEntry {
 struct SdeBlueprintActivity {
   #[serde(default)]
   materials: Vec<SdeBlueprintQuantity>,
+  #[serde(default, rename = "maxProductionLimit")]
+  max_production_limit: Option<i64>,
   #[serde(default)]
   products: Vec<SdeBlueprintQuantity>,
+  #[serde(default)]
+  time: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -374,6 +378,16 @@ struct BlueprintActivityRow {
   activity_id: i64,
   type_id: i64,
   quantity: i64,
+}
+
+/// One `(blueprint_type_id, activity_id, time, max_production_limit)` row for `blueprint_activity_meta`.
+/// `time` is base seconds per run; `max_production_limit` is the per-job run cap (0 when the SDE omits it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BlueprintActivityMetaRow {
+  activity_id: i64,
+  blueprint_type_id: i64,
+  max_production_limit: i64,
+  time: i64,
 }
 
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
@@ -1095,19 +1109,39 @@ fn blueprint_activity_id(name: &str) -> Option<i64> {
   }
 }
 
+/// Returns `true` for manufacturing (1) and reaction (11) — the only activities that produce items
+/// and therefore need time and run-cap meta rows.
+fn is_build_activity(activity_id: i64) -> bool {
+  activity_id == 1 || activity_id == 11
+}
+
 /// Flattens the parsed `blueprints.yaml` into the product and material rows destined for their
 /// respective tables, keyed by `(blueprint_type_id, activity_id)`.
 fn build_blueprint_rows(
   entries: HashMap<i64, SdeBlueprintEntry>,
-) -> (Vec<BlueprintActivityRow>, Vec<BlueprintActivityRow>) {
+) -> (
+  Vec<BlueprintActivityRow>,
+  Vec<BlueprintActivityRow>,
+  Vec<BlueprintActivityMetaRow>,
+) {
   let mut products: Vec<BlueprintActivityRow> = Vec::new();
   let mut materials: Vec<BlueprintActivityRow> = Vec::new();
+  let mut meta: Vec<BlueprintActivityMetaRow> = Vec::new();
 
   for (blueprint_type_id, entry) in entries {
     for (activity_name, activity) in entry.activities {
       let Some(activity_id) = blueprint_activity_id(&activity_name) else {
         continue;
       };
+
+      if let (true, Some(time)) = (is_build_activity(activity_id), activity.time) {
+        meta.push(BlueprintActivityMetaRow {
+          activity_id,
+          blueprint_type_id,
+          max_production_limit: activity.max_production_limit.unwrap_or(0),
+          time,
+        });
+      }
 
       for product in activity.products {
         products.push(BlueprintActivityRow {
@@ -1129,15 +1163,16 @@ fn build_blueprint_rows(
     }
   }
 
-  (products, materials)
+  (products, materials, meta)
 }
 
 async fn seed_blueprints(db: &Database, path: &Path) -> Result<(), String> {
   let entries: HashMap<i64, SdeBlueprintEntry> = read_yaml(path).await?;
-  let (products, materials) = build_blueprint_rows(entries);
+  let (products, materials, meta) = build_blueprint_rows(entries);
 
   insert_blueprint_rows(db, "blueprint_activity_products", "product_type_id", &products).await?;
   insert_blueprint_rows(db, "blueprint_activity_materials", "material_type_id", &materials).await?;
+  insert_blueprint_meta_rows(db, &meta).await?;
 
   Ok(())
 }
@@ -1169,6 +1204,34 @@ async fn insert_blueprint_rows(
     builder.push(format!(
       " ON CONFLICT(blueprint_type_id, activity_id, {type_column}) DO UPDATE SET quantity = excluded.quantity"
     ));
+    builder.build().execute(&mut *tx).await.map_err(|e| e.to_string())?;
+  }
+
+  tx.commit().await.map_err(|e| e.to_string())
+}
+
+/// Bulk-inserts rows into `blueprint_activity_meta`. Re-seeds replace existing rows via the primary key.
+async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMetaRow]) -> Result<(), String> {
+  if rows.is_empty() {
+    return Ok(());
+  }
+
+  let mut tx = db.0.begin().await.map_err(|e| e.to_string())?;
+
+  for chunk in rows.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
+    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+      "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) ",
+    );
+    builder.push_values(chunk, |mut b, row| {
+      b.push_bind(row.blueprint_type_id)
+        .push_bind(row.activity_id)
+        .push_bind(row.time)
+        .push_bind(row.max_production_limit);
+    });
+    builder.push(
+      " ON CONFLICT(blueprint_type_id, activity_id) DO UPDATE SET time = excluded.time, \
+      max_production_limit = excluded.max_production_limit",
+    );
     builder.build().execute(&mut *tx).await.map_err(|e| e.to_string())?;
   }
 
@@ -2893,6 +2956,7 @@ mod tests {
       products:
         - { typeID: 587, quantity: 1 }
       time: 600
+      maxProductionLimit: 300
     copying:
       time: 480
   blueprintTypeID: 939
@@ -2962,6 +3026,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_seeds_manufacturing_activity_meta() {
+      let db = seed_fixture().await;
+
+      let row: (i64, i64) = sqlx::query_as(
+        "SELECT time, max_production_limit FROM blueprint_activity_meta \
+        WHERE blueprint_type_id = 939 AND activity_id = 1",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(row, (600, 300));
+    }
+
+    #[tokio::test]
+    async fn it_seeds_reaction_activity_meta() {
+      let db = seed_fixture().await;
+
+      let row: (i64, i64) = sqlx::query_as(
+        "SELECT time, max_production_limit FROM blueprint_activity_meta \
+        WHERE blueprint_type_id = 46167 AND activity_id = 11",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(row, (3600, 0));
+    }
+
+    #[tokio::test]
+    async fn it_skips_meta_for_non_build_activities() {
+      let db = seed_fixture().await;
+
+      let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_meta WHERE activity_id NOT IN (1, 11)")
+          .fetch_one(&db.0)
+          .await
+          .unwrap();
+
+      assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
       let path = tmp.path().join("blueprints.yaml");
@@ -3001,7 +3108,7 @@ mod tests {
         - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
       );
 
-      let (products, materials) = build_blueprint_rows(entries);
+      let (products, materials, _meta) = build_blueprint_rows(entries);
 
       assert_eq!(
         products,
@@ -3030,10 +3137,60 @@ mod tests {
         - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
       );
 
-      let (products, materials) = build_blueprint_rows(entries);
+      let (products, materials, meta) = build_blueprint_rows(entries);
 
       assert!(products.is_empty());
       assert!(materials.is_empty());
+      assert!(meta.is_empty());
+    }
+
+    #[test]
+    fn it_captures_activity_time_and_max_production_limit() {
+      let entries = parse(
+        "939:\n  activities:\n    manufacturing:\n      \
+        products:\n        - { typeID: 587, quantity: 1 }\n      time: 600\n      maxProductionLimit: 300\n",
+      );
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        meta,
+        vec![BlueprintActivityMetaRow {
+          activity_id: 1,
+          blueprint_type_id: 939,
+          max_production_limit: 300,
+          time: 600,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_defaults_a_missing_max_production_limit_to_zero() {
+      let entries = parse(
+        "939:\n  activities:\n    reaction:\n      products:\n        - { typeID: 16640, quantity: 200 }\n      time: 3600\n",
+      );
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        meta,
+        vec![BlueprintActivityMetaRow {
+          activity_id: 11,
+          blueprint_type_id: 939,
+          max_production_limit: 0,
+          time: 3600,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_omits_meta_for_an_activity_without_a_time() {
+      let entries =
+        parse("939:\n  activities:\n    manufacturing:\n      products:\n        - { typeID: 587, quantity: 1 }\n");
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert!(meta.is_empty());
     }
   }
 }

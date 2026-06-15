@@ -1249,14 +1249,9 @@ fn mail_clock_reload(app: &App) -> Task<Message> {
 
 fn navigate_to_calendar(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Calendar);
-  let tweaks = app
-    .calendar
-    .as_ref()
-    .map(calendar::State::tweaks)
-    .unwrap_or_else(|| calendar_tweaks(app));
   let features = calendar_features(app);
   let selection = target.unwrap_or(calendar::EMPTY_CALENDAR_SELECTION);
-  app.calendar = Some(calendar::State::new(selection, app.now, tweaks, features));
+  app.calendar = Some(calendar::State::new(selection, app.now, features));
   match app.runtime.as_ref() {
     Some(runtime) => calendar::load(&runtime.db, selection, features).map(Message::Calendar),
     None => Task::none(),
@@ -1298,16 +1293,6 @@ fn calendar_features(app: &App) -> config::FeatureFlags {
     return *runtime.settings.features();
   }
   config::FeatureFlags::default()
-}
-
-fn calendar_tweaks(app: &App) -> config::CalendarTweaks {
-  if let Some(state) = app.settings.as_ref() {
-    return *state.settings().calendar_tweaks();
-  }
-  if let Some(runtime) = app.runtime.as_ref() {
-    return *runtime.settings.calendar_tweaks();
-  }
-  config::CalendarTweaks::default()
 }
 
 fn calendar_clock_reload(app: &App) -> Task<Message> {
@@ -4817,25 +4802,6 @@ mod tests {
     }
 
     #[test]
-    fn it_preserves_calendar_tweaks_across_a_re_navigation() {
-      let mut app = test_app();
-
-      let _ = navigate_to_calendar(&mut app, None);
-      let mut tweaks = app.calendar.as_ref().expect("calendar state").tweaks();
-      tweaks.set_pod_overlays(true);
-      app.calendar = Some(calendar::State::new(
-        calendar::EMPTY_CALENDAR_SELECTION,
-        app.now,
-        tweaks,
-        config::FeatureFlags::default(),
-      ));
-
-      let _ = navigate_to_calendar(&mut app, None);
-
-      assert!(app.calendar.as_ref().expect("calendar state").tweaks().pod_overlays());
-    }
-
-    #[test]
     fn it_routes_to_the_skills_empty_state_for_an_empty_owned_roster() {
       let mut app = test_app();
 
@@ -7146,12 +7112,7 @@ mod tests {
   fn featured_app() -> App {
     let mut app = test_app();
     app.assets = Some(assets::State::new());
-    app.calendar = Some(calendar::State::new(
-      42,
-      app.now,
-      config::CalendarTweaks::default(),
-      config::FeatureFlags::default(),
-    ));
+    app.calendar = Some(calendar::State::new(42, app.now, config::FeatureFlags::default()));
     app.character_detail = Some(character_detail::State::new(1, &[]));
     app.character_manager = Some(character_manager::State::new());
     app.mail = Some(mail::State::new(42));

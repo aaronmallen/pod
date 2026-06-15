@@ -6,18 +6,13 @@ use iced::{
 };
 
 use super::{
-  Message, Scope, State, View, agenda, day, detail, grid, month, palette, palette::OwnerType, switcher, tweaks, week,
-  year,
+  Message, Scope, State, View, agenda, day, detail, grid, month, palette, palette::OwnerType, switcher, week, year,
 };
 use crate::{
   config::Feature,
   ui::{
     components::{
-      backdrop, forbidden,
-      icon::Icon,
-      modal_overlay::modal_overlay,
-      positioned_dropdown::{positioned_dropdown, positioned_dropdown_right},
-      rule,
+      backdrop, forbidden, icon::Icon, modal_overlay::modal_overlay, positioned_dropdown::positioned_dropdown, rule,
       segmented::segment_button,
     },
     style::{color, radius, spacing, typography},
@@ -27,8 +22,6 @@ use crate::{
 const HEADER_SIDE_PADDING: f32 = 28.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
-const TWEAKS_OVERLAY_RIGHT: f32 = HEADER_SIDE_PADDING;
-const TWEAKS_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let body = Column::with_children(vec![header(state, now), content(state, now)])
@@ -49,18 +42,6 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       base.into(),
       backdrop::click_catcher(Message::PickerToggled),
       dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
-  }
-
-  if state.tweaks_open() {
-    let panel = positioned_dropdown_right(tweaks::panel(state.tweaks()), TWEAKS_OVERLAY_TOP, TWEAKS_OVERLAY_RIGHT);
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::TweaksToggled),
-      panel,
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -277,7 +258,6 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     date_nav(state),
     Space::new().width(Length::Fill).into(),
     view_segmented(state),
-    tweaks_button(),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center);
@@ -439,19 +419,6 @@ fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
       ..button::Style::default()
     }
   })
-  .into()
-}
-
-fn tweaks_button<'a>() -> Element<'a, Message> {
-  button(
-    Icon::settings()
-      .color(color::text::secondary())
-      .size(16.0)
-      .render::<Message>(),
-  )
-  .padding(spacing::SPACE_2)
-  .on_press(Message::TweaksToggled)
-  .style(|_, status| nav_button_style(status))
   .into()
 }
 

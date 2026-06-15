@@ -12,7 +12,6 @@ mod palette;
 mod respond;
 mod shell;
 mod switcher;
-mod tweaks;
 mod week;
 mod year;
 
@@ -81,8 +80,6 @@ pub enum Message {
   Responded(i64, i64, palette::Response),
   RsvpWritten,
   ScopeSelected(Scope),
-  TweakChanged(tweaks::Tweak),
-  TweaksToggled,
   ViewSelected(View),
 }
 
@@ -96,12 +93,11 @@ pub struct State {
   picker_open: bool,
   roster: Vec<RosterPilot>,
   tweaks: CalendarTweaks,
-  tweaks_open: bool,
   view: View,
 }
 
 impl State {
-  pub fn new(active: i64, cursor: DateTime<Utc>, tweaks: CalendarTweaks, features: FeatureFlags) -> Self {
+  pub fn new(active: i64, cursor: DateTime<Utc>, features: FeatureFlags) -> Self {
     State {
       active: if active == EMPTY_CALENDAR_SELECTION {
         Scope::All
@@ -114,8 +110,7 @@ impl State {
       features,
       picker_open: false,
       roster: Vec::new(),
-      tweaks,
-      tweaks_open: false,
+      tweaks: CalendarTweaks::default(),
       view: View::default(),
     }
   }
@@ -180,10 +175,6 @@ impl State {
       return None;
     }
     Some((id, pilot.name.as_str(), missing))
-  }
-
-  pub(super) fn tweaks_open(&self) -> bool {
-    self.tweaks_open
   }
 
   pub(super) fn unauthorized_pilots(&self) -> Vec<&RosterPilot> {
@@ -318,14 +309,6 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.detail = None;
       reload(db, scope, state.features)
     }
-    Message::TweakChanged(tweak) => {
-      tweak.apply(&mut state.tweaks);
-      Task::none()
-    }
-    Message::TweaksToggled => {
-      state.tweaks_open = !state.tweaks_open;
-      Task::none()
-    }
     Message::ViewSelected(view) => {
       state.view = view;
       Task::none()
@@ -443,12 +426,7 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterPilot>, events: Vec<CalendarEvent>) -> State {
-    let mut state = State::new(
-      EMPTY_CALENDAR_SELECTION,
-      now(),
-      CalendarTweaks::default(),
-      FeatureFlags::default(),
-    );
+    let mut state = State::new(EMPTY_CALENDAR_SELECTION, now(), FeatureFlags::default());
     state.active = active;
     state.roster = roster;
     state.events = events;
@@ -551,13 +529,6 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_tweaks_overlay() {
-      let mut state = populated();
-      state.tweaks_open = true;
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
     fn it_renders_the_respondable_event_detail_with_attendees() {
       let mut state = populated();
       state.detail = Some(Detail {
@@ -627,13 +598,6 @@ mod tests {
       );
       let _ = update(&mut state, Message::DetailClosed, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
-      let _ = update(&mut state, Message::TweaksToggled, &db, n);
-      let _ = update(
-        &mut state,
-        Message::TweakChanged(tweaks::Tweak::ColorByPilot(false)),
-        &db,
-        n,
-      );
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(
         &mut state,

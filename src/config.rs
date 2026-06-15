@@ -69,12 +69,6 @@ pub struct CalendarTweaks {
   week_start: CalendarWeekStart,
 }
 
-impl CalendarTweaks {
-  fn is_default(&self) -> bool {
-    *self == CalendarTweaks::default()
-  }
-}
-
 impl Default for CalendarTweaks {
   fn default() -> Self {
     Self {
@@ -278,9 +272,6 @@ pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default, skip_serializing_if = "AccessibilityConfig::is_default")]
   accessibility: AccessibilityConfig,
-  #[getset(get = "pub", get_mut = "pub", set = "pub")]
-  #[serde(default, skip_serializing_if = "CalendarTweaks::is_default")]
-  calendar_tweaks: CalendarTweaks,
   #[getset(get = "pub")]
   #[serde(default = "default_eve_client_id")]
   eve_client_id: String,
@@ -296,7 +287,6 @@ impl Default for Settings {
   fn default() -> Self {
     Self {
       accessibility: AccessibilityConfig::default(),
-      calendar_tweaks: CalendarTweaks::default(),
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
       storage: StorageConfig::default(),

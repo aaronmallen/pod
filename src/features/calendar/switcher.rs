@@ -101,10 +101,7 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{
-    config::{CalendarTweaks, FeatureFlags},
-    store::images,
-  };
+  use crate::{config::FeatureFlags, store::images};
 
   fn pilot(id: i64) -> RosterPilot {
     RosterPilot {
@@ -121,7 +118,7 @@ mod tests {
 
   fn state_with(active: Scope, roster: Vec<RosterPilot>) -> State {
     let now = chrono::Utc::now();
-    let mut state = State::new(0, now, CalendarTweaks::default(), FeatureFlags::default());
+    let mut state = State::new(0, now, FeatureFlags::default());
     state.active = active;
     state.roster = roster;
     state

@@ -31,16 +31,17 @@ pub struct PlanTree {
   pub runs: i64,
 }
 
-const FACILITY_MANAGER_ROLES: &[&str] = &["Director", "Factory_Manager"];
-
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
 
 const PLAN_NODE_PATH_SEPARATOR: char = '/';
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
+const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
+
 /// Returns all NPC stations plus corp structures whose owning corp is authorized and whose `authorized_by` character
-/// holds Director or Factory_Manager; ordered by manufacturing cost index ascending, facilities with no index last.
+/// holds Director or Station_Manager (the same roles that gate structure discovery); ordered by manufacturing cost
+/// index ascending, facilities with no index last.
 #[allow(dead_code)]
 pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
   let rows = sqlx::query_as::<_, Facility>(
@@ -62,8 +63,8 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
     LEFT JOIN industry_cost_indices ci ON ci.solar_system_id = f.solar_system_id \
     ORDER BY ci.manufacturing IS NULL, ci.manufacturing, f.name, f.id",
   )
-  .bind(FACILITY_MANAGER_ROLES[0])
-  .bind(FACILITY_MANAGER_ROLES[1])
+  .bind(STRUCTURE_FACILITY_ROLES[0])
+  .bind(STRUCTURE_FACILITY_ROLES[1])
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -1183,12 +1184,9 @@ mod tests {
       assert!(facilities.is_empty());
     }
 
-    #[tokio::test]
-    async fn it_includes_structures_when_the_authorizer_holds_factory_manager() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
+    async fn authorize_corporation_with_role(db: &Database, role: &str) {
       infra::upsert(
-        &db,
+        db,
         CORPORATION_ID,
         OwnerType::Corporation,
         "tok",
@@ -1200,17 +1198,24 @@ mod tests {
       .await
       .unwrap();
       org::replace_for_corporation(
-        &db,
+        db,
         CORPORATION_ID,
         &[CorporationMemberRole::from((
           CORPORATION_ID,
           DIRECTOR_ID,
-          "Factory_Manager".to_owned(),
+          role.to_owned(),
         ))],
       )
       .await
       .unwrap();
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Factory").await;
+    }
+
+    #[tokio::test]
+    async fn it_includes_structures_when_the_authorizer_holds_station_manager() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation_with_role(&db, "Station_Manager").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Citadel").await;
 
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
@@ -1218,6 +1223,18 @@ mod tests {
         facilities.iter().map(Facility::id).collect::<Vec<_>>(),
         [1_021_000_000_001]
       );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_structures_when_the_authorizer_holds_only_factory_manager() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation_with_role(&db, "Factory_Manager").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Factory").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert!(facilities.is_empty());
     }
   }
 }

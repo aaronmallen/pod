@@ -1,6 +1,8 @@
 mod blueprints;
 mod jobs;
 mod loaders;
+#[allow(dead_code)]
+mod planner_model;
 mod shell;
 mod side_rail;
 mod switcher;

@@ -39,17 +39,14 @@ const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
 const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
 
-/// Returns all NPC stations plus corp structures whose owning corp is authorized and whose `authorized_by` character
-/// holds Director or Station_Manager (the same roles that gate structure discovery); ordered by manufacturing cost
-/// index ascending, facilities with no index last.
+/// Returns all NPC stations, corp structures whose owning corp is authorized and whose `authorized_by` character holds
+/// Director or Station_Manager (the same roles that gate structure discovery), plus player-pinned structures (public or
+/// allied citadels the planner chose, surfaced regardless of corp ownership and de-duped against the corp arm); ordered
+/// by manufacturing cost index ascending, facilities with no index last.
 #[allow(dead_code)]
 pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
   let rows = sqlx::query_as::<_, Facility>(
-    "SELECT f.id AS id, ci.manufacturing AS manufacturing_index, f.name AS name, \
-      f.owner_id AS owner_id, f.solar_system_id AS solar_system_id, f.type_id AS type_id \
-    FROM ( \
-      SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
-      UNION ALL \
+    "WITH accessible_structures AS ( \
       SELECT s.id, s.owner_id, s.name, s.solar_system_id, s.type_id FROM structures s \
       JOIN owned_corporations oc ON oc.id = s.owner_id \
       JOIN corporation_member_roles cmr \
@@ -59,6 +56,16 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
       LEFT JOIN inaccessible_structures ina \
         ON ina.id = s.id AND ina.owner_id = s.owner_id AND ina.owner_type = 'corporation' \
       WHERE ina.id IS NULL \
+    ) \
+    SELECT f.id AS id, ci.manufacturing AS manufacturing_index, f.name AS name, \
+      f.owner_id AS owner_id, f.solar_system_id AS solar_system_id, f.type_id AS type_id \
+    FROM ( \
+      SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
+      UNION ALL \
+      SELECT id, owner_id, name, solar_system_id, type_id FROM accessible_structures \
+      UNION ALL \
+      SELECT p.id, NULL AS owner_id, p.name, p.solar_system_id, p.type_id FROM pinned_structures p \
+      WHERE p.id NOT IN (SELECT id FROM accessible_structures) \
     ) f \
     LEFT JOIN industry_cost_indices ci ON ci.solar_system_id = f.solar_system_id \
     ORDER BY ci.manufacturing IS NULL, ci.manufacturing, f.name, f.id",
@@ -1082,6 +1089,20 @@ mod tests {
         .unwrap();
     }
 
+    async fn pin_structure(db: &Database, id: i64, solar_system_id: i64, name: &str) {
+      seed_solar_system(db, solar_system_id).await;
+      sqlx::query(
+        "INSERT INTO pinned_structures (id, name, pinned_at, solar_system_id, type_id) \
+        VALUES (?, ?, '2026-06-15T00:00:00Z', ?, NULL)",
+      )
+      .bind(id)
+      .bind(name)
+      .bind(solar_system_id)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
     async fn mark_inaccessible(db: &Database, id: i64, owner_id: i64) {
       sqlx::query(
         "INSERT INTO inaccessible_structures (owner_id, owner_type, id, marked_at) \
@@ -1235,6 +1256,52 @@ mod tests {
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
       assert!(facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_includes_a_pinned_structure_with_no_owned_corp() {
+      let db = store::open_test().await.unwrap();
+      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_009]
+      );
+      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
+      assert_eq!(pinned.solar_system_id(), 30_002_187);
+      assert_eq!(pinned.owner_id(), None);
+    }
+
+    #[tokio::test]
+    async fn it_attaches_the_cost_index_to_a_pinned_structure_system() {
+      let db = store::open_test().await.unwrap();
+      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
+      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.04, 0.0)])
+        .await
+        .unwrap();
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
+      assert_eq!(pinned.manufacturing_index(), Some(0.04));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_duplicate_a_structure_that_is_both_pinned_and_corp_owned() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Shared Citadel").await;
+      pin_structure(&db, 1_021_000_000_001, 30_002_187, "Shared Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      let matching = facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count();
+      assert_eq!(matching, 1);
+      let facility = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
+      assert_eq!(facility.owner_id(), Some(CORPORATION_ID));
     }
   }
 }

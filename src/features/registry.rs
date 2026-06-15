@@ -67,9 +67,11 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       scopes: &[
         scopes::CHARACTER_BLUEPRINTS,
         scopes::CHARACTER_INDUSTRY_JOBS,
+        scopes::CHARACTER_SEARCH,
         scopes::CORPORATION_BLUEPRINTS,
         scopes::CORPORATION_INDUSTRY_JOBS,
         scopes::CORPORATION_STRUCTURES,
+        scopes::UNIVERSE_STRUCTURES,
       ],
       tab: None,
     },
@@ -162,6 +164,20 @@ mod tests {
           "{feature:?} must map to at least one scope"
         );
       }
+    }
+
+    #[test]
+    fn the_industry_feature_requests_the_facility_search_scopes() {
+      let scopes = descriptor(Feature::Industry).scopes;
+
+      assert!(
+        scopes.contains(&scopes::CHARACTER_SEARCH),
+        "Industry must request CHARACTER_SEARCH for live facility search"
+      );
+      assert!(
+        scopes.contains(&scopes::UNIVERSE_STRUCTURES),
+        "Industry must request UNIVERSE_STRUCTURES to resolve structure hits"
+      );
     }
 
     #[test]

@@ -376,6 +376,20 @@ mod tests {
     }
 
     #[test]
+    fn it_only_consults_the_committed_tier_at_s64() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("587.png"), [1]).unwrap();
+
+      assert_eq!(store.resolve_type_icon(587, None, Size::S32), IconResolution::Missing);
+      assert!(matches!(
+        store.resolve_type_icon(587, None, Size::S64),
+        IconResolution::Found(_)
+      ));
+    }
+
+    #[test]
     fn it_prefers_a_committed_bpc_render_over_the_shared_blueprint_icon() {
       let data = tempfile::tempdir().unwrap();
       let committed = tempfile::tempdir().unwrap();

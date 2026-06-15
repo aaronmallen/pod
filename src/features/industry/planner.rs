@@ -12,6 +12,7 @@ use crate::store::repo::industry::{PlanNode, PlanTree};
 const DEFAULT_ME: i64 = 10;
 const DEFAULT_TE: i64 = 20;
 const INSTALL_FEE_RATE: f64 = 0.5;
+const MATERIAL_PLAN_SCROLL_ID: &str = "industry-planner-material-plan";
 const ME_MAX: i64 = 10;
 const RECENT_LIMIT: usize = 8;
 const RUNS_MAX: i64 = 9_999;
@@ -59,6 +60,7 @@ pub enum Message {
   FacilitySelected { path: Vec<i64>, solar_system_id: i64 },
   MaterialEfficiencyChanged { me: i64, path: Vec<i64> },
   MaterialRightPressed { mat: i64, parent: Vec<i64> },
+  MaterialScrolled { absolute: f32 },
   MenuClosed,
   NodeBrokenDown { mat: i64, parent: Vec<i64> },
   NodeCollapsed { mat: i64, parent: Vec<i64> },
@@ -157,6 +159,7 @@ pub struct Planner {
   cursor: Option<Point>,
   data: PlannerData,
   loaded: bool,
+  material_scroll_offset: f32,
   menu: Option<MaterialMenu>,
   picker_open: bool,
   placeholder: String,
@@ -270,6 +273,10 @@ impl Planner {
 
   pub fn is_loaded(&self) -> bool {
     self.loaded
+  }
+
+  pub fn material_scroll_offset(&self) -> f32 {
+    self.material_scroll_offset
   }
 
   pub fn menu(&self) -> Option<&MaterialMenu> {
@@ -402,6 +409,9 @@ impl Planner {
         mat,
         parent,
       } => self.open_menu(parent, mat),
+      Message::MaterialScrolled {
+        absolute,
+      } => self.material_scroll_offset = absolute.max(0.0),
       Message::MenuClosed => self.menu = None,
       Message::NodeBrokenDown {
         mat,
@@ -650,6 +660,23 @@ pub fn load(db: crate::store::Database, scope: Scope) -> iced::Task<PlannerData>
   iced::Task::perform(async move { planner_loaders::load_data(&db, scope).await }, |data| data)
 }
 
+/// Re-applies the tracked scroll offset after the material-plan widget is rebuilt.
+///
+/// Breaking down or collapsing a material causes iced to reconstruct the scrollable, resetting
+/// its position to the top. Issuing this task immediately after such a rebuild restores the
+/// user's previous position.
+pub fn restore_material_scroll<M: Send + 'static>(offset: f32) -> iced::Task<M> {
+  use iced::widget::operation::{AbsoluteOffset, scroll_to};
+
+  scroll_to(
+    MATERIAL_PLAN_SCROLL_ID,
+    AbsoluteOffset {
+      x: 0.0,
+      y: offset,
+    },
+  )
+}
+
 pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Message> {
   use iced::{
     Length,
@@ -707,7 +734,7 @@ mod view {
     widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, slider, text},
   };
 
-  use super::{Economics, Message, Planner, RightTab, SavedPlan, node_build_time};
+  use super::{Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time};
   use crate::{
     clients::eve_image::Size,
     features::industry::{
@@ -734,7 +761,8 @@ mod view {
   const PICKER_MAX_RESULTS: usize = 200;
   const RIGHT_PANE_WIDTH: f32 = 340.0;
   const TILE_BOX: f32 = 30.0;
-  const TILE_ICON: Size = Size::S32;
+  /// Must be S64 — `resolve_type_icon` only returns a bundled icon at this size; smaller sizes fall back to a placeholder glyph.
+  const TILE_ICON: Size = Size::S64;
   const TREE_INDENT: f32 = 22.0;
 
   const COL_COST: f32 = 140.0;
@@ -758,9 +786,13 @@ mod view {
     };
 
     let left = scrollable(left_pane(planner, product, recipe))
+      .id(MATERIAL_PLAN_SCROLL_ID)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
-      .height(Length::Fill);
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::MaterialScrolled {
+        absolute: viewport.absolute_offset().y,
+      });
 
     Row::with_children(vec![
       container(left).width(Length::Fill).height(Length::Fill).into(),
@@ -2574,6 +2606,29 @@ mod view {
   fn fmt_volume(value: f64) -> String {
     format!("{} m\u{00B3}", fmt_num(value.round() as i64))
   }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+    use crate::store::images::Store;
+
+    #[test]
+    fn it_renders_type_tiles_at_the_bundled_icon_size() {
+      assert_eq!(TILE_ICON, Size::S64);
+    }
+
+    #[test]
+    fn it_resolves_a_bundled_icon_at_the_tile_size() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("34.png"), [1]).unwrap();
+
+      let resolved = store.resolve_type_icon(34, None, TILE_ICON);
+
+      assert!(matches!(resolved, IconResolution::Found(_)));
+    }
+  }
 }
 
 #[cfg(test)]
@@ -2793,6 +2848,49 @@ mod tests {
 
       assert_eq!(planner.node(&[]).me, 8);
       assert_eq!(planner.node(&[]).te, 16);
+    }
+  }
+
+  mod material_scroll {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_tracks_the_latest_scroll_offset() {
+      let mut planner = planner();
+
+      planner.update(Message::MaterialScrolled {
+        absolute: 420.0,
+      });
+
+      assert_eq!(planner.material_scroll_offset(), 420.0);
+    }
+
+    #[test]
+    fn it_clamps_a_negative_offset_to_zero() {
+      let mut planner = planner();
+
+      planner.update(Message::MaterialScrolled {
+        absolute: -32.0,
+      });
+
+      assert_eq!(planner.material_scroll_offset(), 0.0);
+    }
+
+    #[test]
+    fn it_survives_a_break_down_so_the_offset_can_be_restored() {
+      let mut planner = planner();
+      planner.update(Message::MaterialScrolled {
+        absolute: 256.0,
+      });
+
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+
+      assert_eq!(planner.material_scroll_offset(), 256.0);
     }
   }
 

@@ -3,6 +3,17 @@ import { FEATURES } from '../data';
 import { SectionHead } from './SectionHead';
 
 const ICONS: Record<string, React.ReactNode> = {
+  calendar: <g>
+    <rect x="4" y="5" width="16" height="16" rx="1.5" fill="none" stroke="currentColor" strokeWidth="2"/>
+    <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" strokeWidth="2"/>
+    <line x1="8" y1="3" x2="8" y2="6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="16" y1="3" x2="16" y2="6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="12" cy="15" r="1.5" fill="currentColor"/>
+  </g>,
+  industry: <g>
+    <path d="M 12 3 L 19.5 7.25 L 19.5 16.75 L 12 21 L 4.5 16.75 L 4.5 7.25 Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+    <circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" strokeWidth="2"/>
+  </g>,
   fitting: <g>
     <path d="M 10.437 20.863 A 9 9 0 0 1 3.543 8.922" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
     <path d="M 5.106 6.215 A 9 9 0 0 1 18.894 6.215" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
@@ -59,14 +70,14 @@ export function Features({ accent }: Props) {
       <div style={{ maxWidth: 1320, margin: '0 auto' }}>
         <SectionHead
           eyebrow="In the box"
-          title="Six windows, one binary."
+          title="One app, packed with features."
           line="Every Pod feature for EVE Online ships in every build. No add-ons, no plugins, no per-seat tier."
         />
 
         <div style={{
           marginTop: 48,
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
           gap: 1,
           background: T.rule,
           border: `1px solid ${T.rule}`,
@@ -117,6 +128,22 @@ export function Features({ accent }: Props) {
                   color: muted ? T.veryMuted : T.muted,
                   textWrap: 'pretty',
                 } as React.CSSProperties}>{f.line}</div>
+                {f.subs && f.subs.length > 0 && (
+                  <div style={{
+                    display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2,
+                  }}>
+                    {f.subs.map(s => (
+                      <span key={s} style={{
+                        padding: '3px 8px', borderRadius: 4,
+                        background: 'rgba(244,242,236,0.04)',
+                        border: `1px solid ${T.rule}`,
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        fontSize: 10, letterSpacing: '0.02em',
+                        color: T.muted,
+                      }}>{s}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

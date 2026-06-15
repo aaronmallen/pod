@@ -19,6 +19,7 @@ export interface Feature {
   title: string;
   line: string;
   soon?: boolean;
+  subs?: string[];
 }
 
 export type BuildId =

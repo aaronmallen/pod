@@ -6,12 +6,14 @@ export const FEATURES: Feature[] = [
     icon: 'characters',
     title: 'Characters',
     line: 'Roster overview with sheets, standings and clone state across every EVE character.',
+    subs: ['Standings', 'Contacts', 'Combat Log', 'Clone Monitoring'],
   },
   {
     id: 'skills',
     icon: 'skills',
     title: 'Skills',
     line: 'Plan EVE skill queues months out; compare paths side-by-side.',
+    subs: ['Queue Monitoring', 'Skill Plans', 'Injector Planning'],
   },
   {
     id: 'mail',
@@ -24,12 +26,27 @@ export const FEATURES: Feature[] = [
     icon: 'wallet',
     title: 'Wallet',
     line: 'In-game wallet journal, market orders, contracts and recurring across every character.',
+    subs: ['Journal', 'Market Transactions', 'Contracts'],
   },
   {
     id: 'assets',
     icon: 'assets',
     title: 'Assets',
     line: 'Search every hangar and container by name or category.',
+    subs: ['Inventory', 'Abyssals', 'Stockpiles'],
+  },
+  {
+    id: 'calendar',
+    icon: 'calendar',
+    title: 'Calendar',
+    line: "Every character's EVE calendar in one place: events, invitations and RSVPs.",
+  },
+  {
+    id: 'industry',
+    icon: 'industry',
+    title: 'Industry',
+    line: 'Watch manufacturing, research and reaction jobs, and plan recursive builds end to end.',
+    subs: ['Job Monitoring', 'Job Planning'],
   },
   {
     id: 'fitting',

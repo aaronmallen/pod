@@ -77,6 +77,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterWallet, Subject::Character(42)),
       grant: None,
+      sso: None,
     }
   }
 

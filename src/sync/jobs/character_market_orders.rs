@@ -90,6 +90,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterMarketOrders, Subject::Character(character_id)),
       grant,
+      sso: None,
     }
   }
 

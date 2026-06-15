@@ -301,6 +301,7 @@ mod tests {
         image_store: &self.image_store,
         key: JobKey::new(JobKind::CharacterAbyssals, Subject::Character(character_id)),
         grant: Some(&self.grant),
+        sso: None,
       }
     }
   }

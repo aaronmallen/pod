@@ -86,6 +86,49 @@ pub async fn fresh_token(
   Ok(Some(grant))
 }
 
+/// Forces a refresh against SSO to prove a credential's refresh token is still live, persisting the
+/// rotated token on success. Unlike [`fresh_token`], it does not short-circuit on a not-yet-expired
+/// token: a token can be revoked at the SSO long before it would naturally expire, and the only way
+/// to learn that is to actually exercise the refresh. Returns `Ok(true)` when the token is valid,
+/// `Ok(false)` when SSO rejects the refresh (a revoked/dead token), and `Err` for transient failures
+/// (network, rate limits) that must not be mistaken for revocation.
+pub async fn validate_credential(
+  db: &Database,
+  sso: &eve_sso::Client,
+  owner_id: i64,
+  owner_type: OwnerType,
+) -> Result<bool, clients::Error> {
+  let Some(credential) = infra::get(db, owner_id, owner_type).await? else {
+    return Ok(false);
+  };
+  match sso.refresh_with_token(credential.refresh_token()).await {
+    Ok(grant) => {
+      let scopes = grant.scopes().join(" ");
+      infra::upsert(
+        db,
+        owner_id,
+        owner_type,
+        grant.access_token(),
+        grant.refresh_token(),
+        grant.expires_at().timestamp(),
+        credential.authorized_by(),
+        Some(&scopes),
+      )
+      .await?;
+      Ok(true)
+    }
+    Err(error) if is_revoked_refresh(&error) => Ok(false),
+    Err(error) => Err(error),
+  }
+}
+
+/// A refresh that fails with HTTP 400 (`invalid_grant`) is the EVE SSO signal for a revoked or
+/// otherwise dead refresh token; any other error (401/403/5xx/network) is transient and must not be
+/// read as revocation, lest a blip permanently parks a healthy entity.
+pub fn is_revoked_refresh(error: &clients::Error) -> bool {
+  matches!(error, clients::Error::Http(http) if http.status() == Some(reqwest::StatusCode::BAD_REQUEST))
+}
+
 fn needs_refresh(expires_at: i64, now: i64, skew: i64) -> bool {
   expires_at - skew <= now
 }

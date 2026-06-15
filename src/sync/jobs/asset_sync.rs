@@ -607,6 +607,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::AssetSync, subject),
       grant: Some(grant),
+      sso: None,
     }
   }
 

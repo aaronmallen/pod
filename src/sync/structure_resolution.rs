@@ -41,6 +41,7 @@ pub async fn resolve_stockpile_location(
     image_store,
     key: JobKey::new(JobKind::AssetSync, Subject::Character(*grant.character_id())),
     grant: Some(grant),
+    sso: None,
   };
   if (REGION_ID_FLOOR..CONSTELLATION_ID_FLOOR).contains(&location_id) {
     return resolve_region(&ctx, location_id).await;
@@ -463,6 +464,7 @@ mod tests {
       image_store: &harness.image_store,
       key: JobKey::new(JobKind::AssetSync, subject),
       grant,
+      sso: None,
     }
   }
 

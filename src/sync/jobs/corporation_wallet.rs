@@ -277,6 +277,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CorporationWallet, Subject::Corporation(CORP)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

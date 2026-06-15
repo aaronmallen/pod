@@ -492,6 +492,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterKillmails, Subject::Character(character_id)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

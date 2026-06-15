@@ -368,6 +368,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CorporationStructures, Subject::Corporation(CORP)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

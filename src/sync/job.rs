@@ -2,7 +2,7 @@ use std::{collections::HashSet, time::Duration};
 
 use super::{outcome::Outcome, subject::Subject};
 use crate::{
-  clients::{self, esi, esi::scopes, eve_image, eve_sso::Grant},
+  clients::{self, esi, esi::scopes, eve_image, eve_sso, eve_sso::Grant},
   config::{Feature, FeatureFlags},
   store::{Database, images},
 };
@@ -36,6 +36,7 @@ pub enum JobKind {
   KillmailReconcile,
   MarketPrices,
   NetWorthSnapshot,
+  TokenAudit,
 }
 
 impl JobKind {
@@ -67,6 +68,7 @@ impl JobKind {
     JobKind::KillmailReconcile,
     JobKind::MarketPrices,
     JobKind::NetWorthSnapshot,
+    JobKind::TokenAudit,
   ];
 
   pub fn for_subject(subject: Subject) -> Vec<JobKind> {
@@ -206,6 +208,10 @@ impl JobKind {
       | Self::CharacterTelemetry => Duration::from_secs(300),
       Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
+      // Re-validate every stored token and re-check feature scopes every 20 minutes (tunable). A
+      // revoked refresh token or a newly-enabled feature needing an ungranted scope is caught within
+      // one interval rather than waiting for a card load or never being noticed at all.
+      Self::TokenAudit => Duration::from_secs(1200),
     }
   }
 
@@ -246,7 +252,7 @@ impl JobKind {
         scopes::CORPORATION_DIVISIONS,
       ],
       Self::IndustryCostIndices | Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => &[],
-      Self::NetWorthSnapshot => &[],
+      Self::NetWorthSnapshot | Self::TokenAudit => &[],
     }
   }
 }
@@ -273,6 +279,10 @@ pub struct JobCtx<'a> {
   pub image: &'a eve_image::Client,
   pub image_store: &'a images::Store,
   pub key: JobKey,
+  /// The SSO client, supplied so the global TokenAudit job can attempt a refresh against every
+  /// stored credential to detect a revoked token. Per-subject jobs never touch it (their grant is
+  /// already resolved before dispatch), so it is `None` for them.
+  pub sso: Option<&'a eve_sso::Client>,
 }
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
@@ -352,6 +362,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::IndustryCostIndices => super::jobs::industry_cost_indices::run(ctx).await,
     JobKind::MarketPrices => super::jobs::market_prices::run(ctx).await,
     JobKind::NetWorthSnapshot => super::jobs::net_worth_snapshot::run(ctx).await,
+    JobKind::TokenAudit => super::jobs::token_audit::run(ctx).await,
     _ => Ok(Outcome::synced()),
   }
 }
@@ -548,6 +559,7 @@ mod tests {
               | JobKind::KillmailReconcile
               | JobKind::MarketPrices
               | JobKind::NetWorthSnapshot
+              | JobKind::TokenAudit
           );
 
           assert_eq!(
@@ -632,6 +644,7 @@ mod tests {
           image: &image,
           image_store: &image_store,
           key: JobKey::new(kind, subject),
+          sso: None,
         };
 
         let result = run(&ctx).await;

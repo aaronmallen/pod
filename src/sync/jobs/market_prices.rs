@@ -59,6 +59,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::MarketPrices, Subject::Character(0)),
       grant: None,
+      sso: None,
     }
   }
 

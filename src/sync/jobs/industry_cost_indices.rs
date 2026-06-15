@@ -64,6 +64,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::IndustryCostIndices, Subject::Character(0)),
       grant: None,
+      sso: None,
     }
   }
 

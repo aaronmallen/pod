@@ -179,6 +179,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CorporationProfile, Subject::Corporation(corporation_id)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

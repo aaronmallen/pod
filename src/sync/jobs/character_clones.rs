@@ -305,6 +305,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterClones, Subject::Character(character_id)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

@@ -151,13 +151,16 @@ impl Engine {
           .collect();
         let seeds = self.seeds_for(subject, now).await;
         let deferred = self.deferred_gathers(subject).await;
-        self.schedule.enroll_kinds_deferred(
-          subject,
-          JobKind::granted_for_subject(subject, &granted),
-          now,
-          &seeds,
-          &deferred,
-        );
+        // A flagged entity's token is known-bad, so enroll only its public (no-scope) jobs and keep
+        // its privileged jobs out of the schedule until the TokenAudit clears the flag.
+        let kinds = if credential.needs_reauth() {
+          JobKind::public_for_subject(subject)
+        } else {
+          JobKind::granted_for_subject(subject, &granted)
+        };
+        self
+          .schedule
+          .enroll_kinds_deferred(subject, kinds, now, &seeds, &deferred);
       }
     }
     if let Ok(characters) = character::all(&self.db).await {
@@ -195,7 +198,11 @@ impl Engine {
           .unwrap_or_default()
           .split_whitespace()
           .collect();
-        let kinds = JobKind::granted_for_subject(subject, &granted);
+        let kinds = if credential.needs_reauth() {
+          JobKind::public_for_subject(subject)
+        } else {
+          JobKind::granted_for_subject(subject, &granted)
+        };
         let seeds = self.seeds_for(subject, now).await;
         let deferred = self.deferred_gathers(subject).await;
         self
@@ -738,6 +745,16 @@ async fn run_job(
     None
   } else {
     let (owner_id, owner_type) = owner_of(key.subject);
+    // Honor the persisted needs-reauth flag at dispatch: a flagged entity's token is known-bad, so
+    // skip the work entirely rather than refresh-and-fail against it. The job reschedules on its
+    // normal interval (a benign no-op), not the tight backoff loop, and stays skipped until the
+    // TokenAudit clears the flag or a re-auth's run_now revives it.
+    if is_flagged_needs_reauth(db, owner_id, owner_type).await {
+      tracing::debug!(?key, "skipping privileged job for an entity flagged needs-reauth");
+      return Ok(Outcome::Skipped {
+        reason: "entity needs re-authentication".to_string(),
+      });
+    }
     let Some(grant) = token::fresh_token(db, sso, owner_id, owner_type).await? else {
       tracing::warn!(
         ?key,
@@ -764,8 +781,15 @@ async fn run_job(
     image_store,
     key,
     grant: grant.as_ref(),
+    // Only the global TokenAudit job needs raw SSO access (to force-refresh every credential); every
+    // other job has already had its grant resolved above, so it gets None.
+    sso: matches!(key.kind, JobKind::TokenAudit).then_some(sso.as_ref()),
   };
   job::run(&ctx).await
+}
+
+async fn is_flagged_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> bool {
+  matches!(infra::get(db, owner_id, owner_type).await, Ok(Some(credential)) if credential.needs_reauth())
 }
 
 fn is_pending_outcome(outcome: &Outcome) -> bool {
@@ -779,7 +803,11 @@ fn is_permanent_failure(error: &Error) -> bool {
         || message.contains("has no authorizing character")
         || message.contains("has no usable credential")
     }
-    _ => false,
+    // A revoked refresh token surfaces as HTTP 400 (invalid_grant) from the SSO refresh path that
+    // every privileged job runs through before its ESI call. Classifying it permanent parks the job
+    // (reschedule_permanent) instead of looping it on the ~300s backoff against a dead token; the
+    // TokenAudit job and a re-auth's run_now are what revive it.
+    _ => token::is_revoked_refresh(error),
   }
 }
 
@@ -1601,6 +1629,39 @@ mod tests {
         "write logo failed".to_owned()
       )));
     }
+
+    /// Builds a real `Error::Http` carrying the given status by exercising reqwest against a server
+    /// that returns it, so the classifier is tested against an authentic error rather than a mock.
+    async fn http_error_with_status(status: u16) -> Error {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/x"))
+        .respond_with(ResponseTemplate::new(status))
+        .mount(&server)
+        .await;
+      let resp = reqwest::get(format!("{}/x", server.uri())).await.unwrap();
+      Error::Http(resp.error_for_status().unwrap_err())
+    }
+
+    #[tokio::test]
+    async fn it_classifies_a_revoked_token_refresh_400_as_permanent() {
+      let error = http_error_with_status(400).await;
+
+      assert!(
+        super::super::is_permanent_failure(&error),
+        "a revoked refresh token surfaces as HTTP 400 and must park rather than backoff-hammer"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_classify_a_transient_500_as_permanent() {
+      let error = http_error_with_status(500).await;
+
+      assert!(
+        !super::super::is_permanent_failure(&error),
+        "a server-side 500 is transient and must keep retrying on backoff, not park"
+      );
+    }
   }
 
   mod global_kinds {
@@ -1686,6 +1747,7 @@ mod tests {
       seed_ledger(&db, "KillmailReconcile", Some(&future), None).await;
       seed_ledger(&db, "MarketPrices", Some(&future), None).await;
       seed_ledger(&db, "NetWorthSnapshot", Some(&future), None).await;
+      seed_ledger(&db, "TokenAudit", Some(&future), None).await;
 
       let (_handle, mut events, _images) = spawn_engine_with_db(db, server.uri()).await;
 

@@ -167,6 +167,7 @@ mod tests {
         image_store: &image_store,
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(42)),
         grant: None,
+        sso: None,
       };
 
       let result = run(&ctx).await;
@@ -242,6 +243,7 @@ mod tests {
         image_store: &image_store,
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(100)),
         grant: None,
+        sso: None,
       };
 
       run(&ctx).await.unwrap();
@@ -317,6 +319,7 @@ mod tests {
         image_store: &image_store,
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(100)),
         grant: None,
+        sso: None,
       };
 
       let result = run(&ctx).await;
@@ -349,6 +352,7 @@ mod tests {
         image_store: &image_store,
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
         grant: None,
+        sso: None,
       };
 
       let faction = resolve_faction(&ctx, 500_001).await.unwrap();

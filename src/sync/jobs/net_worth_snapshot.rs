@@ -200,6 +200,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::NetWorthSnapshot, Subject::Character(0)),
       grant: None,
+      sso: None,
     }
   }
 

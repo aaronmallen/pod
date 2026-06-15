@@ -138,6 +138,7 @@ mod tests {
       image_store: &image_store,
       key: JobKey::new(JobKind::KillmailReconcile, Subject::Character(0)),
       grant: None,
+      sso: None,
     };
     let zkill = zkillboard::Client::with_base_url(http, zkill_uri);
     run_with_zkill(&ctx, &zkill).await.unwrap();

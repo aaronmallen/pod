@@ -143,6 +143,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterContracts, Subject::Character(character_id)),
       grant,
+      sso: None,
     }
   }
 

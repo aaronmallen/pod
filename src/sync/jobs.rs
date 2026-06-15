@@ -26,3 +26,4 @@ pub mod market_prices;
 pub mod names;
 pub mod net_worth_snapshot;
 pub mod resolve;
+pub mod token_audit;

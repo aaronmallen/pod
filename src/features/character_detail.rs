@@ -90,7 +90,8 @@ impl DetailDataType {
       | JobKind::IndustryCostIndices
       | JobKind::KillmailReconcile
       | JobKind::MarketPrices
-      | JobKind::NetWorthSnapshot => None,
+      | JobKind::NetWorthSnapshot
+      | JobKind::TokenAudit => None,
     }
   }
 }

@@ -146,6 +146,7 @@ mod tests {
       image_store: &image_store,
       key: JobKey::new(JobKind::KillmailDetailBackfill, Subject::Character(0)),
       grant: None,
+      sso: None,
     };
     run(&ctx).await.unwrap()
   }

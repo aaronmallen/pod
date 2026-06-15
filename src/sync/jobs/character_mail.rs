@@ -333,6 +333,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterMail, Subject::Character(character_id)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

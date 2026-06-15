@@ -350,6 +350,7 @@ mod tests {
       image_store,
       key: JobKey::new(JobKind::CharacterTelemetry, Subject::Character(character_id)),
       grant: Some(grant),
+      sso: None,
     }
   }
 

@@ -276,6 +276,7 @@ mod tests {
       image_store,
       key: JobKey::new(kind, subject),
       grant: Some(grant),
+      sso: None,
     }
   }
 

@@ -3384,7 +3384,11 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
     None => None,
   };
   if let Some(subject) = enrolled {
+    // The session handler cleared any persisted needs-reauth flag, so re-enrolling now picks up the
+    // full granted job set instead of just the public ones; run_now makes those revived jobs due so
+    // a re-authorized entity's parked sync resumes promptly without an app restart.
     runtime.sync.enroll(subject);
+    runtime.sync.run_now(subject);
     runtime.sync.discover();
     if app.character_manager.is_some() {
       tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));

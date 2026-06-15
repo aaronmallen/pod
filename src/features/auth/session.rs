@@ -61,6 +61,7 @@ pub async fn complete_add_corporation(
     Some(&grant.scopes().join(" ")),
   )
   .await?;
+  infra::clear_needs_reauth(db, corporation_id, OwnerType::Corporation).await?;
   Ok(CorporationAdded {
     authorizing_character_id: character_id,
     corporation_id,
@@ -88,6 +89,7 @@ pub async fn complete_sign_in(
     Some(&grant.scopes().join(" ")),
   )
   .await?;
+  infra::clear_needs_reauth(db, *grant.character_id(), OwnerType::Character).await?;
   Ok(SignedIn {
     character_id: *grant.character_id(),
     character_name: grant.character_name().to_owned(),
@@ -349,6 +351,86 @@ mod tests {
           .is_none()
       );
     }
+
+    #[tokio::test]
+    async fn it_clears_a_previously_set_needs_reauth_flag_on_success() {
+      let server = MockServer::start().await;
+      mount_token(&server).await;
+      mount_public_info(&server).await;
+      mount_roles(&server, r#"["Director"]"#).await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(
+        &db,
+        CORPORATION_ID,
+        OwnerType::Corporation,
+        "at",
+        "rt",
+        0,
+        Some(CHARACTER_ID),
+        Some(""),
+      )
+      .await
+      .unwrap();
+      infra::mark_needs_reauth(&db, CORPORATION_ID, OwnerType::Corporation)
+        .await
+        .unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &redirect_uri());
+      let callback = callback_for(&pending);
+
+      complete_add_corporation(&sso, &esi, &db, &pending, &callback)
+        .await
+        .unwrap();
+
+      let credential = infra::get(&db, CORPORATION_ID, OwnerType::Corporation)
+        .await
+        .unwrap()
+        .unwrap();
+      assert!(
+        !credential.needs_reauth(),
+        "a successful corp re-auth must clear the persisted needs-reauth flag"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_the_flag_set_when_the_re_auth_fails() {
+      let server = MockServer::start().await;
+      mount_token(&server).await;
+      mount_public_info(&server).await;
+      mount_roles(&server, r#"["Accountant"]"#).await;
+      mount_corporation_info(&server, 999).await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(
+        &db,
+        CORPORATION_ID,
+        OwnerType::Corporation,
+        "at",
+        "rt",
+        0,
+        Some(CHARACTER_ID),
+        Some(""),
+      )
+      .await
+      .unwrap();
+      infra::mark_needs_reauth(&db, CORPORATION_ID, OwnerType::Corporation)
+        .await
+        .unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &redirect_uri());
+      let callback = callback_for(&pending);
+
+      let result = complete_add_corporation(&sso, &esi, &db, &pending, &callback).await;
+
+      assert!(matches!(result, Err(clients::Error::Auth(_))));
+      let credential = infra::get(&db, CORPORATION_ID, OwnerType::Corporation)
+        .await
+        .unwrap()
+        .unwrap();
+      assert!(
+        credential.needs_reauth(),
+        "a failed corp re-auth must NOT clear the persisted needs-reauth flag"
+      );
+    }
   }
 
   mod complete_sign_in {
@@ -408,6 +490,39 @@ mod tests {
 
       assert!(result.is_err());
       assert!(infra::get(&db, 42, OwnerType::Character).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_previously_set_needs_reauth_flag_on_success() {
+      let server = MockServer::start().await;
+      let body = format!(
+        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
+        jwt("CHARACTER:EVE:42")
+      );
+      Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(&server)
+        .await;
+      let sso = sso_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(&db, 42, OwnerType::Character, "at", "rt", 0, None, Some(""))
+        .await
+        .unwrap();
+      infra::mark_needs_reauth(&db, 42, OwnerType::Character).await.unwrap();
+      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
+      let callback = Callback {
+        code: "code".to_owned(),
+        state: pending.state.clone(),
+      };
+
+      complete_sign_in(&sso, &db, &pending, &callback).await.unwrap();
+
+      let credential = infra::get(&db, 42, OwnerType::Character).await.unwrap().unwrap();
+      assert!(
+        !credential.needs_reauth(),
+        "a successful character re-auth must clear the persisted needs-reauth flag"
+      );
     }
   }
 }

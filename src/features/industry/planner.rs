@@ -44,6 +44,12 @@ impl Economics {
   }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FacilityPickerState {
+  pub path: Vec<i64>,
+  pub query: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialMenu {
   pub anchor: Point,
@@ -57,6 +63,8 @@ pub struct MaterialMenu {
 pub enum Message {
   CategorySelected(Category),
   CursorMoved(Point),
+  FacilityPickerToggled { path: Vec<i64> },
+  FacilitySearchChanged { path: Vec<i64>, query: String },
   FacilitySelected { path: Vec<i64>, solar_system_id: i64 },
   MaterialEfficiencyChanged { me: i64, path: Vec<i64> },
   MaterialRightPressed { mat: i64, parent: Vec<i64> },
@@ -158,6 +166,7 @@ pub struct Planner {
   category: Category,
   cursor: Option<Point>,
   data: PlannerData,
+  facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   material_scroll_offset: f32,
   menu: Option<MaterialMenu>,
@@ -271,6 +280,10 @@ impl Planner {
     })
   }
 
+  pub fn facility_picker(&self) -> Option<&FacilityPickerState> {
+    self.facility_picker.as_ref()
+  }
+
   pub fn is_loaded(&self) -> bool {
     self.loaded
   }
@@ -309,6 +322,7 @@ impl Planner {
     self.product = Some(tree.product_type_id);
     self.runs = tree.runs.clamp(1, RUNS_MAX);
     self.tree = NodeConfig::rebuild(&tree.nodes);
+    self.facility_picker = None;
     self.push_recent(tree.product_type_id);
   }
 
@@ -389,6 +403,17 @@ impl Planner {
     match message {
       Message::CategorySelected(category) => self.category = category,
       Message::CursorMoved(point) => self.cursor = Some(point),
+      Message::FacilityPickerToggled {
+        path,
+      } => self.toggle_facility_picker(path),
+      Message::FacilitySearchChanged {
+        path,
+        query,
+      } => {
+        if let Some(state) = self.facility_picker.as_mut().filter(|state| state.path == path) {
+          state.query = query;
+        }
+      }
       Message::FacilitySelected {
         path,
         solar_system_id,
@@ -396,6 +421,7 @@ impl Planner {
         if let Some(node) = self.tree.at_mut(&path) {
           node.facility_system = Some(solar_system_id);
         }
+        self.facility_picker = None;
       }
       Message::MaterialEfficiencyChanged {
         me,
@@ -563,6 +589,18 @@ impl Planner {
   fn select_product(&mut self, type_id: i64) {
     self.product = Some(type_id);
     self.tree = self.fresh_node(type_id);
+    self.facility_picker = None;
+  }
+
+  fn toggle_facility_picker(&mut self, path: Vec<i64>) {
+    if self.facility_picker.as_ref().is_some_and(|state| state.path == path) {
+      self.facility_picker = None;
+    } else {
+      self.facility_picker = Some(FacilityPickerState {
+        path,
+        query: String::new(),
+      });
+    }
   }
 
   /// Root-job economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
@@ -738,7 +776,7 @@ mod view {
   use crate::{
     clients::eve_image::Size,
     features::industry::{
-      planner_loaders::{Category, PlannerData, Recipe},
+      planner_loaders::{Category, PlannerData, PlannerFacility, Recipe},
       planner_model::{SubBuild, eff_qty, runs_for},
     },
     store::images::{self, IconResolution},
@@ -757,6 +795,8 @@ mod view {
   };
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
+  const FACILITY_PICKER_LIST_HEIGHT: f32 = 230.0;
+  const FACILITY_PICKER_WIDTH: f32 = 280.0;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
   const RIGHT_PANE_WIDTH: f32 = 340.0;
@@ -1093,7 +1133,7 @@ mod view {
         false,
       ));
     }
-    controls.push(facility_control(planner, path, type_id, is_reaction));
+    controls.push(facility_control(planner, path, is_reaction));
 
     let mut body: Vec<Element<'a, Message>> = vec![
       header,
@@ -1323,65 +1363,225 @@ mod view {
     .into()
   }
 
-  fn facility_control<'a>(planner: &'a Planner, path: &[i64], type_id: i64, is_reaction: bool) -> Element<'a, Message> {
-    let _ = type_id;
-    let facility = planner.selected_facility(path, is_reaction);
-    let chips: Vec<Element<'a, Message>> = planner
+  fn facility_control<'a>(planner: &'a Planner, path: &[i64], is_reaction: bool) -> Element<'a, Message> {
+    let selected = planner.selected_facility(path, is_reaction);
+    let open = planner.facility_picker().is_some_and(|state| state.path == path);
+
+    let label: Element<'a, Message> = match selected {
+      Some(facility) => Row::with_children(vec![
+        text(facility.name.clone())
+          .font(typography::body::REGULAR)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::PRIMARY))
+          .width(Length::Fill)
+          .into(),
+        text(format!(
+          "{:.2}%",
+          facility.index_for(is_reaction).unwrap_or(0.0) * 100.0
+        ))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .width(Length::Fill)
+      .into(),
+      None => text("No facilities available")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary()))
+        .width(Length::Fill)
+        .into(),
+    };
+
+    let trigger = button(
+      Row::with_children(vec![
+        Icon::search()
+          .color(if open {
+            color::accent::PLASMA
+          } else {
+            color::text::secondary()
+          })
+          .size(14.0)
+          .render::<Message>(),
+        label,
+        Icon::chevron()
+          .color(color::text::secondary())
+          .size(14.0)
+          .render::<Message>(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .width(Length::Fill),
+    )
+    .padding(Padding {
+      top: spacing::UNIT,
+      bottom: spacing::UNIT,
+      left: spacing::SPACE_2_5,
+      right: spacing::SPACE_2,
+    })
+    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+    .on_press_maybe(selected.map(|_| Message::FacilityPickerToggled {
+      path: path.to_vec(),
+    }))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: if open {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      ..button::Style::default()
+    });
+
+    let mut children: Vec<Element<'a, Message>> = vec![micro_label("Build at"), trigger.into()];
+    if open {
+      children.push(facility_picker_panel(planner, path, is_reaction));
+    }
+
+    Column::with_children(children).spacing(spacing::SPACE_2).into()
+  }
+
+  fn facility_picker_panel<'a>(planner: &'a Planner, path: &[i64], is_reaction: bool) -> Element<'a, Message> {
+    let query: &'a str = planner
+      .facility_picker()
+      .map(|state| state.query.as_str())
+      .unwrap_or_default();
+    let needle = query.trim().to_lowercase();
+    let selected_system = planner.selected_facility(path, is_reaction).map(|f| f.solar_system_id);
+
+    let owned_path = path.to_vec();
+    let search = TextInput::new("Search facilities\u{2026}", query, move |value| {
+      Message::FacilitySearchChanged {
+        path: owned_path.clone(),
+        query: value,
+      }
+    })
+    .background(color::surface::SUNKEN)
+    .width(Length::Fill)
+    .render();
+
+    let rows: Vec<Element<'a, Message>> = planner
       .data()
       .facilities
       .iter()
-      .filter(|candidate| candidate.index_for(is_reaction).is_some())
-      .take(4)
-      .map(|candidate| {
-        let selected = facility.is_some_and(|sel| sel.solar_system_id == candidate.solar_system_id);
-        let system = candidate.solar_system_id;
-        let pct = candidate.index_for(is_reaction).unwrap_or(0.0) * 100.0;
-        button(
-          text(format!("{system} \u{00B7} {pct:.2}%"))
-            .font(typography::mono::REGULAR)
-            .size(typography::size::XS_PLUS)
-            .style(typography::colored(if selected {
-              color::accent::PLASMA
-            } else {
-              color::text::secondary()
-            })),
-        )
-        .padding(Padding {
-          top: spacing::UNIT,
-          bottom: spacing::UNIT,
-          left: spacing::SPACE_2,
-          right: spacing::SPACE_2,
-        })
-        .on_press(Message::FacilitySelected {
-          path: path.to_vec(),
-          solar_system_id: system,
-        })
-        .style(move |_, _| button::Style {
-          background: selected.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
-          border: Border {
-            color: if selected { color::accent::PLASMA } else { color::rule() },
-            radius: radius::CONTROL.into(),
-            width: 1.0,
-          },
-          text_color: color::text::secondary(),
-          ..button::Style::default()
-        })
-        .into()
+      .filter(|facility| facility.index_for(is_reaction).is_some())
+      .filter(|facility| {
+        needle.is_empty()
+          || facility.name.to_lowercase().contains(&needle)
+          || facility.solar_system_id.to_string().contains(&needle)
       })
+      .map(|facility| facility_row(path, facility, is_reaction, selected_system))
       .collect();
 
-    let row: Element<'a, Message> = if chips.is_empty() {
-      text("No facilities available")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(typography::colored(color::text::tertiary()))
-        .into()
+    let list: Element<'a, Message> = if rows.is_empty() {
+      centered(
+        text("No facilities match.")
+          .font(typography::body::REGULAR)
+          .size(typography::size::SM)
+          .style(typography::colored(color::text::tertiary())),
+      )
     } else {
-      Row::with_children(chips).spacing(spacing::SPACE_2).into()
+      scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
+        .style(crate::ui::style::control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fixed(FACILITY_PICKER_LIST_HEIGHT))
+        .into()
     };
 
-    Column::with_children(vec![micro_label("Build at"), row])
-      .spacing(spacing::SPACE_2)
+    container(
+      Column::with_children(vec![
+        container(search).padding(spacing::SPACE_2).into(),
+        rule::horizontal(),
+        list,
+      ])
+      .spacing(spacing::SPACE_2),
+    )
+    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+    .padding(Padding {
+      top: 0.0,
+      bottom: spacing::SPACE_2,
+      left: 0.0,
+      right: 0.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+  }
+
+  fn facility_row<'a>(
+    path: &[i64],
+    facility: &'a PlannerFacility,
+    is_reaction: bool,
+    selected_system: Option<i64>,
+  ) -> Element<'a, Message> {
+    let on = selected_system == Some(facility.solar_system_id);
+    let pct = facility.index_for(is_reaction).unwrap_or(0.0) * 100.0;
+
+    let name = text(facility.name.clone())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(if on {
+        color::accent::PLASMA
+      } else {
+        color::text::PRIMARY
+      }));
+    let system = text(facility.solar_system_id.to_string())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()));
+
+    let details = Column::with_children(vec![name.into(), system.into()])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill);
+
+    let pct_label = text(format!("{pct:.2}%"))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary()));
+
+    let mut row = Row::with_children(vec![])
+      .spacing(spacing::SPACE_2_5)
+      .align_y(Vertical::Center);
+    if let Some(type_id) = facility.type_id {
+      row = row.push(type_tile(type_id));
+    }
+    let row = row.push(details).push(pct_label).width(Length::Fill);
+
+    button(row)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_2_5,
+        right: spacing::SPACE_2_5,
+      })
+      .on_press(Message::FacilitySelected {
+        path: path.to_vec(),
+        solar_system_id: facility.solar_system_id,
+      })
+      .style(move |_, _| button::Style {
+        background: on.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        border: Border {
+          radius: radius::CONTROL.into(),
+          ..Border::default()
+        },
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      })
       .into()
   }
 
@@ -2641,6 +2841,17 @@ mod tests {
   const RETRIEVER: i64 = 17_478;
   const TRITANIUM: i64 = 34;
 
+  fn facility(id: i64, solar_system_id: i64, name: &str, manufacturing_index: f64) -> PlannerFacility {
+    PlannerFacility {
+      id,
+      manufacturing_index: Some(manufacturing_index),
+      name: name.to_owned(),
+      reaction_index: Some(manufacturing_index),
+      solar_system_id,
+      type_id: None,
+    }
+  }
+
   fn recipe(blueprint: i64, output: i64, is_reaction: bool, materials: Vec<Material>) -> Recipe {
     Recipe {
       activity_id: if is_reaction { 11 } else { 1 },
@@ -2681,6 +2892,10 @@ mod tests {
       type_id: HULK,
       volume: 3_750.0,
     });
+    data.facilities = vec![
+      facility(60_000_002, 30_002_187, "Cheap Citadel", 0.02),
+      facility(60_000_001, 30_000_142, "Pricey Station", 0.09),
+    ];
 
     let mut planner = Planner::new();
     planner.apply_data(data);
@@ -2807,6 +3022,111 @@ mod tests {
       let eco = planner.economics().unwrap();
 
       assert_eq!(eco.isk_per_hour(), 0.0);
+    }
+  }
+
+  mod facility_picker {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_a_node_to_the_cheapest_eligible_facility() {
+      let planner = planner();
+
+      let facility = planner.selected_facility(&[], false).unwrap();
+
+      assert_eq!(facility.name, "Cheap Citadel");
+      assert_eq!(facility.solar_system_id, 30_002_187);
+    }
+
+    #[test]
+    fn it_toggles_a_per_node_picker_open_and_closed() {
+      let mut planner = planner();
+
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      assert_eq!(planner.facility_picker().map(|state| state.path.clone()), Some(vec![]));
+
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      assert!(planner.facility_picker().is_none());
+    }
+
+    #[test]
+    fn it_only_keeps_one_node_picker_open_at_a_time() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![RETRIEVER],
+      });
+
+      assert_eq!(
+        planner.facility_picker().map(|state| state.path.clone()),
+        Some(vec![RETRIEVER])
+      );
+    }
+
+    #[test]
+    fn it_records_the_search_query_for_the_open_node() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "cheap".to_owned(),
+      });
+
+      assert_eq!(
+        planner.facility_picker().map(|state| state.query.clone()),
+        Some("cheap".to_owned())
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_search_query_for_a_node_that_is_not_open() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![RETRIEVER],
+        query: "amarr".to_owned(),
+      });
+
+      assert_eq!(
+        planner.facility_picker().map(|state| state.query.clone()),
+        Some(String::new())
+      );
+    }
+
+    #[test]
+    fn it_pins_the_selected_facility_system_and_closes_the_picker() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+
+      planner.update(Message::FacilitySelected {
+        path: vec![],
+        solar_system_id: 30_000_142,
+      });
+
+      assert_eq!(planner.node(&[]).facility_system, Some(30_000_142));
+      assert_eq!(planner.selected_facility(&[], false).unwrap().name, "Pricey Station");
+      assert!(planner.facility_picker().is_none());
     }
   }
 

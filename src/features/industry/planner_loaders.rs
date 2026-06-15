@@ -145,11 +145,14 @@ impl PlannerData {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlannerFacility {
+  pub id: i64,
   pub manufacturing_index: Option<f64>,
+  pub name: String,
   pub reaction_index: Option<f64>,
   pub solar_system_id: i64,
+  pub type_id: Option<i64>,
 }
 
 impl PlannerFacility {
@@ -395,25 +398,32 @@ async fn owned_index(db: &Database, recipes: &HashMap<i64, Recipe>, scope: Scope
   owned
 }
 
+/// Maps every accessible facility to a [`PlannerFacility`], preserving the repo's cost-index-ascending
+/// order so the picker surfaces the cheapest manufacturing facility first (no-index last). Reaction
+/// indices are per-system, so they are looked up once and cached across facilities in the same system.
 async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
-  let mut by_system: BTreeMap<i64, PlannerFacility> = BTreeMap::new();
+  let mut reaction_indices: BTreeMap<i64, Option<f64>> = BTreeMap::new();
+  let mut out = Vec::new();
   for facility in facilities(db).await {
     let system = facility.solar_system_id();
-    if by_system.contains_key(&system) {
-      continue;
-    }
-    let manufacturing_index = facility.manufacturing_index();
-    let reaction_index = cost_index(db, system, REACTION_ACTIVITY_ID).await;
-    by_system.insert(
-      system,
-      PlannerFacility {
-        manufacturing_index,
-        reaction_index,
-        solar_system_id: system,
-      },
-    );
+    let reaction_index = match reaction_indices.get(&system) {
+      Some(index) => *index,
+      None => {
+        let index = cost_index(db, system, REACTION_ACTIVITY_ID).await;
+        reaction_indices.insert(system, index);
+        index
+      }
+    };
+    out.push(PlannerFacility {
+      id: facility.id(),
+      manufacturing_index: facility.manufacturing_index(),
+      name: facility.name().clone(),
+      reaction_index,
+      solar_system_id: system,
+      type_id: facility.type_id(),
+    });
   }
-  by_system.into_values().collect()
+  out
 }
 
 async fn product_categories(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, (String, String)> {
@@ -990,6 +1000,108 @@ mod tests {
       let entry = data.catalog.iter().find(|entry| entry.type_id == HULK).unwrap();
       assert_eq!(entry.category, Category::Ship);
       assert_eq!(entry.name, "Hulk");
+    }
+  }
+
+  mod planner_facilities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::IndustryCostIndex;
+
+    const CHEAP_STATION: i64 = 60_000_002;
+    const CHEAP_SYSTEM: i64 = 30_002_187;
+    const PRICEY_STATION: i64 = 60_000_001;
+    const PRICEY_SYSTEM: i64 = 30_000_142;
+    const STATION_TYPE_ID: i64 = 54;
+
+    async fn seed_station(db: &Database, id: i64, solar_system_id: i64, name: &str) {
+      sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (10000001, 'Region')")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
+        VALUES (20000001, 'Constellation', 0, 0, 0, 10000001)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO solar_systems \
+          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (?, 20000001, 'System', 0, 0, 0, 1.0)",
+      )
+      .bind(solar_system_id)
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (3, 'Station', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (15, 3, 'Station', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_types (id, group_id, name, description, published) \
+        VALUES (?, 15, 'Station', '', 1)",
+      )
+      .bind(STATION_TYPE_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO stations \
+          (id, system_id, type_id, name, max_dockable_ship_volume, office_rental_cost, \
+          reprocessing_efficiency, reprocessing_stations_take, services, position_x, position_y, position_z) \
+        VALUES (?, ?, ?, ?, 0, 0, 0.5, 0.05, '[]', 0, 0, 0)",
+      )
+      .bind(id)
+      .bind(solar_system_id)
+      .bind(STATION_TYPE_ID)
+      .bind(name)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    fn cost_index(solar_system_id: i64, manufacturing: f64, reaction: f64) -> IndustryCostIndex {
+      IndustryCostIndex {
+        manufacturing: Some(manufacturing),
+        reaction: Some(reaction),
+        solar_system_id,
+        ..IndustryCostIndex::default()
+      }
+    }
+
+    #[tokio::test]
+    async fn it_carries_facility_id_name_and_type_id_cheapest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, PRICEY_STATION, PRICEY_SYSTEM, "Pricey Station").await;
+      seed_station(&db, CHEAP_STATION, CHEAP_SYSTEM, "Cheap Station").await;
+      industry::replace_cost_indices(
+        &db,
+        &[
+          cost_index(PRICEY_SYSTEM, 0.09, 0.07),
+          cost_index(CHEAP_SYSTEM, 0.02, 0.01),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let facilities = super::planner_facilities(&db).await;
+
+      assert_eq!(
+        facilities.iter().map(|f| f.id).collect::<Vec<_>>(),
+        [CHEAP_STATION, PRICEY_STATION]
+      );
+      assert_eq!(facilities[0].name, "Cheap Station");
+      assert_eq!(facilities[0].type_id, Some(STATION_TYPE_ID));
+      assert_eq!(facilities[0].manufacturing_index, Some(0.02));
+      assert_eq!(facilities[0].reaction_index, Some(0.01));
+      assert_eq!(facilities[1].name, "Pricey Station");
     }
   }
 }

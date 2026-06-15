@@ -295,8 +295,66 @@ pub fn reload(db: &Database, scope: Scope, required_scopes: &[&'static str]) -> 
   })
 }
 
+fn delete_plan(db: &Database, id: i64) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let _ = crate::store::repo::industry::delete_plan(&db, id).await;
+      list_saved_plans(&db).await
+    },
+    |plans| Message::Planner(planner::Message::PlansListed(plans)),
+  )
+}
+
+fn list_plans(db: &Database) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(async move { list_saved_plans(&db).await }, |plans| {
+    Message::Planner(planner::Message::PlansListed(plans))
+  })
+}
+
+/// Lists every saved plan with its full tree so the Plans pane can recompute economics at current
+/// prices. A plan whose node tree fails to load is dropped rather than shown without its config.
+async fn list_saved_plans(db: &Database) -> Vec<planner::SavedPlanData> {
+  let plans = crate::store::repo::industry::list_plans(db).await.unwrap_or_default();
+  let mut out = Vec::with_capacity(plans.len());
+  for plan in plans {
+    if let Ok(Some(tree)) = crate::store::repo::industry::load_plan(db, plan.id()).await {
+      out.push(planner::SavedPlanData {
+        id: plan.id(),
+        name: plan.name().to_owned(),
+        tree,
+      });
+    }
+  }
+  out
+}
+
+fn load_plan(db: &Database, id: i64) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move { crate::store::repo::industry::load_plan(&db, id).await.ok().flatten() },
+    |tree| match tree {
+      Some(tree) => Message::Planner(planner::Message::PlanRestored(Box::new(tree))),
+      // Plan missing or unreadable — emit a no-op rather than an error.
+      None => Message::Tick,
+    },
+  )
+}
+
 fn load_planner(db: &Database, scope: Scope) -> Task<Message> {
   planner::load(db.clone(), scope).map(|data| Message::PlannerLoaded(Box::new(data)))
+}
+
+fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::PlanTree) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let _ = crate::store::repo::industry::create_plan(&db, &name, &tree).await;
+      list_saved_plans(&db).await
+    },
+    |plans| Message::Planner(planner::Message::PlansListed(plans)),
+  )
 }
 
 pub fn subscription(_state: &State) -> Subscription<Message> {
@@ -353,14 +411,22 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    Message::Planner(planner_message) => {
-      let copy = matches!(planner_message, planner::Message::ShoppingListCopied);
-      state.planner.update(planner_message);
-      if copy {
-        return iced::clipboard::write(state.planner.shopping_list());
+    Message::Planner(planner_message) => match planner_message {
+      planner::Message::ShoppingListCopied => {
+        state.planner.update(planner_message);
+        iced::clipboard::write(state.planner.shopping_list())
       }
-      Task::none()
-    }
+      planner::Message::PlanSaveRequested => match (state.planner.snapshot(), state.planner.save_name()) {
+        (Some(tree), Some(name)) => save_plan(db, name, tree),
+        _ => Task::none(),
+      },
+      planner::Message::PlanLoadRequested(id) => load_plan(db, id),
+      planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
+      other => {
+        state.planner.update(other);
+        Task::none()
+      }
+    },
     Message::PlannerLoaded(data) => {
       state.planner.apply_data(*data);
       Task::none()
@@ -378,8 +444,12 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     }
     Message::TabSelected(tab) => {
       state.tab = tab;
-      if tab == Tab::Planner && !state.planner.is_loaded() {
-        return load_planner(db, state.active);
+      if tab == Tab::Planner {
+        let mut tasks = vec![list_plans(db)];
+        if !state.planner.is_loaded() {
+          tasks.push(load_planner(db, state.active));
+        }
+        return Task::batch(tasks);
       }
       Task::none()
     }
@@ -696,7 +766,19 @@ mod tests {
         .planner
         .update(planner::Message::RightTabSelected(planner::RightTab::Plans));
       {
-        let _plans: Element<'_, Message> = view(&state, &required(), now());
+        let _empty_plans: Element<'_, Message> = view(&state, &required(), now());
+      }
+      // A listed plan exercises the populated Plans pane: name, recomputed economics, load/delete actions.
+      let tree = state.planner.snapshot().unwrap();
+      state
+        .planner
+        .update(planner::Message::PlansListed(vec![planner::SavedPlanData {
+          id: 1,
+          name: "Hulk run".to_owned(),
+          tree,
+        }]));
+      {
+        let _saved_plans: Element<'_, Message> = view(&state, &required(), now());
       }
       state
         .planner
@@ -775,6 +857,30 @@ mod tests {
         &db,
         n,
       );
+      let _ = update(
+        &mut state,
+        Message::Planner(planner::Message::PlanSaveRequested),
+        &db,
+        n,
+      );
+      let _ = update(
+        &mut state,
+        Message::Planner(planner::Message::PlanLoadRequested(1)),
+        &db,
+        n,
+      );
+      let _ = update(
+        &mut state,
+        Message::Planner(planner::Message::PlanDeleteRequested(1)),
+        &db,
+        n,
+      );
+      let _ = update(
+        &mut state,
+        Message::Planner(planner::Message::PlansListed(Vec::new())),
+        &db,
+        n,
+      );
       let _ = update(&mut state, Message::Tick, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
@@ -794,6 +900,48 @@ mod tests {
         scope: Scope::Char(424_242),
       };
       let _ = update(&mut state, Message::Loaded(Box::new(stale)), &db, n);
+    }
+  }
+
+  mod list_saved_plans {
+    use pretty_assertions::assert_eq;
+
+    use crate::store::repo::industry::{self as industry_repo, PlanNode, PlanTree};
+
+    fn sample_tree() -> PlanTree {
+      PlanTree {
+        nodes: vec![PlanNode {
+          facility_system: None,
+          me: 10,
+          path: vec![],
+          te: 20,
+        }],
+        product_type_id: 22_544,
+        root_facility_system: None,
+        runs: 1,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_each_saved_plan_with_its_tree_newest_first() {
+      let db = crate::store::open_test().await.unwrap();
+      industry_repo::create_plan(&db, "First", &sample_tree()).await.unwrap();
+      industry_repo::create_plan(&db, "Second", &sample_tree()).await.unwrap();
+
+      let listed = super::list_saved_plans(&db).await;
+
+      assert_eq!(listed.len(), 2);
+      assert_eq!(listed[0].tree, sample_tree());
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_plan_once_deleted() {
+      let db = crate::store::open_test().await.unwrap();
+      let plan = industry_repo::create_plan(&db, "Doomed", &sample_tree()).await.unwrap();
+
+      industry_repo::delete_plan(&db, plan.id()).await.unwrap();
+
+      assert!(super::list_saved_plans(&db).await.is_empty());
     }
   }
 

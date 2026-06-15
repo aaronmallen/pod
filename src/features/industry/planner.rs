@@ -63,6 +63,11 @@ pub enum Message {
   NodeBrokenDown { mat: i64, parent: Vec<i64> },
   NodeCollapsed { mat: i64, parent: Vec<i64> },
   PickerToggled,
+  PlanDeleteRequested(i64),
+  PlanLoadRequested(i64),
+  PlanRestored(Box<PlanTree>),
+  PlanSaveRequested,
+  PlansListed(Vec<SavedPlanData>),
   ProductPicked(i64),
   RightTabSelected(RightTab),
   RunsChanged(i64),
@@ -86,7 +91,6 @@ pub struct NodeConfig {
 }
 
 impl NodeConfig {
-  #[allow(dead_code)]
   fn rebuild(nodes: &[PlanNode]) -> NodeConfig {
     let mut root = NodeConfig::default();
     let mut ordered: Vec<&PlanNode> = nodes.iter().collect();
@@ -132,7 +136,6 @@ impl NodeConfig {
     Some(node)
   }
 
-  #[allow(dead_code)]
   fn flatten(&self, path: &mut Vec<i64>, out: &mut Vec<PlanNode>) {
     out.push(PlanNode {
       facility_system: self.facility_system,
@@ -160,6 +163,7 @@ pub struct Planner {
   recent: Vec<i64>,
   right_tab: RightTab,
   runs: i64,
+  saved: Vec<SavedPlan>,
   search: String,
   tree: NodeConfig,
 }
@@ -289,7 +293,6 @@ impl Planner {
     &self.recent
   }
 
-  #[allow(dead_code)]
   pub fn restore(&mut self, tree: &PlanTree) {
     self.product = Some(tree.product_type_id);
     self.runs = tree.runs.clamp(1, RUNS_MAX);
@@ -303,6 +306,16 @@ impl Planner {
 
   pub fn runs(&self) -> i64 {
     self.runs
+  }
+
+  /// Default name for the next saved plan: the product name plus its run count.
+  pub fn save_name(&self) -> Option<String> {
+    let product = self.product?;
+    Some(format!("{} \u{00D7}{}", self.data.name(product), self.runs))
+  }
+
+  pub fn saved(&self) -> &[SavedPlan] {
+    &self.saved
   }
 
   pub fn search(&self) -> &str {
@@ -340,7 +353,6 @@ impl Planner {
       .join("\n")
   }
 
-  #[allow(dead_code)]
   pub fn snapshot(&self) -> Option<PlanTree> {
     let product = self.product?;
     let mut nodes = Vec::new();
@@ -395,6 +407,14 @@ impl Planner {
         self.menu = None;
       }
       Message::PickerToggled => self.picker_open = !self.picker_open,
+      // The DB round trips for save/load/delete are performed by the parent industry::update, which
+      // owns the database handle; here only the resolved list and restored tree touch planner state.
+      Message::PlanDeleteRequested(_) | Message::PlanLoadRequested(_) | Message::PlanSaveRequested => {}
+      Message::PlanRestored(tree) => {
+        self.restore(&tree);
+        self.right_tab = RightTab::Detail;
+      }
+      Message::PlansListed(plans) => self.apply_saved(plans),
       Message::ProductPicked(type_id) => {
         self.select_product(type_id);
         self.picker_open = false;
@@ -416,6 +436,21 @@ impl Planner {
         }
       }
     }
+  }
+
+  fn apply_saved(&mut self, plans: Vec<SavedPlanData>) {
+    self.saved = plans
+      .into_iter()
+      .map(|plan| {
+        let economics = self.tree_economics(&plan.tree);
+        SavedPlan {
+          economics,
+          id: plan.id,
+          name: plan.name,
+          product_type_id: plan.tree.product_type_id,
+        }
+      })
+      .collect();
   }
 
   fn assemble(&self, type_id: i64, config: &NodeConfig) -> Option<BuildNode> {
@@ -506,6 +541,63 @@ impl Planner {
     self.product = Some(type_id);
     self.tree = self.fresh_node(type_id);
   }
+
+  /// Root-job economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
+  /// but reads the product, runs, and root ME/TE/facility from `tree` instead of live state, so a list
+  /// of saved plans reflects today's market without rehydrating each into the live planner.
+  fn tree_economics(&self, tree: &PlanTree) -> Option<Economics> {
+    let product = tree.product_type_id;
+    let recipe = self.data.recipe(product)?;
+    let runs = tree.runs.clamp(1, RUNS_MAX);
+    let root = tree.nodes.iter().find(|node| node.path.is_empty());
+    let me = root.map(|node| node.me).unwrap_or(0);
+    let te = root.map(|node| node.te).unwrap_or(0);
+    let facility_system = tree.root_facility_system;
+
+    let material_cost: f64 = recipe
+      .materials
+      .iter()
+      .map(|material| {
+        let qty = crate::features::industry::planner_model::eff_qty(material.base_qty, runs, me, recipe.is_reaction);
+        qty as f64 * self.data.price(material.type_id)
+      })
+      .sum();
+
+    let output_qty = recipe.output_per_run * runs;
+    let revenue = self.data.price(product) * output_qty as f64;
+    let cost_index = facility_system
+      .and_then(|system| {
+        self
+          .data
+          .facilities
+          .iter()
+          .find(|facility| facility.solar_system_id == system)
+      })
+      .or_else(|| self.default_facility(recipe.is_reaction))
+      .and_then(|facility| facility.index_for(recipe.is_reaction))
+      .unwrap_or(0.0);
+    let install_fee = revenue * cost_index * INSTALL_FEE_RATE;
+    let profit = revenue - material_cost - install_fee;
+    let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
+    let per_unit = if output_qty > 0 {
+      profit / output_qty as f64
+    } else {
+      0.0
+    };
+    let build_time_secs = node_build_time(recipe, runs, te);
+
+    Some(Economics {
+      build_time_secs,
+      install_fee,
+      margin,
+      material_cost,
+      output_qty,
+      output_volume: self.data.volume(product) * output_qty as f64,
+      per_unit,
+      profit,
+      revenue,
+    })
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -513,6 +605,21 @@ pub enum RightTab {
   #[default]
   Detail,
   Plans,
+}
+
+#[derive(Clone, Debug)]
+pub struct SavedPlan {
+  pub economics: Option<Economics>,
+  pub id: i64,
+  pub name: String,
+  pub product_type_id: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedPlanData {
+  pub id: i64,
+  pub name: String,
+  pub tree: PlanTree,
 }
 
 /// Returns total build time in seconds. `te` is a 0–20 integer (EVE TE %, applied as
@@ -587,7 +694,7 @@ mod view {
     widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, slider, text},
   };
 
-  use super::{Message, Planner, RightTab, node_build_time};
+  use super::{Economics, Message, Planner, RightTab, SavedPlan, node_build_time};
   use crate::{
     clients::eve_image::Size,
     features::industry::{
@@ -1605,7 +1712,7 @@ mod view {
 
     let content: Element<'a, Message> = match planner.right_tab() {
       RightTab::Detail => detail_pane(planner, product),
-      RightTab::Plans => plans_stub(),
+      RightTab::Plans => plans_pane(planner),
     };
 
     let column = Column::with_children(vec![
@@ -1836,14 +1943,177 @@ mod view {
     .into()
   }
 
-  fn plans_stub<'a>() -> Element<'a, Message> {
+  fn plans_pane(planner: &Planner) -> Element<'_, Message> {
+    let saved = planner.saved();
+    let body: Element<'_, Message> = if saved.is_empty() {
+      plans_empty()
+    } else {
+      let rows: Vec<Element<'_, Message>> = saved.iter().map(|plan| plan_row(planner, plan)).collect();
+      Column::with_children(rows).spacing(spacing::SPACE_3).into()
+    };
+
+    Column::with_children(vec![save_plan_button(planner), body])
+      .spacing(spacing::SPACE_3_5)
+      .width(Length::Fill)
+      .into()
+  }
+
+  fn save_plan_button(planner: &Planner) -> Element<'_, Message> {
+    let enabled = planner.product().is_some();
+    let mut control = button(
+      Row::with_children(vec![
+        Icon::doc().color(color::accent::PLASMA).size(14.0).render::<Message>(),
+        text("Save build plan")
+          .font(typography::body::MEDIUM)
+          .size(typography::size::MD)
+          .style(typography::colored(color::accent::PLASMA))
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_3)
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(color::with_alpha(
+          color::accent::PLASMA,
+          if hovered { 0.22 } else { 0.14 },
+        ))),
+        border: Border {
+          color: color::accent::PLASMA,
+          radius: radius::CARD.into(),
+          width: 1.0,
+        },
+        text_color: color::accent::PLASMA,
+        ..button::Style::default()
+      }
+    });
+    if enabled {
+      control = control.on_press(Message::PlanSaveRequested);
+    }
+    control.into()
+  }
+
+  fn plan_row<'a>(planner: &'a Planner, plan: &'a SavedPlan) -> Element<'a, Message> {
+    let header = Row::with_children(vec![
+      type_tile(plan.product_type_id, false),
+      Column::with_children(vec![
+        text(plan.name.clone())
+          .font(typography::body::MEDIUM)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::PRIMARY))
+          .into(),
+        text(planner.data().name(plan.product_type_id))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill)
+      .into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center);
+
+    let economics = plan_economics(plan.economics.as_ref());
+
+    let actions = Row::with_children(vec![
+      plan_action("Load", color::accent::PLASMA, Message::PlanLoadRequested(plan.id)),
+      plan_action("Delete", color::status::DANGER, Message::PlanDeleteRequested(plan.id)),
+    ])
+    .spacing(spacing::SPACE_2);
+
+    container(
+      Column::with_children(vec![header.into(), economics, actions.into()])
+        .spacing(spacing::SPACE_3)
+        .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_3_5)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule(),
+        radius: radius::CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+  }
+
+  fn plan_economics(economics: Option<&Economics>) -> Element<'_, Message> {
+    let Some(eco) = economics else {
+      return text("Recipe unavailable at current data")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::tertiary()))
+        .into();
+    };
+    let profit_color = if eco.profitable() {
+      color::status::ONLINE
+    } else {
+      color::status::DANGER
+    };
+
+    Row::with_children(vec![
+      metric(
+        "Profit",
+        &format!(
+          "{}{}",
+          if eco.profit >= 0.0 { "+" } else { "\u{2212}" },
+          fmt_isk(eco.profit.abs())
+        ),
+        profit_color,
+      ),
+      metric("Margin", &fmt_pct(eco.margin), profit_color),
+      metric("Revenue", &fmt_isk(eco.revenue), color::text::secondary()),
+    ])
+    .spacing(spacing::SPACE_6)
+    .into()
+  }
+
+  fn plan_action<'a>(label: &str, accent: iced::Color, message: Message) -> Element<'a, Message> {
+    button(
+      text(label.to_owned())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(accent)),
+    )
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(message)
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: hovered.then(|| Background::Color(color::with_alpha(accent, 0.14))),
+        border: Border {
+          color: color::with_alpha(accent, 0.45),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: accent,
+        ..button::Style::default()
+      }
+    })
+    .into()
+  }
+
+  fn plans_empty<'a>() -> Element<'a, Message> {
     centered(
       Column::with_children(vec![
         Icon::doc()
           .color(color::text::tertiary())
           .size(28.0)
           .render::<Message>(),
-        text("Saved plans land soon")
+        text("No saved plans yet")
           .font(typography::body::REGULAR)
           .size(typography::size::LG)
           .style(typography::colored(color::text::secondary()))
@@ -2538,6 +2808,67 @@ mod tests {
 
       let builds = planner.plan().unwrap().collect_builds();
       assert_eq!(builds[0].runs, 6);
+    }
+  }
+
+  mod saved_plans {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn saved_data(id: i64, name: &str, planner: &Planner) -> SavedPlanData {
+      SavedPlanData {
+        id,
+        name: name.to_owned(),
+        tree: planner.snapshot().unwrap(),
+      }
+    }
+
+    #[test]
+    fn it_leaves_economics_unset_when_the_recipe_is_unknown() {
+      let source = planner();
+      let data = saved_data(1, "Orphan", &source);
+      let mut empty = Planner::new();
+      empty.apply_data(PlannerData::default());
+
+      empty.update(Message::PlansListed(vec![data]));
+
+      assert!(empty.saved()[0].economics.is_none());
+    }
+
+    #[test]
+    fn it_recomputes_economics_for_each_listed_plan_at_current_prices() {
+      let mut planner = planner();
+      let data = saved_data(1, "Hulk run", &planner);
+
+      planner.update(Message::PlansListed(vec![data]));
+
+      let saved = planner.saved();
+      assert_eq!(saved.len(), 1);
+      assert_eq!(saved[0].name, "Hulk run");
+      assert_eq!(saved[0].product_type_id, HULK);
+      let eco = saved[0].economics.as_ref().unwrap();
+      assert_eq!(eco.revenue, 200_000_000.0);
+      assert_eq!(eco.material_cost, planner.economics().unwrap().material_cost);
+    }
+
+    #[test]
+    fn it_rehydrates_the_tree_and_returns_to_the_detail_tab_on_restore() {
+      let mut source = planner();
+      source.update(Message::RunsChanged(4));
+      source.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+      let tree = source.snapshot().unwrap();
+
+      let mut planner = planner();
+      planner.update(Message::RightTabSelected(RightTab::Plans));
+      planner.update(Message::PlanRestored(Box::new(tree)));
+
+      assert_eq!(planner.runs(), 4);
+      assert_eq!(planner.right_tab(), RightTab::Detail);
+      assert_eq!(planner.plan(), source.plan());
     }
   }
 

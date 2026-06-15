@@ -14,9 +14,6 @@ pub struct AllIndustryJobs {
   pub corporation_jobs: Vec<CorporationIndustryJob>,
 }
 
-// The saved-build-plans CRUD below is consumed by the Industry Planner UI in a follow-up; the
-// storage layer lands first.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanNode {
   pub facility_system: Option<i64>,
@@ -26,7 +23,6 @@ pub struct PlanNode {
   pub te: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanTree {
   pub nodes: Vec<PlanNode>,
@@ -39,7 +35,6 @@ const FACILITY_MANAGER_ROLES: &[&str] = &["Director", "Factory_Manager"];
 
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
 
-#[allow(dead_code)]
 const PLAN_NODE_PATH_SEPARATOR: char = '/';
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
@@ -164,7 +159,6 @@ pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) 
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<IndustryPlan, Error> {
   let saved_at = chrono::Utc::now().to_rfc3339();
   let mut tx = db.0.begin().await?;
@@ -200,7 +194,6 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   Ok(plan)
 }
 
-#[allow(dead_code)]
 pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM industry_plans WHERE id = ?")
     .bind(id)
@@ -209,7 +202,6 @@ pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn list_plans(db: &Database) -> Result<Vec<IndustryPlan>, Error> {
   let rows = sqlx::query_as::<_, IndustryPlan>(
     "SELECT id, name, product_type_id, root_facility_system, runs, saved_at FROM industry_plans \
@@ -220,7 +212,6 @@ pub async fn list_plans(db: &Database) -> Result<Vec<IndustryPlan>, Error> {
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error> {
   let Some(plan) = sqlx::query_as::<_, IndustryPlan>(
     "SELECT id, name, product_type_id, root_facility_system, runs, saved_at FROM industry_plans WHERE id = ?",
@@ -274,7 +265,6 @@ pub async fn replace_for_corporation(
 }
 
 /// Empty string encodes the root node (sentinel); unparseable segments are silently dropped.
-#[allow(dead_code)]
 fn decode_path(path: &str) -> Vec<i64> {
   if path.is_empty() {
     return Vec::new();
@@ -285,7 +275,6 @@ fn decode_path(path: &str) -> Vec<i64> {
     .collect()
 }
 
-#[allow(dead_code)]
 fn encode_path(path: &[i64]) -> String {
   path
     .iter()

@@ -55,6 +55,32 @@ pub struct CorporationInfo {
   pub war_eligible: Option<bool>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CorporationStructure {
+  pub corporation_id: i64,
+  #[serde(default)]
+  pub fuel_expires: Option<String>,
+  #[serde(default)]
+  pub name: Option<String>,
+  #[serde(default)]
+  pub profile_id: Option<i64>,
+  #[serde(default)]
+  pub services: Vec<CorporationStructureService>,
+  #[serde(default)]
+  pub state: Option<String>,
+  pub structure_id: i64,
+  pub system_id: i64,
+  pub type_id: i32,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct CorporationStructureService {
+  pub name: String,
+  pub state: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CorporationWalletBalance {
   pub balance: f64,

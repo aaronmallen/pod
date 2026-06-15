@@ -29,6 +29,7 @@ pub enum JobKind {
   CorporationBlueprints,
   CorporationIndustryJobs,
   CorporationProfile,
+  CorporationStructures,
   CorporationWallet,
   KillmailDetailBackfill,
   KillmailReconcile,
@@ -58,6 +59,7 @@ impl JobKind {
     JobKind::CorporationBlueprints,
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationProfile,
+    JobKind::CorporationStructures,
     JobKind::CorporationWallet,
     JobKind::KillmailDetailBackfill,
     JobKind::KillmailReconcile,
@@ -135,6 +137,7 @@ impl JobKind {
       (Self::CorporationBlueprints, _) => Some(scopes::CORPORATION_BLUEPRINTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
+      (Self::CorporationStructures, _) => Some(scopes::CORPORATION_STRUCTURES),
       (Self::CorporationWallet, _) => Some(scopes::CORPORATION_WALLET),
       _ => None,
     }
@@ -167,6 +170,7 @@ impl JobKind {
           | Self::CorporationBlueprints
           | Self::CorporationIndustryJobs
           | Self::CorporationProfile
+          | Self::CorporationStructures
           | Self::CorporationWallet,
         Subject::Corporation(_)
       )
@@ -189,6 +193,7 @@ impl JobKind {
       | Self::CorporationBlueprints
       | Self::CorporationIndustryJobs
       | Self::CorporationProfile
+      | Self::CorporationStructures
       | Self::CorporationWallet => Duration::from_secs(3600),
       Self::CharacterSkills => Duration::from_secs(60),
       Self::CharacterCalendar
@@ -231,6 +236,7 @@ impl JobKind {
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
+      Self::CorporationStructures => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_STRUCTURES],
       Self::CorporationWallet => &[
         scopes::CORPORATION_ROLES,
         scopes::CORPORATION_WALLET,
@@ -338,6 +344,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::KillmailDetailBackfill => super::jobs::killmail_detail_backfill::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
+    JobKind::CorporationStructures => super::jobs::corporation_structures::run(ctx).await,
     JobKind::CorporationWallet => super::jobs::corporation_wallet::run(ctx).await,
     JobKind::MarketPrices => super::jobs::market_prices::run(ctx).await,
     JobKind::NetWorthSnapshot => super::jobs::net_worth_snapshot::run(ctx).await,

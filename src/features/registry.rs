@@ -61,6 +61,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         JobKind::CharacterIndustryJobs,
         JobKind::CorporationBlueprints,
         JobKind::CorporationIndustryJobs,
+        JobKind::CorporationStructures,
       ],
       rail: Some(Destination::Industry),
       scopes: &[
@@ -68,6 +69,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         scopes::CHARACTER_INDUSTRY_JOBS,
         scopes::CORPORATION_BLUEPRINTS,
         scopes::CORPORATION_INDUSTRY_JOBS,
+        scopes::CORPORATION_STRUCTURES,
       ],
       tab: None,
     },

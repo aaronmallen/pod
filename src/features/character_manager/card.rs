@@ -463,7 +463,7 @@ fn reauth_badge<'a>() -> Element<'a, Message> {
   let on_danger = color::on_fill(color::status::DANGER);
   let pill = container(
     Row::with_children(vec![
-      status::dot(on_danger).into(),
+      status::dot(on_danger),
       text("Needs re-authorization")
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)

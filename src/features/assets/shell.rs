@@ -13,6 +13,7 @@ use crate::{
   ui::{
     components::{
       backdrop, forbidden,
+      icon::Icon,
       modal_overlay::modal_overlay,
       positioned_dropdown::positioned_dropdown,
       resizable_pane::pane_handle,
@@ -187,10 +188,20 @@ fn tab<'a>(state: &State, tab: Tab, label: &'a str, count: String) -> tab_select
   let selected = state.tab() == tab;
   tab_select::Tab {
     count,
-    icon: None,
+    icon: Some(tab_icon(tab)),
     label,
     on_press: (!selected).then_some(Message::TabSelected(tab)),
     selected,
+  }
+}
+
+fn tab_icon(tab: Tab) -> Icon {
+  match tab {
+    Tab::Abyssals => Icon::abyssals(),
+    Tab::Inventory => Icon::inventory(),
+    Tab::Stockpiles => Icon::stockpiles(),
+    Tab::Tracker => Icon::tracker(),
+    Tab::Values => Icon::values(),
   }
 }
 

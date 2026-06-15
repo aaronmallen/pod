@@ -11,6 +11,10 @@ pub struct Icon {
 }
 
 impl Icon {
+  pub fn abyssals() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/abyssals.svg"))
+  }
+
   pub fn archive() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/archive.svg"))
   }
@@ -65,6 +69,10 @@ impl Icon {
 
   pub fn compare() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/compare.svg"))
+  }
+
+  pub fn contracts() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/contracts.svg"))
   }
 
   pub fn copy() -> Self {
@@ -124,6 +132,14 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/industry.svg"))
   }
 
+  pub fn inventory() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/inventory.svg"))
+  }
+
+  pub fn journal() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/journal.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn live() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/live.svg"))
@@ -142,6 +158,10 @@ impl Icon {
   #[allow(dead_code)]
   pub fn mail() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/mail.svg"))
+  }
+
+  pub fn market() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/market.svg"))
   }
 
   #[allow(dead_code)]
@@ -272,6 +292,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/star.svg"))
   }
 
+  pub fn stockpiles() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/stockpiles.svg"))
+  }
+
   pub fn tag() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/tag.svg"))
   }
@@ -301,6 +325,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/tilde.svg"))
   }
 
+  pub fn tracker() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/tracker.svg"))
+  }
+
   pub fn trash() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/trash.svg"))
   }
@@ -308,6 +336,10 @@ impl Icon {
   #[allow(dead_code)]
   pub fn users() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/users.svg"))
+  }
+
+  pub fn values() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/values.svg"))
   }
 
   #[allow(dead_code)]

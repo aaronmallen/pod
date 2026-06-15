@@ -214,7 +214,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
       let selected = state.tab == tab;
       tab_select::Tab {
         count: count.to_string(),
-        icon: None,
+        icon: Some(tab_icon(tab)),
         label,
         on_press: (!selected).then_some(Message::TabSelected(tab)),
         selected,
@@ -233,6 +233,14 @@ fn tabs(state: &State) -> Element<'_, Message> {
     })
     .style(bordered_pane)
     .into()
+}
+
+fn tab_icon(tab: Tab) -> Icon {
+  match tab {
+    Tab::Contracts => Icon::contracts(),
+    Tab::Journal => Icon::journal(),
+    Tab::Market => Icon::market(),
+  }
 }
 
 fn filter_bar(state: &State) -> Element<'_, Message> {

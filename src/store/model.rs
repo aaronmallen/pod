@@ -60,6 +60,7 @@ mod corporation_wallet_transaction;
 mod credential;
 mod dogma_attribute;
 mod entity_tag;
+mod facility;
 mod faction;
 mod http_cache_entry;
 mod inaccessible_structure;
@@ -190,6 +191,7 @@ pub use credential::{Model as Credential, OwnerType};
 #[allow(unused_imports)]
 pub use dogma_attribute::Model as DogmaAttribute;
 pub use entity_tag::{ENTITY_TYPE_CHARACTER, ENTITY_TYPE_CORPORATION, Model as EntityTag};
+pub use facility::Model as Facility;
 pub use faction::Model as Faction;
 pub use http_cache_entry::Model as HttpCacheEntry;
 #[allow(unused_imports)]

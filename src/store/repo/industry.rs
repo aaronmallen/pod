@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
-  model::{CharacterIndustryJob, CorporationIndustryJob, IndustryCostIndex},
+  model::{CharacterIndustryJob, CorporationIndustryJob, Facility, IndustryCostIndex},
   repo::org,
 };
 
@@ -14,9 +14,41 @@ pub struct AllIndustryJobs {
   pub corporation_jobs: Vec<CorporationIndustryJob>,
 }
 
+const FACILITY_MANAGER_ROLES: &[&str] = &["Director", "Factory_Manager"];
+
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
+/// Returns all NPC stations plus corp structures whose owning corp is authorized and whose `authorized_by` character
+/// holds Director or Factory_Manager; ordered by manufacturing cost index ascending, facilities with no index last.
+#[allow(dead_code)]
+pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
+  let rows = sqlx::query_as::<_, Facility>(
+    "SELECT f.id AS id, ci.manufacturing AS manufacturing_index, f.name AS name, \
+      f.owner_id AS owner_id, f.solar_system_id AS solar_system_id, f.type_id AS type_id \
+    FROM ( \
+      SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
+      UNION ALL \
+      SELECT s.id, s.owner_id, s.name, s.solar_system_id, s.type_id FROM structures s \
+      JOIN owned_corporations oc ON oc.id = s.owner_id \
+      JOIN corporation_member_roles cmr \
+        ON cmr.corporation_id = oc.id \
+        AND cmr.character_id = oc.authorized_by \
+        AND cmr.role IN (?, ?) \
+      LEFT JOIN inaccessible_structures ina \
+        ON ina.id = s.id AND ina.owner_id = s.owner_id AND ina.owner_type = 'corporation' \
+      WHERE ina.id IS NULL \
+    ) f \
+    LEFT JOIN industry_cost_indices ci ON ci.solar_system_id = f.solar_system_id \
+    ORDER BY ci.manufacturing IS NULL, ci.manufacturing, f.name, f.id",
+  )
+  .bind(FACILITY_MANAGER_ROLES[0])
+  .bind(FACILITY_MANAGER_ROLES[1])
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
 
 #[allow(dead_code)]
 pub async fn cost_index_for(db: &Database, solar_system_id: i64, activity_id: i64) -> Result<Option<f64>, Error> {
@@ -735,6 +767,227 @@ mod tests {
       assert_eq!(
         super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
         Some(cost_index(30_002_187, 0.09, 0.03))
+      );
+    }
+  }
+
+  mod accessible_facilities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const REGION_ID: i64 = 10_000_001;
+    const CONSTELLATION_ID: i64 = 20_000_001;
+    const STATION_TYPE_ID: i64 = 54;
+
+    async fn seed_solar_system(db: &Database, id: i64) {
+      sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (?, 'Test Region')")
+        .bind(REGION_ID)
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
+        VALUES (?, 'Test Constellation', 0, 0, 0, ?)",
+      )
+      .bind(CONSTELLATION_ID)
+      .bind(REGION_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO solar_systems \
+          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (?, ?, 'Test System', 0, 0, 0, 1.0)",
+      )
+      .bind(id)
+      .bind(CONSTELLATION_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_station(db: &Database, id: i64, solar_system_id: i64, name: &str) {
+      seed_solar_system(db, solar_system_id).await;
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (3, 'Station', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (15, 3, 'Station', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT OR IGNORE INTO item_types (id, group_id, name, description, published) \
+        VALUES (?, 15, 'Station', '', 1)",
+      )
+      .bind(STATION_TYPE_ID)
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO stations \
+          (id, system_id, type_id, name, max_dockable_ship_volume, office_rental_cost, \
+          reprocessing_efficiency, reprocessing_stations_take, services, position_x, position_y, position_z) \
+        VALUES (?, ?, ?, ?, 0, 0, 0.5, 0.05, '[]', 0, 0, 0)",
+      )
+      .bind(id)
+      .bind(solar_system_id)
+      .bind(STATION_TYPE_ID)
+      .bind(name)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_structure(db: &Database, id: i64, owner_id: i64, solar_system_id: i64, name: &str) {
+      seed_solar_system(db, solar_system_id).await;
+      sqlx::query("INSERT INTO structures (id, name, owner_id, solar_system_id, type_id) VALUES (?, ?, ?, ?, NULL)")
+        .bind(id)
+        .bind(name)
+        .bind(owner_id)
+        .bind(solar_system_id)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    async fn mark_inaccessible(db: &Database, id: i64, owner_id: i64) {
+      sqlx::query(
+        "INSERT INTO inaccessible_structures (owner_id, owner_type, id, marked_at) \
+        VALUES (?, 'corporation', ?, '2026-06-14T00:00:00Z')",
+      )
+      .bind(owner_id)
+      .bind(id)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_unions_stations_and_accessible_structures_with_their_systems() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_station(&db, 60_000_001, 30_000_142, "Jita IV - Moon 4").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Amarr Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      let ids = facilities.iter().map(Facility::id).collect::<Vec<_>>();
+      assert_eq!(ids.len(), 2);
+      assert!(ids.contains(&60_000_001));
+      assert!(ids.contains(&1_021_000_000_001));
+      let structure = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
+      assert_eq!(structure.solar_system_id(), 30_002_187);
+      assert_eq!(structure.owner_id(), Some(CORPORATION_ID));
+      let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
+      assert_eq!(station.solar_system_id(), 30_000_142);
+      assert_eq!(station.owner_id(), None);
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_manufacturing_index_ascending() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, 60_000_001, 30_000_142, "Pricey System").await;
+      seed_station(&db, 60_000_002, 30_002_187, "Cheap System").await;
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.09, 0.0), cost_index(30_002_187, 0.02, 0.0)],
+      )
+      .await
+      .unwrap();
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [60_000_002, 60_000_001]
+      );
+      assert_eq!(facilities[0].manufacturing_index(), Some(0.02));
+      assert_eq!(facilities[1].manufacturing_index(), Some(0.09));
+    }
+
+    #[tokio::test]
+    async fn it_sorts_facilities_without_a_cost_index_last() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, 60_000_001, 30_000_142, "Indexed System").await;
+      seed_station(&db, 60_000_002, 30_002_187, "Unindexed System").await;
+      super::replace_cost_indices(&db, &[cost_index(30_000_142, 0.05, 0.0)])
+        .await
+        .unwrap();
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [60_000_001, 60_000_002]
+      );
+      assert_eq!(facilities[1].manufacturing_index(), None);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_inaccessible_structures() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Reachable").await;
+      seed_structure(&db, 1_021_000_000_002, CORPORATION_ID, 30_002_187, "Unreachable").await;
+      mark_inaccessible(&db, 1_021_000_000_002, CORPORATION_ID).await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_001]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_structures_owned_by_an_unauthorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Locked Out").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert!(facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_includes_structures_when_the_authorizer_holds_factory_manager() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      infra::upsert(
+        &db,
+        CORPORATION_ID,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(DIRECTOR_ID),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[CorporationMemberRole::from((
+          CORPORATION_ID,
+          DIRECTOR_ID,
+          "Factory_Manager".to_owned(),
+        ))],
+      )
+      .await
+      .unwrap();
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Factory").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_001]
       );
     }
   }

@@ -87,6 +87,7 @@ impl DetailDataType {
       | JobKind::CorporationProfile
       | JobKind::CorporationStructures
       | JobKind::CorporationWallet
+      | JobKind::IndustryCostIndices
       | JobKind::KillmailReconcile
       | JobKind::MarketPrices
       | JobKind::NetWorthSnapshot => None,

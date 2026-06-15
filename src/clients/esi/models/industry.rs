@@ -1,5 +1,17 @@
 use serde::Deserialize;
 
+#[derive(Debug, Deserialize)]
+pub struct CostIndex {
+  pub activity: String,
+  pub cost_index: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SystemCostIndices {
+  pub cost_indices: Vec<CostIndex>,
+  pub solar_system_id: i64,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct IndustryJob {

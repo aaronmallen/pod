@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
-  model::{CharacterIndustryJob, CorporationIndustryJob},
+  model::{CharacterIndustryJob, CorporationIndustryJob, IndustryCostIndex},
   repo::org,
 };
 
@@ -15,6 +15,30 @@ pub struct AllIndustryJobs {
 }
 
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
+
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
+#[allow(dead_code)]
+pub async fn cost_index_for(db: &Database, solar_system_id: i64, activity_id: i64) -> Result<Option<f64>, Error> {
+  Ok(
+    cost_indices_for_system(db, solar_system_id)
+      .await?
+      .and_then(|indices| indices.for_activity(activity_id)),
+  )
+}
+
+#[allow(dead_code)]
+pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Result<Option<IndustryCostIndex>, Error> {
+  let row = sqlx::query_as::<_, IndustryCostIndex>(
+    "SELECT copying, invention, manufacturing, reaction, researching_material_efficiency, \
+    researching_time_efficiency, solar_system_id \
+    FROM industry_cost_indices WHERE solar_system_id = ?",
+  )
+  .bind(solar_system_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row)
+}
 
 pub async fn list_all(db: &Database) -> Result<AllIndustryJobs, Error> {
   let character_jobs = list_all_character(db).await?;
@@ -52,6 +76,36 @@ pub async fn list_for_corporation(db: &Database, corporation_id: i64) -> Result<
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+/// Wholesale replaces all cost index rows in a single transaction; systems absent from `indices` are dropped.
+pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("DELETE FROM industry_cost_indices")
+    .execute(&mut *tx)
+    .await?;
+
+  for chunk in indices.chunks(SQLITE_MAX_BIND_PARAMS / 7) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO industry_cost_indices \
+        (copying, invention, manufacturing, reaction, researching_material_efficiency, \
+        researching_time_efficiency, solar_system_id) ",
+    );
+    builder.push_values(chunk, |mut row, index| {
+      row
+        .push_bind(index.copying())
+        .push_bind(index.invention())
+        .push_bind(index.manufacturing())
+        .push_bind(index.reaction())
+        .push_bind(index.researching_material_efficiency())
+        .push_bind(index.researching_time_efficiency())
+        .push_bind(index.solar_system_id());
+    });
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
 }
 
 pub async fn replace_for_character(
@@ -597,6 +651,90 @@ mod tests {
           .map(CorporationIndustryJob::job_id)
           .collect::<Vec<_>>(),
         [10]
+      );
+    }
+  }
+
+  fn cost_index(solar_system_id: i64, manufacturing: f64, reaction: f64) -> IndustryCostIndex {
+    IndustryCostIndex {
+      copying: None,
+      invention: None,
+      manufacturing: Some(manufacturing),
+      reaction: Some(reaction),
+      researching_material_efficiency: None,
+      researching_time_efficiency: None,
+      solar_system_id,
+    }
+  }
+
+  mod cost_index_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_indexed_activity_for_a_known_system() {
+      let db = store::open_test().await.unwrap();
+      super::replace_cost_indices(&db, &[cost_index(30_000_142, 0.05, 0.01)])
+        .await
+        .unwrap();
+
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), Some(0.05));
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 9).await.unwrap(), Some(0.01));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_system() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), None);
+    }
+  }
+
+  mod replace_cost_indices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_every_system() {
+      let db = store::open_test().await.unwrap();
+
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
+        Some(cost_index(30_000_142, 0.05, 0.01))
+      );
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.06, 0.02))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_wholesale_replaces_dropping_systems_absent_from_the_new_set() {
+      let db = store::open_test().await.unwrap();
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.09, 0.03)])
+        .await
+        .unwrap();
+
+      assert_eq!(super::cost_indices_for_system(&db, 30_000_142).await.unwrap(), None);
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.09, 0.03))
       );
     }
   }

@@ -18,6 +18,7 @@ pub mod corporation_profile;
 pub mod corporation_structures;
 pub mod corporation_wallet;
 pub mod industry;
+pub mod industry_cost_indices;
 pub mod killmail_detail_backfill;
 pub mod killmail_reconcile;
 pub mod killmail_value;

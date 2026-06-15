@@ -10,6 +10,7 @@ pub mod character;
 pub mod corporation;
 pub mod dogma;
 pub mod faction;
+pub mod industry;
 pub mod killmail;
 pub mod market;
 pub mod models;
@@ -100,6 +101,10 @@ impl Client {
 
   pub fn faction(&self) -> faction::Client<'_> {
     faction::Client::new(self)
+  }
+
+  pub fn industry(&self) -> industry::Client<'_> {
+    industry::Client::new(self)
   }
 
   pub fn killmail(&self) -> killmail::Client<'_> {

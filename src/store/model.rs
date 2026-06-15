@@ -63,6 +63,7 @@ mod entity_tag;
 mod faction;
 mod http_cache_entry;
 mod inaccessible_structure;
+mod industry_cost_index;
 mod item_category;
 mod item_group;
 mod item_type;
@@ -193,6 +194,7 @@ pub use faction::Model as Faction;
 pub use http_cache_entry::Model as HttpCacheEntry;
 #[allow(unused_imports)]
 pub use inaccessible_structure::Model as InaccessibleStructure;
+pub use industry_cost_index::Model as IndustryCostIndex;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;
 pub use item_type::Model as ItemType;

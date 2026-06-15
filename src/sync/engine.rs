@@ -1681,6 +1681,7 @@ mod tests {
       mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
+      seed_ledger(&db, "IndustryCostIndices", Some(&future), None).await;
       seed_ledger(&db, "KillmailDetailBackfill", Some(&future), None).await;
       seed_ledger(&db, "KillmailReconcile", Some(&future), None).await;
       seed_ledger(&db, "MarketPrices", Some(&future), None).await;
@@ -2683,7 +2684,11 @@ mod tests {
 
       handle.run_now(Subject::Character(30));
 
-      let rerun = wait_for(&mut events, |event| matches!(event, Event::Started { .. })).await;
+      let rerun = wait_for(
+        &mut events,
+        |event| matches!(event, Event::Started { key } if key.subject == Subject::Character(30)),
+      )
+      .await;
       assert!(matches!(rerun, Event::Started { key } if key.subject == Subject::Character(30)));
     }
 

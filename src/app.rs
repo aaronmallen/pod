@@ -3732,7 +3732,42 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
     return Task::none();
   };
 
-  industry::update(state, msg, &runtime.db, app.now).map(Message::Industry)
+  // The facility picker's live ESI search and structure-pin persistence need the runtime's esi/sso/db,
+  // so they are seamed here rather than in the pure planner reducer (mirrors stockpile location search).
+  match msg {
+    industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
+      ref path,
+      ref query,
+    }) => {
+      let (path, query) = (path.clone(), query.clone());
+      let update = industry::update(state, msg, &runtime.db, app.now).map(Message::Industry);
+      let search = match state.facility_search_target() {
+        Some((target, generation)) if target == path => industry::facility_search(
+          &runtime.db,
+          Arc::clone(&runtime.esi),
+          Arc::clone(&runtime.sso),
+          path,
+          query,
+          generation,
+        )
+        .map(Message::Industry),
+        _ => Task::none(),
+      };
+      Task::batch([update, search])
+    }
+    industry::Message::Planner(industry::PlannerMessage::FacilitySelected {
+      pin: Some(ref pin), ..
+    }) => {
+      let pin = pin.clone();
+      let scope = state.active();
+      let update = industry::update(state, msg, &runtime.db, app.now).map(Message::Industry);
+      Task::batch([
+        update,
+        industry::facility_pin(&runtime.db, scope, pin).map(Message::Industry),
+      ])
+    }
+    _ => industry::update(state, msg, &runtime.db, app.now).map(Message::Industry),
+  }
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {

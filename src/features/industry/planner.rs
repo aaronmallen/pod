@@ -52,11 +52,33 @@ impl Economics {
   }
 }
 
+/// Minimum characters before the always-visible facility field triggers a live ESI search; shorter
+/// queries fall back to filtering the local `accessible_facilities` list.
+pub const FACILITY_SEARCH_MIN_CHARS: usize = 3;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
   pub anchor: Point,
   pub path: Vec<i64>,
   pub query: String,
+  /// Live ESI search results (stations resolved from the SDE, structures via the authenticated
+  /// endpoint), replacing the local list once a query reaches [`FACILITY_SEARCH_MIN_CHARS`].
+  pub results: Vec<PlannerFacility>,
+  /// Bumped on every keystroke; results stamped with an older generation are dropped on receipt so a
+  /// slow ESI response cannot overwrite a newer query's results.
+  pub search_generation: u64,
+  pub searching: bool,
+}
+
+/// A live-searched structure the planner chose to pin. Carried on [`Message::FacilitySelected`] so the
+/// app layer can persist it via the storage `pin_structure` fn; `None` for facilities already known to
+/// the SDE (NPC stations) or to corp sync.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PinnedStructure {
+  pub id: i64,
+  pub name: String,
+  pub solar_system_id: i64,
+  pub type_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,18 +95,46 @@ pub enum Message {
   BreakDownAll,
   CategorySelected(Category),
   CursorMoved(Point),
-  FacilityPickerToggled { path: Vec<i64> },
-  FacilitySearchChanged { path: Vec<i64>, query: String },
-  FacilitySelected { path: Vec<i64>, solar_system_id: i64 },
-  MaterialEfficiencyChanged { me: i64, path: Vec<i64> },
-  MaterialRightPressed { mat: i64, parent: Vec<i64> },
+  FacilityPickerToggled {
+    path: Vec<i64>,
+  },
+  FacilitySearchChanged {
+    path: Vec<i64>,
+    query: String,
+  },
+  FacilitySearchResults {
+    generation: u64,
+    path: Vec<i64>,
+    results: Vec<PlannerFacility>,
+  },
+  FacilitySelected {
+    path: Vec<i64>,
+    pin: Option<PinnedStructure>,
+    solar_system_id: i64,
+  },
+  MaterialEfficiencyChanged {
+    me: i64,
+    path: Vec<i64>,
+  },
+  MaterialRightPressed {
+    mat: i64,
+    parent: Vec<i64>,
+  },
   MenuClosed,
-  NodeBrokenDown { mat: i64, parent: Vec<i64> },
-  NodeCollapsed { mat: i64, parent: Vec<i64> },
+  NodeBrokenDown {
+    mat: i64,
+    parent: Vec<i64>,
+  },
+  NodeCollapsed {
+    mat: i64,
+    parent: Vec<i64>,
+  },
   PaneDrag(f32),
   PaneDragEnd,
   PaneDragStart,
-  PickerScrolled { absolute: f32 },
+  PickerScrolled {
+    absolute: f32,
+  },
   PickerToggled,
   PlanDeleteRequested(i64),
   PlanLoadRequested(i64),
@@ -97,7 +147,10 @@ pub enum Message {
   RunsInputChanged(String),
   SearchChanged(String),
   ShoppingListCopied,
-  TimeEfficiencyChanged { path: Vec<i64>, te: i64 },
+  TimeEfficiencyChanged {
+    path: Vec<i64>,
+    te: i64,
+  },
 }
 
 /// Per-node build configuration for the in-house production tree.
@@ -578,6 +631,9 @@ impl Planner {
       | Message::FacilitySearchChanged {
         ..
       }
+      | Message::FacilitySearchResults {
+        ..
+      }
       | Message::FacilitySelected {
         ..
       } => self.update_facility(message),
@@ -642,20 +698,16 @@ impl Planner {
       Message::FacilitySearchChanged {
         path,
         query,
-      } => match self.facility_picker.as_mut().filter(|state| state.path == path) {
-        Some(state) => state.query = query,
-        // Typing into the always-visible field opens the picker for that node.
-        None => {
-          self.facility_picker = Some(FacilityPickerState {
-            anchor: self.cursor.unwrap_or_default(),
-            path,
-            query,
-          })
-        }
-      },
+      } => self.edit_facility_query(path, query),
+      Message::FacilitySearchResults {
+        generation,
+        path,
+        results,
+      } => self.apply_facility_results(generation, path, results),
       Message::FacilitySelected {
         path,
         solar_system_id,
+        ..
       } => {
         if let Some(node) = self.tree.at_mut(&path) {
           node.facility_system = Some(solar_system_id);
@@ -663,6 +715,48 @@ impl Planner {
         self.facility_picker = None;
       }
       _ => {}
+    }
+  }
+
+  /// Applies a live ESI facility search edit: records the query and bumps the per-keystroke generation
+  /// (opening the picker for the node if typing into its always-visible field). A query that reaches
+  /// [`FACILITY_SEARCH_MIN_CHARS`] marks the picker as searching; a shorter one falls back to the local
+  /// list and clears any stale live results.
+  fn edit_facility_query(&mut self, path: Vec<i64>, query: String) {
+    let live = query.trim().chars().count() >= FACILITY_SEARCH_MIN_CHARS;
+    match self.facility_picker.as_mut().filter(|state| state.path == path) {
+      Some(state) => {
+        state.query = query;
+        state.search_generation = state.search_generation.wrapping_add(1);
+        state.searching = live;
+        if !live {
+          state.results.clear();
+        }
+      }
+      // Typing into the always-visible field opens the picker for that node.
+      None => {
+        self.facility_picker = Some(FacilityPickerState {
+          anchor: self.cursor.unwrap_or_default(),
+          path,
+          query,
+          results: Vec::new(),
+          search_generation: 1,
+          searching: live,
+        })
+      }
+    }
+  }
+
+  /// Applies live ESI facility results to the open picker, dropping them when the picker has moved to a
+  /// different node or a newer keystroke has superseded this query's generation.
+  fn apply_facility_results(&mut self, generation: u64, path: Vec<i64>, results: Vec<PlannerFacility>) {
+    if let Some(state) = self
+      .facility_picker
+      .as_mut()
+      .filter(|state| state.path == path && state.search_generation == generation)
+    {
+      state.results = results;
+      state.searching = false;
     }
   }
 
@@ -881,6 +975,9 @@ impl Planner {
         anchor: self.cursor.unwrap_or_default(),
         path,
         query: String::new(),
+        results: Vec::new(),
+        search_generation: 0,
+        searching: false,
       });
     }
   }
@@ -1068,6 +1165,10 @@ mod view {
   const FACILITY_PICKER_GAP: f32 = 6.0;
   const FACILITY_PICKER_LIST_HEIGHT: f32 = 230.0;
   const FACILITY_PICKER_WIDTH: f32 = 320.0;
+  /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
+  /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
+  /// SDE/corp-sync facility tables.
+  const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
   const RUNS_FIELD_WIDTH: f32 = 34.0;
@@ -1778,24 +1879,42 @@ mod view {
       })
       .unwrap_or(false);
     let needle = state.query.trim().to_lowercase();
+    let live = state.query.trim().chars().count() >= super::FACILITY_SEARCH_MIN_CHARS;
     let selected_system = planner.selected_facility(path, is_reaction).map(|f| f.solar_system_id);
 
-    let rows: Vec<Element<'_, Message>> = planner
-      .data()
-      .facilities
-      .iter()
-      .filter(|facility| facility.index_for(is_reaction).is_some())
-      .filter(|facility| {
-        needle.is_empty()
-          || facility.name.to_lowercase().contains(&needle)
-          || facility.solar_system_id.to_string().contains(&needle)
-      })
-      .map(|facility| facility_row(path, facility, is_reaction, selected_system))
-      .collect();
+    // A query long enough to search surfaces the live ESI results (any reachable station/structure);
+    // a shorter one filters the locally known accessible facilities.
+    let rows: Vec<Element<'_, Message>> = if live {
+      state
+        .results
+        .iter()
+        .map(|facility| facility_row(path, facility, is_reaction, selected_system))
+        .collect()
+    } else {
+      planner
+        .data()
+        .facilities
+        .iter()
+        .filter(|facility| facility.index_for(is_reaction).is_some())
+        .filter(|facility| {
+          needle.is_empty()
+            || facility.name.to_lowercase().contains(&needle)
+            || facility.solar_system_id.to_string().contains(&needle)
+        })
+        .map(|facility| facility_row(path, facility, is_reaction, selected_system))
+        .collect()
+    };
 
     let list: Element<'_, Message> = if rows.is_empty() {
+      let message = if state.searching {
+        "Searching\u{2026}"
+      } else if live {
+        "No facilities found."
+      } else {
+        "No facilities match."
+      };
       centered(
-        text("No facilities match.")
+        text(message)
           .font(typography::body::REGULAR)
           .size(typography::size::SM)
           .style(typography::colored(color::text::tertiary())),
@@ -1826,6 +1945,17 @@ mod view {
     // the right-floated facility input rather than the planner's right edge.
     let right = planner.detail_pane_width() + PANE_PADDING + spacing::SPACE_3_5;
     crate::ui::components::positioned_dropdown::positioned_dropdown_right(panel.into(), anchor_top, right)
+  }
+
+  /// The pin descriptor for a selected facility: `Some` for a player structure that must be persisted,
+  /// `None` for an NPC station already known to the SDE.
+  fn pin_for(facility: &PlannerFacility) -> Option<super::PinnedStructure> {
+    (facility.id >= MIN_STRUCTURE_ID).then(|| super::PinnedStructure {
+      id: facility.id,
+      name: facility.name.clone(),
+      solar_system_id: facility.solar_system_id,
+      type_id: facility.type_id,
+    })
   }
 
   fn facility_row<'a>(
@@ -1874,6 +2004,7 @@ mod view {
       })
       .on_press(Message::FacilitySelected {
         path: path.to_vec(),
+        pin: pin_for(facility),
         solar_system_id: facility.solar_system_id,
       })
       .style(move |_, _| button::Style {
@@ -3814,12 +3945,129 @@ mod tests {
 
       planner.update(Message::FacilitySelected {
         path: vec![],
+        pin: None,
         solar_system_id: 30_000_142,
       });
 
       assert_eq!(planner.node(&[]).facility_system, Some(30_000_142));
       assert_eq!(planner.selected_facility(&[], false).unwrap().name, "Pricey Station");
       assert!(planner.facility_picker().is_none());
+    }
+
+    #[test]
+    fn it_bumps_the_search_generation_and_flags_searching_at_three_chars() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      let before = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jita".to_owned(),
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert_eq!(state.search_generation, before + 1);
+      assert!(state.searching);
+    }
+
+    #[test]
+    fn it_falls_back_to_local_and_clears_results_below_three_chars() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        path: vec![],
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
+      });
+
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Ji".to_owned(),
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert!(state.results.is_empty());
+      assert!(!state.searching);
+    }
+
+    #[test]
+    fn it_applies_live_results_for_the_current_generation() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        path: vec![],
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert_eq!(state.results.len(), 1);
+      assert_eq!(state.results[0].name, "Jita Keepstar");
+      assert!(!state.searching);
+    }
+
+    #[test]
+    fn it_drops_results_stamped_with_a_stale_generation() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jita".to_owned(),
+      });
+      let stale = planner.facility_picker().unwrap().search_generation;
+      // A second keystroke supersedes the first query's generation.
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jitan".to_owned(),
+      });
+
+      planner.update(Message::FacilitySearchResults {
+        generation: stale,
+        path: vec![],
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Stale Hit", 0.04)],
+      });
+
+      assert!(planner.facility_picker().unwrap().results.is_empty());
+    }
+
+    #[test]
+    fn it_drops_results_routed_to_a_different_node() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        path: vec![],
+      });
+      planner.update(Message::FacilitySearchChanged {
+        path: vec![],
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        path: vec![RETRIEVER],
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Wrong Node", 0.04)],
+      });
+
+      assert!(planner.facility_picker().unwrap().results.is_empty());
     }
   }
 
@@ -4164,6 +4412,7 @@ mod tests {
       });
       planner.update(Message::FacilitySelected {
         path: vec![],
+        pin: None,
         solar_system_id: 30_000_142,
       });
       planner.update(Message::NodeBrokenDown {
@@ -4176,6 +4425,7 @@ mod tests {
       });
       planner.update(Message::FacilitySelected {
         path: vec![RETRIEVER],
+        pin: None,
         solar_system_id: 30_002_187,
       });
       planner

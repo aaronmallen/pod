@@ -6,6 +6,7 @@ mod planner;
 mod planner_loaders;
 #[allow(dead_code)]
 mod planner_model;
+mod planner_search;
 mod shell;
 mod side_rail;
 mod switcher;
@@ -15,12 +16,20 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use iced::{Element, Subscription, Task};
 
-pub use self::loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner};
 use self::planner::Planner;
-use crate::store::{Database, images};
+pub use self::{
+  loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner},
+  planner::{Message as PlannerMessage, PinnedStructure},
+};
+use crate::{
+  clients::{esi, eve_sso},
+  store::{Database, images},
+};
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
 pub const EMPTY_INDUSTRY_SELECTION: i64 = 0;
+
+const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Filter {
@@ -190,6 +199,15 @@ impl State {
     self.blueprint_sort
   }
 
+  /// Returns the path and generation the app layer needs to stamp a live ESI search for stale-response
+  /// detection; `None` when no picker is open.
+  pub(crate) fn facility_search_target(&self) -> Option<(Vec<i64>, u64)> {
+    self
+      .planner
+      .facility_picker()
+      .map(|state| (state.path.clone(), state.search_generation))
+  }
+
   /// Blueprints visible under the current scope. Corporation blueprints are always shown; a character's blueprints are
   /// hidden when that pilot is missing the required industry scope (mirroring [`visible_jobs`]).
   pub(super) fn visible_blueprints(&self) -> Vec<&Blueprint> {
@@ -355,6 +373,48 @@ fn load_plan(db: &Database, id: i64) -> Task<Message> {
 
 fn load_planner(db: &Database, scope: Scope) -> Task<Message> {
   planner::load(db.clone(), scope).map(|data| Message::PlannerLoaded(Box::new(data)))
+}
+
+/// Returns `Task::none()` until the query reaches [`planner::FACILITY_SEARCH_MIN_CHARS`]; otherwise
+/// results are stamped with `generation` so the reducer can discard stale responses.
+pub fn facility_search(
+  db: &Database,
+  esi: std::sync::Arc<esi::Client>,
+  sso: std::sync::Arc<eve_sso::Client>,
+  path: Vec<i64>,
+  query: String,
+  generation: u64,
+) -> Task<Message> {
+  if query.trim().chars().count() < planner::FACILITY_SEARCH_MIN_CHARS {
+    return Task::none();
+  }
+  let db = db.clone();
+  Task::perform(
+    async move {
+      tokio::time::sleep(Duration::from_millis(FACILITY_SEARCH_DEBOUNCE_MS)).await;
+      planner_search::search_facilities(db, esi, sso, query).await
+    },
+    move |results| {
+      Message::Planner(PlannerMessage::FacilitySearchResults {
+        generation,
+        path: path.clone(),
+        results,
+      })
+    },
+  )
+}
+
+/// Reloads planner facilities after pinning so the structure appears locally even when no managed corp
+/// owns it.
+pub fn facility_pin(db: &Database, scope: Scope, pin: PinnedStructure) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      planner_search::pin_facility(db.clone(), pin).await;
+      planner_loaders::load_data(&db, scope).await
+    },
+    |data| Message::PlannerLoaded(Box::new(data)),
+  )
 }
 
 fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::PlanTree) -> Task<Message> {

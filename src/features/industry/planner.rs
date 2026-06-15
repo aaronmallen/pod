@@ -68,7 +68,6 @@ pub enum Message {
   FacilitySelected { path: Vec<i64>, solar_system_id: i64 },
   MaterialEfficiencyChanged { me: i64, path: Vec<i64> },
   MaterialRightPressed { mat: i64, parent: Vec<i64> },
-  MaterialScrolled { absolute: f32 },
   MenuClosed,
   NodeBrokenDown { mat: i64, parent: Vec<i64> },
   NodeCollapsed { mat: i64, parent: Vec<i64> },
@@ -81,6 +80,7 @@ pub enum Message {
   ProductPicked(i64),
   RightTabSelected(RightTab),
   RunsChanged(i64),
+  RunsInputChanged(String),
   SearchChanged(String),
   ShoppingListCopied,
   TimeEfficiencyChanged { path: Vec<i64>, te: i64 },
@@ -168,7 +168,6 @@ pub struct Planner {
   data: PlannerData,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
-  material_scroll_offset: f32,
   menu: Option<MaterialMenu>,
   picker_open: bool,
   placeholder: String,
@@ -176,6 +175,7 @@ pub struct Planner {
   recent: Vec<i64>,
   right_tab: RightTab,
   runs: i64,
+  runs_input: String,
   saved: Vec<SavedPlan>,
   search: String,
   tree: NodeConfig,
@@ -186,6 +186,7 @@ impl Planner {
     Planner {
       category: Category::Other,
       runs: 1,
+      runs_input: "1".to_owned(),
       ..Planner::default()
     }
   }
@@ -235,25 +236,17 @@ impl Planner {
       })
   }
 
-  /// Root-job economics only — materials are priced as if all bought on the market.
-  /// Sub-build savings are shown on the individual sub-blueprint cards, not here.
+  /// Whole-plan economics: `material_cost` is the rolled-up acquisition total of every raw input the
+  /// bill of materials says you must buy, plus the install fees of any in-house sub-builds. With no
+  /// component broken down this equals pricing the root recipe's materials; once a component is built
+  /// in-house it equals buying that component's constituent parts plus its sub-job fee. Net profit and
+  /// margin derive from this true cost so they match the bill of materials.
   pub fn economics(&self) -> Option<Economics> {
     let product = self.product?;
     let recipe = self.data.recipe(product)?;
+    let plan = self.plan()?;
 
-    let material_cost: f64 = recipe
-      .materials
-      .iter()
-      .map(|material| {
-        let qty = crate::features::industry::planner_model::eff_qty(
-          material.base_qty,
-          self.runs,
-          self.tree.me,
-          recipe.is_reaction,
-        );
-        qty as f64 * self.data.price(material.type_id)
-      })
-      .sum();
+    let material_cost = self.plan_material_cost(&plan, &|path, type_id| self.cost_index(path, type_id).unwrap_or(0.0));
 
     let output_qty = recipe.output_per_run * self.runs;
     let revenue = self.data.price(product) * output_qty as f64;
@@ -288,10 +281,6 @@ impl Planner {
     self.loaded
   }
 
-  pub fn material_scroll_offset(&self) -> f32 {
-    self.material_scroll_offset
-  }
-
   pub fn menu(&self) -> Option<&MaterialMenu> {
     self.menu.as_ref()
   }
@@ -320,7 +309,7 @@ impl Planner {
 
   pub fn restore(&mut self, tree: &PlanTree) {
     self.product = Some(tree.product_type_id);
-    self.runs = tree.runs.clamp(1, RUNS_MAX);
+    self.set_runs(tree.runs);
     self.tree = NodeConfig::rebuild(&tree.nodes);
     self.facility_picker = None;
     self.push_recent(tree.product_type_id);
@@ -332,6 +321,10 @@ impl Planner {
 
   pub fn runs(&self) -> i64 {
     self.runs
+  }
+
+  pub fn runs_input(&self) -> &str {
+    &self.runs_input
   }
 
   /// Default name for the next saved plan: the product name plus its run count.
@@ -409,11 +402,16 @@ impl Planner {
       Message::FacilitySearchChanged {
         path,
         query,
-      } => {
-        if let Some(state) = self.facility_picker.as_mut().filter(|state| state.path == path) {
-          state.query = query;
+      } => match self.facility_picker.as_mut().filter(|state| state.path == path) {
+        Some(state) => state.query = query,
+        // Typing into the always-visible field opens the picker for that node.
+        None => {
+          self.facility_picker = Some(FacilityPickerState {
+            path,
+            query,
+          })
         }
-      }
+      },
       Message::FacilitySelected {
         path,
         solar_system_id,
@@ -435,9 +433,6 @@ impl Planner {
         mat,
         parent,
       } => self.open_menu(parent, mat),
-      Message::MaterialScrolled {
-        absolute,
-      } => self.material_scroll_offset = absolute.max(0.0),
       Message::MenuClosed => self.menu = None,
       Message::NodeBrokenDown {
         mat,
@@ -472,7 +467,8 @@ impl Planner {
         self.push_recent(type_id);
       }
       Message::RightTabSelected(tab) => self.right_tab = tab,
-      Message::RunsChanged(runs) => self.runs = runs.clamp(1, RUNS_MAX),
+      Message::RunsChanged(runs) => self.set_runs(runs),
+      Message::RunsInputChanged(raw) => self.edit_runs(raw),
       Message::SearchChanged(query) => self.search = query,
       // Clipboard write is handled by the parent industry::update; nothing to do here.
       Message::ShoppingListCopied => {}
@@ -526,6 +522,30 @@ impl Planner {
     }
   }
 
+  /// Resolves a facility cost index for a node pinned (or not) to `facility_system`, falling back to the
+  /// cheapest available default when the system is absent from current data.
+  fn cost_index_for(&self, facility_system: Option<i64>, is_reaction: bool) -> f64 {
+    facility_system
+      .and_then(|system| {
+        self
+          .data
+          .facilities
+          .iter()
+          .find(|facility| facility.solar_system_id == system)
+      })
+      .or_else(|| self.default_facility(is_reaction))
+      .and_then(|facility| facility.index_for(is_reaction))
+      .unwrap_or(0.0)
+  }
+
+  /// Applies a raw runs field edit: keeps only digits in the visible field, and reflows the plan from
+  /// the parsed value clamped to the valid range (an empty or unparseable field holds at one run).
+  fn edit_runs(&mut self, raw: String) {
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+    self.runs = digits.parse::<i64>().unwrap_or(1).clamp(1, RUNS_MAX);
+    self.runs_input = digits;
+  }
+
   fn fresh_node(&self, type_id: i64) -> NodeConfig {
     let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
     let owned = self.data.owned.get(&type_id);
@@ -563,6 +583,28 @@ impl Planner {
     });
   }
 
+  /// Total acquisition cost of a build plan: every raw input priced at market plus the install fee of
+  /// each in-house sub-build. `cost_index` resolves a node's facility cost index (0.0 when none).
+  fn plan_material_cost(&self, plan: &BuildPlan, cost_index: &dyn Fn(&[i64], i64) -> f64) -> f64 {
+    let acquisition: f64 = plan
+      .raw_totals()
+      .iter()
+      .map(|total| total.qty as f64 * self.data.price(total.type_id))
+      .sum();
+
+    let sub_fees: f64 = plan
+      .build_order()
+      .iter()
+      .filter(|job| !job.path.is_empty())
+      .map(|job| {
+        let produced = job.node.output_per_run * job.runs;
+        self.data.price(job.type_id) * produced as f64 * cost_index(&job.path, job.type_id) * INSTALL_FEE_RATE
+      })
+      .sum();
+
+    acquisition + sub_fees
+  }
+
   fn push_recent(&mut self, type_id: i64) {
     self.recent.retain(|&id| id != type_id);
     self.recent.insert(0, type_id);
@@ -592,6 +634,11 @@ impl Planner {
     self.facility_picker = None;
   }
 
+  fn set_runs(&mut self, runs: i64) {
+    self.runs = runs.clamp(1, RUNS_MAX);
+    self.runs_input = self.runs.to_string();
+  }
+
   fn toggle_facility_picker(&mut self, path: Vec<i64>) {
     if self.facility_picker.as_ref().is_some_and(|state| state.path == path) {
       self.facility_picker = None;
@@ -603,40 +650,26 @@ impl Planner {
     }
   }
 
-  /// Root-job economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
-  /// but reads the product, runs, and root ME/TE/facility from `tree` instead of live state, so a list
+  /// Whole-plan economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
+  /// but reads the product, runs, and per-node ME/TE/facility from `tree` instead of live state, so a list
   /// of saved plans reflects today's market without rehydrating each into the live planner.
   fn tree_economics(&self, tree: &PlanTree) -> Option<Economics> {
     let product = tree.product_type_id;
     let recipe = self.data.recipe(product)?;
     let runs = tree.runs.clamp(1, RUNS_MAX);
     let root = tree.nodes.iter().find(|node| node.path.is_empty());
-    let me = root.map(|node| node.me).unwrap_or(0);
     let te = root.map(|node| node.te).unwrap_or(0);
-    let facility_system = tree.root_facility_system;
 
-    let material_cost: f64 = recipe
-      .materials
-      .iter()
-      .map(|material| {
-        let qty = crate::features::industry::planner_model::eff_qty(material.base_qty, runs, me, recipe.is_reaction);
-        qty as f64 * self.data.price(material.type_id)
-      })
-      .sum();
+    let config = NodeConfig::rebuild(&tree.nodes);
+    let plan = BuildPlan::new(self.assemble(product, &config)?, runs);
+    let material_cost = self.plan_material_cost(&plan, &|path, type_id| {
+      let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
+      self.cost_index_for(config.at(path).and_then(|node| node.facility_system), is_reaction)
+    });
 
     let output_qty = recipe.output_per_run * runs;
     let revenue = self.data.price(product) * output_qty as f64;
-    let cost_index = facility_system
-      .and_then(|system| {
-        self
-          .data
-          .facilities
-          .iter()
-          .find(|facility| facility.solar_system_id == system)
-      })
-      .or_else(|| self.default_facility(recipe.is_reaction))
-      .and_then(|facility| facility.index_for(recipe.is_reaction))
-      .unwrap_or(0.0);
+    let cost_index = self.cost_index_for(tree.root_facility_system, recipe.is_reaction);
     let install_fee = revenue * cost_index * INSTALL_FEE_RATE;
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
@@ -698,27 +731,10 @@ pub fn load(db: crate::store::Database, scope: Scope) -> iced::Task<PlannerData>
   iced::Task::perform(async move { planner_loaders::load_data(&db, scope).await }, |data| data)
 }
 
-/// Re-applies the tracked scroll offset after the material-plan widget is rebuilt.
-///
-/// Breaking down or collapsing a material causes iced to reconstruct the scrollable, resetting
-/// its position to the top. Issuing this task immediately after such a rebuild restores the
-/// user's previous position.
-pub fn restore_material_scroll<M: Send + 'static>(offset: f32) -> iced::Task<M> {
-  use iced::widget::operation::{AbsoluteOffset, scroll_to};
-
-  scroll_to(
-    MATERIAL_PLAN_SCROLL_ID,
-    AbsoluteOffset {
-      x: 0.0,
-      y: offset,
-    },
-  )
-}
-
 pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Message> {
   use iced::{
     Length,
-    widget::{Stack, mouse_area},
+    widget::{Space, Stack, mouse_area},
   };
 
   use crate::ui::components::{backdrop, context_menu};
@@ -729,40 +745,58 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
 
   let base = mouse_area(view::body(planner)).on_move(Message::CursorMoved).into();
 
-  let Some(menu) = planner.menu() else {
-    return base;
+  // The Material Plan scrollable lives inside `base`. The root element must keep a stable widget
+  // identity whether or not an overlay is open, otherwise iced rebuilds the scrollable and resets
+  // its offset to the top. Always return the same Stack shape — an empty overlay slot when nothing
+  // is open — so opening a menu/picker and breaking a node down move the scroll position not at all.
+  let overlay: iced::Element<'a, Message> = if let Some(menu) = planner.menu() {
+    let mut items = Vec::new();
+    if !menu.buildable {
+      items.push(context_menu::Item::disabled("Raw material \u{2014} can't break down"));
+    } else if menu.built {
+      items.push(context_menu::Item::action(
+        "Stop building \u{2014} buy on market",
+        Message::NodeCollapsed {
+          mat: menu.mat,
+          parent: menu.parent.clone(),
+        },
+      ));
+    } else {
+      items.push(context_menu::Item::warning(
+        "Break down \u{2014} build in-house",
+        Message::NodeBrokenDown {
+          mat: menu.mat,
+          parent: menu.parent.clone(),
+        },
+      ));
+    }
+
+    let title = planner.data().name(menu.mat);
+    Stack::with_children(vec![
+      backdrop::click_catcher(Message::MenuClosed),
+      context_menu::context_menu(&title, items, menu.anchor),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+  } else if let Some(state) = planner.facility_picker() {
+    Stack::with_children(vec![
+      backdrop::click_catcher(Message::FacilityPickerToggled {
+        path: state.path.clone(),
+      }),
+      view::facility_picker_panel(planner),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+  } else {
+    Space::new().width(Length::Shrink).height(Length::Shrink).into()
   };
 
-  let mut items = Vec::new();
-  if !menu.buildable {
-    items.push(context_menu::Item::disabled("Raw material \u{2014} can't break down"));
-  } else if menu.built {
-    items.push(context_menu::Item::action(
-      "Stop building \u{2014} buy on market",
-      Message::NodeCollapsed {
-        mat: menu.mat,
-        parent: menu.parent.clone(),
-      },
-    ));
-  } else {
-    items.push(context_menu::Item::warning(
-      "Break down \u{2014} build in-house",
-      Message::NodeBrokenDown {
-        mat: menu.mat,
-        parent: menu.parent.clone(),
-      },
-    ));
-  }
-
-  let title = planner.data().name(menu.mat);
-  Stack::with_children(vec![
-    base,
-    backdrop::click_catcher(Message::MenuClosed),
-    context_menu::context_menu(&title, items, menu.anchor),
-  ])
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .into()
+  Stack::with_children(vec![base, overlay])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 mod view {
@@ -796,7 +830,7 @@ mod view {
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
   const FACILITY_PICKER_LIST_HEIGHT: f32 = 230.0;
-  const FACILITY_PICKER_WIDTH: f32 = 280.0;
+  const FACILITY_PICKER_WIDTH: f32 = 320.0;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
   const RIGHT_PANE_WIDTH: f32 = 340.0;
@@ -829,10 +863,7 @@ mod view {
       .id(MATERIAL_PLAN_SCROLL_ID)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
-      .height(Length::Fill)
-      .on_scroll(|viewport| Message::MaterialScrolled {
-        absolute: viewport.absolute_offset().y,
-      });
+      .height(Length::Fill);
 
     Row::with_children(vec![
       container(left).width(Length::Fill).height(Length::Fill).into(),
@@ -1116,16 +1147,17 @@ mod view {
 
     let header = blueprint_header(planner, type_id, is_reaction, sub);
 
-    let mut controls: Vec<Element<'a, Message>> = vec![runs_control(runs, sub.is_some(), is_reaction, path)];
+    // Runs sit on the left, the ME/TE sliders are centered, and the location search is floated right.
+    let mut center: Vec<Element<'a, Message>> = Vec::new();
     if !is_reaction {
-      controls.push(efficiency_slider(
+      center.push(efficiency_slider(
         "Material efficiency",
         config.me,
         super::ME_MAX,
         path.to_vec(),
         true,
       ));
-      controls.push(efficiency_slider(
+      center.push(efficiency_slider(
         "Time efficiency",
         config.te,
         super::TE_MAX,
@@ -1133,15 +1165,22 @@ mod view {
         false,
       ));
     }
-    controls.push(facility_control(planner, path, is_reaction));
 
-    let mut body: Vec<Element<'a, Message>> = vec![
-      header,
-      Row::with_children(controls)
+    let controls = Row::with_children(vec![
+      runs_control(runs, planner.runs_input(), sub.is_some(), is_reaction),
+      Space::new().width(Length::Fill).into(),
+      Row::with_children(center)
         .spacing(spacing::SPACE_6)
         .align_y(Vertical::Top)
         .into(),
-    ];
+      Space::new().width(Length::Fill).into(),
+      facility_control(planner, path, is_reaction),
+    ])
+    .spacing(spacing::SPACE_6)
+    .align_y(Vertical::Top)
+    .width(Length::Fill);
+
+    let mut body: Vec<Element<'a, Message>> = vec![header, controls.into()];
 
     if let Some(sub) = sub {
       body.push(rule::horizontal());
@@ -1250,7 +1289,7 @@ mod view {
     row.into()
   }
 
-  fn runs_control<'a>(runs: i64, locked: bool, is_reaction: bool, path: &[i64]) -> Element<'a, Message> {
+  fn runs_control<'a>(runs: i64, runs_text: &'a str, locked: bool, is_reaction: bool) -> Element<'a, Message> {
     let label = format!(
       "{}{}",
       if is_reaction { "Cycles" } else { "Runs" },
@@ -1274,14 +1313,14 @@ mod view {
       .align_y(Vertical::Center)
       .into()
     } else {
-      let _ = path;
+      let field = TextInput::new("1", runs_text, Message::RunsInputChanged)
+        .background(color::surface::SUNKEN)
+        .width(Length::Fixed(72.0))
+        .render();
+
       Row::with_children(vec![
         stepper_button("\u{2212}", (runs > 1).then(|| Message::RunsChanged(runs - 1))),
-        text(fmt_num(runs))
-          .font(typography::mono::MEDIUM)
-          .size(typography::size::LG)
-          .style(typography::colored(color::text::PRIMARY))
-          .into(),
+        field,
         stepper_button("+", Some(Message::RunsChanged(runs + 1))),
       ])
       .spacing(spacing::SPACE_2)
@@ -1343,6 +1382,8 @@ mod view {
     let step: f64 = if material { 1.0 } else { 2.0 };
     let control = slider(0.0..=max as f64, value as f64, handle)
       .step(step)
+      .height(6.0)
+      .style(crate::ui::style::control::slider_track)
       .width(Length::Fixed(120.0));
 
     Column::with_children(vec![
@@ -1367,65 +1408,48 @@ mod view {
     let selected = planner.selected_facility(path, is_reaction);
     let open = planner.facility_picker().is_some_and(|state| state.path == path);
 
-    let label: Element<'a, Message> = match selected {
-      Some(facility) => Row::with_children(vec![
-        text(facility.name.clone())
-          .font(typography::body::REGULAR)
-          .size(typography::size::MD)
-          .style(typography::colored(color::text::PRIMARY))
-          .width(Length::Fill)
-          .into(),
-        text(format!(
-          "{:.2}%",
-          facility.index_for(is_reaction).unwrap_or(0.0) * 100.0
-        ))
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(typography::colored(color::text::secondary()))
-        .into(),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center)
-      .width(Length::Fill)
-      .into(),
-      None => text("No facilities available")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::tertiary()))
-        .width(Length::Fill)
-        .into(),
+    let query = if open {
+      planner
+        .facility_picker()
+        .map(|state| state.query.as_str())
+        .unwrap_or("")
+    } else {
+      ""
     };
 
-    let trigger = button(
-      Row::with_children(vec![
-        Icon::search()
-          .color(if open {
-            color::accent::PLASMA
-          } else {
-            color::text::secondary()
-          })
-          .size(14.0)
-          .render::<Message>(),
-        label,
-        Icon::chevron()
-          .color(color::text::secondary())
-          .size(14.0)
-          .render::<Message>(),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center)
-      .width(Length::Fill),
-    )
-    .padding(Padding {
-      top: spacing::UNIT,
-      bottom: spacing::UNIT,
-      left: spacing::SPACE_2_5,
-      right: spacing::SPACE_2,
+    let placeholder: &'a str = match selected {
+      Some(facility) => facility.name.as_str(),
+      None => "No facilities available",
+    };
+
+    let owned_path = path.to_vec();
+    let input = TextInput::new(placeholder, query, move |value| Message::FacilitySearchChanged {
+      path: owned_path.clone(),
+      query: value,
     })
-    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-    .on_press_maybe(selected.map(|_| Message::FacilityPickerToggled {
-      path: path.to_vec(),
+    .leading_icon(Icon::search().color(if open {
+      color::accent::PLASMA
+    } else {
+      color::text::secondary()
     }))
+    .background(color::surface::SUNKEN)
+    .width(Length::Fill)
+    .render();
+
+    let toggle = button(
+      Icon::chevron()
+        .color(if open {
+          color::accent::PLASMA
+        } else {
+          color::text::secondary()
+        })
+        .size(14.0)
+        .render::<Message>(),
+    )
+    .padding(spacing::SPACE_2)
+    .on_press(Message::FacilityPickerToggled {
+      path: path.to_vec(),
+    })
     .style(move |_, _| button::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
       border: Border {
@@ -1440,34 +1464,52 @@ mod view {
       ..button::Style::default()
     });
 
-    let mut children: Vec<Element<'a, Message>> = vec![micro_label("Build at"), trigger.into()];
-    if open {
-      children.push(facility_picker_panel(planner, path, is_reaction));
-    }
+    let percent: Element<'a, Message> = match selected {
+      Some(facility) => text(format!(
+        "{:.2}% index",
+        facility.index_for(is_reaction).unwrap_or(0.0) * 100.0
+      ))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+      None => Space::new().into(),
+    };
 
-    Column::with_children(children).spacing(spacing::SPACE_2).into()
+    let field = Row::with_children(vec![container(input).width(Length::Fill).into(), toggle.into()])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center);
+
+    Column::with_children(vec![micro_label("Build at"), field.into(), percent])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+      .into()
   }
 
-  fn facility_picker_panel<'a>(planner: &'a Planner, path: &[i64], is_reaction: bool) -> Element<'a, Message> {
-    let query: &'a str = planner
-      .facility_picker()
-      .map(|state| state.query.as_str())
-      .unwrap_or_default();
-    let needle = query.trim().to_lowercase();
+  /// Floating results for the open "Build at" picker. Rendered in the planner's overlay Stack (right-aligned,
+  /// over the card) rather than inline, so the card never resizes when the picker opens. The search input
+  /// lives in the always-visible field; this panel only carries the filtered, selectable facility rows.
+  pub(super) fn facility_picker_panel(planner: &Planner) -> Element<'_, Message> {
+    let Some(state) = planner.facility_picker() else {
+      return Space::new().into();
+    };
+    let path = state.path.as_slice();
+    let is_reaction = planner
+      .product()
+      .filter(|_| path.is_empty())
+      .and_then(|product| planner.data().recipe(product))
+      .map(|recipe| recipe.is_reaction)
+      .or_else(|| {
+        path
+          .last()
+          .and_then(|&type_id| planner.data().recipe(type_id))
+          .map(|recipe| recipe.is_reaction)
+      })
+      .unwrap_or(false);
+    let needle = state.query.trim().to_lowercase();
     let selected_system = planner.selected_facility(path, is_reaction).map(|f| f.solar_system_id);
 
-    let owned_path = path.to_vec();
-    let search = TextInput::new("Search facilities\u{2026}", query, move |value| {
-      Message::FacilitySearchChanged {
-        path: owned_path.clone(),
-        query: value,
-      }
-    })
-    .background(color::surface::SUNKEN)
-    .width(Length::Fill)
-    .render();
-
-    let rows: Vec<Element<'a, Message>> = planner
+    let rows: Vec<Element<'_, Message>> = planner
       .data()
       .facilities
       .iter()
@@ -1480,7 +1522,7 @@ mod view {
       .map(|facility| facility_row(path, facility, is_reaction, selected_system))
       .collect();
 
-    let list: Element<'a, Message> = if rows.is_empty() {
+    let list: Element<'_, Message> = if rows.is_empty() {
       centered(
         text("No facilities match.")
           .font(typography::body::REGULAR)
@@ -1495,21 +1537,11 @@ mod view {
         .into()
     };
 
-    container(
-      Column::with_children(vec![
-        container(search).padding(spacing::SPACE_2).into(),
-        rule::horizontal(),
-        list,
-      ])
-      .spacing(spacing::SPACE_2),
+    let panel = container(
+      Column::with_children(vec![micro_label("Build at"), rule::horizontal(), list]).spacing(spacing::SPACE_2),
     )
     .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-    .padding(Padding {
-      top: 0.0,
-      bottom: spacing::SPACE_2,
-      left: 0.0,
-      right: 0.0,
-    })
+    .padding(spacing::SPACE_2)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
@@ -1517,9 +1549,11 @@ mod view {
         radius: radius::CARD.into(),
         width: 1.0,
       },
+      shadow: crate::ui::style::shadow::CARD,
       ..container::Style::default()
-    })
-    .into()
+    });
+
+    crate::ui::components::positioned_dropdown::positioned_dropdown_right(panel.into(), PANE_PADDING, PANE_PADDING)
   }
 
   fn facility_row<'a>(
@@ -1553,13 +1587,10 @@ mod view {
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary()));
 
-    let mut row = Row::with_children(vec![])
+    let row = Row::with_children(vec![details.into(), pct_label.into()])
       .spacing(spacing::SPACE_2_5)
-      .align_y(Vertical::Center);
-    if let Some(type_id) = facility.type_id {
-      row = row.push(type_tile(type_id));
-    }
-    let row = row.push(details).push(pct_label).width(Length::Fill);
+      .align_y(Vertical::Center)
+      .width(Length::Fill);
 
     button(row)
       .width(Length::Fill)
@@ -2079,16 +2110,18 @@ mod view {
     });
 
     let breakdown = Column::with_children(vec![
-      detail_line("Revenue", &fmt_isk_full(eco.revenue), color::text::PRIMARY),
+      detail_line("Revenue", &fmt_isk_full(eco.revenue), color::text::PRIMARY, false),
       detail_line(
         "Material cost",
         &format!("\u{2212}{}", fmt_isk_full(eco.material_cost)),
         color::status::DANGER,
+        false,
       ),
       detail_line(
         "Job fee",
         &format!("\u{2212}{}", fmt_isk_full(eco.install_fee)),
         color::status::DANGER,
+        false,
       ),
       detail_line(
         "Net profit",
@@ -2098,6 +2131,7 @@ mod view {
           fmt_isk_full(eco.profit.abs())
         ),
         profit_color,
+        true,
       ),
     ])
     .spacing(spacing::SPACE_2);
@@ -2384,11 +2418,11 @@ mod view {
   fn copy_button<'a>() -> Element<'a, Message> {
     button(
       Row::with_children(vec![
-        Icon::copy().color(color::accent::PLASMA).size(14.0).render::<Message>(),
+        Icon::copy().color(color::text::PRIMARY).size(14.0).render::<Message>(),
         text("Copy shopping list")
           .font(typography::body::MEDIUM)
           .size(typography::size::MD)
-          .style(typography::colored(color::accent::PLASMA))
+          .style(typography::colored(color::text::PRIMARY))
           .into(),
       ])
       .spacing(spacing::SPACE_2)
@@ -2397,32 +2431,26 @@ mod view {
     .width(Length::Fill)
     .padding(spacing::SPACE_3)
     .on_press(Message::ShoppingListCopied)
-    .style(|_, status| {
-      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-      button::Style {
-        background: Some(Background::Color(color::with_alpha(
-          color::accent::PLASMA,
-          if hovered { 0.22 } else { 0.14 },
-        ))),
-        border: Border {
-          color: color::accent::PLASMA,
-          radius: radius::CARD.into(),
-          width: 1.0,
-        },
-        text_color: color::accent::PLASMA,
-        ..button::Style::default()
-      }
-    })
+    .style(crate::ui::style::control::ghost_button)
     .into()
   }
 
-  fn detail_line<'a>(label: &str, value: &str, value_color: iced::Color) -> Element<'a, Message> {
+  fn detail_line<'a>(label: &str, value: &str, value_color: iced::Color, emphasized: bool) -> Element<'a, Message> {
+    let label_color = if emphasized {
+      color::text::PRIMARY
+    } else {
+      color::text::secondary()
+    };
     container(
       Row::with_children(vec![
         text(label.to_owned())
-          .font(typography::body::REGULAR)
+          .font(if emphasized {
+            typography::body::MEDIUM
+          } else {
+            typography::body::REGULAR
+          })
           .size(typography::size::MD)
-          .style(typography::colored(color::text::secondary()))
+          .style(typography::colored(label_color))
           .into(),
         Space::new().width(Length::Fill).into(),
         text(value.to_owned())
@@ -3006,6 +3034,31 @@ mod tests {
     }
 
     #[test]
+    fn it_prices_material_cost_as_the_rolled_up_acquisition_total_plus_sub_build_fees() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+
+      let eco = planner.economics().unwrap();
+      let plan = planner.plan().unwrap();
+      let acquisition: f64 = plan
+        .raw_totals()
+        .iter()
+        .map(|total| total.qty as f64 * planner.data().price(total.type_id))
+        .sum();
+
+      // With a component built in-house, material cost is the bill-of-materials acquisition total
+      // (raw inputs only — the sub-built component is no longer bought) plus its sub-job install fee,
+      // which diverges sharply from pricing the root recipe's immediate materials at market.
+      assert!(eco.material_cost > acquisition);
+      assert_eq!(eco.material_cost, 600_115.0);
+      assert_eq!(acquisition, 115.0);
+      assert_eq!(eco.profit, eco.revenue - eco.material_cost - eco.install_fee);
+    }
+
+    #[test]
     fn it_reports_zero_isk_per_hour_when_build_time_is_zero() {
       let mut data = PlannerData::default();
       data.recipes.insert(
@@ -3022,6 +3075,34 @@ mod tests {
       let eco = planner.economics().unwrap();
 
       assert_eq!(eco.isk_per_hour(), 0.0);
+    }
+  }
+
+  mod view {
+    use iced::advanced::widget::Tree;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_stable_root_tree_shape_whether_or_not_an_overlay_is_open() {
+      let mut planner = planner();
+      let idle_children = {
+        let idle = super::super::view(&planner, Scope::All);
+        Tree::new(idle.as_widget()).children.len()
+      };
+
+      planner.update(Message::CursorMoved(iced::Point::new(20.0, 40.0)));
+      planner.update(Message::MaterialRightPressed {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
+
+      // The root Stack must carry the same number of direct children open or closed so the Material
+      // Plan scrollable keeps a stable widget identity and never resets its offset on right-click.
+      assert!(planner.menu().is_some());
+      let with_menu = super::super::view(&planner, Scope::All);
+      assert_eq!(Tree::new(with_menu.as_widget()).children.len(), idle_children);
     }
   }
 
@@ -3095,20 +3176,29 @@ mod tests {
     }
 
     #[test]
-    fn it_ignores_a_search_query_for_a_node_that_is_not_open() {
+    fn it_opens_a_nodes_picker_when_its_always_visible_field_is_typed_into() {
       let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        mat: RETRIEVER,
+        parent: vec![],
+      });
       planner.update(Message::FacilityPickerToggled {
         path: vec![],
       });
 
+      // Typing into a different node's field switches the open picker to that node.
       planner.update(Message::FacilitySearchChanged {
         path: vec![RETRIEVER],
         query: "amarr".to_owned(),
       });
 
       assert_eq!(
+        planner.facility_picker().map(|state| state.path.clone()),
+        Some(vec![RETRIEVER])
+      );
+      assert_eq!(
         planner.facility_picker().map(|state| state.query.clone()),
-        Some(String::new())
+        Some("amarr".to_owned())
       );
     }
 
@@ -3171,49 +3261,6 @@ mod tests {
     }
   }
 
-  mod material_scroll {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_tracks_the_latest_scroll_offset() {
-      let mut planner = planner();
-
-      planner.update(Message::MaterialScrolled {
-        absolute: 420.0,
-      });
-
-      assert_eq!(planner.material_scroll_offset(), 420.0);
-    }
-
-    #[test]
-    fn it_clamps_a_negative_offset_to_zero() {
-      let mut planner = planner();
-
-      planner.update(Message::MaterialScrolled {
-        absolute: -32.0,
-      });
-
-      assert_eq!(planner.material_scroll_offset(), 0.0);
-    }
-
-    #[test]
-    fn it_survives_a_break_down_so_the_offset_can_be_restored() {
-      let mut planner = planner();
-      planner.update(Message::MaterialScrolled {
-        absolute: 256.0,
-      });
-
-      planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
-      });
-
-      assert_eq!(planner.material_scroll_offset(), 256.0);
-    }
-  }
-
   mod runs_changed {
     use pretty_assertions::assert_eq;
 
@@ -3246,6 +3293,49 @@ mod tests {
 
       let builds = planner.plan().unwrap().collect_builds();
       assert_eq!(builds[0].runs, 6);
+    }
+
+    #[test]
+    fn it_syncs_the_runs_field_text_when_steppers_change_the_count() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsChanged(7));
+
+      assert_eq!(planner.runs(), 7);
+      assert_eq!(planner.runs_input(), "7");
+    }
+
+    #[test]
+    fn it_keeps_only_digits_and_reflows_from_an_edited_runs_field() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged("4x2".to_owned()));
+
+      assert_eq!(planner.runs(), 42);
+      assert_eq!(planner.runs_input(), "42");
+      assert_eq!(planner.economics().unwrap().output_qty, 42);
+    }
+
+    #[test]
+    fn it_holds_at_one_run_for_an_empty_or_zero_runs_field() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged(String::new()));
+      assert_eq!(planner.runs(), 1);
+      assert_eq!(planner.runs_input(), "");
+
+      planner.update(Message::RunsInputChanged("0".to_owned()));
+      assert_eq!(planner.runs(), 1);
+      assert_eq!(planner.runs_input(), "0");
+    }
+
+    #[test]
+    fn it_clamps_an_edited_runs_field_to_the_maximum() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged("99999".to_owned()));
+
+      assert_eq!(planner.runs(), RUNS_MAX);
     }
   }
 

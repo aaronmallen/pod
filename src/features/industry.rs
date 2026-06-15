@@ -423,18 +423,8 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       planner::Message::PlanLoadRequested(id) => load_plan(db, id),
       planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
       other => {
-        // Breaking down or collapsing a node rebuilds the Material Plan scrollable, which makes
-        // iced reset the scroll offset to zero; re-apply the tracked offset afterward.
-        let restore_scroll = matches!(
-          other,
-          planner::Message::NodeBrokenDown { .. } | planner::Message::NodeCollapsed { .. }
-        );
         state.planner.update(other);
-        if restore_scroll {
-          planner::restore_material_scroll(state.planner.material_scroll_offset())
-        } else {
-          Task::none()
-        }
+        Task::none()
       }
     },
     Message::PlannerLoaded(data) => {
@@ -888,14 +878,6 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Planner(planner::Message::PlansListed(Vec::new())),
-        &db,
-        n,
-      );
-      let _ = update(
-        &mut state,
-        Message::Planner(planner::Message::MaterialScrolled {
-          absolute: 160.0,
-        }),
         &db,
         n,
       );

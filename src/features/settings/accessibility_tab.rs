@@ -9,7 +9,7 @@ use crate::{
   config::Settings,
   ui::{
     components::{rule, toggle},
-    style::{color, radius, spacing, typography},
+    style::{color, control, radius, spacing, typography},
   },
 };
 
@@ -712,28 +712,7 @@ fn fine_scale(scale: u8) -> Element<'static, Message> {
   let track = slider(SCALE_MIN..=SCALE_MAX, scale, Message::ScaleChanged)
     .step(1u8)
     .height(6.0)
-    .style(|_, _| slider::Style {
-      rail: slider::Rail {
-        backgrounds: (
-          Background::Color(color::accent::PLASMA),
-          Background::Color(color::with_alpha(color::text::PRIMARY, 0.12)),
-        ),
-        width: 6.0,
-        border: Border {
-          radius: radius::SUBTLE.into(),
-          width: 0.0,
-          color: iced::Color::TRANSPARENT,
-        },
-      },
-      handle: slider::Handle {
-        shape: slider::HandleShape::Circle {
-          radius: 10.0,
-        },
-        background: Background::Color(color::accent::PLASMA),
-        border_color: color::surface::BASE,
-        border_width: 3.0,
-      },
-    });
+    .style(control::slider_track);
 
   let column = Column::with_children(vec![top.into(), track.into(), scale_ticks(scale)])
     .spacing(spacing::SPACE_3_5)

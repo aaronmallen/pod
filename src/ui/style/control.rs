@@ -1,6 +1,6 @@
 use iced::{
   Background, Border, Color, Padding,
-  widget::{button, container, scrollable},
+  widget::{button, container, scrollable, slider},
 };
 
 use crate::ui::style::{color, radius, spacing};
@@ -100,6 +100,31 @@ pub fn scrollbar(theme: &iced::Theme, status: scrollable::Status) -> scrollable:
   base
 }
 
+pub fn slider_track(_theme: &iced::Theme, _status: slider::Status) -> slider::Style {
+  slider::Style {
+    rail: slider::Rail {
+      backgrounds: (
+        Background::Color(color::accent::PLASMA),
+        Background::Color(color::with_alpha(color::text::PRIMARY, 0.12)),
+      ),
+      width: 6.0,
+      border: Border {
+        radius: radius::SUBTLE.into(),
+        width: 0.0,
+        color: Color::TRANSPARENT,
+      },
+    },
+    handle: slider::Handle {
+      shape: slider::HandleShape::Circle {
+        radius: 10.0,
+      },
+      background: Background::Color(color::accent::PLASMA),
+      border_color: color::surface::BASE,
+      border_width: 3.0,
+    },
+  }
+}
+
 #[allow(dead_code)]
 pub fn sunken_pane(_theme: &iced::Theme) -> container::Style {
   container::Style {
@@ -110,5 +135,28 @@ pub fn sunken_pane(_theme: &iced::Theme) -> container::Style {
       radius: 0.0.into(),
     },
     ..container::Style::default()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod slider_track {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_a_circular_handle_over_a_neutral_rail() {
+      let style = slider_track(&iced::Theme::Dark, slider::Status::Active);
+
+      assert!(matches!(style.handle.shape, slider::HandleShape::Circle { .. }));
+      assert_eq!(style.rail.backgrounds.0, Background::Color(color::accent::PLASMA));
+      assert_eq!(
+        style.rail.backgrounds.1,
+        Background::Color(color::with_alpha(color::text::PRIMARY, 0.12))
+      );
+    }
   }
 }

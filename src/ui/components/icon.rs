@@ -107,6 +107,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/filter.svg"))
   }
 
+  pub fn flask() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/flask.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn fleet() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/fleet.svg"))
@@ -254,6 +258,7 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pin.svg"))
   }
 
+  #[allow(dead_code)]
   pub fn planner() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/planner.svg"))
   }

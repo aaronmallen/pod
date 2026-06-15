@@ -159,6 +159,7 @@ pub struct Planner {
   loaded: bool,
   menu: Option<MaterialMenu>,
   picker_open: bool,
+  placeholder: String,
   product: Option<i64>,
   recent: Vec<i64>,
   right_tab: RightTab,
@@ -180,6 +181,10 @@ impl Planner {
   pub fn apply_data(&mut self, data: PlannerData) {
     self.data = data;
     self.loaded = true;
+    self.placeholder = format!(
+      "Search {} buildable products\u{2026}",
+      view::fmt_num(self.data.catalog.len() as i64)
+    );
     if self.recent.is_empty() {
       self.recent = self.seed_recent();
     }
@@ -320,6 +325,14 @@ impl Planner {
 
   pub fn search(&self) -> &str {
     &self.search
+  }
+
+  pub fn search_placeholder(&self) -> &str {
+    if self.placeholder.is_empty() {
+      "Search buildable products\u{2026}"
+    } else {
+      &self.placeholder
+    }
   }
 
   /// Returns the facility pinned to this node, falling back to the cheapest available
@@ -807,15 +820,18 @@ mod view {
   }
 
   fn picker(planner: &Planner) -> Element<'_, Message> {
-    let search = TextInput::new(
-      "Search buildable products\u{2026}",
-      planner.search(),
-      Message::SearchChanged,
-    )
-    .leading_icon(Icon::search())
-    .background(color::surface::SUNKEN)
-    .width(Length::Fill)
-    .render();
+    let active = planner.picker_open() || !planner.search().is_empty();
+    let glyph_color = if active {
+      color::accent::PLASMA
+    } else {
+      color::text::secondary()
+    };
+
+    let search = TextInput::new(planner.search_placeholder(), planner.search(), Message::SearchChanged)
+      .leading_icon(Icon::search().color(glyph_color))
+      .background(color::surface::SUNKEN)
+      .width(Length::Fill)
+      .render();
 
     let toggle = button(
       Icon::chevron()
@@ -885,8 +901,13 @@ mod view {
     let list: Element<'_, Message> = if matches.is_empty() {
       let source = if query.is_empty() { planner.recent() } else { &[] };
       if source.is_empty() {
+        let message = if query.is_empty() {
+          "No products match.".to_owned()
+        } else {
+          format!("No products match \u{201C}{}\u{201D}.", planner.search().trim())
+        };
         centered(
-          text("No products match.")
+          text(message)
             .font(typography::body::REGULAR)
             .size(typography::size::MD)
             .style(typography::colored(color::text::tertiary())),
@@ -936,26 +957,25 @@ mod view {
     let recipe = data.recipe(type_id);
     let is_reaction = recipe.is_some_and(|recipe| recipe.is_reaction);
 
-    let title = Row::with_children(vec![
-      text(data.name(type_id))
-        .font(typography::body::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::PRIMARY))
-        .into(),
-      activity_badge(is_reaction),
-      owned_badge(planner, type_id),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center);
+    let title = text(data.name(type_id))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY));
 
     let subtitle = text(format!("{} ISK", fmt_isk(data.price(type_id))))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::tertiary()));
 
-    let details = Column::with_children(vec![title.into(), subtitle.into()]).spacing(spacing::UNIT);
+    let details = Column::with_children(vec![title.into(), subtitle.into()])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill);
 
-    let row = Row::with_children(vec![type_tile(type_id, false), details.into()])
+    let badges = Row::with_children(vec![activity_badge(is_reaction), owned_badge(planner, type_id)])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center);
+
+    let row = Row::with_children(vec![type_tile(type_id), details.into(), badges.into()])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill);
@@ -1131,7 +1151,7 @@ mod view {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-    let mut row = Row::with_children(vec![type_tile(type_id, sub.is_some()), details.into()])
+    let mut row = Row::with_children(vec![type_tile(type_id), details.into()])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill);
@@ -1441,7 +1461,7 @@ mod view {
     let data = planner.data();
     let buildable = data.recipe(type_id).is_some();
 
-    let mut name_row = Row::with_children(vec![type_tile(type_id, false)])
+    let mut name_row = Row::with_children(vec![type_tile(type_id)])
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center);
     name_row = name_row.push(
@@ -1538,7 +1558,7 @@ mod view {
           Row::with_children(vec![
             container(
               Row::with_children(vec![
-                type_tile(total.type_id, false),
+                type_tile(total.type_id),
                 text(data.name(total.type_id))
                   .font(typography::body::REGULAR)
                   .size(typography::size::MD)
@@ -1622,7 +1642,7 @@ mod view {
             color::text::secondary()
           }))
           .into(),
-        type_tile(job.type_id, false),
+        type_tile(job.type_id),
         Column::with_children(vec![
           Row::with_children(vec![
             text(data.name(job.type_id))
@@ -1757,7 +1777,7 @@ mod view {
     let data = planner.data();
 
     let header = Row::with_children(vec![
-      type_tile(product, false),
+      type_tile(product),
       Column::with_children(vec![
         text(data.name(product))
           .font(typography::body::MEDIUM)
@@ -1998,7 +2018,7 @@ mod view {
 
   fn plan_row<'a>(planner: &'a Planner, plan: &'a SavedPlan) -> Element<'a, Message> {
     let header = Row::with_children(vec![
-      type_tile(plan.product_type_id, false),
+      type_tile(plan.product_type_id),
       Column::with_children(vec![
         text(plan.name.clone())
           .font(typography::body::MEDIUM)
@@ -2412,8 +2432,8 @@ mod view {
     }
   }
 
-  fn type_tile<'a>(type_id: i64, copy: bool) -> Element<'a, Message> {
-    match images::default_store().resolve_type_icon(type_id, copy.then_some(true), TILE_ICON) {
+  fn type_tile<'a>(type_id: i64) -> Element<'a, Message> {
+    match images::default_store().resolve_type_icon(type_id, None, TILE_ICON) {
       IconResolution::Found(path) => icon_tile(
         clip_layer(
           image(image::Handle::from_path(path))
@@ -2493,7 +2513,7 @@ mod view {
     active == Category::Other || category == active
   }
 
-  fn fmt_num(value: i64) -> String {
+  pub(super) fn fmt_num(value: i64) -> String {
     let mut out = String::new();
     let digits = value.abs().to_string();
     let bytes = digits.as_bytes();
@@ -2869,6 +2889,26 @@ mod tests {
       assert_eq!(planner.runs(), 4);
       assert_eq!(planner.right_tab(), RightTab::Detail);
       assert_eq!(planner.plan(), source.plan());
+    }
+  }
+
+  mod search_placeholder {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reports_the_buildable_catalog_size() {
+      let planner = planner();
+
+      assert_eq!(planner.search_placeholder(), "Search 1 buildable products\u{2026}");
+    }
+
+    #[test]
+    fn it_falls_back_when_no_catalog_is_loaded() {
+      let planner = Planner::new();
+
+      assert_eq!(planner.search_placeholder(), "Search buildable products\u{2026}");
     }
   }
 

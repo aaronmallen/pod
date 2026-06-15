@@ -311,7 +311,7 @@ fn tab_icon(tab: Tab) -> Icon {
   match tab {
     Tab::Blueprints => Icon::doc(),
     Tab::Jobs => Icon::industry(),
-    Tab::Planner => Icon::planner(),
+    Tab::Planner => Icon::flask(),
   }
 }
 

@@ -383,6 +383,21 @@ pub fn subscription(state: &State) -> Subscription<Message> {
   Subscription::batch([tick, drag])
 }
 
+// "Plan Build" on a Blueprints row: switch to the Planner tab and seed that blueprint's product as the
+// root with a fresh breakdown tree. When the catalog is already loaded the reseed is immediate;
+// otherwise it is queued and applied once the planner data arrives.
+fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -> Task<Message> {
+  state.tab = Tab::Planner;
+  let mut tasks = vec![list_plans(db)];
+  if state.planner.is_loaded() {
+    state.planner.seed_from_blueprint(blueprint_type_id);
+  } else {
+    state.planner.queue_blueprint_seed(blueprint_type_id);
+    tasks.push(load_planner(db, state.active));
+  }
+  Task::batch(tasks)
+}
+
 pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime<Utc>) -> Task<Message> {
   match message {
     Message::BlueprintKindSelected(kind) => {
@@ -434,20 +449,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       Task::none()
     }
     Message::PaneSettled(..) => Task::none(),
-    // "Plan Build" on a Blueprints row: switch to the Planner tab and seed that blueprint's product as the
-    // root with a fresh breakdown tree. When the catalog is already loaded the reseed is immediate;
-    // otherwise it is queued and applied once the planner data arrives.
-    Message::PlanBuild(blueprint_type_id) => {
-      state.tab = Tab::Planner;
-      let mut tasks = vec![list_plans(db)];
-      if state.planner.is_loaded() {
-        state.planner.seed_from_blueprint(blueprint_type_id);
-      } else {
-        state.planner.queue_blueprint_seed(blueprint_type_id);
-        tasks.push(load_planner(db, state.active));
-      }
-      Task::batch(tasks)
-    }
+    Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
     Message::Planner(planner_message) => match planner_message {
       planner::Message::ShoppingListCopied => {
         state.planner.update(planner_message);

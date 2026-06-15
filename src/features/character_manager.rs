@@ -2014,25 +2014,31 @@ fn corp_card_from_row_with_reauth(row: corporation_card::CardRow, needs_reauth: 
   }
 }
 
+// Run the corp finder query and overlay each result's persisted needs-reauth flag. Split out from the
+// `Task` wrapper so it can be exercised directly in tests (the debounce sleep stays in the wrapper).
+async fn search_corp_cards(db: &Database, query: &str) -> Result<Vec<CorpCardModel>, String> {
+  let rows = org::search_corporations(db, &parse(query))
+    .await
+    .map_err(|err| err.to_string())?;
+  let reauth_by_id = reauth_flags(db, OwnerType::Corporation)
+    .await
+    .map_err(|err| err.to_string())?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| {
+        let needs_reauth = reauth_by_id.get(&row.corporation_id).copied().unwrap_or(false);
+        corp_card_from_row_with_reauth(row, needs_reauth)
+      })
+      .collect(),
+  )
+}
+
 fn run_corp_search(db: Database, query: String, generation: u64) -> Task<Message> {
   Task::perform(
     async move {
       tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
-      let rows = org::search_corporations(&db, &parse(&query))
-        .await
-        .map_err(|err| err.to_string())?;
-      let reauth_by_id = reauth_flags(&db, OwnerType::Corporation)
-        .await
-        .map_err(|err| err.to_string())?;
-      Ok(
-        rows
-          .into_iter()
-          .map(|row| {
-            let needs_reauth = reauth_by_id.get(&row.corporation_id).copied().unwrap_or(false);
-            corp_card_from_row_with_reauth(row, needs_reauth)
-          })
-          .collect::<Vec<_>>(),
-      )
+      search_corp_cards(&db, &query).await
     },
     move |result| Message::CorpSearchResults {
       generation,
@@ -2041,26 +2047,32 @@ fn run_corp_search(db: Database, query: String, generation: u64) -> Task<Message
   )
 }
 
+// Run the character finder query and overlay each result's persisted needs-reauth flag. Split out from
+// the `Task` wrapper so it can be exercised directly in tests (the debounce sleep stays in the wrapper).
+async fn search_character_cards(db: &Database, query: &str) -> Result<Vec<CardModel>, String> {
+  let now = Utc::now();
+  let rows = character::search(db, &parse(query), &now.to_rfc3339())
+    .await
+    .map_err(|err| err.to_string())?;
+  let reauth_by_id = reauth_flags(db, OwnerType::Character)
+    .await
+    .map_err(|err| err.to_string())?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|row| {
+        let needs_reauth = reauth_by_id.get(&row.character_id).copied().unwrap_or(false);
+        card_from_row_with_reauth(row, now, needs_reauth)
+      })
+      .collect(),
+  )
+}
+
 fn run_search(db: Database, query: String, generation: u64) -> Task<Message> {
   Task::perform(
     async move {
       tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
-      let now = Utc::now();
-      let rows = character::search(&db, &parse(&query), &now.to_rfc3339())
-        .await
-        .map_err(|err| err.to_string())?;
-      let reauth_by_id = reauth_flags(&db, OwnerType::Character)
-        .await
-        .map_err(|err| err.to_string())?;
-      Ok(
-        rows
-          .into_iter()
-          .map(|row| {
-            let needs_reauth = reauth_by_id.get(&row.character_id).copied().unwrap_or(false);
-            card_from_row_with_reauth(row, now, needs_reauth)
-          })
-          .collect::<Vec<_>>(),
-      )
+      search_character_cards(&db, &query).await
     },
     move |result| Message::SearchResults {
       generation,
@@ -3344,6 +3356,139 @@ mod tests {
       {
         let _error: Element<'_, Message> = view(&state, &sync);
       }
+    }
+  }
+
+  mod search_cards {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      repo::infra,
+    };
+
+    async fn seed_character(db: &Database, id: i64, name: &str) {
+      let bloodline = Bloodline::new(1, 90_000_001, 2, 3, "A bloodline.", 4, 5, "Civire", 6, 7);
+      let race = Race::new(2, 500_001, "A race.", "Caldari");
+      let mut corp = Corporation::new(90_000_001, "Corp One", "CORP1");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let pilot = Character::new(id, 1, 90_000_001, 2, "2003-05-12", Gender::Male, name);
+      character::insert_with_org(db, &pilot, &bloodline, &race, &corp, None, None)
+        .await
+        .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_corporation(db: &Database, corp_id: i64, ceo_id: i64, name: &str) {
+      let alliance = Alliance::new(
+        corp_id,
+        corp_id,
+        ceo_id,
+        "2010-01-01T00:00:00Z",
+        "Iron Helix Pact",
+        "IHP",
+      );
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 6, 7);
+      let race = Race::new(2, 500_001, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, name, "COBSY");
+      corp.set_alliance_id(corp_id);
+      corp.set_ceo_id(ceo_id);
+      corp.set_creation_date("2019-03-14T00:00:00Z");
+      corp.set_creator_id(ceo_id);
+      corp.set_member_count(1247);
+      corp.set_tax_rate(0.10);
+      let ceo = Character::new(ceo_id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Vex Voronova");
+      character::insert_with_org(db, &ceo, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, ceo_id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+      infra::upsert(
+        db,
+        corp_id,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9999,
+        Some(ceo_id),
+        None,
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_overlays_the_persisted_reauth_flag_onto_character_results() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Flagged Pilot").await;
+      seed_character(&db, 2, "Clean Pilot").await;
+      infra::mark_needs_reauth(&db, 1, OwnerType::Character).await.unwrap();
+
+      let cards = search_character_cards(&db, "pilot").await.unwrap();
+
+      let flagged = cards
+        .iter()
+        .find(|card| card.character_id == 1)
+        .expect("the flagged pilot is in the results");
+      let clean = cards
+        .iter()
+        .find(|card| card.character_id == 2)
+        .expect("the clean pilot is in the results");
+      assert!(flagged.needs_reauth, "the marked credential surfaces a reauth card");
+      assert!(!clean.needs_reauth, "the unmarked credential stays clean");
+    }
+
+    #[tokio::test]
+    async fn it_leaves_character_cards_unflagged_when_no_credential_needs_reauth() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Quiet Pilot").await;
+
+      let cards = search_character_cards(&db, "pilot").await.unwrap();
+
+      assert_eq!(cards.len(), 1);
+      assert!(!cards[0].needs_reauth);
+    }
+
+    #[tokio::test]
+    async fn it_overlays_the_persisted_reauth_flag_onto_corp_results() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 90_100_001, 1, "Cobalt Flagged").await;
+      seed_corporation(&db, 90_100_002, 2, "Cobalt Clean").await;
+      infra::mark_needs_reauth(&db, 90_100_001, OwnerType::Corporation)
+        .await
+        .unwrap();
+
+      let cards = search_corp_cards(&db, "cobalt").await.unwrap();
+
+      let flagged = cards
+        .iter()
+        .find(|card| card.corporation_id == 90_100_001)
+        .expect("the flagged corp is in the results");
+      let clean = cards
+        .iter()
+        .find(|card| card.corporation_id == 90_100_002)
+        .expect("the clean corp is in the results");
+      assert!(flagged.needs_reauth, "the marked credential surfaces a reauth card");
+      assert!(!clean.needs_reauth, "the unmarked credential stays clean");
+    }
+
+    #[tokio::test]
+    async fn it_leaves_corp_cards_unflagged_when_no_credential_needs_reauth() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 90_100_003, 3, "Cobalt Quiet").await;
+
+      let cards = search_corp_cards(&db, "cobalt").await.unwrap();
+
+      assert_eq!(cards.len(), 1);
+      assert!(!cards[0].needs_reauth);
     }
   }
 

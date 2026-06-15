@@ -94,6 +94,15 @@ impl AbyssalStat {
 pub struct AbyssalsData {
   pub(super) cards: Vec<AbyssalCard>,
   pub(super) source_types: Vec<SourceTypeFilter>,
+  /// Full filtered count from a DB COUNT, not `cards.len()` — `cards` holds only the first page.
+  pub(super) total: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct FilteredCards {
+  pub(super) cards: Vec<AbyssalCard>,
+  /// Full filtered count from a DB COUNT, not `cards.len()` — `cards` holds only the first page.
+  pub(super) total: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -128,13 +137,24 @@ impl Filters {
 /// plus the source-type filter facets.
 pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilot]) -> AbyssalsData {
   let character_ids = scope_character_ids(db, scope, roster).await;
-  let cards = load_filtered_page(db, scope, roster, &Filters::default(), None).await;
+  let filters = Filters::default();
+  let items = page_items(db, &character_ids, &filters, None).await;
+  let cards = cards_from_items(db, roster, &items).await;
+  let total = assets::count_for_characters(
+    db,
+    &character_ids,
+    filters.source_type_id,
+    &filters.stat_ranges_for_query(),
+  )
+  .await
+  .unwrap_or_default();
   let source_types = assets::source_type_filters(db, &character_ids)
     .await
     .unwrap_or_default();
   AbyssalsData {
     cards,
     source_types,
+    total,
   }
 }
 
@@ -147,8 +167,22 @@ pub(super) async fn load_filtered_cards(
   scope: Scope,
   roster: &[RosterPilot],
   filters: &Filters,
-) -> Vec<AbyssalCard> {
-  load_filtered_page(db, scope, roster, filters, None).await
+) -> FilteredCards {
+  let character_ids = scope_character_ids(db, scope, roster).await;
+  let items = page_items(db, &character_ids, filters, None).await;
+  let cards = cards_from_items(db, roster, &items).await;
+  let total = assets::count_for_characters(
+    db,
+    &character_ids,
+    filters.source_type_id,
+    &filters.stat_ranges_for_query(),
+  )
+  .await
+  .unwrap_or_default();
+  FilteredCards {
+    cards,
+    total,
+  }
 }
 
 /// Load one cursor-delimited page of filtered cards.
@@ -163,18 +197,26 @@ pub(super) async fn load_filtered_page(
   cursor: Option<AbyssalCursor>,
 ) -> Vec<AbyssalCard> {
   let character_ids = scope_character_ids(db, scope, roster).await;
-  let items = assets::page_for_characters(
+  let items = page_items(db, &character_ids, filters, cursor).await;
+  cards_from_items(db, roster, &items).await
+}
+
+async fn page_items(
+  db: &Database,
+  character_ids: &[i64],
+  filters: &Filters,
+  cursor: Option<AbyssalCursor>,
+) -> Vec<AbyssalItem> {
+  assets::page_for_characters(
     db,
-    &character_ids,
+    character_ids,
     filters.source_type_id,
     &filters.stat_ranges_for_query(),
     cursor,
     Some(PAGE_SIZE),
   )
   .await
-  .unwrap_or_default();
-
-  cards_from_items(db, roster, &items).await
+  .unwrap_or_default()
 }
 
 /// Build the display cards for a batch of items, resolving each card's stats and
@@ -570,12 +612,13 @@ mod tests {
         .await
         .unwrap();
 
-      let cards = load_filtered_cards(&db, Scope::Character(7), &[], &Filters::default()).await;
+      let loaded = load_filtered_cards(&db, Scope::Character(7), &[], &Filters::default()).await;
 
-      assert_eq!(cards.len(), 1);
-      assert_eq!(cards[0].item_id, 100);
-      assert_eq!(cards[0].character_id, 7);
-      assert!(cards[0].stats.iter().any(|stat| stat.attribute_id == 6));
+      assert_eq!(loaded.cards.len(), 1);
+      assert_eq!(loaded.total, 1);
+      assert_eq!(loaded.cards[0].item_id, 100);
+      assert_eq!(loaded.cards[0].character_id, 7);
+      assert!(loaded.cards[0].stats.iter().any(|stat| stat.attribute_id == 6));
     }
 
     #[tokio::test]
@@ -583,9 +626,10 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 7).await;
 
-      let cards = load_filtered_cards(&db, Scope::Character(7), &[], &Filters::default()).await;
+      let loaded = load_filtered_cards(&db, Scope::Character(7), &[], &Filters::default()).await;
 
-      assert!(cards.is_empty());
+      assert!(loaded.cards.is_empty());
+      assert_eq!(loaded.total, 0);
     }
   }
 

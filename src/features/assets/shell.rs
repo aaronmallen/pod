@@ -156,8 +156,8 @@ fn location_tree(state: &State) -> Element<'_, Message> {
 
 fn tab_strip(state: &State) -> Element<'_, Message> {
   let tabs = vec![
-    tab(state, Tab::Inventory, "Inventory", tab_count(state.inventory().len())),
-    tab(state, Tab::Abyssals, "Abyssals", tab_count(state.abyssals().len())),
+    tab(state, Tab::Inventory, "Inventory", fmt_count(state.inventory_total())),
+    tab(state, Tab::Abyssals, "Abyssals", fmt_count(state.abyssal_total())),
     tab(
       state,
       Tab::Stockpiles,

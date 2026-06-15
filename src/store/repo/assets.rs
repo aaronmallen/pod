@@ -30,6 +30,47 @@ pub async fn abyssal_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   Ok(rows)
 }
 
+/// Count the abyssal items the page query would yield: the same [`page_for_characters`] WHERE clause
+/// (character set, rolled-type, per-attribute stat ranges) minus the cursor/limit pagination.
+pub async fn count_for_characters(
+  db: &Database,
+  character_ids: &[i64],
+  source_type_id: Option<i64>,
+  stat_ranges: &HashMap<i64, StatRange>,
+) -> Result<i64, Error> {
+  if character_ids.is_empty() {
+    return Ok(0);
+  }
+
+  let mut builder = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM abyssal_items WHERE character_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in character_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
+
+  if let Some(type_id) = source_type_id {
+    builder.push(" AND type_id = ");
+    builder.push_bind(type_id);
+  }
+
+  for (attribute_id, range) in stat_ranges {
+    builder.push(
+      " AND EXISTS (SELECT 1 FROM json_each(abyssal_items.dogma_attributes) je \
+      WHERE json_extract(je.value, '$.attribute_id') = ",
+    );
+    builder.push_bind(*attribute_id);
+    builder.push(" AND json_extract(je.value, '$.value') >= ");
+    builder.push_bind(range.min - RANGE_EPSILON);
+    builder.push(" AND json_extract(je.value, '$.value') <= ");
+    builder.push_bind(range.max + RANGE_EPSILON);
+    builder.push(")");
+  }
+
+  let count = builder.build_query_scalar::<i64>().fetch_one(&db.0).await?;
+  Ok(count)
+}
+
 pub async fn delete_stale(db: &Database, character_id: i64, keep_ids: &[i64]) -> Result<(), Error> {
   if keep_ids.is_empty() {
     sqlx::query("DELETE FROM abyssal_items WHERE character_id = ?")
@@ -946,27 +987,48 @@ pub async fn inventory_totals_for_character(
   db: &Database,
   character_id: i64,
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
-  inventory_totals(db, "character_assets", "character_id", &[character_id], filter, me_id).await
+  inventory_totals(
+    db,
+    "character_assets",
+    "character_id",
+    &[character_id],
+    filter,
+    location_ids,
+    me_id,
+  )
+  .await
 }
 
 pub async fn inventory_totals_for_characters(
   db: &Database,
   character_ids: &[i64],
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
   if character_ids.is_empty() {
     return Ok(InventoryTotals::default());
   }
-  inventory_totals(db, "character_assets", "character_id", character_ids, filter, me_id).await
+  inventory_totals(
+    db,
+    "character_assets",
+    "character_id",
+    character_ids,
+    filter,
+    location_ids,
+    me_id,
+  )
+  .await
 }
 
 pub async fn inventory_totals_for_corporation(
   db: &Database,
   corporation_id: i64,
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
@@ -978,6 +1040,7 @@ pub async fn inventory_totals_for_corporation(
     "corporation_id",
     &[corporation_id],
     filter,
+    location_ids,
     me_id,
   )
   .await
@@ -988,13 +1051,14 @@ pub async fn inventory_totals_for_combined(
   character_ids: &[i64],
   corporation_ids: &[i64],
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
   let corporation_ids = authorized_corporation_ids(db, corporation_ids).await?;
   if character_ids.is_empty() && corporation_ids.is_empty() {
     return Ok(InventoryTotals::default());
   }
-  combined_inventory_totals(db, character_ids, &corporation_ids, filter, me_id).await
+  combined_inventory_totals(db, character_ids, &corporation_ids, filter, location_ids, me_id).await
 }
 
 macro_rules! historical_unit_price_expr {
@@ -1383,12 +1447,22 @@ async fn inventory_totals(
   owner_column: &'static str,
   owner_ids: &[i64],
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
   let select_head = inventory_totals_head(table, owner_column);
 
   let mut builder = QueryBuilder::<Sqlite>::new(select_head);
   push_owner_predicate(&mut builder, owner_ids);
+
+  if !location_ids.is_empty() {
+    builder.push(" AND a.location_id IN (");
+    let mut separated = builder.separated(", ");
+    for location_id in location_ids {
+      separated.push_bind(*location_id);
+    }
+    builder.push(")");
+  }
 
   if let Some(clause) = scoped_where(filter, owner_column, me_id) {
     builder.push(" AND (");
@@ -1568,6 +1642,7 @@ async fn combined_inventory_totals(
   character_ids: &[i64],
   corporation_ids: &[i64],
   filter: &str,
+  location_ids: &[i64],
   me_id: Option<i64>,
 ) -> Result<InventoryTotals, Error> {
   let schema = combined_column_schema();
@@ -1578,6 +1653,15 @@ async fn combined_inventory_totals(
   );
   push_combined_union(&mut builder, character_ids, corporation_ids, false);
   builder.push(") a WHERE 1 = 1");
+
+  if !location_ids.is_empty() {
+    builder.push(" AND a.location_id IN (");
+    let mut separated = builder.separated(", ");
+    for location_id in location_ids {
+      separated.push_bind(*location_id);
+    }
+    builder.push(")");
+  }
 
   if let Some(clause) = compile_query(
     filter,
@@ -2778,6 +2862,107 @@ mod abyssal_tests {
           .unwrap()
           .is_empty()
       );
+    }
+  }
+
+  mod count_for_characters {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn item_with(item_id: i64, character_id: i64, type_id: i64, dogma: &str) -> AbyssalItem {
+      AbyssalItem::new(
+        item_id,
+        character_id,
+        type_id,
+        47_408,
+        47_297,
+        dogma.to_owned(),
+        1_700_000_000,
+      )
+    }
+
+    #[tokio::test]
+    async fn it_is_zero_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(count_for_characters(&db, &[], None, &HashMap::new()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_counts_every_matching_item_minus_pagination() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
+        .await
+        .unwrap();
+
+      let count = count_for_characters(&db, &[42], None, &HashMap::new()).await.unwrap();
+      let page = page_for_characters(&db, &[42], None, &HashMap::new(), None, None)
+        .await
+        .unwrap();
+
+      assert_eq!(count, 2);
+      assert_eq!(
+        count,
+        page.len() as i64,
+        "the count matches the unpaginated page length"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_the_rolled_type_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
+        .await
+        .unwrap();
+
+      let count = count_for_characters(&db, &[42], Some(2410), &HashMap::new())
+        .await
+        .unwrap();
+      let page = page_for_characters(&db, &[42], Some(2410), &HashMap::new(), None, None)
+        .await
+        .unwrap();
+
+      assert_eq!(count, 1);
+      assert_eq!(count, page.len() as i64);
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_the_stat_range_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2410, r#"[{"attribute_id":50,"value":55.0}]"#))
+        .await
+        .unwrap();
+      let mut ranges = HashMap::new();
+      ranges.insert(
+        50,
+        StatRange {
+          max: 50.0,
+          min: 40.0,
+        },
+      );
+
+      let count = count_for_characters(&db, &[42], None, &ranges).await.unwrap();
+      let page = page_for_characters(&db, &[42], None, &ranges, None, None)
+        .await
+        .unwrap();
+
+      assert_eq!(count, 1);
+      assert_eq!(count, page.len() as i64);
     }
   }
 
@@ -4918,12 +5103,39 @@ mod asset_tests {
       b.location_id = 60_000_002;
       replace_for_character(&db, 42, &[a, b]).await.unwrap();
 
-      let totals = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
 
       assert_eq!(totals.items, 5);
       assert_eq!(totals.locations, 2);
       assert_eq!(totals.value, 500.0);
       assert_eq!(totals.volume, 12.5);
+    }
+
+    #[tokio::test]
+    async fn it_restricts_the_totals_to_the_selected_locations() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut here = char_asset(100, 42, None);
+      here.type_id = 587;
+      here.quantity = 2;
+      here.location_id = 60_000_001;
+      let mut there = char_asset(101, 42, None);
+      there.type_id = 587;
+      there.quantity = 3;
+      there.location_id = 60_000_002;
+      replace_for_character(&db, 42, &[here, there]).await.unwrap();
+
+      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let one = inventory_totals_for_character(&db, 42, "", &[60_000_001], None)
+        .await
+        .unwrap();
+
+      assert_eq!(all.items, 5, "an empty location predicate counts every location");
+      assert_eq!(
+        one.items, 2,
+        "the badge total honors the same location filter as the page"
+      );
     }
 
     #[tokio::test]
@@ -4942,8 +5154,8 @@ mod asset_tests {
       mineral.quantity = 1_000;
       replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
 
-      let all = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
-      let ships_only = inventory_totals_for_character(&db, 42, "category:ship", None)
+      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let ships_only = inventory_totals_for_character(&db, 42, "category:ship", &[], None)
         .await
         .unwrap();
 
@@ -4959,7 +5171,7 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      let totals = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
 
       assert_eq!(totals, InventoryTotals::default());
     }
@@ -4976,7 +5188,9 @@ mod asset_tests {
       a.quantity = 4;
       replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
 
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
 
       assert_eq!(totals.items, 4);
       assert_eq!(totals.value, 1_000.0);
@@ -5143,7 +5357,7 @@ mod asset_tests {
       replace_for_character(&db, 42, &[a]).await.unwrap();
       replace_for_corporation(&db, CORP_ID, &[b]).await.unwrap();
 
-      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", None)
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", &[], None)
         .await
         .unwrap();
 
@@ -5167,7 +5381,7 @@ mod asset_tests {
       replace_for_character(&db, 42, &[a]).await.unwrap();
       replace_for_corporation(&db, CORP_ID, &[b]).await.unwrap();
 
-      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", None)
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", &[], None)
         .await
         .unwrap();
 
@@ -5211,7 +5425,9 @@ mod asset_tests {
           .is_empty()
       );
       assert_eq!(
-        inventory_totals_for_combined(&db, &[], &[], "", None).await.unwrap(),
+        inventory_totals_for_combined(&db, &[], &[], "", &[], None)
+          .await
+          .unwrap(),
         InventoryTotals::default()
       );
       assert!(geo_locations_for_combined(&db, &[], &[]).await.unwrap().is_empty());
@@ -5396,7 +5612,7 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
       seed_single_scope(&db).await;
 
-      let totals = inventory_totals_for_character(&db, 42, "region:\"The Forge\"", None)
+      let totals = inventory_totals_for_character(&db, 42, "region:\"The Forge\"", &[], None)
         .await
         .unwrap();
 
@@ -5469,7 +5685,7 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
       seed_combined_scope(&db).await;
 
-      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "constellation:Coriault", None)
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "constellation:Coriault", &[], None)
         .await
         .unwrap();
 
@@ -5748,7 +5964,9 @@ mod asset_tests {
       let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
         .await
         .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
 
       assert_eq!(page.len(), 1);
       assert_eq!(totals.items, 4);
@@ -5788,7 +6006,9 @@ mod asset_tests {
       let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
         .await
         .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
 
       assert!(page.is_empty());
       assert_eq!(totals, InventoryTotals::default());
@@ -5815,7 +6035,9 @@ mod asset_tests {
       let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
         .await
         .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
 
       assert!(page.is_empty());
       assert_eq!(totals, InventoryTotals::default());
@@ -5884,7 +6106,9 @@ mod asset_tests {
       let page = inventory_page_for_characters(&db, &[42, 43], &query(SortColumn::Name))
         .await
         .unwrap();
-      let totals = inventory_totals_for_characters(&db, &[42, 43], "", None).await.unwrap();
+      let totals = inventory_totals_for_characters(&db, &[42, 43], "", &[], None)
+        .await
+        .unwrap();
 
       assert_eq!(
         page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
@@ -5935,7 +6159,7 @@ mod asset_tests {
           .is_empty()
       );
       assert_eq!(
-        inventory_totals_for_characters(&db, &[], "", None).await.unwrap(),
+        inventory_totals_for_characters(&db, &[], "", &[], None).await.unwrap(),
         InventoryTotals::default()
       );
     }
@@ -5988,7 +6212,7 @@ mod asset_tests {
       seed_character(&db, 42).await;
       ingest_character_portfolio(&db, 42).await;
 
-      let totals = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
       assert_eq!(totals.items, 1_502);
       assert_eq!(totals.locations, 1);
       assert_eq!(totals.value, 9_500.0);
@@ -6038,7 +6262,7 @@ mod asset_tests {
         "the material hits are nested, so no top-level page row matches; auto-expand surfaces them"
       );
 
-      let totals = inventory_totals_for_character(&db, 42, "category:material", None)
+      let totals = inventory_totals_for_character(&db, 42, "category:material", &[], None)
         .await
         .unwrap();
       assert_eq!(
@@ -6103,7 +6327,7 @@ mod asset_tests {
         "the second window does not re-yield any first-window row"
       );
 
-      let totals = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
       assert_eq!(totals.items, 12);
     }
 
@@ -6134,7 +6358,7 @@ mod asset_tests {
         .await
         .unwrap();
       assert_eq!(char_page.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-      let char_totals = inventory_totals_for_character(&db, 42, "", None).await.unwrap();
+      let char_totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
       assert_eq!(char_totals.items, 1);
       assert_eq!(char_totals.value, 1_000.0);
       assert_eq!(roots_for_character(&db, 42).await.unwrap().len(), 1);
@@ -6147,7 +6371,9 @@ mod asset_tests {
         [200],
         "only the top-level corp container paginates; its children lazy-load"
       );
-      let corp_totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let corp_totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
       assert_eq!(corp_totals.items, 3);
       assert_eq!(corp_totals.value, 3_000.0);
       let corp_children = children_render_for_corporation(&db, CORP_ID, 200).await.unwrap();
@@ -6177,7 +6403,9 @@ mod asset_tests {
           .is_empty()
       );
       assert_eq!(
-        inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap(),
+        inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+          .await
+          .unwrap(),
         InventoryTotals::default()
       );
       assert!(roots_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
@@ -6205,7 +6433,9 @@ mod asset_tests {
         [100],
         "only the top-level container paginates once gated in; the child lazy-loads"
       );
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", None).await.unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
       assert_eq!(totals.items, 4, "1 + 3 quantities now visible");
       assert_eq!(totals.value, 1_000.0);
       assert_eq!(roots_for_corporation(&db, CORP_ID).await.unwrap().len(), 1);

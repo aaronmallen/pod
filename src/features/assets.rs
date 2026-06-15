@@ -189,7 +189,7 @@ pub struct Loaded {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  AbyssalCardsReloaded(Vec<abyssals::AbyssalCard>),
+  AbyssalCardsReloaded(abyssals::FilteredCards),
   AbyssalFilterReset,
   /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
   /// the pixel offset stored to window the card grid.
@@ -364,6 +364,7 @@ pub struct State {
   abyssal_has_more: bool,
   abyssal_loading: bool,
   abyssal_scroll_offset: f32,
+  abyssal_total: i64,
 }
 
 impl State {
@@ -426,6 +427,7 @@ impl State {
       abyssal_has_more: false,
       abyssal_loading: false,
       abyssal_scroll_offset: 0.0,
+      abyssal_total: 0,
     }
   }
 
@@ -476,6 +478,10 @@ impl State {
 
   pub(super) fn inventory(&self) -> &[InventoryRow] {
     &self.inventory
+  }
+
+  pub(super) fn inventory_total(&self) -> i64 {
+    self.totals.items
   }
 
   pub(super) fn inventory_scroll_offset(&self) -> f32 {
@@ -613,6 +619,10 @@ impl State {
 
   pub(super) fn abyssals(&self) -> &[abyssals::AbyssalCard] {
     &self.abyssals
+  }
+
+  pub(super) fn abyssal_total(&self) -> i64 {
+    self.abyssal_total
   }
 
   pub(super) fn abyssal_source_types(&self) -> &[abyssals::SourceTypeFilter] {
@@ -844,6 +854,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_has_more = abyssals.cards.len() as i64 == abyssals::PAGE_SIZE;
   state.abyssal_loading = false;
   state.abyssal_scroll_offset = 0.0;
+  state.abyssal_total = abyssals.total;
   state.abyssals = abyssals.cards;
   state.abyssal_source_types = abyssals.source_types;
   state.abyssal_filters = abyssals::Filters::default();
@@ -884,6 +895,7 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   state.stockpiles = stockpiles;
   state.abyssal_has_more = abyssals.cards.len() as i64 == abyssals::PAGE_SIZE;
   state.abyssal_loading = false;
+  state.abyssal_total = abyssals.total;
   state.abyssals = abyssals.cards;
   state.abyssal_source_types = abyssals.source_types;
   state.geo_tree = geo_tree;
@@ -1591,17 +1603,24 @@ fn update_abyssal(state: &mut State, message: Message, db: &Database) -> Task<Me
       state.abyssal_loading = false;
       state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
       state.abyssals.extend(cards);
+      // Deliberately leave abyssal_total alone: it is the filter-aware DB count, not the loaded
+      // length, so appending a scroll page must not overwrite it.
       Task::none()
     }
     Message::AbyssalStatTemplatesLoaded(templates) => {
       state.abyssal_stat_templates = templates;
       Task::none()
     }
-    Message::AbyssalCardsReloaded(cards) => {
+    Message::AbyssalCardsReloaded(reload) => {
+      let abyssals::FilteredCards {
+        cards,
+        total,
+      } = reload;
       state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
       state.abyssal_loading = false;
       state.abyssal_scroll_offset = 0.0;
       state.abyssals = cards;
+      state.abyssal_total = total;
       Task::none()
     }
     other => update_abyssal_slider(state, other, db),
@@ -1813,7 +1832,7 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
 
   match owner {
     Owner::Character(id) => {
-      let totals = assets::inventory_totals_for_character(db, *id, &view.filter, me_id)
+      let totals = assets::inventory_totals_for_character(db, *id, &view.filter, &view.location_ids, me_id)
         .await
         .unwrap_or_default();
       let inventory = assets::inventory_page_for_character(db, *id, &query)
@@ -1825,16 +1844,23 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
       character_ids,
       corporation_ids,
     } => {
-      let totals = assets::inventory_totals_for_combined(db, character_ids, corporation_ids, &view.filter, None)
-        .await
-        .unwrap_or_default();
+      let totals = assets::inventory_totals_for_combined(
+        db,
+        character_ids,
+        corporation_ids,
+        &view.filter,
+        &view.location_ids,
+        None,
+      )
+      .await
+      .unwrap_or_default();
       let inventory = assets::inventory_page_for_combined(db, character_ids, corporation_ids, &query)
         .await
         .unwrap_or_default();
       (totals, inventory)
     }
     Owner::Corporation(id) => {
-      let totals = assets::inventory_totals_for_corporation(db, *id, &view.filter, None)
+      let totals = assets::inventory_totals_for_corporation(db, *id, &view.filter, &view.location_ids, None)
         .await
         .unwrap_or_default();
       let inventory = assets::inventory_page_for_corporation(db, *id, &query)
@@ -2613,17 +2639,46 @@ mod tests {
       // A reload that returns a full page keeps has_more true and clears loading/offset.
       let _ = update(
         &mut state,
-        Message::AbyssalCardsReloaded(abyssal_cards(abyssals::PAGE_SIZE as usize)),
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
+          total: 137,
+        }),
         &db,
       );
 
       assert_eq!(state.abyssals().len(), abyssals::PAGE_SIZE as usize);
+      assert_eq!(state.abyssal_total(), 137, "the reload feeds the filter-aware DB total");
       assert!(state.abyssal_has_more(), "a full reload page implies more to load");
       assert!(!state.abyssal_loading());
       assert_eq!(
         state.abyssal_scroll_offset(),
         0.0,
         "a reload returns the grid to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_scroll_append_does_not_clobber_the_abyssal_total() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
+          total: 200,
+        }),
+        &db,
+      );
+      state.set_abyssal_pagination_for_test(true, true);
+
+      let _ = update(&mut state, Message::AbyssalPageLoaded(abyssal_cards(10)), &db);
+
+      assert_eq!(
+        state.abyssal_total(),
+        200,
+        "appending a scroll page leaves the DB total untouched"
       );
     }
 

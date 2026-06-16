@@ -85,6 +85,7 @@ impl DetailDataType {
       | JobKind::CharacterWallet
       | JobKind::CorporationBlueprints
       | JobKind::CorporationContacts
+      | JobKind::CorporationContracts
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationKillmails
       | JobKind::CorporationProfile

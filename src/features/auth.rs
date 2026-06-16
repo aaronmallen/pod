@@ -536,6 +536,16 @@ mod tests {
     }
 
     #[test]
+    fn it_derives_corp_contracts_when_wallet_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Wallet]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_CONTRACTS),
+        "an enabled Wallet feature must request the corp contracts scope, got {requested:?}"
+      );
+    }
+
+    #[test]
     fn it_derives_corp_asset_and_wallet_scopes_from_their_features() {
       let requested = corp_scopes_for(&[Feature::AssetTracking, Feature::Wallet]);
 

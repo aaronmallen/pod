@@ -28,6 +28,7 @@ pub enum JobKind {
   CharacterWallet,
   CorporationBlueprints,
   CorporationContacts,
+  CorporationContracts,
   CorporationIndustryJobs,
   CorporationKillmails,
   CorporationProfile,
@@ -63,6 +64,7 @@ impl JobKind {
     JobKind::CharacterWallet,
     JobKind::CorporationBlueprints,
     JobKind::CorporationContacts,
+    JobKind::CorporationContracts,
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationKillmails,
     JobKind::CorporationProfile,
@@ -146,6 +148,7 @@ impl JobKind {
       (Self::CharacterWallet, _) => Some(scopes::CHARACTER_WALLET),
       (Self::CorporationBlueprints, _) => Some(scopes::CORPORATION_BLUEPRINTS),
       (Self::CorporationContacts, _) => Some(scopes::CORPORATION_CONTACTS),
+      (Self::CorporationContracts, _) => Some(scopes::CORPORATION_CONTRACTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationKillmails, _) => Some(scopes::CORPORATION_KILLMAILS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
@@ -182,6 +185,7 @@ impl JobKind {
         Self::AssetSync
           | Self::CorporationBlueprints
           | Self::CorporationContacts
+          | Self::CorporationContracts
           | Self::CorporationIndustryJobs
           | Self::CorporationKillmails
           | Self::CorporationProfile
@@ -208,6 +212,7 @@ impl JobKind {
       | Self::CharacterWallet
       | Self::CorporationBlueprints
       | Self::CorporationContacts
+      | Self::CorporationContracts
       | Self::CorporationIndustryJobs
       | Self::CorporationProfile
       | Self::CorporationStandings
@@ -259,6 +264,7 @@ impl JobKind {
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationContacts => &[scopes::CORPORATION_CONTACTS],
+      Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationKillmails => &[scopes::CORPORATION_KILLMAILS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
@@ -375,6 +381,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::KillmailDetailBackfill => super::jobs::killmail_detail_backfill::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationContacts => super::jobs::corporation_contacts::run(ctx).await,
+    JobKind::CorporationContracts => super::jobs::corporation_contracts::run(ctx).await,
     JobKind::CorporationKillmails => super::jobs::corporation_killmails::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationStandings => super::jobs::corporation_standings::run(ctx).await,

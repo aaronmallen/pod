@@ -15,6 +15,7 @@ pub mod character_standings;
 pub mod character_telemetry;
 pub mod character_wallet;
 pub mod corporation_contacts;
+pub mod corporation_contracts;
 pub mod corporation_killmails;
 pub mod corporation_profile;
 pub mod corporation_standings;

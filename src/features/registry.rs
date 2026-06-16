@@ -119,6 +119,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         JobKind::CharacterContracts,
         JobKind::CharacterMarketOrders,
         JobKind::CharacterWallet,
+        JobKind::CorporationContracts,
         JobKind::CorporationWallet,
         JobKind::MarketPrices,
         JobKind::NetWorthSnapshot,

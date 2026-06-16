@@ -4,6 +4,7 @@ pub mod auth;
 pub mod calendar;
 pub mod character_detail;
 pub mod character_manager;
+pub mod contract_detail;
 pub mod corporation_detail;
 pub mod entity_search;
 pub mod industry;

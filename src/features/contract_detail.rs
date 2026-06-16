@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},

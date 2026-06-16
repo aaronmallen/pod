@@ -1730,6 +1730,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
+
+      let _ = update(&mut state, Message::ContractSelected(12_345), &db);
+
+      assert!(state.selected_contract.is_none());
+    }
+
+    #[tokio::test]
+    async fn selecting_an_unknown_contract_row_is_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::ContractSelected(999), &db);
+
+      assert!(state.selected_contract.is_none());
+    }
+
+    #[tokio::test]
     async fn selecting_a_corp_scope_resets_the_active_division_to_the_master() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();

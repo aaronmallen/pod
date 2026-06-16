@@ -72,6 +72,7 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     .style(card_surface);
 
   mouse_area(body)
+    .on_press(Message::CorporationSelected(model.corporation_id))
     .on_right_press(Message::CorpRightPressed(model.corporation_id))
     .into()
 }

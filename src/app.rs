@@ -25,8 +25,8 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, industry, mail,
-    registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
+    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot,
+    corporation_detail, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::updater,
   store,
@@ -115,6 +115,7 @@ struct App {
   /// been received but the share has not yet been claimed — the forceful claim fires only on the
   /// second explicit confirmation.
   confirm_force_takeover: bool,
+  corporation_detail: Option<corporation_detail::State>,
   detail_dirty: HashSet<character_detail::DetailDataType>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
@@ -246,6 +247,7 @@ enum Message {
   CloseSyncPopover,
   Compare(skills_compare::Message),
   ConfirmTakeOver,
+  CorporationDetail(corporation_detail::Message),
   EngineStopped {
     reason: Option<String>,
   },
@@ -315,6 +317,7 @@ impl Message {
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
       Message::Compare(_) => "Compare",
+      Message::CorporationDetail(_) => "CorporationDetail",
       Message::Industry(_) => "Industry",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
@@ -400,6 +403,7 @@ enum Route {
   CharacterDetail(i64),
   #[default]
   Characters,
+  CorporationDetail(i64),
   Industry,
   Mail,
   Settings,
@@ -442,7 +446,7 @@ impl Route {
     match self {
       Route::Assets => rail::Destination::Assets,
       Route::Calendar => rail::Destination::Calendar,
-      Route::Characters | Route::CharacterDetail(_) => rail::Destination::Characters,
+      Route::Characters | Route::CharacterDetail(_) | Route::CorporationDetail(_) => rail::Destination::Characters,
       Route::Industry => rail::Destination::Industry,
       Route::Mail => rail::Destination::Mail,
       Route::Settings => rail::Destination::Settings,
@@ -457,6 +461,7 @@ impl Route {
       Route::Calendar => "Calendar",
       Route::CharacterDetail(_) => "CharacterDetail",
       Route::Characters => "Characters",
+      Route::CorporationDetail(_) => "CorporationDetail",
       Route::Industry => "Industry",
       Route::Mail => "Mail",
       Route::Settings => "Settings",
@@ -760,6 +765,7 @@ fn boot() -> (App, Task<Message>) {
     coalescer: WriteCoalescer::new(),
     compare: None,
     confirm_force_takeover: false,
+    corporation_detail: None,
     detail_dirty: HashSet::new(),
     editor: None,
     engine_state: EngineState::default(),
@@ -1393,6 +1399,15 @@ fn navigate_to_character_detail(app: &mut App, id: i64) -> Task<Message> {
   }
 }
 
+fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Message> {
+  navigate(app, Route::CorporationDetail(id));
+  app.corporation_detail = Some(corporation_detail::State::new(id));
+  match app.runtime.as_ref() {
+    Some(runtime) => corporation_detail::load(&runtime.db, id).map(Message::CorporationDetail),
+    None => Task::none(),
+  }
+}
+
 fn detail_reload_target(
   detail: Option<&character_detail::State>,
   key: JobKey,
@@ -1472,6 +1487,11 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
       .character_manager
       .as_ref()
       .map(character_manager::State::stale_images)
+      .unwrap_or_default(),
+    Route::CorporationDetail(_) => app
+      .corporation_detail
+      .as_ref()
+      .map(corporation_detail::State::stale_images)
       .unwrap_or_default(),
     Route::Industry => app
       .industry
@@ -1585,6 +1605,11 @@ fn image_reload(app: &App) -> Task<Message> {
     Route::Characters => {
       if app.character_manager.is_some() {
         tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
+      }
+    }
+    Route::CorporationDetail(_) => {
+      if let Some(detail) = app.corporation_detail.as_ref() {
+        tasks.push(corporation_detail::load(&runtime.db, detail.active()).map(Message::CorporationDetail));
       }
     }
     Route::Industry => {
@@ -1805,6 +1830,7 @@ fn route_view(app: &App) -> Element<'_, Message> {
     Route::Calendar => calendar_route_view(app),
     Route::CharacterDetail(_) => character_detail_route_view(app),
     Route::Characters => characters_route_view(app),
+    Route::CorporationDetail(_) => corporation_detail_route_view(app),
     Route::Industry => industry_route_view(app),
     Route::Mail => mail_route_view(app),
     Route::Settings => settings_route_view(app),
@@ -1835,6 +1861,13 @@ fn characters_route_view(app: &App) -> Element<'_, Message> {
 fn character_detail_route_view(app: &App) -> Element<'_, Message> {
   match &app.character_detail {
     Some(state) => character_detail::view(state).map(Message::CharacterDetail),
+    None => starting_up(),
+  }
+}
+
+fn corporation_detail_route_view(app: &App) -> Element<'_, Message> {
+  match &app.corporation_detail {
+    Some(state) => corporation_detail::view(state).map(Message::CorporationDetail),
     None => starting_up(),
   }
 }
@@ -2596,6 +2629,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
+    Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
@@ -3480,6 +3514,7 @@ fn handle_character_manager(app: &mut App, msg: character_manager::Message) -> T
       Message::Auth(auth::Message::StartAddCorporation(enabled_features(app))),
     ),
     character_manager::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
+    character_manager::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
     character_manager::Message::TrainingSkillClicked(character_id) => {
       let owned = owned_pilot_ids(app);
       navigate_to_skills(app, Some(character_id), owned)
@@ -3562,6 +3597,13 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
   match (app.character_detail.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => character_detail::update(state, msg, &runtime.db).map(Message::CharacterDetail),
     _ => Task::none(),
+  }
+}
+
+fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) -> Task<Message> {
+  match app.corporation_detail.as_mut() {
+    Some(state) => corporation_detail::update(state, msg).map(Message::CorporationDetail),
+    None => Task::none(),
   }
 }
 
@@ -4259,6 +4301,7 @@ mod tests {
       coalescer: WriteCoalescer::new(),
       compare: None,
       confirm_force_takeover: false,
+      corporation_detail: None,
       detail_dirty: HashSet::new(),
       editor: None,
       engine_state: EngineState::default(),
@@ -4845,6 +4888,41 @@ mod tests {
     }
 
     #[test]
+    fn it_navigates_to_the_corporation_detail_for_the_selected_corporation() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+      );
+
+      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
+      assert!(app.corporation_detail.is_some());
+    }
+
+    #[test]
+    fn it_keeps_the_characters_destination_lit_while_a_corporation_is_drilled_in() {
+      assert_eq!(
+        Route::CorporationDetail(98_000_001).destination(),
+        rail::Destination::Characters
+      );
+    }
+
+    #[test]
+    fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_corp_detail() {
+      let mut app = test_app();
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+      );
+      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
+
+      assert_eq!(app.route, Route::Characters);
+    }
+
+    #[test]
     fn it_navigates_to_the_wallet_screen_on_the_wallet_rail_destination() {
       let mut app = test_app();
 
@@ -5220,6 +5298,7 @@ mod tests {
     fn it_renders_every_route_through_route_view() {
       render_route(Route::Characters);
       render_route(Route::CharacterDetail(1));
+      render_route(Route::CorporationDetail(1));
       render_route(Route::Skills(1));
       render_route(Route::Mail);
       render_route(Route::Wallet);
@@ -7066,6 +7145,7 @@ mod tests {
     fn it_names_every_route_variant() {
       assert_eq!(Route::Characters.name(), "Characters");
       assert_eq!(Route::CharacterDetail(1).name(), "CharacterDetail");
+      assert_eq!(Route::CorporationDetail(1).name(), "CorporationDetail");
       assert_eq!(Route::Skills(1).name(), "Skills");
       assert_eq!(Route::Mail.name(), "Mail");
       assert_eq!(Route::Wallet.name(), "Wallet");

@@ -256,6 +256,7 @@ pub enum Message {
   CopyCharacterName(String),
   CopyCorporationName(String),
   CorporationRemoved(Result<(), String>),
+  CorporationSelected(i64),
   CorpRightPressed(i64),
   CorpSearchResults {
     generation: u64,
@@ -959,6 +960,10 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
     }
     Message::CharacterSelected(id) => {
       tracing::info!(character_id = id, "character selected; detail view not yet implemented");
+      Task::none()
+    }
+    Message::CorporationSelected(id) => {
+      tracing::info!(corporation_id = id, "corporation selected; handled by the app router");
       Task::none()
     }
     Message::CharactersLoaded(Ok((

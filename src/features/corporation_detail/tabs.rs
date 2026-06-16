@@ -1,11 +1,11 @@
+pub(crate) mod contacts;
 pub(crate) mod killlog;
 mod shared;
 pub(crate) mod standings;
 
 use iced::{
   Element, Length, Padding,
-  alignment::{Horizontal, Vertical},
-  widget::{Column, container, responsive, scrollable, text},
+  widget::{Column, container, responsive, scrollable},
 };
 
 use super::{Message, State};
@@ -14,7 +14,7 @@ use crate::ui::{
     rule,
     tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
   },
-  style::{color, spacing, typography},
+  style::spacing,
 };
 
 pub(super) const SCROLL_THRESHOLD: f32 = 0.85;
@@ -37,22 +37,6 @@ impl Tab {
       Tab::Contacts => "Contacts",
       Tab::Killlog => "Kill Log",
       Tab::Standings => "Standings",
-    }
-  }
-
-  fn placeholder_subtitle(self) -> &'static str {
-    match self {
-      Tab::Contacts => "Corporation contacts will appear here once contact sync ships.",
-      Tab::Killlog => "The corporation kill log will appear here once killmail sync ships.",
-      Tab::Standings => "Corporation standings will appear here once standings sync ships.",
-    }
-  }
-
-  fn placeholder_title(self) -> &'static str {
-    match self {
-      Tab::Contacts => "No contacts yet",
-      Tab::Killlog => "No kills yet",
-      Tab::Standings => "No standings yet",
     }
   }
 }
@@ -89,32 +73,65 @@ pub(super) fn tab_strip<'a>(active: Tab) -> Element<'a, Message> {
 
 pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
-    Tab::Contacts => placeholder(Tab::Contacts),
+    Tab::Contacts => windowed_contacts(state),
     Tab::Killlog => windowed_killlog(state),
     Tab::Standings => windowed_standings(state),
   }
 }
 
-fn placeholder<'a>(active: Tab) -> Element<'a, Message> {
-  let content = Column::with_children(vec![
-    text(active.placeholder_title())
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(active.placeholder_subtitle())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_x(Horizontal::Center);
+/// Lays out the Contacts tab: a hoisted, non-scrolling header (search box + entity-type facet) above a
+/// height-filling scrollable whose sole content is the virtualized body. The scrollable is nested inside
+/// `responsive` so the body builder receives the real viewport height; the scrollbar's offset drives both the
+/// pagination threshold and the virtual window.
+fn windowed_contacts(state: &State) -> Element<'_, Message> {
+  let side = Padding {
+    top: 0.0,
+    right: TAB_BODY_PADDING,
+    bottom: 0.0,
+    left: TAB_BODY_PADDING,
+  };
 
-  container(content)
+  let header = container(contacts::header(
+    state.contacts(),
+    state.contact_filter(),
+    state.contacts_query(),
+  ))
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_6,
+    bottom: spacing::SPACE_3_5,
+    ..side
+  });
+
+  let scroll = responsive(move |size| {
+    scrollable(
+      container(contacts::body(
+        state.contacts(),
+        state.contact_sort(),
+        size.height,
+        state.contacts_scroll_offset(),
+      ))
+      .width(Length::Fill)
+      .padding(Padding {
+        top: 0.0,
+        right: TAB_BODY_PADDING,
+        bottom: spacing::SPACE_6,
+        left: TAB_BODY_PADDING,
+      }),
+    )
+    .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
     .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
+    .on_scroll(|viewport| Message::ContactsScrolled {
+      absolute: viewport.absolute_offset().y,
+      relative: viewport.relative_offset().y,
+    })
+    .into()
+  });
+
+  Column::with_children(vec![header.into(), scroll.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
     .into()
 }
 

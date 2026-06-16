@@ -10,13 +10,21 @@ use iced::{
 };
 
 pub use self::tabs::Tab;
-use self::tabs::killlog::{KillLogEntry, KilllogFilter};
+use self::tabs::{
+  contacts::ContactRow,
+  killlog::{KillLogEntry, KilllogFilter},
+};
 pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
-    repo::{character, org, sde, standings},
+    model::{CorporationContactLabel, character_contacts_view::image_kind},
+    repo::{
+      character,
+      character::{ContactCursor, ContactSortColumn, ContactSortDir},
+      org, sde, standings,
+    },
   },
   ui::{
     components::{
@@ -27,6 +35,7 @@ use crate::{
   },
 };
 
+const CONTACTS_PAGE_SIZE: i64 = 100;
 const KILLLOG_PAGE_SIZE: i64 = 100;
 
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "corp-standings-search-input";
@@ -36,8 +45,49 @@ const PLACEHOLDER: &str = "\u{2014}";
 const SEARCH_DEBOUNCE_MS: u64 = 200;
 const STANDINGS_PAGE_SIZE: i64 = 100;
 
+/// One keyset page of render-ready contact rows plus the per-corporation label lookup. The labels travel with the
+/// first page so the address-book notes can resolve label ids without a second query per page.
+#[derive(Clone, Debug)]
+pub struct ContactsPage {
+  cursor: Option<ContactCursor>,
+  has_more: bool,
+  labels: Vec<CorporationContactLabel>,
+  rows: Vec<ContactRow>,
+}
+
+impl ContactsPage {
+  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
+  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
+  #[cfg(test)]
+  pub(in crate::features::corporation_detail) fn for_test(
+    rows: Vec<ContactRow>,
+    labels: Vec<CorporationContactLabel>,
+    has_more: bool,
+  ) -> Self {
+    ContactsPage {
+      cursor: None,
+      has_more,
+      labels,
+      rows,
+    }
+  }
+
+  pub(super) fn has_more(&self) -> bool {
+    self.has_more
+  }
+
+  pub(super) fn labels(&self) -> &[CorporationContactLabel] {
+    &self.labels
+  }
+
+  pub(super) fn rows(&self) -> &[ContactRow] {
+    &self.rows
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct CorpDetail {
+  pub contacts: ContactsPage,
   pub head: Option<CorpHead>,
   pub killlog: LoadState<Vec<KillLogEntry>>,
 }
@@ -65,6 +115,12 @@ pub enum LoadState<T> {
 #[derive(Clone, Debug)]
 pub enum Message {
   CloseKillmailDetail,
+  ContactFilterChanged(tabs::contacts::ContactFilter),
+  ContactSortChanged(tabs::contacts::ContactSort),
+  ContactsPageLoaded(Box<ContactsPage>),
+  ContactsScrolled { absolute: f32, relative: f32 },
+  ContactsSearchChanged(String),
+  ContactsSearchCleared,
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
   KilllogScrolled { absolute: f32, relative: f32 },
@@ -84,6 +140,14 @@ pub enum Message {
 pub struct State {
   active: i64,
   active_tab: Tab,
+  contact_filter: tabs::contacts::ContactFilter,
+  contact_sort: tabs::contacts::ContactSort,
+  contacts: LoadState<ContactsPage>,
+  contacts_cursor: Option<ContactCursor>,
+  contacts_has_more: bool,
+  contacts_loading_more: bool,
+  contacts_query: String,
+  contacts_scroll_offset: f32,
   head: Option<CorpHead>,
   killlog: LoadState<Vec<KillLogEntry>>,
   killlog_cursor: Option<(String, i64)>,
@@ -107,6 +171,14 @@ impl State {
     State {
       active,
       active_tab: Tab::ORDER[0],
+      contact_filter: tabs::contacts::ContactFilter::All,
+      contact_sort: tabs::contacts::ContactSort::default(),
+      contacts: LoadState::Loading,
+      contacts_cursor: None,
+      contacts_has_more: false,
+      contacts_loading_more: false,
+      contacts_query: String::new(),
+      contacts_scroll_offset: 0.0,
       head: None,
       killlog: LoadState::Loading,
       killlog_cursor: None,
@@ -137,6 +209,9 @@ impl State {
       .and_then(|head| head.logo.stale_key())
       .into_iter()
       .collect();
+    if let LoadState::Loaded(page) = &self.contacts {
+      keys.extend(page.rows.iter().filter_map(|row| row.image.stale_key()));
+    }
     if let LoadState::Loaded(rows) = &self.standings {
       keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
     }
@@ -148,6 +223,26 @@ impl State {
 
   pub(super) fn active_tab(&self) -> Tab {
     self.active_tab
+  }
+
+  pub(super) fn contact_filter(&self) -> tabs::contacts::ContactFilter {
+    self.contact_filter
+  }
+
+  pub(super) fn contact_sort(&self) -> tabs::contacts::ContactSort {
+    self.contact_sort
+  }
+
+  pub(super) fn contacts(&self) -> &LoadState<ContactsPage> {
+    &self.contacts
+  }
+
+  pub(super) fn contacts_query(&self) -> &str {
+    &self.contacts_query
+  }
+
+  pub(super) fn contacts_scroll_offset(&self) -> f32 {
+    self.contacts_scroll_offset
   }
 
   pub(super) fn killlog(&self) -> &LoadState<Vec<KillLogEntry>> {
@@ -239,6 +334,78 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.selected_killmail = None;
       Task::none()
     }
+    Message::ContactFilterChanged(filter) => {
+      state.contact_filter = filter;
+      restart_contacts(state, db)
+    }
+    Message::ContactSortChanged(sort) => {
+      state.contact_sort = sort;
+      restart_contacts(state, db)
+    }
+    Message::ContactsPageLoaded(page) => {
+      let ContactsPage {
+        cursor,
+        has_more,
+        labels,
+        rows,
+      } = *page;
+      state.contacts_loading_more = false;
+      state.contacts_has_more = has_more;
+      state.contacts_cursor = cursor.clone();
+      // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
+      // (a fresh first page from initial load or a sort/filter restart).
+      match &mut state.contacts {
+        LoadState::Loaded(existing) => {
+          existing.cursor = cursor;
+          existing.has_more = has_more;
+          existing.rows.extend(rows);
+          if existing.labels.is_empty() {
+            existing.labels = labels;
+          }
+        }
+        _ => {
+          state.contacts = LoadState::Loaded(ContactsPage {
+            cursor,
+            has_more,
+            labels,
+            rows,
+          });
+        }
+      }
+      Task::none()
+    }
+    Message::ContactsScrolled {
+      absolute,
+      relative,
+    } => {
+      state.contacts_scroll_offset = absolute;
+      if relative < tabs::SCROLL_THRESHOLD || !state.contacts_has_more || state.contacts_loading_more {
+        return Task::none();
+      }
+      let Some(cursor) = state.contacts_cursor.clone() else {
+        return Task::none();
+      };
+      state.contacts_loading_more = true;
+      let (contact_type, query, sort, dir) = contact_query_params(state);
+      Task::perform(
+        load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, Some(cursor)),
+        |page| Message::ContactsPageLoaded(Box::new(page)),
+      )
+    }
+    Message::ContactsSearchChanged(query) => {
+      if state.contacts_query == query {
+        return Task::none();
+      }
+      state.contacts_query = query;
+      restart_contacts(state, db)
+    }
+    Message::ContactsSearchCleared => {
+      if state.contacts_query.is_empty() {
+        return Task::none();
+      }
+      state.contacts_query.clear();
+      restart_contacts(state, db)
+    }
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
       Task::none()
@@ -280,11 +447,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::Loaded(detail) => {
       let CorpDetail {
+        contacts,
         head,
         killlog,
       } = *detail;
+      state.contacts = LoadState::Loaded(contacts);
       state.head = head;
       state.killlog = killlog;
+      reset_contacts_pagination(state);
       reset_killlog_pagination(state);
       trigger_standings_search(state, db)
     }
@@ -554,12 +724,84 @@ fn standings_row(store: &images::Store, row: standings::CatalogRow) -> Standings
 }
 
 async fn load_detail(db: &Database, corporation_id: i64) -> CorpDetail {
+  let contacts = load_contacts(db, corporation_id).await;
   let head = load_head(db, corporation_id).await;
   let killlog = load_killlog(db, corporation_id).await;
 
   CorpDetail {
+    contacts,
     head,
     killlog,
+  }
+}
+
+async fn load_contacts(db: &Database, corporation_id: i64) -> ContactsPage {
+  load_contacts_page(
+    db.clone(),
+    corporation_id,
+    None,
+    None,
+    ContactSortColumn::Standing,
+    ContactSortDir::Desc,
+    None,
+  )
+  .await
+}
+
+/// Fetches and image-resolves one keyset page of contacts. The returned page carries the next cursor (when the page
+/// filled to the page size). A first page (`after` is `None`) also carries the per-corporation labels, so the initial
+/// load and every sort/filter restart bring the address-book labels along; follow-on pages return an empty label set
+/// and the caller keeps the labels it already holds.
+async fn load_contacts_page(
+  db: Database,
+  corporation_id: i64,
+  contact_type: Option<&'static str>,
+  query: Option<String>,
+  sort: ContactSortColumn,
+  dir: ContactSortDir,
+  after: Option<ContactCursor>,
+) -> ContactsPage {
+  let labels = if after.is_none() {
+    org::corporation_contact_labels(&db, corporation_id)
+      .await
+      .unwrap_or_default()
+  } else {
+    Vec::new()
+  };
+
+  let rows = org::corporation_contacts_page(
+    &db,
+    corporation_id,
+    contact_type,
+    query.as_deref(),
+    sort,
+    dir,
+    after.as_ref(),
+    CONTACTS_PAGE_SIZE,
+  )
+  .await
+  .unwrap_or_default();
+  let has_more = rows.len() as i64 == CONTACTS_PAGE_SIZE;
+
+  let store = images::default_store();
+  let rows: Vec<ContactRow> = rows
+    .into_iter()
+    .map(|contact| {
+      let kind = image_kind(contact.contact_type());
+      let image = images::resolve(&store, kind, contact.contact_id());
+      ContactRow {
+        contact,
+        image,
+      }
+    })
+    .collect();
+  let cursor = rows.last().map(|row| contact_cursor(sort, row));
+
+  ContactsPage {
+    cursor,
+    has_more,
+    labels,
+    rows,
   }
 }
 
@@ -791,8 +1033,71 @@ pub(super) fn fmt_isk(balance: Option<f64>) -> String {
   }
 }
 
+/// Derives the next keyset cursor from the last row of a page, matching the active sort column.
+fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
+  let id = row.contact.contact_id();
+  match sort {
+    ContactSortColumn::Name => ContactCursor::Text(row.contact.contact_name().clone(), id),
+    ContactSortColumn::Type => ContactCursor::Text(row.contact.contact_type().clone(), id),
+    ContactSortColumn::Standing => ContactCursor::Number(row.contact.standing(), id),
+  }
+}
+
+fn contact_query_params(state: &State) -> (Option<&'static str>, Option<String>, ContactSortColumn, ContactSortDir) {
+  use tabs::contacts::{SortColumn, SortDirection};
+
+  let contact_type = state.contact_filter.contact_type();
+  let query = {
+    let trimmed = state.contacts_query.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+  };
+  let sort = match state.contact_sort.column {
+    SortColumn::Entity => ContactSortColumn::Name,
+    SortColumn::Standing => ContactSortColumn::Standing,
+    SortColumn::Type => ContactSortColumn::Type,
+  };
+  let dir = match state.contact_sort.direction {
+    SortDirection::Ascending => ContactSortDir::Asc,
+    SortDirection::Descending => ContactSortDir::Desc,
+  };
+  (contact_type, query, sort, dir)
+}
+
 fn killlog_cursor(entry: &KillLogEntry) -> (String, i64) {
   (entry.kill_time.clone(), entry.killmail_id)
+}
+
+/// Re-derives the contacts pagination guards from whatever page is currently loaded. A short page (fewer rows than
+/// the page size) is the last page, so `has_more` is false and no further fetch is attempted.
+fn reset_contacts_pagination(state: &mut State) {
+  let (_, _, sort, _) = contact_query_params(state);
+  state.contacts_loading_more = false;
+  state.contacts_scroll_offset = 0.0;
+  match &state.contacts {
+    LoadState::Loaded(page) => {
+      state.contacts_has_more = page.has_more;
+      state.contacts_cursor = page.rows.last().map(|row| contact_cursor(sort, row));
+    }
+    _ => {
+      state.contacts_has_more = false;
+      state.contacts_cursor = None;
+    }
+  }
+}
+
+/// Re-runs the first contacts page after a sort, filter, or search change so the new ordering/facet is applied in
+/// SQL (rather than holding the whole address book in memory) and the virtual window snaps back to the top.
+fn restart_contacts(state: &mut State, db: &Database) -> Task<Message> {
+  state.contacts = LoadState::Loading;
+  state.contacts_cursor = None;
+  state.contacts_has_more = false;
+  state.contacts_loading_more = true;
+  state.contacts_scroll_offset = 0.0;
+  let (contact_type, query, sort, dir) = contact_query_params(state);
+  Task::perform(
+    load_contacts_page(db.clone(), state.active, contact_type, query, sort, dir, None),
+    |page| Message::ContactsPageLoaded(Box::new(page)),
+  )
 }
 
 fn reset_killlog_pagination(state: &mut State) {
@@ -847,6 +1152,7 @@ mod tests {
 
   fn detail() -> CorpDetail {
     CorpDetail {
+      contacts: ContactsPage::for_test(Vec::new(), Vec::new(), false),
       head: Some(head()),
       killlog: LoadState::Loaded(Vec::new()),
     }

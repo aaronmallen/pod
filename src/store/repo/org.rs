@@ -10,7 +10,10 @@ use crate::store::{
     OwnedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
-  repo::infra::like_pattern,
+  repo::{
+    character::{ContactCursor, ContactSortColumn, ContactSortDir},
+    infra::like_pattern,
+  },
   search::{FilterToken, ParsedQuery},
 };
 
@@ -719,6 +722,93 @@ pub async fn replace_labels_for_corporation(
 
   tx.commit().await?;
   Ok(())
+}
+
+pub async fn corporation_contact_labels(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<Vec<CorporationContactLabel>, Error> {
+  let labels = sqlx::query_as::<_, CorporationContactLabel>(
+    "SELECT corporation_id, label_id, label_name FROM corporation_contact_labels \
+    WHERE corporation_id = ? ORDER BY label_id",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(labels)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn corporation_contacts_page(
+  db: &Database,
+  corporation_id: i64,
+  contact_type: Option<&str>,
+  query: Option<&str>,
+  sort: ContactSortColumn,
+  dir: ContactSortDir,
+  cursor: Option<&ContactCursor>,
+  limit: i64,
+) -> Result<Vec<CorporationContact>, Error> {
+  let column = match sort {
+    ContactSortColumn::Name => "contact_name",
+    ContactSortColumn::Standing => "standing",
+    ContactSortColumn::Type => "contact_type",
+  };
+  // The keyset comparator points the seek the same way the rows are ordered: `>` advances an ascending page,
+  // `<` advances a descending one. `contact_id` breaks ties so equal sort values can't strand or repeat a row.
+  let (cmp, order) = match dir {
+    ContactSortDir::Asc => (">", "ASC"),
+    ContactSortDir::Desc => ("<", "DESC"),
+  };
+
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT corporation_id, contact_id, contact_name, contact_type, is_blocked, is_watched, label_ids, standing \
+    FROM corporation_contacts WHERE corporation_id = ",
+  );
+  builder.push_bind(corporation_id);
+  if let Some(kind) = contact_type {
+    builder.push(" AND contact_type = ");
+    builder.push_bind(kind.to_owned());
+  }
+  if let Some(term) = query {
+    let term = term.trim();
+    if !term.is_empty() {
+      builder.push(" AND contact_name LIKE ");
+      builder.push_bind(like_pattern(term));
+      builder.push(" ESCAPE '\\'");
+    }
+  }
+  if let Some(cursor) = cursor {
+    builder.push(" AND (");
+    builder.push(column);
+    builder.push(format!(" {cmp} "));
+    match cursor {
+      ContactCursor::Text(value, id) => {
+        builder.push_bind(value.clone());
+        builder.push(" OR (");
+        builder.push(column);
+        builder.push(" = ");
+        builder.push_bind(value.clone());
+        builder.push(format!(" AND contact_id {cmp} "));
+        builder.push_bind(*id);
+      }
+      ContactCursor::Number(value, id) => {
+        builder.push_bind(*value);
+        builder.push(" OR (");
+        builder.push(column);
+        builder.push(" = ");
+        builder.push_bind(*value);
+        builder.push(format!(" AND contact_id {cmp} "));
+        builder.push_bind(*id);
+      }
+    }
+    builder.push("))");
+  }
+  builder.push(format!(" ORDER BY {column} {order}, contact_id {order} LIMIT "));
+  builder.push_bind(limit);
+
+  let rows = builder.build_query_as::<CorporationContact>().fetch_all(&db.0).await?;
+  Ok(rows)
 }
 
 pub async fn replace_standings_for_corporation(
@@ -1597,6 +1687,172 @@ mod corporation_tests {
         .unwrap();
 
       assert!(beyond.is_empty());
+    }
+  }
+
+  mod corporation_contact_labels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 5001;
+
+    #[tokio::test]
+    async fn it_returns_the_labels_ordered_by_label_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CORP_ID, 8001).await;
+      let labels = vec![
+        CorporationContactLabel {
+          corporation_id: CORP_ID,
+          label_id: 20,
+          label_name: "Allies".to_owned(),
+        },
+        CorporationContactLabel {
+          corporation_id: CORP_ID,
+          label_id: 10,
+          label_name: "Hostiles".to_owned(),
+        },
+      ];
+      replace_labels_for_corporation(&db, CORP_ID, &labels).await.unwrap();
+
+      let fetched = corporation_contact_labels(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(fetched.iter().map(|l| l.label_id()).collect::<Vec<_>>(), vec![10, 20]);
+    }
+  }
+
+  mod corporation_contacts_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 5002;
+
+    fn contact(id: i64, kind: &str, standing: f64, name: &str) -> CorporationContact {
+      CorporationContact {
+        contact_id: id,
+        contact_name: name.to_owned(),
+        contact_type: kind.to_owned(),
+        corporation_id: CORP_ID,
+        is_blocked: false,
+        is_watched: false,
+        label_ids: "[]".to_owned(),
+        standing,
+      }
+    }
+
+    async fn seed_contacts(db: &store::Database) {
+      seed_character(db, CORP_ID, 8002).await;
+      let contacts = vec![
+        contact(100, "character", 8.5, "Wingmate"),
+        contact(200, "corporation", -5.0, "Hostile Corp"),
+        contact(300, "alliance", 0.0, "Neutral Alliance"),
+      ];
+      replace_contacts_for_corporation(db, CORP_ID, &contacts).await.unwrap();
+    }
+
+    fn ids(rows: &[CorporationContact]) -> Vec<i64> {
+      rows.iter().map(|row| row.contact_id()).collect()
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_standing_descending() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![100, 300, 200]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_contact_type() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        Some("corporation"),
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![200]);
+    }
+
+    #[tokio::test]
+    async fn it_matches_a_name_query() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        Some("wing"),
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![100]);
+    }
+
+    #[tokio::test]
+    async fn it_pages_through_contacts_without_overlap_via_the_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let first = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        2,
+      )
+      .await
+      .unwrap();
+      assert_eq!(ids(&first), vec![100, 300]);
+
+      let last = first.last().unwrap();
+      let cursor = ContactCursor::Number(last.standing(), last.contact_id());
+      let second = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        Some(&cursor),
+        2,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&second), vec![200]);
     }
   }
 }

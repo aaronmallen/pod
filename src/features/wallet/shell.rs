@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, container, image, scrollable, text},
+  mouse,
+  widget::{Column, Row, Space, Stack, container, image, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -12,6 +13,7 @@ use super::{
 use crate::{
   clients::eve_image::Size,
   config::Feature,
+  features::contract_detail,
   store::images::{self, IconResolution},
   ui::{
     components::{
@@ -563,13 +565,6 @@ fn contract_header<'a>() -> Element<'a, Message> {
 }
 
 fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  if matches!(state.active(), Scope::Corporation(_)) {
-    return no_source_state(
-      "Contracts",
-      "Corporation contracts aren\u{2019}t synced yet \u{2014} switch to a character to view its contracts.",
-    );
-  }
-
   if !state.has_contracts() {
     return no_source_state(
       "Contracts",
@@ -588,18 +583,13 @@ fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a, Message> {
   let (counterparty_name, counterparty_id) = contract_counterparty(entry);
 
-  row_shell(vec![
+  let row = row_shell(vec![
     body_cell(
       humanize_contract_type(&entry.r#type),
       Length::FillPortion(2),
       color::text::PRIMARY,
     ),
-    mono_cell(
-      &entry.status.to_uppercase(),
-      Length::FillPortion(2),
-      Horizontal::Left,
-      color::text::secondary(),
-    ),
+    contract_status_cell(&entry.derived_status(now), Length::FillPortion(2)),
     party_cell(Some(entry.issuer_id), entry.issuer.as_deref(), Length::FillPortion(2)),
     party_cell(counterparty_id, counterparty_name, Length::FillPortion(2)),
     amount_cell(&fmt_isk(entry.value), Length::FillPortion(2), color::text::PRIMARY),
@@ -615,7 +605,42 @@ fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a,
       Horizontal::Left,
       color::text::secondary(),
     ),
+  ]);
+
+  mouse_area(row)
+    .on_press(Message::ContractSelected(entry.contract_id))
+    .interaction(mouse::Interaction::Pointer)
+    .into()
+}
+
+fn contract_status_cell<'a>(status: &str, width: Length) -> Element<'a, Message> {
+  let tint = contract_detail::contract_status_color(status);
+
+  let row = Row::with_children(vec![
+    container(Space::new())
+      .width(Length::Fixed(6.0))
+      .height(Length::Fixed(6.0))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(tint)),
+        border: Border {
+          radius: 3.0.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into(),
+    text(status.to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      })
+      .into(),
   ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  container(row).width(width).into()
 }
 
 fn party_or_dash(name: Option<&str>) -> String {
@@ -1248,6 +1273,7 @@ mod tests {
         character_id: 1,
         collateral: Some(5_000.0),
         contract_id: 42,
+        date_expired: None,
         date_issued: "2026-05-30T12:00:00Z".to_owned(),
         is_buy,
         issuer: Some("Issuer Pilot".to_owned()),
@@ -1292,6 +1318,34 @@ mod tests {
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert!(crate::features::wallet::filtered_contracts(&state).is_empty());
+    }
+
+    #[test]
+    fn it_renders_corporation_contracts_in_the_table() {
+      let mut state = state_on_contracts();
+      state.active = Scope::Corporation(98_000_001);
+      state.contracts = vec![contract(false, "finished", "item_exchange")];
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert!(state.has_contracts());
+    }
+  }
+
+  mod contract_status_cell {
+    use super::*;
+
+    #[test]
+    fn it_renders_each_status() {
+      for status in [
+        "outstanding",
+        "in_progress",
+        "finished",
+        "expired",
+        "outbid",
+        "cancelled",
+      ] {
+        let _el: Element<'_, Message> = super::super::contract_status_cell(status, Length::FillPortion(2));
+      }
     }
   }
 }

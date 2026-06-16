@@ -311,17 +311,25 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
 
   let items_value = items.iter().map(|item| item.value_isk).sum();
 
-  let issuer = PartyView {
-    name: party_name(&basis.issuer_name, basis.issuer_id),
-    portrait: images::resolve(
-      &images::default_store(),
-      images::ImageKind::CharacterPortrait,
-      basis.issuer_id,
-    ),
-    role: "Issuer",
-    sub: issuer_sub(db, &basis).await,
+  let issuer = match basis.for_corporation.then_some(basis.issuer_corporation_id).flatten() {
+    Some(corp_id) => PartyView {
+      name: corporation_name(db, corp_id).await,
+      portrait: images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp_id),
+      role: "Issuer",
+      sub: Some(party_name(&basis.issuer_name, basis.issuer_id)),
+    },
+    None => PartyView {
+      name: party_name(&basis.issuer_name, basis.issuer_id),
+      portrait: images::resolve(
+        &images::default_store(),
+        images::ImageKind::CharacterPortrait,
+        basis.issuer_id,
+      ),
+      role: "Issuer",
+      sub: issuer_sub(db, &basis).await,
+    },
   };
-  let acceptor = acceptor_view(&basis);
+  let acceptor = acceptor_view(db, &basis).await;
 
   let pickup_name = location_name(db, basis.start_location_id).await;
 
@@ -360,7 +368,7 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
   }
 }
 
-fn acceptor_view(basis: &ContractBasis) -> Option<PartyView> {
+async fn acceptor_view(db: &Database, basis: &ContractBasis) -> Option<PartyView> {
   let id = basis.acceptor_id?;
   let role = if basis.status == "finished" {
     "Acceptor"
@@ -372,9 +380,23 @@ fn acceptor_view(basis: &ContractBasis) -> Option<PartyView> {
   } else {
     "In progress"
   };
+  // The acceptor/assignee may be a corporation (corp-to-corp contracts); resolve it as a corp when the id
+  // matches a known corporation so the corp logo loads instead of a (404) character portrait.
+  let is_corp = org::get_corporation(db, id).await.ok().flatten().is_some();
+  let (name, portrait) = if is_corp {
+    (
+      corporation_name(db, id).await,
+      images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, id),
+    )
+  } else {
+    (
+      party_name(&basis.acceptor_name, id),
+      images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id),
+    )
+  };
   Some(PartyView {
-    name: party_name(&basis.acceptor_name, id),
-    portrait: images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id),
+    name,
+    portrait,
     role,
     sub: Some(sub.to_owned()),
   })
@@ -1760,6 +1782,37 @@ mod tests {
       seed_character(&db, 42).await;
 
       assert!(super::super::load_for_character(&db, 42, 999).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_uses_the_corp_logo_for_a_for_corporation_issuer() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      sqlx::query(
+        "INSERT INTO character_contracts \
+          (character_id, contract_id, type, status, issuer_id, issuer_name, issuer_corporation_id, price, reward, \
+          collateral, volume, for_corporation, date_issued, days_to_complete, start_location_id, end_location_id, \
+          availability) \
+        VALUES (?, ?, 'item_exchange', 'outstanding', ?, 'Issuer Pilot', ?, ?, NULL, NULL, NULL, 1, ?, NULL, NULL, \
+          NULL, 'public')",
+      )
+      .bind(42_i64)
+      .bind(7_i64)
+      .bind(42_i64)
+      .bind(90_000_001_i64)
+      .bind(10_000_000.0_f64)
+      .bind("2024-01-01T00:00:00Z")
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      let detail = super::super::load_for_character(&db, 42, 7).await.unwrap();
+
+      assert_eq!(detail.issuer.name, "Test Corp");
+      assert_eq!(
+        detail.issuer.portrait.stale_key(),
+        Some((images::ImageKind::CorporationLogo, 90_000_001))
+      );
     }
 
     #[tokio::test]

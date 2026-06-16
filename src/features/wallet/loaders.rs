@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+
 use crate::{
   clients::{eve_image, http},
   store::{Database, images, repo::finance},
@@ -14,6 +16,7 @@ pub struct ContractEntry {
   pub character_id: i64,
   pub collateral: Option<f64>,
   pub contract_id: i64,
+  pub date_expired: Option<String>,
   pub date_issued: String,
   pub is_buy: bool,
   pub issuer: Option<String>,
@@ -21,6 +24,26 @@ pub struct ContractEntry {
   pub status: String,
   pub r#type: String,
   pub value: Option<f64>,
+}
+
+impl ContractEntry {
+  /// Status as the modal maps it, with `expired` derived from the expiry timestamp.
+  ///
+  /// ESI never emits an `expired` status: an unaccepted contract simply stays
+  /// `outstanding` past its expiry. Outbid is not derivable here (the list view
+  /// carries no bid data), so an `outbid` status is only ever passed through.
+  pub fn derived_status(&self, now: DateTime<Utc>) -> String {
+    if matches!(self.status.as_str(), "outstanding" | "in_progress")
+      && self
+        .date_expired
+        .as_deref()
+        .and_then(|iso| DateTime::parse_from_rfc3339(iso).ok())
+        .is_some_and(|expiry| expiry.with_timezone(&Utc) < now)
+    {
+      return "expired".to_owned();
+    }
+    self.status.clone()
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +87,28 @@ fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEnt
     character_id: row.character_id(),
     collateral: row.collateral(),
     contract_id: row.contract_id(),
+    date_expired: row.date_expired().clone(),
+    date_issued: row.date_issued().clone(),
+    is_buy: !price.is_some_and(|value| value > 0.0),
+    issuer: row.issuer_name().clone(),
+    issuer_id: row.issuer_id(),
+    status: row.status().clone(),
+    value: price.or_else(|| row.reward()),
+    r#type: row.r#type().clone(),
+  }
+}
+
+fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> ContractEntry {
+  let price = row.price();
+  ContractEntry {
+    acceptor: row.acceptor_name().clone(),
+    acceptor_id: row.acceptor_id(),
+    assignee: row.assignee_name().clone(),
+    assignee_id: row.assignee_id(),
+    character_id: row.corporation_id(),
+    collateral: row.collateral(),
+    contract_id: row.contract_id(),
+    date_expired: row.date_expired().clone(),
     date_issued: row.date_issued().clone(),
     is_buy: !price.is_some_and(|value| value > 0.0),
     issuer: row.issuer_name().clone(),
@@ -127,6 +172,21 @@ pub async fn load_contracts_page(
       .then_with(|| b.contract_id.cmp(&a.contract_id))
   });
   entries.truncate(limit as usize);
+  cache_contract_portraits(db, &entries).await;
+  entries
+}
+
+pub async fn load_corp_contracts_page(
+  db: &Database,
+  corporation_id: i64,
+  cursor: Option<(String, i64)>,
+  limit: i64,
+) -> Vec<ContractEntry> {
+  let after = cursor.as_ref().map(|(date, id)| (date.as_str(), *id));
+  let rows = finance::corporation_contracts_page(db, corporation_id, after, limit)
+    .await
+    .unwrap_or_default();
+  let entries: Vec<ContractEntry> = rows.iter().map(map_corp_contract_row).collect();
   cache_contract_portraits(db, &entries).await;
   entries
 }
@@ -472,6 +532,7 @@ mod tests {
         character_id: 42,
         collateral: None,
         contract_id: 1,
+        date_expired: None,
         date_issued: "2026-05-30T12:00:00Z".to_owned(),
         is_buy: false,
         issuer: None,
@@ -494,6 +555,68 @@ mod tests {
       let entries = vec![entry(0, Some(-1), Some(55)), entry(66, None, None)];
 
       assert_eq!(super::contract_party_ids(&entries), vec![55, 66]);
+    }
+  }
+
+  mod derived_status {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn entry(status: &str, date_expired: Option<&str>) -> ContractEntry {
+      ContractEntry {
+        acceptor: None,
+        acceptor_id: None,
+        assignee: None,
+        assignee_id: None,
+        character_id: 42,
+        collateral: None,
+        contract_id: 1,
+        date_expired: date_expired.map(str::to_owned),
+        date_issued: "2026-05-30T12:00:00Z".to_owned(),
+        is_buy: false,
+        issuer: None,
+        issuer_id: 11,
+        status: status.to_owned(),
+        value: None,
+        r#type: "item_exchange".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_derives_expired_for_an_outstanding_contract_past_its_expiry() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("outstanding", Some("2026-06-01T00:00:00Z")).derived_status(now),
+        "expired"
+      );
+    }
+
+    #[test]
+    fn it_keeps_outstanding_before_its_expiry() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("outstanding", Some("2026-07-01T00:00:00Z")).derived_status(now),
+        "outstanding"
+      );
+    }
+
+    #[test]
+    fn it_passes_through_a_terminal_status_even_when_expired() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("finished", Some("2026-06-01T00:00:00Z")).derived_status(now),
+        "finished"
+      );
     }
   }
 

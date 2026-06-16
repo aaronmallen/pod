@@ -12,6 +12,7 @@ pub use self::{
   side_filter::Side,
 };
 use crate::{
+  features::contract_detail,
   store::{
     Database, images,
     model::{
@@ -195,6 +196,9 @@ pub struct Loaded {
 #[derive(Clone, Debug)]
 pub enum Message {
   ChartHovered(Option<f32>),
+  CloseContractDetail,
+  ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
+  ContractSelected(i64),
   DivisionSelected(i64),
   Loaded(Box<Loaded>),
   MoreLoaded(Box<MorePage>),
@@ -239,6 +243,7 @@ pub struct State {
   right_rail: PaneDrag,
   roster: Vec<RosterPilot>,
   search: String,
+  selected_contract: Option<contract_detail::ContractDetail>,
   side_filter: Side,
   sign_filter: SignFilter,
   tab: Tab,
@@ -273,6 +278,7 @@ impl State {
       .right_anchored(true),
       roster: Vec::new(),
       search: String::new(),
+      selected_contract: None,
       side_filter: Side::default(),
       sign_filter: SignFilter::default(),
       tab: Tab::default(),
@@ -322,6 +328,10 @@ impl State {
     !self.contracts.is_empty()
   }
 
+  pub(super) fn selected_contract(&self) -> Option<&contract_detail::ContractDetail> {
+    self.selected_contract.as_ref()
+  }
+
   pub fn side_filter(&self) -> Side {
     self.side_filter
   }
@@ -333,6 +343,9 @@ impl State {
     keys.extend(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()));
     for id in self.contracts.iter().flat_map(contract_party_ids) {
       keys.extend(shell::party_image(&store, id).stale);
+    }
+    if let Some(detail) = &self.selected_contract {
+      keys.extend(detail.stale_images());
     }
     let mut seen = std::collections::HashSet::new();
     keys.retain(|key| seen.insert(*key));
@@ -431,12 +444,30 @@ fn reload(db: &Database, scope: Scope, division: i64) -> Task<Message> {
 }
 
 fn load_more(state: &mut State, db: &Database) -> Task<Message> {
-  if state.loading_more || state.tab_exhausted || matches!(state.active, Scope::Corporation(_)) {
+  if state.loading_more || state.tab_exhausted {
     return Task::none();
   }
 
   let scope = state.active;
   let tab = state.tab;
+
+  if let Scope::Corporation(corp_id) = scope {
+    if tab != Tab::Contracts {
+      return Task::none();
+    }
+    let cursor = state
+      .contracts
+      .last()
+      .map(|entry| (entry.date_issued.clone(), entry.contract_id));
+    let db = db.clone();
+    let limit = PAGE_SIZE as i64;
+    state.loading_more = true;
+    return Task::perform(
+      async move { loaders::load_corp_contracts_page(&db, corp_id, cursor, limit).await },
+      move |contracts| more_page(scope, tab, MorePage::contracts(contracts)),
+    );
+  }
+
   let scope_ids = state.scope_ids();
   if scope_ids.is_empty() {
     return Task::none();
@@ -485,6 +516,31 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.chart_hover = fraction;
       Task::none()
     }
+    Message::CloseContractDetail => {
+      state.selected_contract = None;
+      Task::none()
+    }
+    Message::ContractDetailLoaded(detail) => {
+      state.selected_contract = *detail;
+      Task::none()
+    }
+    Message::ContractSelected(contract_id) => match contract_loader_target(state, contract_id) {
+      Some(ContractLoad::Character(character_id)) => {
+        let db = db.clone();
+        Task::perform(
+          async move { contract_detail::load_for_character(&db, character_id, contract_id).await },
+          |detail| Message::ContractDetailLoaded(Box::new(detail)),
+        )
+      }
+      Some(ContractLoad::Corporation(corporation_id)) => {
+        let db = db.clone();
+        Task::perform(
+          async move { contract_detail::load_for_corporation(&db, corporation_id, contract_id).await },
+          |detail| Message::ContractDetailLoaded(Box::new(detail)),
+        )
+      }
+      None => Task::none(),
+    },
     Message::DivisionSelected(division) => {
       if !matches!(state.active, Scope::Corporation(_)) || division == state.active_division {
         return Task::none();
@@ -616,16 +672,33 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  shell::shell(state, now)
+  let base = shell::shell(state, now);
+  match state.selected_contract() {
+    Some(detail) => contract_detail::overlay(base, detail, Message::CloseContractDetail),
+    None => base,
+  }
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  if !state.right_rail.is_active() {
-    return iced::Subscription::none();
+  let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
+  if state.right_rail.is_active() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      crate::ui::components::resizable_pane::drag_event(event, Message::RailDragged, Message::RailDragEnd)
+    }));
   }
-  iced::event::listen_with(|event, _status, _id| {
-    crate::ui::components::resizable_pane::drag_event(event, Message::RailDragged, Message::RailDragEnd)
-  })
+  if state.selected_contract.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+          ..
+        })
+      )
+      .then_some(Message::CloseContractDetail)
+    }));
+  }
+  iced::Subscription::batch(subs)
 }
 
 async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
@@ -638,8 +711,10 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
 
   let (journal, market, contracts, corp_divisions, journal_total, market_total, contract_total) = match scope {
     Scope::Corporation(corp_id) => {
+      let limit = PAGE_SIZE as i64;
       let journal = loaders::load_corp_journal(&db, corp_id, division).await;
       let market = loaders::load_corp_market(&db, corp_id, division).await;
+      let contracts = loaders::load_corp_contracts_page(&db, corp_id, None, limit).await;
       let corp_divisions = load_corp_divisions(&db, corp_id).await;
       let journal_total = finance::count_journal_for_corporation(&db, corp_id, division)
         .await
@@ -647,14 +722,17 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
       let market_total = finance::count_transactions_for_corporation(&db, corp_id, division)
         .await
         .unwrap_or(0);
+      let contract_total = finance::count_contracts_for_corporation(&db, corp_id)
+        .await
+        .unwrap_or(0);
       (
         journal,
         market,
-        Vec::new(),
+        contracts,
         corp_divisions,
         journal_total,
         market_total,
-        0,
+        contract_total,
       )
     }
     Scope::All | Scope::Character(_) => {
@@ -1007,6 +1085,28 @@ pub fn filtered_market(state: &State) -> Vec<&MarketEntry> {
     .iter()
     .filter(|entry| market_matches(entry, state.sign_filter, state.side_filter, &query))
     .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContractLoad {
+  Character(i64),
+  Corporation(i64),
+}
+
+/// Resolves which detail loader a clicked contract row needs.
+///
+/// Corporation scope always loads from the corp tables. Under character or all
+/// scope the row's own `character_id` is used, so an all-wallets list still
+/// loads each contract from the character that owns it.
+fn contract_loader_target(state: &State, contract_id: i64) -> Option<ContractLoad> {
+  if let Scope::Corporation(corporation_id) = state.active {
+    return Some(ContractLoad::Corporation(corporation_id));
+  }
+  state
+    .contracts
+    .iter()
+    .find(|entry| entry.contract_id == contract_id)
+    .map(|entry| ContractLoad::Character(entry.character_id))
 }
 
 pub fn filtered_contracts(state: &State) -> Vec<&ContractEntry> {
@@ -1614,6 +1714,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_opens_and_closes_the_contract_detail_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::ContractDetailLoaded(Box::new(Some(contract_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_contract.is_some());
+
+      let _ = update(&mut state, Message::CloseContractDetail, &db);
+      assert!(state.selected_contract.is_none());
+    }
+
+    #[tokio::test]
     async fn selecting_a_corp_scope_resets_the_active_division_to_the_master() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
@@ -1916,6 +2032,7 @@ mod tests {
       character_id,
       collateral: Some(5_000.0),
       contract_id: 12_345,
+      date_expired: None,
       date_issued: "2026-05-30T12:00:00Z".to_owned(),
       is_buy,
       issuer: Some("Issuer Pilot".to_owned()),
@@ -1923,6 +2040,40 @@ mod tests {
       status: status.to_owned(),
       value: Some(200.0),
       r#type: contract_type.to_owned(),
+    }
+  }
+
+  fn contract_detail_fixture() -> contract_detail::ContractDetail {
+    contract_detail::ContractDetail {
+      acceptor: None,
+      availability: "Public".to_owned(),
+      bids: Vec::new(),
+      buyout: None,
+      collateral: None,
+      contract_id: 12_345,
+      days_to_complete: Some(0),
+      expiry: contract_detail::ExpiryView {
+        future: true,
+        label: "Open".to_owned(),
+        title: "Expires",
+      },
+      headline: 200.0,
+      headline_label: "Price",
+      issued_time: "2026-05-30T12:00:00Z".to_owned(),
+      issuer: contract_detail::PartyView {
+        name: "Issuer Pilot".to_owned(),
+        portrait: images::ImageState::Fresh("/tmp/p.jpg".into()),
+        role: "Issuer",
+        sub: None,
+      },
+      items: Vec::new(),
+      items_value: 0.0,
+      kind: contract_detail::ContractKind::ItemExchange,
+      location_name: "Jita IV - Moon 4".to_owned(),
+      route: None,
+      status: "outstanding".to_owned(),
+      title: "Test Contract".to_owned(),
+      volume: 0.0,
     }
   }
 
@@ -2318,6 +2469,41 @@ mod tests {
 
       assert!(super::filtered_contracts(&state).is_empty());
       assert!(!state.has_contracts());
+    }
+  }
+
+  mod contract_loader_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_targets_the_active_corporation_under_a_corp_scope() {
+      let mut state = State::new();
+      state.active = Scope::Corporation(98_000_001);
+
+      assert_eq!(
+        super::contract_loader_target(&state, 12_345),
+        Some(ContractLoad::Corporation(98_000_001))
+      );
+    }
+
+    #[test]
+    fn it_targets_the_owning_character_under_an_all_scope() {
+      let mut state = State::new();
+      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
+
+      assert_eq!(
+        super::contract_loader_target(&state, 12_345),
+        Some(ContractLoad::Character(7))
+      );
+    }
+
+    #[test]
+    fn it_is_none_when_no_row_matches() {
+      let state = State::new();
+
+      assert_eq!(super::contract_loader_target(&state, 999), None);
     }
   }
 

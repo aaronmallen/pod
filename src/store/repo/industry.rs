@@ -15,25 +15,23 @@ pub struct AllIndustryJobs {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlanNode {
+pub struct PlanType {
+  pub built: bool,
   pub facility_system: Option<i64>,
   pub me: i64,
-  /// Materialized path of ancestor material type-ids from the root; empty = root node.
-  pub path: Vec<i64>,
   pub te: i64,
+  pub type_id: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanTree {
-  pub nodes: Vec<PlanNode>,
   pub product_type_id: i64,
   pub root_facility_system: Option<i64>,
   pub runs: i64,
+  pub types: Vec<PlanType>,
 }
 
 const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
-
-const PLAN_NODE_PATH_SEPARATOR: char = '/';
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
@@ -208,16 +206,18 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   .fetch_one(&mut *tx)
   .await?;
 
-  for chunk in tree.nodes.chunks(SQLITE_MAX_BIND_PARAMS / 5) {
-    let mut builder =
-      QueryBuilder::<Sqlite>::new("INSERT INTO industry_plan_nodes (plan_id, path, me, te, facility_system) ");
-    builder.push_values(chunk, |mut row, node| {
+  for chunk in tree.types.chunks(SQLITE_MAX_BIND_PARAMS / 6) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO industry_plan_types (plan_id, type_id, me, te, facility_system, built) ",
+    );
+    builder.push_values(chunk, |mut row, kind| {
       row
         .push_bind(plan.id())
-        .push_bind(encode_path(&node.path))
-        .push_bind(node.me)
-        .push_bind(node.te)
-        .push_bind(node.facility_system);
+        .push_bind(kind.type_id)
+        .push_bind(kind.me)
+        .push_bind(kind.te)
+        .push_bind(kind.facility_system)
+        .push_bind(i64::from(kind.built));
     });
     builder.build().execute(&mut *tx).await?;
   }
@@ -255,28 +255,29 @@ pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error
     return Ok(None);
   };
 
-  let rows = sqlx::query_as::<_, (String, i64, i64, Option<i64>)>(
-    "SELECT path, me, te, facility_system FROM industry_plan_nodes WHERE plan_id = ? ORDER BY path",
+  let rows = sqlx::query_as::<_, (i64, i64, i64, Option<i64>, i64)>(
+    "SELECT type_id, me, te, facility_system, built FROM industry_plan_types WHERE plan_id = ? ORDER BY type_id",
   )
   .bind(id)
   .fetch_all(&db.0)
   .await?;
 
-  let nodes = rows
+  let types = rows
     .into_iter()
-    .map(|(path, me, te, facility_system)| PlanNode {
+    .map(|(type_id, me, te, facility_system, built)| PlanType {
+      built: built != 0,
       facility_system,
       me,
-      path: decode_path(&path),
       te,
+      type_id,
     })
     .collect();
 
   Ok(Some(PlanTree {
-    nodes,
     product_type_id: plan.product_type_id(),
     root_facility_system: plan.root_facility_system(),
     runs: plan.runs(),
+    types,
   }))
 }
 
@@ -294,25 +295,6 @@ pub async fn replace_for_corporation(
   jobs: &[CorporationIndustryJob],
 ) -> Result<(), Error> {
   replace_for_corporation_batched(db, corporation_id, jobs, INDUSTRY_WRITE_BATCH_SIZE).await
-}
-
-/// Empty string encodes the root node (sentinel); unparseable segments are silently dropped.
-fn decode_path(path: &str) -> Vec<i64> {
-  if path.is_empty() {
-    return Vec::new();
-  }
-  path
-    .split(PLAN_NODE_PATH_SEPARATOR)
-    .filter_map(|step| step.parse::<i64>().ok())
-    .collect()
-}
-
-fn encode_path(path: &[i64]) -> String {
-  path
-    .iter()
-    .map(i64::to_string)
-    .collect::<Vec<_>>()
-    .join(&PLAN_NODE_PATH_SEPARATOR.to_string())
 }
 
 async fn delete_character_jobs(db: &Database, character_id: i64, job_ids: &[i64]) -> Result<(), Error> {
@@ -937,40 +919,44 @@ mod tests {
 
     fn sample_tree() -> PlanTree {
       PlanTree {
-        nodes: vec![
-          PlanNode {
-            facility_system: Some(30_000_142),
-            me: 10,
-            path: vec![],
-            te: 20,
-          },
-          PlanNode {
-            facility_system: None,
-            me: 8,
-            path: vec![17_478],
-            te: 16,
-          },
-          PlanNode {
-            facility_system: Some(30_002_187),
-            me: 5,
-            path: vec![17_478, 34],
-            te: 0,
-          },
-          PlanNode {
-            facility_system: None,
-            me: 9,
-            path: vec![11_399],
-            te: 18,
-          },
-        ],
         product_type_id: 22_544,
         root_facility_system: Some(30_000_142),
         runs: 7,
+        types: vec![
+          PlanType {
+            built: false,
+            facility_system: Some(30_000_142),
+            me: 10,
+            te: 20,
+            type_id: 22_544,
+          },
+          PlanType {
+            built: true,
+            facility_system: None,
+            me: 8,
+            te: 16,
+            type_id: 17_478,
+          },
+          PlanType {
+            built: true,
+            facility_system: Some(30_002_187),
+            me: 5,
+            te: 0,
+            type_id: 34,
+          },
+          PlanType {
+            built: false,
+            facility_system: None,
+            me: 9,
+            te: 18,
+            type_id: 11_399,
+          },
+        ],
       }
     }
 
-    fn sorted_by_path(mut tree: PlanTree) -> PlanTree {
-      tree.nodes.sort_by(|a, b| a.path.cmp(&b.path));
+    fn sorted_by_type(mut tree: PlanTree) -> PlanTree {
+      tree.types.sort_by_key(|kind| kind.type_id);
       tree
     }
 
@@ -982,7 +968,23 @@ mod tests {
       let plan = create_plan(&db, "Hulk run", &tree).await.unwrap();
       let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
 
-      assert_eq!(sorted_by_path(loaded), sorted_by_path(tree));
+      assert_eq!(sorted_by_type(loaded), sorted_by_type(tree));
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_built_flag() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let built: Vec<i64> = loaded
+        .types
+        .iter()
+        .filter(|kind| kind.built)
+        .map(|kind| kind.type_id)
+        .collect();
+      assert_eq!(built, vec![34, 17_478]);
     }
 
     #[tokio::test]
@@ -1016,19 +1018,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_deletes_a_plan_and_cascades_its_nodes() {
+    async fn it_deletes_a_plan_and_cascades_its_types() {
       let db = store::open_test().await.unwrap();
       let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
 
       delete_plan(&db, plan.id()).await.unwrap();
 
       assert!(load_plan(&db, plan.id()).await.unwrap().is_none());
-      let node_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_nodes WHERE plan_id = ?")
+      let type_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_types WHERE plan_id = ?")
         .bind(plan.id())
         .fetch_one(&db.0)
         .await
         .unwrap();
-      assert_eq!(node_count, 0);
+      assert_eq!(type_count, 0);
     }
   }
 

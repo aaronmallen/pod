@@ -1,14 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use iced::Point;
 
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan, BuildableLookup, Material},
+  planner_model::{BuildNode, BuildPlan},
 };
 use crate::{
-  store::repo::industry::{PlanNode, PlanTree},
+  store::repo::industry::{PlanTree, PlanType},
   ui::components::resizable_pane::PaneDrag,
   window_state::UiState,
 };
@@ -59,7 +59,6 @@ pub const FACILITY_SEARCH_MIN_CHARS: usize = 3;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
   pub anchor: Point,
-  pub path: Vec<i64>,
   pub query: String,
   /// Live ESI search results (stations resolved from the SDE, structures via the authenticated
   /// endpoint), replacing the local list once a query reaches [`FACILITY_SEARCH_MIN_CHARS`].
@@ -68,6 +67,8 @@ pub struct FacilityPickerState {
   /// slow ESI response cannot overwrite a newer query's results.
   pub search_generation: u64,
   pub searching: bool,
+  /// The item type whose facility is being picked (the root product or a built sub-type).
+  pub type_id: i64,
 }
 
 /// A live-searched structure the planner chose to pin. Carried on [`Message::FacilitySelected`] so the
@@ -106,7 +107,6 @@ pub struct MaterialMenu {
   pub buildable: bool,
   pub built: bool,
   pub mat: i64,
-  pub parent: Vec<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,38 +115,36 @@ pub enum Message {
   CategorySelected(Category),
   CursorMoved(Point),
   FacilityPickerToggled {
-    path: Vec<i64>,
+    type_id: i64,
   },
   FacilitySearchChanged {
-    path: Vec<i64>,
     query: String,
+    type_id: i64,
   },
   FacilitySearchResults {
     generation: u64,
-    path: Vec<i64>,
     results: Vec<PlannerFacility>,
+    type_id: i64,
   },
   FacilitySelected {
-    path: Vec<i64>,
     pin: Option<PinnedStructure>,
     solar_system_id: i64,
+    type_id: i64,
   },
   MaterialEfficiencyChanged {
     me: i64,
-    path: Vec<i64>,
+    type_id: i64,
   },
+  MaterialPlanToggled,
   MaterialRightPressed {
-    mat: i64,
-    parent: Vec<i64>,
+    type_id: i64,
   },
   MenuClosed,
   NodeBrokenDown {
-    mat: i64,
-    parent: Vec<i64>,
+    type_id: i64,
   },
   NodeCollapsed {
-    mat: i64,
-    parent: Vec<i64>,
+    type_id: i64,
   },
   PaneDrag(f32),
   PaneDragEnd,
@@ -167,91 +165,27 @@ pub enum Message {
   SearchChanged(String),
   ShoppingListCopied,
   TimeEfficiencyChanged {
-    path: Vec<i64>,
     te: i64,
+    type_id: i64,
   },
 }
 
-/// Per-node build configuration for the in-house production tree.
-///
-/// Each key in `children` is the type-id of a material the user has chosen to produce
-/// in-house rather than buy. An absent key means "buy on market." The root node (held by
-/// `Planner::tree`) represents the top-level product. `at`/`at_mut` address a node by
-/// walking a slice of type-ids, so `path = [A, B]` reaches `root.children[A].children[B]`.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct NodeConfig {
-  pub children: BTreeMap<i64, NodeConfig>,
+/// Per-TYPE build settings: the material-efficiency, time-efficiency, and install facility chosen for one
+/// item type. Keyed by `type_id` in [`Planner::settings`] (the root product included), so editing a type
+/// applies to every occurrence of it in the derived build tree. Whether a type is produced in-house lives
+/// separately in [`Planner::built`], not here.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TypeSettings {
   pub facility_system: Option<i64>,
   pub me: i64,
   pub te: i64,
 }
 
-impl NodeConfig {
-  fn rebuild(nodes: &[PlanNode]) -> NodeConfig {
-    let mut root = NodeConfig::default();
-    let mut ordered: Vec<&PlanNode> = nodes.iter().collect();
-    // Shortest path first guarantees each parent node exists before its children are inserted.
-    ordered.sort_by_key(|node| node.path.len());
-
-    for node in ordered {
-      let config = NodeConfig {
-        children: BTreeMap::new(),
-        facility_system: node.facility_system,
-        me: node.me,
-        te: node.te,
-      };
-      match node.path.split_last() {
-        None => {
-          root.facility_system = config.facility_system;
-          root.me = config.me;
-          root.te = config.te;
-        }
-        Some((&mat, parent)) => {
-          if let Some(target) = root.at_mut(parent) {
-            target.children.insert(mat, config);
-          }
-        }
-      }
-    }
-    root
-  }
-
-  fn at(&self, path: &[i64]) -> Option<&NodeConfig> {
-    let mut node = self;
-    for step in path {
-      node = node.children.get(step)?;
-    }
-    Some(node)
-  }
-
-  fn at_mut(&mut self, path: &[i64]) -> Option<&mut NodeConfig> {
-    let mut node = self;
-    for step in path {
-      node = node.children.get_mut(step)?;
-    }
-    Some(node)
-  }
-
-  fn flatten(&self, path: &mut Vec<i64>, out: &mut Vec<PlanNode>) {
-    out.push(PlanNode {
-      facility_system: self.facility_system,
-      me: self.me,
-      path: path.clone(),
-      te: self.te,
-    });
-    for (&mat, child) in &self.children {
-      path.push(mat);
-      child.flatten(path, out);
-      path.pop();
-    }
-  }
-}
-
-/// A fresh, un-expanded node config for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
+/// Fresh, default settings for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
 /// blueprint's ME/TE or the planner defaults, and the facility seeds from the configured default install
-/// structure for the node's own activity (manufacturing vs reaction). Shared by [`Planner::fresh_node`] and
-/// the recursive break-down adapter so every job — root or sub-build — honors the settings.
-fn fresh_node_config(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> NodeConfig {
+/// structure for the type's own activity (manufacturing vs reaction). Used for any type the user has not yet
+/// configured — root product or sub-build alike.
+fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> TypeSettings {
   let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
   let owned = data.owned.get(&type_id);
   let (me, te) = if is_reaction {
@@ -262,8 +196,7 @@ fn fresh_node_config(data: &PlannerData, defaults: &FacilityDefaults, type_id: i
       owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
     )
   };
-  NodeConfig {
-    children: BTreeMap::new(),
+  TypeSettings {
     facility_system: default_facility_system_for(data, defaults, is_reaction),
     me,
     te,
@@ -282,37 +215,25 @@ fn default_facility_system_for(data: &PlannerData, defaults: &FacilityDefaults, 
     .map(|facility| facility.solar_system_id)
 }
 
-/// Adapts the planner's loaded recipe data into the pure [`planner_model::expand_to_raw`] lookup, exposing
-/// each type's buildable inputs (materials that have their own recipe) and fresh child configs.
-struct BuildableAdapter<'a> {
-  data: &'a PlannerData,
-  defaults: &'a FacilityDefaults,
-}
-
-impl BuildableLookup<NodeConfig> for BuildableAdapter<'_> {
-  fn buildable_inputs(&self, type_id: i64) -> Vec<i64> {
-    let Some(recipe) = self.data.recipe(type_id) else {
-      return Vec::new();
-    };
-    recipe
-      .materials
-      .iter()
-      .map(|material| material.type_id)
-      .filter(|&mat| self.data.recipe(mat).is_some())
-      .collect()
-  }
-
-  fn fresh_child(&self, type_id: i64) -> NodeConfig {
-    fresh_node_config(self.data, self.defaults, type_id)
-  }
-
-  fn children_of<'a>(&self, child: &'a mut NodeConfig) -> &'a mut BTreeMap<i64, NodeConfig> {
-    &mut child.children
-  }
+/// The buildable inputs of `type_id` (materials that have their own recipe), in recipe order. A material
+/// without a recipe is raw and cannot be built.
+fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
+  let Some(recipe) = data.recipe(type_id) else {
+    return Vec::new();
+  };
+  recipe
+    .materials
+    .iter()
+    .map(|material| material.type_id)
+    .filter(|&mat| data.recipe(mat).is_some())
+    .collect()
 }
 
 #[derive(Debug)]
 pub struct Planner {
+  /// The set of item types the user chose to produce in-house. The derived build tree descends into a
+  /// material only when its type is in this set; everything else is bought.
+  built: BTreeSet<i64>,
   category: Category,
   cursor: Option<Point>,
   data: PlannerData,
@@ -320,6 +241,8 @@ pub struct Planner {
   facility_defaults: FacilityDefaults,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
+  /// Whether the recursive Material Plan table is expanded. Collapsed on initial open.
+  material_plan_open: bool,
   menu: Option<MaterialMenu>,
   /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
   /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
@@ -334,12 +257,15 @@ pub struct Planner {
   runs_input: String,
   saved: Vec<SavedPlan>,
   search: String,
-  tree: NodeConfig,
+  /// Per-TYPE ME/TE/facility, keyed by `type_id` (the root product included). Editing a type here applies
+  /// to every occurrence of it in the derived build tree.
+  settings: BTreeMap<i64, TypeSettings>,
 }
 
 impl Planner {
   pub fn new() -> Self {
     Planner {
+      built: BTreeSet::new(),
       category: Category::Other,
       cursor: None,
       data: PlannerData::default(),
@@ -352,6 +278,7 @@ impl Planner {
       facility_defaults: FacilityDefaults::default(),
       facility_picker: None,
       loaded: false,
+      material_plan_open: false,
       menu: None,
       pending_blueprint_seed: None,
       picker_open: false,
@@ -364,7 +291,7 @@ impl Planner {
       runs_input: "1".to_owned(),
       saved: Vec::new(),
       search: String::new(),
-      tree: NodeConfig::default(),
+      settings: BTreeMap::new(),
     }
   }
 
@@ -389,10 +316,10 @@ impl Planner {
     self.category
   }
 
-  pub fn cost_index(&self, path: &[i64], type_id: i64) -> Option<f64> {
+  pub fn cost_index(&self, type_id: i64) -> Option<f64> {
     let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
     self
-      .selected_facility(path, is_reaction)
+      .selected_facility(type_id, is_reaction)
       .and_then(|facility| facility.index_for(is_reaction))
   }
 
@@ -431,11 +358,11 @@ impl Planner {
     let recipe = self.data.recipe(product)?;
     let plan = self.plan()?;
 
-    let material_cost = self.plan_material_cost(&plan, &|path, type_id| self.cost_index(path, type_id).unwrap_or(0.0));
+    let material_cost = self.plan_material_cost(&plan, &|type_id| self.cost_index(type_id).unwrap_or(0.0));
 
     let output_qty = recipe.output_per_run * self.runs;
     let revenue = self.data.price(product) * output_qty as f64;
-    let install_fee = revenue * self.cost_index(&[], product).unwrap_or(0.0) * INSTALL_FEE_RATE;
+    let install_fee = revenue * self.cost_index(product).unwrap_or(0.0) * INSTALL_FEE_RATE;
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
     let per_unit = if output_qty > 0 {
@@ -443,7 +370,7 @@ impl Planner {
     } else {
       0.0
     };
-    let build_time_secs = node_build_time(recipe, self.runs, self.tree.te);
+    let build_time_secs = node_build_time(recipe, self.runs, self.settings_for(product).te);
 
     Some(Economics {
       build_time_secs,
@@ -470,12 +397,26 @@ impl Planner {
     self.loaded
   }
 
+  pub fn is_built(&self, type_id: i64) -> bool {
+    self.built.contains(&type_id)
+  }
+
+  pub fn material_plan_open(&self) -> bool {
+    self.material_plan_open
+  }
+
   pub fn menu(&self) -> Option<&MaterialMenu> {
     self.menu.as_ref()
   }
 
-  pub fn node(&self, path: &[i64]) -> &NodeConfig {
-    self.tree.at(path).unwrap_or(&self.tree)
+  /// The configured (or fresh-default) settings for `type_id`. Per-TYPE: the same settings back every
+  /// occurrence of the type in the derived build tree.
+  pub fn settings_for(&self, type_id: i64) -> TypeSettings {
+    self
+      .settings
+      .get(&type_id)
+      .copied()
+      .unwrap_or_else(|| fresh_settings(&self.data, &self.facility_defaults, type_id))
   }
 
   pub fn picker_open(&self) -> bool {
@@ -488,7 +429,7 @@ impl Planner {
 
   pub fn plan(&self) -> Option<BuildPlan> {
     let product = self.product?;
-    let root = self.assemble(product, &self.tree)?;
+    let root = self.assemble(product, &mut BTreeSet::new())?;
     Some(BuildPlan::new(root, self.runs))
   }
 
@@ -499,13 +440,9 @@ impl Planner {
   /// Whether the current root product has at least one buildable input (a material that itself has a
   /// recipe). Gates the "Break down all" affordance — there is nothing to expand otherwise.
   pub fn has_buildable_inputs(&self) -> bool {
-    let lookup = BuildableAdapter {
-      data: &self.data,
-      defaults: &self.facility_defaults,
-    };
     self
       .product
-      .map(|product| !lookup.buildable_inputs(product).is_empty())
+      .map(|product| !buildable_inputs(&self.data, product).is_empty())
       .unwrap_or(false)
   }
 
@@ -548,8 +485,28 @@ impl Planner {
   pub fn restore(&mut self, tree: &PlanTree) {
     self.product = Some(tree.product_type_id);
     self.set_runs(tree.runs);
-    self.tree = NodeConfig::rebuild(&tree.nodes);
+    self.settings = tree
+      .types
+      .iter()
+      .map(|kind| {
+        (
+          kind.type_id,
+          TypeSettings {
+            facility_system: kind.facility_system,
+            me: kind.me,
+            te: kind.te,
+          },
+        )
+      })
+      .collect();
+    self.built = tree
+      .types
+      .iter()
+      .filter(|kind| kind.built)
+      .map(|kind| kind.type_id)
+      .collect();
     self.facility_picker = None;
+    self.material_plan_open = false;
     self.push_recent(tree.product_type_id);
   }
 
@@ -595,10 +552,10 @@ impl Planner {
     self.detail_pane.set_host_width(host_width);
   }
 
-  /// Returns the facility pinned to this node, falling back to the cheapest available
-  /// default when the stored system id is absent from the current data (e.g. after a reload).
-  pub fn selected_facility(&self, path: &[i64], is_reaction: bool) -> Option<&PlannerFacility> {
-    match self.node(path).facility_system {
+  /// Returns the facility chosen for `type_id`, falling back to the cheapest available default when the
+  /// stored system id is absent from the current data (e.g. after a reload).
+  pub fn selected_facility(&self, type_id: i64, is_reaction: bool) -> Option<&PlannerFacility> {
+    match self.settings_for(type_id).facility_system {
       Some(system) => self
         .data
         .facilities
@@ -628,13 +585,30 @@ impl Planner {
 
   pub fn snapshot(&self) -> Option<PlanTree> {
     let product = self.product?;
-    let mut nodes = Vec::new();
-    self.tree.flatten(&mut Vec::new(), &mut nodes);
+    // Emit one row per configured type plus the root product and every built type (so a built type with
+    // only default settings is still persisted as built). Deterministic order via a BTreeSet of ids.
+    let ids: BTreeSet<i64> = std::iter::once(product)
+      .chain(self.settings.keys().copied())
+      .chain(self.built.iter().copied())
+      .collect();
+    let types = ids
+      .into_iter()
+      .map(|type_id| {
+        let settings = self.settings_for(type_id);
+        PlanType {
+          built: self.built.contains(&type_id),
+          facility_system: settings.facility_system,
+          me: settings.me,
+          te: settings.te,
+          type_id,
+        }
+      })
+      .collect();
     Some(PlanTree {
-      nodes,
       product_type_id: product,
-      root_facility_system: self.tree.facility_system,
+      root_facility_system: self.settings_for(product).facility_system,
       runs: self.runs,
+      types,
     })
   }
 
@@ -677,6 +651,7 @@ impl Planner {
       | Message::TimeEfficiencyChanged {
         ..
       } => self.update_efficiency(message),
+      Message::MaterialPlanToggled => self.material_plan_open = !self.material_plan_open,
       Message::MaterialRightPressed {
         ..
       }
@@ -727,25 +702,23 @@ impl Planner {
   fn update_facility(&mut self, message: Message) {
     match message {
       Message::FacilityPickerToggled {
-        path,
-      } => self.toggle_facility_picker(path),
+        type_id,
+      } => self.toggle_facility_picker(type_id),
       Message::FacilitySearchChanged {
-        path,
         query,
-      } => self.edit_facility_query(path, query),
+        type_id,
+      } => self.edit_facility_query(type_id, query),
       Message::FacilitySearchResults {
         generation,
-        path,
         results,
-      } => self.apply_facility_results(generation, path, results),
+        type_id,
+      } => self.apply_facility_results(generation, type_id, results),
       Message::FacilitySelected {
-        path,
         solar_system_id,
+        type_id,
         ..
       } => {
-        if let Some(node) = self.tree.at_mut(&path) {
-          node.facility_system = Some(solar_system_id);
-        }
+        self.settings_mut(type_id).facility_system = Some(solar_system_id);
         self.facility_picker = None;
       }
       _ => {}
@@ -753,12 +726,12 @@ impl Planner {
   }
 
   /// Applies a live ESI facility search edit: records the query and bumps the per-keystroke generation
-  /// (opening the picker for the node if typing into its always-visible field). A query that reaches
+  /// (opening the picker for the type if typing into its always-visible field). A query that reaches
   /// [`FACILITY_SEARCH_MIN_CHARS`] marks the picker as searching; a shorter one falls back to the local
   /// list and clears any stale live results.
-  fn edit_facility_query(&mut self, path: Vec<i64>, query: String) {
+  fn edit_facility_query(&mut self, type_id: i64, query: String) {
     let live = query.trim().chars().count() >= FACILITY_SEARCH_MIN_CHARS;
-    match self.facility_picker.as_mut().filter(|state| state.path == path) {
+    match self.facility_picker.as_mut().filter(|state| state.type_id == type_id) {
       Some(state) => {
         state.query = query;
         state.search_generation = state.search_generation.wrapping_add(1);
@@ -767,27 +740,27 @@ impl Planner {
           state.results.clear();
         }
       }
-      // Typing into the always-visible field opens the picker for that node.
+      // Typing into the always-visible field opens the picker for that type.
       None => {
         self.facility_picker = Some(FacilityPickerState {
           anchor: self.cursor.unwrap_or_default(),
-          path,
           query,
           results: Vec::new(),
           search_generation: 1,
           searching: live,
+          type_id,
         })
       }
     }
   }
 
   /// Applies live ESI facility results to the open picker, dropping them when the picker has moved to a
-  /// different node or a newer keystroke has superseded this query's generation.
-  fn apply_facility_results(&mut self, generation: u64, path: Vec<i64>, results: Vec<PlannerFacility>) {
+  /// different type or a newer keystroke has superseded this query's generation.
+  fn apply_facility_results(&mut self, generation: u64, type_id: i64, results: Vec<PlannerFacility>) {
     if let Some(state) = self
       .facility_picker
       .as_mut()
-      .filter(|state| state.path == path && state.search_generation == generation)
+      .filter(|state| state.type_id == type_id && state.search_generation == generation)
     {
       state.results = results;
       state.searching = false;
@@ -799,20 +772,12 @@ impl Planner {
     match message {
       Message::MaterialEfficiencyChanged {
         me,
-        path,
-      } => {
-        if let Some(node) = self.tree.at_mut(&path) {
-          node.me = me.clamp(0, ME_MAX);
-        }
-      }
+        type_id,
+      } => self.settings_mut(type_id).me = me.clamp(0, ME_MAX),
       Message::TimeEfficiencyChanged {
-        path,
         te,
-      } => {
-        if let Some(node) = self.tree.at_mut(&path) {
-          node.te = te.clamp(0, TE_MAX);
-        }
-      }
+        type_id,
+      } => self.settings_mut(type_id).te = te.clamp(0, TE_MAX),
       _ => {}
     }
   }
@@ -822,24 +787,19 @@ impl Planner {
   fn update_menu(&mut self, message: Message) {
     match message {
       Message::MaterialRightPressed {
-        mat,
-        parent,
-      } => self.open_menu(parent, mat),
+        type_id,
+      } => self.open_menu(type_id),
       Message::MenuClosed => self.menu = None,
       Message::NodeBrokenDown {
-        mat,
-        parent,
+        type_id,
       } => {
-        self.break_down(&parent, mat);
+        self.break_down(type_id);
         self.menu = None;
       }
       Message::NodeCollapsed {
-        mat,
-        parent,
+        type_id,
       } => {
-        if let Some(node) = self.tree.at_mut(&parent) {
-          node.children.remove(&mat);
-        }
+        self.built.remove(&type_id);
         self.menu = None;
       }
       _ => {}
@@ -861,44 +821,81 @@ impl Planner {
       .collect();
   }
 
-  fn assemble(&self, type_id: i64, config: &NodeConfig) -> Option<BuildNode> {
+  /// Derives the [`BuildNode`] computation tree for `type_id` from the live per-type settings and built set.
+  fn assemble(&self, type_id: i64, seen: &mut BTreeSet<i64>) -> Option<BuildNode> {
+    self.assemble_from(type_id, &self.settings, &self.built, seen)
+  }
+
+  /// Derives the [`BuildNode`] computation tree for `type_id` by walking its recipe and recursing into a
+  /// material only when its type is in `built`. ME/TE/facility for each node are pulled from `settings`
+  /// (fresh defaults for an unconfigured type), so the same per-type settings back every occurrence of a
+  /// type. `seen` guards against a recipe cycle building itself forever.
+  fn assemble_from(
+    &self,
+    type_id: i64,
+    settings: &BTreeMap<i64, TypeSettings>,
+    built: &BTreeSet<i64>,
+    seen: &mut BTreeSet<i64>,
+  ) -> Option<BuildNode> {
     let recipe = self.data.recipe(type_id)?;
-    let materials: Vec<Material> = recipe.materials.clone();
-    let mut node = BuildNode::new(type_id, recipe.output_per_run, recipe.is_reaction, materials);
+    if !seen.insert(type_id) {
+      return None;
+    }
+    let config = settings
+      .get(&type_id)
+      .copied()
+      .unwrap_or_else(|| self.fresh_settings(type_id));
+    let mut node = BuildNode::new(
+      type_id,
+      recipe.output_per_run,
+      recipe.is_reaction,
+      recipe.materials.clone(),
+    );
     node.facility = config.facility_system;
     node.me = if recipe.is_reaction { 0 } else { config.me };
     node.te = if recipe.is_reaction { 0 } else { config.te };
-    for (&mat, child_config) in &config.children {
-      if let Some(child) = self.assemble(mat, child_config) {
+    let materials: Vec<i64> = recipe.materials.iter().map(|material| material.type_id).collect();
+    for mat in materials {
+      if built.contains(&mat)
+        && let Some(child) = self.assemble_from(mat, settings, built, seen)
+      {
         node.children.insert(mat, child);
       }
     }
+    seen.remove(&type_id);
     Some(node)
   }
 
-  fn break_down(&mut self, parent: &[i64], mat: i64) {
+  /// Marks `mat` as built in-house (no-op for a raw material with no recipe), seeding its default settings
+  /// if it has not been configured yet so its per-type ME/TE/facility are addressable.
+  fn break_down(&mut self, mat: i64) {
     if self.data.recipe(mat).is_none() {
       return;
     }
-    let config = self.fresh_node(mat);
-    if let Some(node) = self.tree.at_mut(parent) {
-      node.children.entry(mat).or_insert(config);
-    }
+    let fresh = self.fresh_settings(mat);
+    self.settings.entry(mat).or_insert(fresh);
+    self.built.insert(mat);
   }
 
-  /// Recursively breaks down every buildable input across the whole tree down to raw materials in one
-  /// action (manufacturing + reactions). Already-broken-down branches are kept and deepened rather than
-  /// reset. Pure expansion logic lives in [`planner_model::expand_to_raw`]; this only wires the planner's
-  /// recipe/blueprint data into it.
+  /// Recursively marks every buildable input reachable from the product as built in-house, down to raw
+  /// materials, in one action (manufacturing + reactions). Already-built types are kept.
   fn break_down_all(&mut self) {
     let Some(product) = self.product else {
       return;
     };
-    let lookup = BuildableAdapter {
-      data: &self.data,
-      defaults: &self.facility_defaults,
-    };
-    super::planner_model::expand_to_raw(&mut self.tree.children, product, &lookup);
+    let mut seen = BTreeSet::new();
+    self.break_down_descendants(product, &mut seen);
+  }
+
+  /// Depth-first marks every buildable input of `type_id` as built; `seen` guards against recipe cycles.
+  fn break_down_descendants(&mut self, type_id: i64, seen: &mut BTreeSet<i64>) {
+    if !seen.insert(type_id) {
+      return;
+    }
+    for mat in buildable_inputs(&self.data, type_id) {
+      self.break_down(mat);
+      self.break_down_descendants(mat, seen);
+    }
   }
 
   /// Resolves a facility cost index for a node pinned (or not) to `facility_system`, falling back to the
@@ -925,31 +922,27 @@ impl Planner {
     self.runs_input = digits;
   }
 
-  fn fresh_node(&self, type_id: i64) -> NodeConfig {
-    fresh_node_config(&self.data, &self.facility_defaults, type_id)
+  fn fresh_settings(&self, type_id: i64) -> TypeSettings {
+    fresh_settings(&self.data, &self.facility_defaults, type_id)
   }
 
-  fn open_menu(&mut self, parent: Vec<i64>, mat: i64) {
+  fn open_menu(&mut self, type_id: i64) {
     let Some(anchor) = self.cursor else {
       return;
     };
-    let buildable = self.data.recipe(mat).is_some();
-    let built = self
-      .tree
-      .at(&parent)
-      .is_some_and(|node| node.children.contains_key(&mat));
     self.menu = Some(MaterialMenu {
       anchor,
-      buildable,
-      built,
-      mat,
-      parent,
+      buildable: self.data.recipe(type_id).is_some(),
+      built: self.built.contains(&type_id),
+      mat: type_id,
     });
   }
 
   /// Total acquisition cost of a build plan: every raw input priced at market plus the install fee of
-  /// each in-house sub-build. `cost_index` resolves a node's facility cost index (0.0 when none).
-  fn plan_material_cost(&self, plan: &BuildPlan, cost_index: &dyn Fn(&[i64], i64) -> f64) -> f64 {
+  /// each in-house sub-build. `cost_index` resolves a type's facility cost index (0.0 when none). Jobs are
+  /// deduped by type via [`BuildPlan::merged_build_order`], so each built type is charged its install fee
+  /// once for its summed run count.
+  fn plan_material_cost(&self, plan: &BuildPlan, cost_index: &dyn Fn(i64) -> f64) -> f64 {
     let acquisition: f64 = plan
       .raw_totals()
       .iter()
@@ -957,16 +950,22 @@ impl Planner {
       .sum();
 
     let sub_fees: f64 = plan
-      .build_order()
+      .merged_build_order()
       .iter()
-      .filter(|job| !job.path.is_empty())
+      .filter(|job| !job.is_root)
       .map(|job| {
         let produced = job.node.output_per_run * job.runs;
-        self.data.price(job.type_id) * produced as f64 * cost_index(&job.path, job.type_id) * INSTALL_FEE_RATE
+        self.data.price(job.type_id) * produced as f64 * cost_index(job.type_id) * INSTALL_FEE_RATE
       })
       .sum();
 
     acquisition + sub_fees
+  }
+
+  /// Mutable per-type settings for `type_id`, inserting fresh defaults the first time the type is edited.
+  fn settings_mut(&mut self, type_id: i64) -> &mut TypeSettings {
+    let fresh = self.fresh_settings(type_id);
+    self.settings.entry(type_id).or_insert(fresh)
   }
 
   fn push_recent(&mut self, type_id: i64) {
@@ -994,8 +993,10 @@ impl Planner {
 
   fn select_product(&mut self, type_id: i64) {
     self.product = Some(type_id);
-    // `fresh_node` already seeds the root's facility from the configured default for its activity.
-    self.tree = self.fresh_node(type_id);
+    // A fresh product resets every per-type decision; its own default settings seed lazily via `settings_for`.
+    self.settings.clear();
+    self.built.clear();
+    self.material_plan_open = false;
     self.facility_picker = None;
   }
 
@@ -1004,36 +1005,62 @@ impl Planner {
     self.runs_input = self.runs.to_string();
   }
 
-  fn toggle_facility_picker(&mut self, path: Vec<i64>) {
-    if self.facility_picker.as_ref().is_some_and(|state| state.path == path) {
+  fn toggle_facility_picker(&mut self, type_id: i64) {
+    if self
+      .facility_picker
+      .as_ref()
+      .is_some_and(|state| state.type_id == type_id)
+    {
       self.facility_picker = None;
     } else {
       self.facility_picker = Some(FacilityPickerState {
         anchor: self.cursor.unwrap_or_default(),
-        path,
         query: String::new(),
         results: Vec::new(),
         search_generation: 0,
         searching: false,
+        type_id,
       });
     }
   }
 
   /// Whole-plan economics for a saved plan, recomputed at current prices. Mirrors [`Planner::economics`]
-  /// but reads the product, runs, and per-node ME/TE/facility from `tree` instead of live state, so a list
+  /// but reads the product, runs, and per-type ME/TE/facility from `tree` instead of live state, so a list
   /// of saved plans reflects today's market without rehydrating each into the live planner.
   fn tree_economics(&self, tree: &PlanTree) -> Option<Economics> {
     let product = tree.product_type_id;
     let recipe = self.data.recipe(product)?;
     let runs = tree.runs.clamp(1, RUNS_MAX);
-    let root = tree.nodes.iter().find(|node| node.path.is_empty());
-    let te = root.map(|node| node.te).unwrap_or(0);
+    let settings: BTreeMap<i64, TypeSettings> = tree
+      .types
+      .iter()
+      .map(|kind| {
+        (
+          kind.type_id,
+          TypeSettings {
+            facility_system: kind.facility_system,
+            me: kind.me,
+            te: kind.te,
+          },
+        )
+      })
+      .collect();
+    let built: BTreeSet<i64> = tree
+      .types
+      .iter()
+      .filter(|kind| kind.built)
+      .map(|kind| kind.type_id)
+      .collect();
+    let te = settings.get(&product).map(|kind| kind.te).unwrap_or(0);
 
-    let config = NodeConfig::rebuild(&tree.nodes);
-    let plan = BuildPlan::new(self.assemble(product, &config)?, runs);
-    let material_cost = self.plan_material_cost(&plan, &|path, type_id| {
+    let root = self.assemble_from(product, &settings, &built, &mut BTreeSet::new())?;
+    let plan = BuildPlan::new(root, runs);
+    let material_cost = self.plan_material_cost(&plan, &|type_id| {
       let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
-      self.cost_index_for(config.at(path).and_then(|node| node.facility_system), is_reaction)
+      self.cost_index_for(
+        settings.get(&type_id).and_then(|kind| kind.facility_system),
+        is_reaction,
+      )
     });
 
     let output_qty = recipe.output_per_run * runs;
@@ -1126,16 +1153,14 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
       items.push(context_menu::Item::action(
         "Stop building \u{2014} buy on market",
         Message::NodeCollapsed {
-          mat: menu.mat,
-          parent: menu.parent.clone(),
+          type_id: menu.mat,
         },
       ));
     } else {
       items.push(context_menu::Item::warning(
         "Break down \u{2014} build in-house",
         Message::NodeBrokenDown {
-          mat: menu.mat,
-          parent: menu.parent.clone(),
+          type_id: menu.mat,
         },
       ));
     }
@@ -1151,7 +1176,7 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
   } else if let Some(state) = planner.facility_picker() {
     Stack::with_children(vec![
       backdrop::click_catcher(Message::FacilityPickerToggled {
-        path: state.path.clone(),
+        type_id: state.type_id,
       }),
       view::facility_picker_panel(planner),
     ])
@@ -1180,7 +1205,7 @@ mod view {
     clients::eve_image::Size,
     features::industry::{
       planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
-      planner_model::{MergedBuildJob, NeededBlueprint, SubBuild, eff_qty, runs_for},
+      planner_model::{MergedBuildJob, NeededBlueprint, eff_qty, runs_for},
     },
     store::images::{self, IconResolution},
     ui::{
@@ -1273,30 +1298,37 @@ mod view {
 
   fn left_pane<'a>(planner: &'a Planner, product: i64, recipe: &'a Recipe) -> Element<'a, Message> {
     let plan = planner.plan();
-    let steps = plan.as_ref().map(|plan| plan.node_count()).unwrap_or(1);
+    // One distinct card per built type: the deduped merged build order is the source of truth, so a type
+    // built by several jobs shows a single summed card. Card count (built types + the root product) reads
+    // as the step count.
+    let merged = plan.as_ref().map(|plan| plan.merged_build_order()).unwrap_or_default();
+    let steps = merged.len().max(1);
 
     let mut children: Vec<Element<'a, Message>> = vec![
       picker(planner),
       section_label("Blueprints", (steps > 1).then(|| format!("{steps} steps"))),
-      blueprint_card(planner, product, recipe, &[], None),
+      blueprint_card(planner, product, recipe, None),
     ];
 
-    if let Some(plan) = plan.as_ref() {
-      for sub in plan.collect_builds() {
-        children.push(sub_blueprint_card(planner, sub));
-      }
+    // Sub-builds: every non-root merged row, summed across its occurrences, rendered as a flat (un-indented)
+    // card. `merged_build_order` is producer-before-consumer, so reverse it to read top-down from the cards
+    // nearest the product.
+    for job in merged.iter().filter(|job| !job.is_root).rev() {
+      children.push(sub_blueprint_card(planner, job));
     }
 
     let me_hint = if recipe.is_reaction {
       "reaction inputs".to_owned()
     } else {
-      format!("ME {} applied", planner.node(&[]).me)
+      format!("ME {} applied", planner.settings_for(product).me)
     };
     children.push(material_plan_header(
       planner,
       format!("{me_hint} \u{00B7} break down an item or right-click for options"),
     ));
-    children.push(material_plan(planner, recipe));
+    if planner.material_plan_open() {
+      children.push(material_plan(planner, recipe));
+    }
 
     if let Some(plan) = plan.as_ref() {
       children.push(bill_of_materials(planner, plan));
@@ -1529,18 +1561,21 @@ mod view {
     .into()
   }
 
+  /// One flat editable card for a built item type. The root product (`job = None`) carries the editable runs
+  /// stepper and no relationship subline; a sub-build (`job = Some`) is keyed by its summed merged-order row,
+  /// so its runs are locked to summed parent demand, its ME/TE/facility apply to every occurrence, and it
+  /// shows the build-vs-buy readout.
   fn blueprint_card<'a>(
     planner: &'a Planner,
     type_id: i64,
     recipe: &'a Recipe,
-    path: &[i64],
-    sub: Option<&SubBuild>,
+    job: Option<&MergedBuildJob>,
   ) -> Element<'a, Message> {
-    let config = planner.node(path);
+    let config = planner.settings_for(type_id);
     let is_reaction = recipe.is_reaction;
-    let runs = sub.map(|sub| sub.runs).unwrap_or_else(|| planner.runs());
+    let runs = job.map(|job| job.runs).unwrap_or_else(|| planner.runs());
 
-    let header = blueprint_header(planner, type_id, is_reaction, sub);
+    let header = blueprint_header(planner, type_id, is_reaction, job);
 
     // Runs sit on the left, the ME/TE sliders are centered, and the location search is floated right.
     let mut center: Vec<Element<'a, Message>> = Vec::new();
@@ -1549,27 +1584,27 @@ mod view {
         "Material efficiency",
         config.me,
         super::ME_MAX,
-        path.to_vec(),
+        type_id,
         true,
       ));
       center.push(efficiency_slider(
         "Time efficiency",
         config.te,
         super::TE_MAX,
-        path.to_vec(),
+        type_id,
         false,
       ));
     }
 
     let controls = Row::with_children(vec![
-      runs_control(runs, planner.runs_input(), sub.is_some(), is_reaction),
+      runs_control(runs, planner.runs_input(), job.is_some(), is_reaction),
       Space::new().width(Length::Fill).into(),
       Row::with_children(center)
         .spacing(spacing::SPACE_6)
         .align_y(Vertical::Top)
         .into(),
       Space::new().width(Length::Fill).into(),
-      facility_control(planner, path, is_reaction),
+      facility_control(planner, type_id, is_reaction),
     ])
     .spacing(spacing::SPACE_6)
     .align_y(Vertical::Top)
@@ -1577,9 +1612,9 @@ mod view {
 
     let mut body: Vec<Element<'a, Message>> = vec![header, controls.into()];
 
-    if let Some(sub) = sub {
+    if let Some(job) = job {
       body.push(rule::horizontal());
-      body.push(build_vs_buy(planner, type_id, recipe, sub));
+      body.push(build_vs_buy(planner, type_id, recipe, job));
     }
 
     container(Column::with_children(body).spacing(spacing::SPACE_3).padding(Padding {
@@ -1601,24 +1636,19 @@ mod view {
     .into()
   }
 
-  fn sub_blueprint_card<'a>(planner: &'a Planner, sub: SubBuild) -> Element<'a, Message> {
-    let Some(recipe) = planner.data().recipe(sub.type_id) else {
+  /// A flat (un-indented) sub-build card for one merged-order row.
+  fn sub_blueprint_card<'a>(planner: &'a Planner, job: &MergedBuildJob) -> Element<'a, Message> {
+    let Some(recipe) = planner.data().recipe(job.type_id) else {
       return Space::new().into();
     };
-    let indent = (sub.depth.saturating_sub(1)) as f32 * 18.0;
-    container(blueprint_card(planner, sub.type_id, recipe, &sub.path, Some(&sub)))
-      .padding(Padding {
-        left: indent,
-        ..Padding::ZERO
-      })
-      .into()
+    blueprint_card(planner, job.type_id, recipe, Some(job))
   }
 
   fn blueprint_header<'a>(
     planner: &'a Planner,
     type_id: i64,
     is_reaction: bool,
-    sub: Option<&SubBuild>,
+    job: Option<&MergedBuildJob>,
   ) -> Element<'a, Message> {
     let data = planner.data();
     let mut badges = Row::with_children(vec![
@@ -1631,17 +1661,18 @@ mod view {
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
-    badges = if sub.is_some() {
+    badges = if job.is_some() {
       badges.push(badge("BUILDING", Some(color::status::WARNING)))
     } else {
       badges.push(owned_badge(planner, type_id))
     };
 
-    let subtitle = match sub {
-      Some(sub) => format!(
-        "builds {} \u{00B7} needs {} for parent job",
-        fmt_num(data.recipe(type_id).map(|r| r.output_per_run).unwrap_or(1) * sub.runs),
-        fmt_num(sub.needed_qty)
+    let subtitle = match job {
+      Some(job) => format!(
+        "builds {} \u{00B7} needs {} \u{00B7} {}",
+        fmt_num(data.recipe(type_id).map(|r| r.output_per_run).unwrap_or(1) * job.runs),
+        fmt_num(job.needed_qty),
+        merged_feeds_line(data, job)
       ),
       None => format!("{} ISK each", fmt_isk(data.price(type_id))),
     };
@@ -1662,9 +1693,7 @@ mod view {
       .align_y(Vertical::Center)
       .width(Length::Fill);
 
-    if let Some(sub) = sub {
-      let parent = sub.path[..sub.path.len() - 1].to_vec();
-      let mat = sub.type_id;
+    if job.is_some() {
       row = row.push(
         button(
           Icon::close()
@@ -1674,8 +1703,7 @@ mod view {
         )
         .padding(spacing::UNIT)
         .on_press(Message::NodeCollapsed {
-          mat,
-          parent,
+          type_id,
         })
         .style(|_, _| button::Style::default()),
       );
@@ -1809,19 +1837,19 @@ mod view {
       .into()
   }
 
-  fn efficiency_slider<'a>(label: &str, value: i64, max: i64, path: Vec<i64>, material: bool) -> Element<'a, Message> {
+  fn efficiency_slider<'a>(label: &str, value: i64, max: i64, type_id: i64, material: bool) -> Element<'a, Message> {
     let prefix = if material { "ME" } else { "TE" };
     let handle = move |next: f64| {
       let next = next.round() as i64;
       if material {
         Message::MaterialEfficiencyChanged {
           me: next,
-          path: path.clone(),
+          type_id,
         }
       } else {
         Message::TimeEfficiencyChanged {
-          path: path.clone(),
           te: next,
+          type_id,
         }
       }
     };
@@ -1850,8 +1878,8 @@ mod view {
     .into()
   }
 
-  fn facility_control<'a>(planner: &'a Planner, path: &[i64], is_reaction: bool) -> Element<'a, Message> {
-    let selected = planner.selected_facility(path, is_reaction);
+  fn facility_control<'a>(planner: &'a Planner, type_id: i64, is_reaction: bool) -> Element<'a, Message> {
+    let selected = planner.selected_facility(type_id, is_reaction);
 
     let placeholder: &'a str = if planner.data().facilities.is_empty() {
       "No facilities available"
@@ -1859,12 +1887,11 @@ mod view {
       "Select a facility\u{2026}"
     };
 
-    let owned_path = path.to_vec();
     let trigger = FacilityCombobox::new()
       .placeholder(placeholder)
       .selection(selected.map(|facility| facility_ref(facility, is_reaction)))
       .on_toggle(Message::FacilityPickerToggled {
-        path: owned_path,
+        type_id,
       })
       .trigger();
 
@@ -1883,21 +1910,14 @@ mod view {
       return Space::new().into();
     };
     let anchor_top = (state.anchor.y + FACILITY_PICKER_GAP).max(0.0);
-    let path = state.path.as_slice();
+    let type_id = state.type_id;
     let is_reaction = planner
-      .product()
-      .filter(|_| path.is_empty())
-      .and_then(|product| planner.data().recipe(product))
+      .data()
+      .recipe(type_id)
       .map(|recipe| recipe.is_reaction)
-      .or_else(|| {
-        path
-          .last()
-          .and_then(|&type_id| planner.data().recipe(type_id))
-          .map(|recipe| recipe.is_reaction)
-      })
       .unwrap_or(false);
     let selected = planner
-      .selected_facility(path, is_reaction)
+      .selected_facility(type_id, is_reaction)
       .map(|f| facility_ref(f, is_reaction));
 
     // Type-to-search only (live ESI over any reachable station/structure), identical to the Settings
@@ -1906,19 +1926,17 @@ mod view {
     // surfaces the rest on demand.
     let facilities: Vec<FacilityRef> = state.results.iter().map(|f| facility_ref(f, is_reaction)).collect();
 
-    let search_path = path.to_vec();
-    let pick_path = path.to_vec();
     let popover = FacilityCombobox::new()
       .query(state.query.as_str())
       .results(facilities)
       .on_input(move |value| Message::FacilitySearchChanged {
-        path: search_path.clone(),
         query: value,
+        type_id,
       })
       .on_pick(move |facility: FacilityRef| Message::FacilitySelected {
-        path: pick_path.clone(),
         pin: pin_for(&facility),
         solar_system_id: facility.solar_system_id,
+        type_id,
       })
       .width(Length::Fixed(FACILITY_PICKER_WIDTH))
       .searching(state.searching)
@@ -1953,23 +1971,26 @@ mod view {
     facility.to_ref(is_reaction)
   }
 
-  fn build_vs_buy<'a>(planner: &'a Planner, type_id: i64, recipe: &'a Recipe, sub: &SubBuild) -> Element<'a, Message> {
+  fn build_vs_buy<'a>(
+    planner: &'a Planner,
+    type_id: i64,
+    recipe: &'a Recipe,
+    job: &MergedBuildJob,
+  ) -> Element<'a, Message> {
     let data = planner.data();
-    let config = planner.node(&sub.path);
+    let config = planner.settings_for(type_id);
     let material_cost: f64 = recipe
       .materials
       .iter()
-      .map(|m| eff_qty(m.base_qty, sub.runs, config.me, recipe.is_reaction) as f64 * data.price(m.type_id))
+      .map(|m| eff_qty(m.base_qty, job.runs, config.me, recipe.is_reaction) as f64 * data.price(m.type_id))
       .sum();
-    let produced = recipe.output_per_run * sub.runs;
-    let fee = data.price(type_id)
-      * produced as f64
-      * planner.cost_index(&sub.path, type_id).unwrap_or(0.0)
-      * super::INSTALL_FEE_RATE;
+    let produced = recipe.output_per_run * job.runs;
+    let fee =
+      data.price(type_id) * produced as f64 * planner.cost_index(type_id).unwrap_or(0.0) * super::INSTALL_FEE_RATE;
     let build_cost = material_cost + fee;
-    let buy_cost = sub.needed_qty as f64 * data.price(type_id);
+    let buy_cost = job.needed_qty as f64 * data.price(type_id);
     let savings = buy_cost - build_cost;
-    let build_time = node_build_time(recipe, sub.runs, config.te);
+    let build_time = node_build_time(recipe, job.runs, config.te);
 
     let (savings_label, savings_color) = if savings >= 0.0 {
       ("Saved", color::status::ONLINE)
@@ -1995,22 +2016,44 @@ mod view {
     .into()
   }
 
-  /// The Material Plan section heading: the label/hint on the left and, when the plan has at least one
-  /// buildable input, a warning-tinted "Break down all" button floated right that recursively builds every
-  /// buildable input down to raw materials in one action.
+  /// The Material Plan section heading: a clickable collapse/expand toggle (the table is collapsed on initial
+  /// open) on the left and, when the plan has at least one buildable input, a warning-tinted "Break down all"
+  /// button floated right that recursively builds every buildable input down to raw materials in one action.
   fn material_plan_header(planner: &Planner, hint: String) -> Element<'_, Message> {
-    let label = section_label("Material plan", Some(hint));
+    let toggle = material_plan_toggle(planner.material_plan_open(), hint);
     if !planner.has_buildable_inputs() {
-      return label;
+      return toggle;
     }
     Row::with_children(vec![
-      container(label).width(Length::Fill).into(),
+      container(toggle).width(Length::Fill).into(),
       break_down_all_button(),
     ])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .width(Length::Fill)
     .into()
+  }
+
+  /// The clickable "Material plan" heading that expands/collapses the recursive table. A rotating chevron
+  /// signals state; collapsed by default.
+  fn material_plan_toggle<'a>(open: bool, hint: String) -> Element<'a, Message> {
+    let chevron = if open {
+      Icon::chevron().color(color::text::secondary()).size(13.0)
+    } else {
+      Icon::chevron_right().color(color::text::secondary()).size(13.0)
+    };
+    let inner = Row::with_children(vec![
+      chevron.render::<Message>(),
+      section_label("Material plan", Some(hint)),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center);
+
+    button(inner)
+      .padding(Padding::ZERO)
+      .on_press(Message::MaterialPlanToggled)
+      .style(|_, _| button::Style::default())
+      .into()
   }
 
   fn break_down_all_button<'a>() -> Element<'a, Message> {
@@ -2052,7 +2095,8 @@ mod view {
   fn material_plan<'a>(planner: &'a Planner, recipe: &'a Recipe) -> Element<'a, Message> {
     let mut rows: Vec<Element<'a, Message>> = vec![grid_header()];
     let mut total = 0.0;
-    material_rows(planner, recipe, planner.runs(), &[], 0, &mut rows, &mut total);
+    let mut seen = std::collections::BTreeSet::new();
+    material_rows(planner, recipe, planner.runs(), 0, &mut seen, &mut rows, &mut total);
 
     rows.push(footer_row("Material cost", &fmt_isk_full(total)));
 
@@ -2062,22 +2106,23 @@ mod view {
       .into()
   }
 
+  /// Recursively emits the material-plan rows for `recipe`, descending into a material when its type is built
+  /// in-house (keyed per-TYPE, not per tree position). `seen` guards against a recipe cycle recursing forever.
   fn material_rows<'a>(
     planner: &'a Planner,
     recipe: &'a Recipe,
     runs: i64,
-    path: &[i64],
     depth: usize,
+    seen: &mut std::collections::BTreeSet<i64>,
     out: &mut Vec<Element<'a, Message>>,
     total: &mut f64,
   ) {
     let data = planner.data();
-    let config = planner.node(path);
     for material in &recipe.materials {
-      let qty = eff_qty(material.base_qty, runs, config.me, recipe.is_reaction);
+      let qty = eff_qty(material.base_qty, runs, runs_me(planner, recipe), recipe.is_reaction);
       let unit = data.price(material.type_id);
       let cost = qty as f64 * unit;
-      let child = config.children.contains_key(&material.type_id);
+      let child = planner.is_built(material.type_id);
       if depth == 0 {
         *total += cost;
       }
@@ -2092,21 +2137,37 @@ mod view {
           qty,
           unit,
         },
-        path,
       ));
 
-      if child && let Some(child_recipe) = data.recipe(material.type_id) {
+      if child
+        && seen.insert(material.type_id)
+        && let Some(child_recipe) = data.recipe(material.type_id)
+      {
         let child_runs = runs_for(qty, child_recipe.output_per_run);
-        let mut child_path = path.to_vec();
-        child_path.push(material.type_id);
-        material_rows(planner, child_recipe, child_runs, &child_path, depth + 1, out, total);
+        material_rows(planner, child_recipe, child_runs, depth + 1, seen, out, total);
+        seen.remove(&material.type_id);
       }
     }
   }
 
+  /// The ME the planner applies for the type that owns `recipe` (reactions ignore ME). Per-TYPE, so the same
+  /// value backs the material plan and the editable cards.
+  fn runs_me(planner: &Planner, recipe: &Recipe) -> i64 {
+    if recipe.is_reaction {
+      return 0;
+    }
+    planner
+      .data()
+      .recipes
+      .iter()
+      .find(|(_, candidate)| candidate.blueprint_type_id == recipe.blueprint_type_id)
+      .map(|(&product, _)| planner.settings_for(product).me)
+      .unwrap_or(super::DEFAULT_ME)
+  }
+
   /// Inline "Breakdown" button shown on a buildable material-plan row that has not yet been broken down.
   /// Fires the same `NodeBrokenDown` message the row-click and context menu use, so all three coexist.
-  fn breakdown_button<'a>(type_id: i64, parent: &[i64]) -> Element<'a, Message> {
+  fn breakdown_button<'a>(type_id: i64) -> Element<'a, Message> {
     let inner = Row::with_children(vec![
       Icon::flask()
         .color(color::status::WARNING)
@@ -2129,8 +2190,7 @@ mod view {
         right: spacing::SPACE_2,
       })
       .on_press(Message::NodeBrokenDown {
-        mat: type_id,
-        parent: parent.to_vec(),
+        type_id,
       })
       .style(|_, _| button::Style {
         background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.1))),
@@ -2145,7 +2205,7 @@ mod view {
       .into()
   }
 
-  fn material_row<'a>(planner: &'a Planner, type_id: i64, line: MaterialLine, parent: &[i64]) -> Element<'a, Message> {
+  fn material_row<'a>(planner: &'a Planner, type_id: i64, line: MaterialLine) -> Element<'a, Message> {
     let MaterialLine {
       building,
       cost,
@@ -2168,7 +2228,7 @@ mod view {
     if building {
       name_row = name_row.push(badge("BUILDING", Some(color::status::WARNING)));
     } else if buildable {
-      name_row = name_row.push(breakdown_button(type_id, parent));
+      name_row = name_row.push(breakdown_button(type_id));
     }
 
     let name_cell = container(name_row).padding(Padding {
@@ -2221,13 +2281,11 @@ mod view {
       });
 
     let mut area = mouse_area(styled).on_right_press(Message::MaterialRightPressed {
-      mat: type_id,
-      parent: parent.to_vec(),
+      type_id,
     });
     if buildable && !building {
       area = area.on_press(Message::NodeBrokenDown {
-        mat: type_id,
-        parent: parent.to_vec(),
+        type_id,
       });
     }
     area.into()
@@ -3534,7 +3592,10 @@ mod view {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::features::industry::planner_loaders::{CatalogEntry, OwnedSummary};
+  use crate::features::industry::{
+    planner_loaders::{CatalogEntry, OwnedSummary},
+    planner_model::Material,
+  };
 
   const COMPONENT: i64 = 11_000;
   const HULK: i64 = 22_544;
@@ -3651,12 +3712,11 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![],
+        type_id: HULK,
       });
 
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       let plan = planner.plan().unwrap();
@@ -3672,11 +3732,10 @@ mod tests {
       let mut planner = planner();
 
       planner.update(Message::NodeBrokenDown {
-        mat: TRITANIUM,
-        parent: vec![],
+        type_id: TRITANIUM,
       });
 
-      assert!(planner.node(&[]).children.is_empty());
+      assert!(!planner.is_built(TRITANIUM));
     }
 
     #[test]
@@ -3684,15 +3743,14 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
       });
 
       let totals = planner.plan().unwrap().raw_totals();
@@ -3715,10 +3773,11 @@ mod tests {
       planner.update(Message::BreakDownAll);
 
       // The buildable RETRIEVER input is built in-house; raw TRITANIUM is left to buy.
-      let root = planner.node(&[]);
+      assert!(planner.is_built(RETRIEVER));
+      assert!(!planner.is_built(TRITANIUM));
+      // The derived tree builds RETRIEVER but leaves its raw TRITANIUM to buy.
+      let root = planner.plan().unwrap().root;
       assert!(root.children.contains_key(&RETRIEVER));
-      assert!(!root.children.contains_key(&TRITANIUM));
-      // RETRIEVER's only input is raw TRITANIUM, so it has no further sub-builds.
       assert!(root.children[&RETRIEVER].children.is_empty());
     }
 
@@ -3726,14 +3785,13 @@ mod tests {
     fn it_is_idempotent_and_keeps_existing_breakdowns() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
-      let before = planner.node(&[]).clone();
+      let before = planner.plan();
 
       planner.update(Message::BreakDownAll);
 
-      assert_eq!(planner.node(&[]), &before);
+      assert_eq!(planner.plan(), before);
     }
 
     #[test]
@@ -3759,7 +3817,8 @@ mod tests {
 
       planner.update(Message::BreakDownAll);
 
-      let root = planner.node(&[]);
+      assert!(planner.is_built(COMPOSITE));
+      let root = planner.plan().unwrap().root;
       assert!(root.children.contains_key(&COMPOSITE));
       assert!(root.children[&COMPOSITE].children.is_empty());
     }
@@ -3798,7 +3857,7 @@ mod tests {
 
       assert!(seeded);
       assert_eq!(planner.product(), Some(HULK));
-      assert!(planner.node(&[]).children.is_empty());
+      assert!(!planner.is_built(RETRIEVER));
     }
 
     #[test]
@@ -3869,7 +3928,7 @@ mod tests {
 
       planner.update(Message::ProductPicked(HULK));
 
-      assert_eq!(planner.node(&[]).facility_system, Some(30_002_187));
+      assert_eq!(planner.settings_for(HULK).facility_system, Some(30_002_187));
     }
 
     #[test]
@@ -3882,7 +3941,7 @@ mod tests {
 
       planner.update(Message::ProductPicked(SULFURIC));
 
-      assert_eq!(planner.node(&[]).facility_system, Some(30_000_142));
+      assert_eq!(planner.settings_for(SULFURIC).facility_system, Some(30_000_142));
     }
 
     #[test]
@@ -3891,7 +3950,7 @@ mod tests {
 
       planner.update(Message::ProductPicked(HULK));
 
-      assert_eq!(planner.node(&[]).facility_system, None);
+      assert_eq!(planner.settings_for(HULK).facility_system, None);
     }
 
     #[test]
@@ -3903,7 +3962,7 @@ mod tests {
 
       planner.update(Message::ProductPicked(HULK));
 
-      assert_eq!(planner.node(&[]).facility_system, None);
+      assert_eq!(planner.settings_for(HULK).facility_system, None);
     }
 
     #[test]
@@ -3933,17 +3992,16 @@ mod tests {
 
       planner.update(Message::ProductPicked(WIDGET));
       planner.update(Message::NodeBrokenDown {
-        mat: REACTED,
-        parent: vec![],
+        type_id: REACTED,
       });
 
       assert_eq!(
-        planner.node(&[]).facility_system,
+        planner.settings_for(WIDGET).facility_system,
         Some(30_002_187),
         "the root manufacturing job seeds the manufacturing default"
       );
       assert_eq!(
-        planner.node(&[REACTED]).facility_system,
+        planner.settings_for(REACTED).facility_system,
         Some(30_000_142),
         "the reaction sub-build seeds the reaction default, not the cheapest fallback"
       );
@@ -3958,13 +4016,11 @@ mod tests {
     fn it_restores_a_collapsed_child_to_a_raw_input() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       planner.update(Message::NodeCollapsed {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       let totals = planner.plan().unwrap().raw_totals();
@@ -3993,8 +4049,7 @@ mod tests {
     fn it_prices_material_cost_as_the_rolled_up_acquisition_total_plus_sub_build_fees() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       let eco = planner.economics().unwrap();
@@ -4050,8 +4105,7 @@ mod tests {
 
       planner.update(Message::CursorMoved(iced::Point::new(20.0, 40.0)));
       planner.update(Message::MaterialRightPressed {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       // The root Stack must carry the same number of direct children open or closed so the Material
@@ -4118,13 +4172,13 @@ mod tests {
       let mut root = planner();
       root.update(Message::CursorMoved(Point::new(120.0, 80.0)));
       root.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
 
       // A query that matches no facility renders the "No facilities match." empty state.
       root.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "zzzznomatch".to_owned(),
       });
       let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
@@ -4133,11 +4187,10 @@ mod tests {
       let mut nested = planner();
       nested.update(Message::CursorMoved(Point::new(120.0, 80.0)));
       nested.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       nested.update(Message::FacilityPickerToggled {
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
       });
       let _ = Tree::new(super::super::view(&nested, Scope::All).as_widget());
     }
@@ -4245,7 +4298,7 @@ mod tests {
     fn it_defaults_a_node_to_the_cheapest_eligible_facility() {
       let planner = planner();
 
-      let facility = planner.selected_facility(&[], false).unwrap();
+      let facility = planner.selected_facility(HULK, false).unwrap();
 
       assert_eq!(facility.name, "Cheap Citadel");
       assert_eq!(facility.solar_system_id, 30_002_187);
@@ -4256,12 +4309,12 @@ mod tests {
       let mut planner = planner();
 
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
-      assert_eq!(planner.facility_picker().map(|state| state.path.clone()), Some(vec![]));
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
 
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       assert!(planner.facility_picker().is_none());
     }
@@ -4272,7 +4325,7 @@ mod tests {
       planner.update(Message::CursorMoved(Point::new(640.0, 215.0)));
 
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
 
       assert_eq!(
@@ -4287,7 +4340,7 @@ mod tests {
       planner.update(Message::CursorMoved(Point::new(120.0, 88.0)));
 
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "cheap".to_owned(),
       });
 
@@ -4301,32 +4354,28 @@ mod tests {
     fn it_only_keeps_one_node_picker_open_at_a_time() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::FacilityPickerToggled {
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
       });
 
-      assert_eq!(
-        planner.facility_picker().map(|state| state.path.clone()),
-        Some(vec![RETRIEVER])
-      );
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(RETRIEVER));
     }
 
     #[test]
     fn it_records_the_search_query_for_the_open_node() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
 
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "cheap".to_owned(),
       });
 
@@ -4340,23 +4389,19 @@ mod tests {
     fn it_opens_a_nodes_picker_when_its_always_visible_field_is_typed_into() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
 
       // Typing into a different node's field switches the open picker to that node.
       planner.update(Message::FacilitySearchChanged {
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
         query: "amarr".to_owned(),
       });
 
-      assert_eq!(
-        planner.facility_picker().map(|state| state.path.clone()),
-        Some(vec![RETRIEVER])
-      );
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(RETRIEVER));
       assert_eq!(
         planner.facility_picker().map(|state| state.query.clone()),
         Some("amarr".to_owned())
@@ -4367,17 +4412,17 @@ mod tests {
     fn it_pins_the_selected_facility_system_and_closes_the_picker() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
 
       planner.update(Message::FacilitySelected {
-        path: vec![],
+        type_id: HULK,
         pin: None,
         solar_system_id: 30_000_142,
       });
 
-      assert_eq!(planner.node(&[]).facility_system, Some(30_000_142));
-      assert_eq!(planner.selected_facility(&[], false).unwrap().name, "Pricey Station");
+      assert_eq!(planner.settings_for(HULK).facility_system, Some(30_000_142));
+      assert_eq!(planner.selected_facility(HULK, false).unwrap().name, "Pricey Station");
       assert!(planner.facility_picker().is_none());
     }
 
@@ -4385,12 +4430,12 @@ mod tests {
     fn it_bumps_the_search_generation_and_flags_searching_at_three_chars() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       let before = planner.facility_picker().unwrap().search_generation;
 
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jita".to_owned(),
       });
 
@@ -4403,21 +4448,21 @@ mod tests {
     fn it_falls_back_to_local_and_clears_results_below_three_chars() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jita".to_owned(),
       });
       let generation = planner.facility_picker().unwrap().search_generation;
       planner.update(Message::FacilitySearchResults {
         generation,
-        path: vec![],
+        type_id: HULK,
         results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
       });
 
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Ji".to_owned(),
       });
 
@@ -4430,17 +4475,17 @@ mod tests {
     fn it_applies_live_results_for_the_current_generation() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jita".to_owned(),
       });
       let generation = planner.facility_picker().unwrap().search_generation;
 
       planner.update(Message::FacilitySearchResults {
         generation,
-        path: vec![],
+        type_id: HULK,
         results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
       });
 
@@ -4454,22 +4499,22 @@ mod tests {
     fn it_drops_results_stamped_with_a_stale_generation() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jita".to_owned(),
       });
       let stale = planner.facility_picker().unwrap().search_generation;
       // A second keystroke supersedes the first query's generation.
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jitan".to_owned(),
       });
 
       planner.update(Message::FacilitySearchResults {
         generation: stale,
-        path: vec![],
+        type_id: HULK,
         results: vec![facility(1_021_000_000_001, 30_000_142, "Stale Hit", 0.04)],
       });
 
@@ -4480,17 +4525,17 @@ mod tests {
     fn it_drops_results_routed_to_a_different_node() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::FacilitySearchChanged {
-        path: vec![],
+        type_id: HULK,
         query: "Jita".to_owned(),
       });
       let generation = planner.facility_picker().unwrap().search_generation;
 
       planner.update(Message::FacilitySearchResults {
         generation,
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
         results: vec![facility(1_021_000_000_001, 30_000_142, "Wrong Node", 0.04)],
       });
 
@@ -4515,8 +4560,8 @@ mod tests {
 
       planner.update(Message::ProductPicked(COMPONENT));
 
-      assert_eq!(planner.node(&[]).me, 0);
-      assert_eq!(planner.node(&[]).te, 0);
+      assert_eq!(planner.settings_for(COMPONENT).me, 0);
+      assert_eq!(planner.settings_for(COMPONENT).te, 0);
     }
 
     #[test]
@@ -4534,8 +4579,8 @@ mod tests {
 
       planner.update(Message::ProductPicked(HULK));
 
-      assert_eq!(planner.node(&[]).me, 8);
-      assert_eq!(planner.node(&[]).te, 16);
+      assert_eq!(planner.settings_for(HULK).me, 8);
+      assert_eq!(planner.settings_for(HULK).te, 16);
     }
   }
 
@@ -4656,11 +4701,10 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
 
       planner.update(Message::RunsChanged(3));
@@ -4759,8 +4803,7 @@ mod tests {
       let mut source = planner();
       source.update(Message::RunsChanged(4));
       source.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       let tree = source.snapshot().unwrap();
 
@@ -4803,15 +4846,14 @@ mod tests {
       let mut planner = planner();
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       planner.update(Message::MaterialEfficiencyChanged {
         me: 0,
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
       });
 
       let list = planner.shopping_list();
@@ -4831,27 +4873,26 @@ mod tests {
       planner.update(Message::RunsChanged(3));
       planner.update(Message::MaterialEfficiencyChanged {
         me: 7,
-        path: vec![],
+        type_id: HULK,
       });
       planner.update(Message::TimeEfficiencyChanged {
-        path: vec![],
+        type_id: HULK,
         te: 14,
       });
       planner.update(Message::FacilitySelected {
-        path: vec![],
+        type_id: HULK,
         pin: None,
         solar_system_id: 30_000_142,
       });
       planner.update(Message::NodeBrokenDown {
-        mat: RETRIEVER,
-        parent: vec![],
+        type_id: RETRIEVER,
       });
       planner.update(Message::MaterialEfficiencyChanged {
         me: 4,
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
       });
       planner.update(Message::FacilitySelected {
-        path: vec![RETRIEVER],
+        type_id: RETRIEVER,
         pin: None,
         solar_system_id: 30_002_187,
       });
@@ -4866,18 +4907,21 @@ mod tests {
     }
 
     #[test]
-    fn it_captures_the_root_and_per_node_configuration() {
+    fn it_captures_the_root_and_per_type_configuration() {
       let snapshot = configured_planner().snapshot().unwrap();
 
       assert_eq!(snapshot.product_type_id, HULK);
       assert_eq!(snapshot.runs, 3);
       assert_eq!(snapshot.root_facility_system, Some(30_000_142));
 
-      let root = snapshot.nodes.iter().find(|node| node.path.is_empty()).unwrap();
-      assert_eq!((root.me, root.te), (7, 14));
+      let root = snapshot.types.iter().find(|kind| kind.type_id == HULK).unwrap();
+      assert_eq!((root.me, root.te, root.built), (7, 14, false));
 
-      let child = snapshot.nodes.iter().find(|node| node.path == vec![RETRIEVER]).unwrap();
-      assert_eq!((child.me, child.facility_system), (4, Some(30_002_187)));
+      let child = snapshot.types.iter().find(|kind| kind.type_id == RETRIEVER).unwrap();
+      assert_eq!(
+        (child.me, child.facility_system, child.built),
+        (4, Some(30_002_187), true)
+      );
     }
 
     #[test]

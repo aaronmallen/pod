@@ -3854,17 +3854,17 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
   // so they are seamed here rather than in the pure planner reducer (mirrors stockpile location search).
   match msg {
     industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
-      ref path,
       ref query,
+      type_id,
     }) => {
-      let (path, query) = (path.clone(), query.clone());
+      let query = query.clone();
       let update = industry::update(state, msg, &runtime.db, app.now).map(Message::Industry);
       let search = match state.facility_search_target() {
-        Some((target, generation)) if target == path => industry::facility_search(
+        Some((target, generation)) if target == type_id => industry::facility_search(
           &runtime.db,
           Arc::clone(&runtime.esi),
           Arc::clone(&runtime.sso),
-          path,
+          type_id,
           query,
           generation,
         )
@@ -6168,8 +6168,8 @@ mod tests {
       let _ = handle_industry(
         &mut app,
         industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
-          path: Vec::new(),
           query: "jita".to_owned(),
+          type_id: 0,
         }),
       );
 

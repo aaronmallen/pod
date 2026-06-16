@@ -247,13 +247,13 @@ impl State {
     self.blueprint_sort
   }
 
-  /// Returns the path and generation the app layer needs to stamp a live ESI search for stale-response
+  /// Returns the type-id and generation the app layer needs to stamp a live ESI search for stale-response
   /// detection; `None` when no picker is open.
-  pub(crate) fn facility_search_target(&self) -> Option<(Vec<i64>, u64)> {
+  pub(crate) fn facility_search_target(&self) -> Option<(i64, u64)> {
     self
       .planner
       .facility_picker()
-      .map(|state| (state.path.clone(), state.search_generation))
+      .map(|state| (state.type_id, state.search_generation))
   }
 
   /// Blueprints visible under the current scope. Corporation blueprints are always shown; a character's blueprints are
@@ -466,7 +466,7 @@ pub fn facility_search(
   db: &Database,
   esi: std::sync::Arc<esi::Client>,
   sso: std::sync::Arc<eve_sso::Client>,
-  path: Vec<i64>,
+  type_id: i64,
   query: String,
   generation: u64,
 ) -> Task<Message> {
@@ -482,8 +482,8 @@ pub fn facility_search(
     move |results| {
       Message::Planner(PlannerMessage::FacilitySearchResults {
         generation,
-        path: path.clone(),
         results,
+        type_id,
       })
     },
   )
@@ -1087,8 +1087,7 @@ mod tests {
         let _loaded: Element<'_, Message> = view(&state, &required(), now());
       }
       state.planner.update(planner::Message::NodeBrokenDown {
-        mat: 17_478,
-        parent: Vec::new(),
+        type_id: 17_478,
       });
       state
         .planner
@@ -1115,8 +1114,7 @@ mod tests {
         .planner
         .update(planner::Message::CursorMoved(iced::Point::new(20.0, 40.0)));
       state.planner.update(planner::Message::MaterialRightPressed {
-        mat: 34,
-        parent: Vec::new(),
+        type_id: 34,
       });
       {
         let _menu: Element<'_, Message> = view(&state, &required(), now());
@@ -1215,8 +1213,7 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Planner(planner::Message::NodeBrokenDown {
-          mat: 34,
-          parent: Vec::new(),
+          type_id: 34,
         }),
         &db,
         n,
@@ -1251,19 +1248,20 @@ mod tests {
   mod list_saved_plans {
     use pretty_assertions::assert_eq;
 
-    use crate::store::repo::industry::{self as industry_repo, PlanNode, PlanTree};
+    use crate::store::repo::industry::{self as industry_repo, PlanTree, PlanType};
 
     fn sample_tree() -> PlanTree {
       PlanTree {
-        nodes: vec![PlanNode {
-          facility_system: None,
-          me: 10,
-          path: vec![],
-          te: 20,
-        }],
         product_type_id: 22_544,
         root_facility_system: None,
         runs: 1,
+        types: vec![PlanType {
+          built: false,
+          facility_system: None,
+          me: 10,
+          te: 20,
+          type_id: 22_544,
+        }],
       }
     }
 

@@ -20,6 +20,8 @@ use self::planner::Planner;
 pub use self::{
   loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner},
   planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
+  planner_loaders::PlannerFacility,
+  planner_search::{pin_facility, search_facilities},
 };
 use crate::{
   clients::{esi, eve_sso},
@@ -29,7 +31,10 @@ use crate::{
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
 pub const EMPTY_INDUSTRY_SELECTION: i64 = 0;
 
-const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
+pub const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
+
+/// Re-exported so the Settings Industry tab's app-layer search seam shares the planner's min-char gate.
+pub const FACILITY_SEARCH_MIN_CHARS: usize = planner::FACILITY_SEARCH_MIN_CHARS;
 
 impl From<&crate::config::IndustryConfig> for FacilityDefaults {
   fn from(config: &crate::config::IndustryConfig) -> Self {
@@ -426,6 +431,47 @@ pub fn facility_pin(db: &Database, scope: Scope, pin: PinnedStructure) -> Task<M
     },
     |data| Message::PlannerLoaded(Box::new(data)),
   )
+}
+
+/// Resolves the Settings tab's configured default facility ids (manufacturing, reactions) into the
+/// [`PlannerFacility`] rows the combobox renders, so the trigger can show a structure name + context
+/// after a restart rather than a bare id. Each pair is tagged with its activity id. Ids that no longer
+/// resolve to a locally known facility are dropped.
+pub async fn resolve_default_facilities(
+  db: Database,
+  manufacturing: Option<i64>,
+  reactions: Option<i64>,
+) -> Vec<(i64, PlannerFacility)> {
+  const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+  const REACTION_ACTIVITY_ID: i64 = 11;
+
+  let facilities = planner_loaders::facilities(&db).await;
+  let resolve = |id: Option<i64>, activity: i64| {
+    let id = id?;
+    let facility = facilities.iter().find(|facility| facility.id() == id)?;
+    Some((
+      activity,
+      PlannerFacility {
+        id: facility.id(),
+        manufacturing_index: facility.manufacturing_index(),
+        name: facility.name().clone(),
+        reaction_index: None,
+        region: facility.region().clone(),
+        security_status: facility.security_status(),
+        solar_system: facility.solar_system().clone(),
+        solar_system_id: facility.solar_system_id(),
+        type_id: facility.type_id(),
+      },
+    ))
+  };
+
+  [
+    resolve(manufacturing, MANUFACTURING_ACTIVITY_ID),
+    resolve(reactions, REACTION_ACTIVITY_ID),
+  ]
+  .into_iter()
+  .flatten()
+  .collect()
 }
 
 fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::PlanTree) -> Task<Message> {

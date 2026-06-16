@@ -1,6 +1,7 @@
 pub mod about_tab;
 pub mod accessibility_tab;
 pub mod features_tab;
+pub mod industry_tab;
 pub mod log_export;
 pub mod storage_tab;
 pub mod tags_tab;
@@ -31,25 +32,31 @@ pub enum Category {
   Accessibility,
   #[default]
   Features,
+  Industry,
   Storage,
   Tags,
 }
 
 impl Category {
   /// The categories that appear in the normal top-of-rail list, in order. `About` is excluded here
-  /// because it is pinned to the bottom of the rail, separated from the rest.
-  const ALL: [Category; 4] = [
-    Category::Accessibility,
-    Category::Features,
-    Category::Storage,
-    Category::Tags,
-  ];
+  /// because it is pinned to the bottom of the rail, separated from the rest. `Industry` only appears
+  /// when the Industry feature is enabled.
+  fn list(settings: &Settings) -> Vec<Category> {
+    let mut categories = vec![Category::Accessibility, Category::Features];
+    if *settings.features().industry() {
+      categories.push(Category::Industry);
+    }
+    categories.push(Category::Storage);
+    categories.push(Category::Tags);
+    categories
+  }
 
   fn label(self) -> &'static str {
     match self {
       Category::About => "About",
       Category::Accessibility => "Accessibility",
       Category::Features => "Features",
+      Category::Industry => "Industry",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
     }
@@ -62,15 +69,25 @@ pub enum Message {
   Accessibility(accessibility_tab::Message),
   CategorySelected(Category),
   Features(features_tab::Message),
+  Industry(industry_tab::Message),
   ResetToDefaults,
   Storage(storage_tab::Message),
   Tags(tags_tab::Message),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
   AccessibilityChanged,
-  ExportLogs { end: DateTime<Utc>, start: DateTime<Utc> },
+  ExportLogs {
+    end: DateTime<Utc>,
+    start: DateTime<Utc>,
+  },
+  IndustryPin(crate::features::industry::PinnedStructure),
+  IndustrySearch {
+    activity: i64,
+    generation: u64,
+    query: String,
+  },
   None,
   Persist,
   ReleaseLock,
@@ -84,6 +101,7 @@ pub struct State {
   active: Category,
   db: Database,
   features: features_tab::State,
+  industry: industry_tab::State,
   settings: Settings,
   storage: storage_tab::State,
   tags: tags_tab::State,
@@ -93,6 +111,7 @@ impl State {
   pub fn new(settings: Settings, db: Database) -> Self {
     let accessibility = accessibility_tab::State::from_settings(&settings);
     let features = features_tab::State::from_settings(&settings);
+    let industry = industry_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
     State {
@@ -100,6 +119,7 @@ impl State {
       active: Category::default(),
       db,
       features,
+      industry,
       settings,
       storage,
       tags,
@@ -120,7 +140,20 @@ impl State {
 }
 
 pub fn load(state: &State) -> Task<Message> {
-  tags_tab::load(&state.db).map(Message::Tags)
+  let tags = tags_tab::load(&state.db).map(Message::Tags);
+  if !*state.settings.features().industry() {
+    return tags;
+  }
+
+  let db = state.db.clone();
+  let manufacturing = *state.settings.industry().manufacturing();
+  let reactions = *state.settings.industry().reactions();
+  let defaults = Task::perform(
+    async move { crate::features::industry::resolve_default_facilities(db, manufacturing, reactions).await },
+    |resolved| Message::Industry(industry_tab::Message::SelectionsResolved(resolved)),
+  );
+
+  Task::batch([tags, defaults])
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
@@ -140,6 +173,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     }
     Message::Features(msg) => (
       features_tab::update(&mut state.features, msg, &mut state.settings),
+      Task::none(),
+    ),
+    Message::Industry(msg) => (
+      industry_tab::update(&mut state.industry, msg, &mut state.settings),
       Task::none(),
     ),
     Message::Storage(msg) => (
@@ -165,7 +202,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
   };
   if matches!(
     outcome,
-    Outcome::AccessibilityChanged | Outcome::Persist | Outcome::SetLogLevel(_)
+    Outcome::AccessibilityChanged | Outcome::IndustryPin(_) | Outcome::Persist | Outcome::SetLogLevel(_)
   ) {
     config::save(&state.settings);
   }
@@ -177,6 +214,11 @@ fn reset_active(state: &mut State) {
   match state.active {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
     Category::Features => *state.settings.features_mut() = *defaults.features(),
+    Category::Industry if *state.settings.features().industry() => {
+      *state.settings.industry_mut() = *defaults.industry();
+      state.industry = industry_tab::State::from_settings(&state.settings);
+    }
+    Category::Industry => {}
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
     Category::Tags | Category::About => {}
   }
@@ -257,7 +299,7 @@ fn categories_pane(state: &State) -> Element<'_, Message> {
   });
 
   let mut rows: Vec<Element<'_, Message>> = vec![heading.into()];
-  for category in Category::ALL {
+  for category in Category::list(&state.settings) {
     rows.push(category_row(state, category, badge_for(state, category)));
   }
 
@@ -399,18 +441,28 @@ fn badge_for(state: &State, category: Category) -> String {
     Category::About => String::new(),
     Category::Accessibility => accessibility_tab::badge(&state.settings),
     Category::Features => features_tab::badge(&state.settings),
+    Category::Industry => industry_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
   }
 }
 
 fn active_panel(state: &State) -> Element<'_, Message> {
-  match state.active {
+  // A disabled Industry feature must never render its panel, even if it was the active category when
+  // the feature was switched off; fall back to the default category in that case.
+  let active = if state.active == Category::Industry && !*state.settings.features().industry() {
+    Category::default()
+  } else {
+    state.active
+  };
+
+  match active {
     Category::About => about_tab::view().map(Message::About),
     Category::Accessibility => {
       accessibility_tab::view(&state.accessibility, &state.settings).map(Message::Accessibility)
     }
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
+    Category::Industry => industry_tab::view(&state.industry, &state.settings).map(Message::Industry),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
   }
@@ -495,12 +547,41 @@ mod tests {
 
   #[tokio::test]
   async fn view_renders_each_category() {
-    let categories = Category::ALL.into_iter().chain(std::iter::once(Category::About));
+    let categories = Category::list(&Settings::default())
+      .into_iter()
+      .chain([Category::Industry, Category::About]);
+
     for category in categories {
       let mut state = state().await;
+      state.settings.features_mut().set_industry(true);
       state.active = category;
       let _el: Element<'_, Message> = view(&state);
     }
+  }
+
+  #[tokio::test]
+  async fn the_industry_category_is_hidden_when_the_feature_is_disabled() {
+    let mut settings = Settings::default();
+    settings.features_mut().set_industry(false);
+
+    assert!(!Category::list(&settings).contains(&Category::Industry));
+  }
+
+  #[tokio::test]
+  async fn the_industry_category_appears_when_the_feature_is_enabled() {
+    let mut settings = Settings::default();
+    settings.features_mut().set_industry(true);
+
+    assert!(Category::list(&settings).contains(&Category::Industry));
+  }
+
+  #[tokio::test]
+  async fn a_disabled_industry_panel_falls_back_to_the_default_category() {
+    let mut state = state().await;
+    state.settings.features_mut().set_industry(false);
+    state.active = Category::Industry;
+
+    let _el: Element<'_, Message> = view(&state);
   }
 
   #[tokio::test]

@@ -2832,6 +2832,12 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       apply_log_level(level);
       return task;
     }
+    settings::Outcome::IndustrySearch {
+      activity,
+      generation,
+      query,
+    } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
+    settings::Outcome::IndustryPin(pin) => return Task::batch(vec![task, settings_facility_pin(app, pin)]),
     _ => {}
   }
 
@@ -2879,6 +2885,53 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   }
 
   Task::batch(tasks)
+}
+
+/// Runs the Settings Industry tab's facility search through the same live ESI search the planner uses.
+/// Mirrors the planner's debounce + min-char gate, stamping `generation` so the tab can drop stale
+/// responses, and degrades to a no-op when no runtime (and therefore no authenticated character) exists.
+fn settings_facility_search(app: &App, activity: i64, generation: u64, query: String) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  if query.trim().chars().count() < industry::FACILITY_SEARCH_MIN_CHARS {
+    return Task::none();
+  }
+
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let sso = Arc::clone(&runtime.sso);
+  Task::perform(
+    async move {
+      tokio::time::sleep(Duration::from_millis(industry::FACILITY_SEARCH_DEBOUNCE_MS)).await;
+      industry::search_facilities(db, esi, sso, query).await
+    },
+    move |results| {
+      Message::Settings(settings::Message::Industry(
+        settings::industry_tab::Message::SearchResults {
+          activity,
+          generation,
+          results,
+        },
+      ))
+    },
+  )
+}
+
+/// Persists a player structure picked as a Settings default so it survives in the locally known
+/// facility set, exactly as the planner pins picked structures.
+fn settings_facility_pin(app: &App, pin: industry::PinnedStructure) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  // The tab already shows the picked facility from the user's selection, so the pin only persists; an
+  // empty `SelectionsResolved` is a benign no-op completion message.
+  Task::perform(async move { industry::pin_facility(db, pin).await }, |()| {
+    Message::Settings(settings::Message::Industry(
+      settings::industry_tab::Message::SelectionsResolved(Vec::new()),
+    ))
+  })
 }
 
 // The resolved color functions are read inside each window's `view` closure, which only re-runs

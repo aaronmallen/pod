@@ -552,10 +552,29 @@ impl Planner {
       .filter(|kind| kind.built)
       .map(|kind| kind.type_id)
       .collect();
-    self.stock_selections.clear();
+    self.restore_stock_selections(tree);
     self.facility_picker = None;
     self.material_plan_open = false;
     self.push_recent(tree.product_type_id);
+  }
+
+  /// Rebuilds the use-stock intent from a saved tree: each `use_stock` type with a pinned facility becomes a
+  /// [`StockSelection`] at that site. The drawn quantity is NOT stored — `needed` is recomputed live from the
+  /// current build tree (mirroring [`toggle_stock_selection`]), so [`allocate_stock`] re-derives the draws
+  /// against today's on-hand once it loads. Settings and `built` must already be restored.
+  fn restore_stock_selections(&mut self, tree: &PlanTree) {
+    self.stock_selections = tree
+      .types
+      .iter()
+      .filter(|kind| kind.use_stock)
+      .filter_map(|kind| {
+        kind.facility_structure.map(|site| StockSelection {
+          needed: self.raw_demand_for(kind.type_id),
+          site,
+          type_id: kind.type_id,
+        })
+      })
+      .collect();
   }
 
   pub fn right_tab(&self) -> RightTab {
@@ -672,23 +691,34 @@ impl Planner {
 
   pub fn snapshot(&self) -> Option<PlanTree> {
     let product = self.product?;
-    // Emit one row per configured type plus the root product and every built type (so a built type with
-    // only default settings is still persisted as built). Deterministic order via a BTreeSet of ids.
+    // Emit one row per configured type plus the root product, every built type (so a built type with only
+    // default settings is still persisted as built), and every use-stock type (a raw material drawn from
+    // stock is neither configured nor built, yet its intent must persist). Deterministic order via a BTreeSet.
     let ids: BTreeSet<i64> = std::iter::once(product)
       .chain(self.settings.keys().copied())
       .chain(self.built.iter().copied())
+      .chain(self.stock_selections.iter().map(|selection| selection.type_id))
       .collect();
     let types = ids
       .into_iter()
       .map(|type_id| {
         let settings = self.settings_for(type_id);
+        // A use-stock type's draw site is the consuming facility, which for a raw material is not its own
+        // configured facility (it has none). Persist that site in `facility_structure` so `restore` can
+        // rehydrate the selection from it; the configured site stands for every other type.
+        let stock_site = self
+          .stock_selections
+          .iter()
+          .find(|selection| selection.type_id == type_id)
+          .map(|selection| selection.site);
         PlanType {
           built: self.built.contains(&type_id),
-          facility_structure: settings.facility_structure,
+          facility_structure: stock_site.or(settings.facility_structure),
           facility_system: settings.facility_system,
           me: settings.me,
           te: settings.te,
           type_id,
+          use_stock: stock_site.is_some(),
         }
       })
       .collect();
@@ -5423,6 +5453,26 @@ mod tests {
     }
 
     #[test]
+    fn it_recomputes_drawn_stock_live_after_a_snapshot_restore() {
+      // HULK root pinned to SITE consumes 5 Tritanium; 4 sit in SITE's hangar and are opted into stock. After
+      // snapshot -> restore -> on-hand reload, the live allocation re-derives all 4 drawn units from the
+      // current tree and assets — no frozen quantity is persisted.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      let snapshot = planner.snapshot().unwrap();
+
+      let mut restored = self::planner();
+      restored.restore(&snapshot);
+      restored.set_on_hand(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      assert!(restored.is_stock_selected(SITE, TRITANIUM));
+      assert_eq!(restored.stock_allocation().drawn_for_type(TRITANIUM), 4);
+    }
+
+    #[test]
     fn it_composes_stock_with_a_breakdown_on_the_remainder() {
       // Break RETRIEVER down so the plan rolls up to 25 Tritanium (5 direct + 2*10), draw 6 from stock,
       // leaving 19 to buy: the breakdown deepens the tree, the netting subtracts the drawn stock.
@@ -5538,6 +5588,37 @@ mod tests {
 
       assert_eq!(restored.snapshot(), Some(snapshot));
       assert_eq!(restored.plan(), original.plan());
+    }
+
+    #[test]
+    fn it_captures_the_use_stock_intent_per_type() {
+      let mut planner = configured_planner();
+      planner.update(Message::StockSelectionToggled {
+        site: 60_000_001,
+        type_id: TRITANIUM,
+      });
+
+      let snapshot = planner.snapshot().unwrap();
+
+      let trit = snapshot.types.iter().find(|kind| kind.type_id == TRITANIUM).unwrap();
+      let hulk = snapshot.types.iter().find(|kind| kind.type_id == HULK).unwrap();
+      assert!(trit.use_stock);
+      assert!(!hulk.use_stock);
+    }
+
+    #[test]
+    fn it_rebuilds_the_use_stock_selection_from_the_saved_facility_structure() {
+      let mut planner = configured_planner();
+      planner.update(Message::StockSelectionToggled {
+        site: 60_000_001,
+        type_id: TRITANIUM,
+      });
+      let snapshot = planner.snapshot().unwrap();
+
+      let mut restored = self::planner();
+      restored.restore(&snapshot);
+
+      assert!(restored.is_stock_selected(60_000_001, TRITANIUM));
     }
   }
 }

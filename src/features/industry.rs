@@ -1295,6 +1295,7 @@ mod tests {
           me: 10,
           te: 20,
           type_id: 22_544,
+          use_stock: false,
         }],
       }
     }

@@ -22,6 +22,7 @@ pub struct PlanType {
   pub me: i64,
   pub te: i64,
   pub type_id: i64,
+  pub use_stock: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -207,9 +208,10 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   .fetch_one(&mut *tx)
   .await?;
 
-  for chunk in tree.types.chunks(SQLITE_MAX_BIND_PARAMS / 7) {
+  for chunk in tree.types.chunks(SQLITE_MAX_BIND_PARAMS / 8) {
     let mut builder = QueryBuilder::<Sqlite>::new(
-      "INSERT INTO industry_plan_types (plan_id, type_id, me, te, facility_system, facility_structure, built) ",
+      "INSERT INTO industry_plan_types \
+        (plan_id, type_id, me, te, facility_system, facility_structure, built, use_stock) ",
     );
     builder.push_values(chunk, |mut row, kind| {
       row
@@ -219,7 +221,8 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
         .push_bind(kind.te)
         .push_bind(kind.facility_system)
         .push_bind(kind.facility_structure)
-        .push_bind(i64::from(kind.built));
+        .push_bind(i64::from(kind.built))
+        .push_bind(i64::from(kind.use_stock));
     });
     builder.build().execute(&mut *tx).await?;
   }
@@ -257,8 +260,8 @@ pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error
     return Ok(None);
   };
 
-  let rows = sqlx::query_as::<_, (i64, i64, i64, Option<i64>, Option<i64>, i64)>(
-    "SELECT type_id, me, te, facility_system, facility_structure, built \
+  let rows = sqlx::query_as::<_, (i64, i64, i64, Option<i64>, Option<i64>, i64, i64)>(
+    "SELECT type_id, me, te, facility_system, facility_structure, built, use_stock \
     FROM industry_plan_types WHERE plan_id = ? ORDER BY type_id",
   )
   .bind(id)
@@ -268,13 +271,14 @@ pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error
   let types = rows
     .into_iter()
     .map(
-      |(type_id, me, te, facility_system, facility_structure, built)| PlanType {
+      |(type_id, me, te, facility_system, facility_structure, built, use_stock)| PlanType {
         built: built != 0,
         facility_structure,
         facility_system,
         me,
         te,
         type_id,
+        use_stock: use_stock != 0,
       },
     )
     .collect();
@@ -936,6 +940,7 @@ mod tests {
             me: 10,
             te: 20,
             type_id: 22_544,
+            use_stock: false,
           },
           PlanType {
             built: true,
@@ -944,6 +949,7 @@ mod tests {
             me: 8,
             te: 16,
             type_id: 17_478,
+            use_stock: false,
           },
           PlanType {
             built: true,
@@ -952,6 +958,7 @@ mod tests {
             me: 5,
             te: 0,
             type_id: 34,
+            use_stock: true,
           },
           PlanType {
             built: false,
@@ -960,6 +967,7 @@ mod tests {
             me: 9,
             te: 18,
             type_id: 11_399,
+            use_stock: false,
           },
         ],
       }
@@ -1010,6 +1018,22 @@ mod tests {
       assert_eq!(root.facility_structure, Some(60_003_760));
       assert_eq!(component.facility_structure, Some(1_021_000_000_001));
       assert_eq!(unset.facility_structure, None);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_use_stock_intent() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let use_stock: Vec<i64> = loaded
+        .types
+        .iter()
+        .filter(|kind| kind.use_stock)
+        .map(|kind| kind.type_id)
+        .collect();
+      assert_eq!(use_stock, vec![34]);
     }
 
     #[tokio::test]

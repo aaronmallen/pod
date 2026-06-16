@@ -1,0 +1,1 @@
+ALTER TABLE industry_plan_types ADD COLUMN use_stock INTEGER NOT NULL DEFAULT 0;

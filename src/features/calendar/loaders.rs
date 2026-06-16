@@ -10,7 +10,7 @@ use crate::{
     Database, images,
     model::{
       AttendeeTally, CharacterCalendarEvent, CharacterContract, CharacterIndustryJob, CharacterSkillqueue,
-      CorporationIndustryJob, MarketOrder, OwnerType as CredentialOwner,
+      CorporationIndustryJob, CorporationMiningExtraction, MarketOrder, OwnerType as CredentialOwner,
     },
     repo::{calendar, character, finance, industry, infra, org, sde},
   },
@@ -18,6 +18,11 @@ use crate::{
 
 const OVERLAY_OWNER: &str = "pod";
 const SOURCE_CONTRACT: &str = "contract";
+/// Discriminant only: chunk-arrival and natural-decay events both display `source = SOURCE_EXTRACTION`,
+/// but take distinct `synthetic_id` ranges so the two timers off one extraction never collide.
+const SOURCE_EXTRACTION: &str = "extraction";
+const SOURCE_EXTRACTION_ARRIVAL: &str = "extraction-arrival";
+const SOURCE_EXTRACTION_DECAY: &str = "extraction-decay";
 const SOURCE_INDUSTRY: &str = "industry";
 /// Discriminant only: corp jobs display `source = SOURCE_INDUSTRY`, but get a distinct `synthetic_id`
 /// range so character and corporation job-id spaces never collide.
@@ -205,6 +210,12 @@ pub(super) async fn load_overlays(db: &Database, character_ids: &[i64], features
           overlays.push(event);
         }
       }
+      for extraction in org::corporation_mining_extractions(db, corporation.id())
+        .await
+        .unwrap_or_default()
+      {
+        overlays.extend(extraction_overlays(&extraction));
+      }
     }
   }
   overlays
@@ -317,6 +328,35 @@ async fn corporation_industry_overlay(
     },
   )
   .await
+}
+
+fn extraction_overlays(extraction: &CorporationMiningExtraction) -> Vec<CalendarEvent> {
+  let moon = extraction
+    .moon_name()
+    .clone()
+    .unwrap_or_else(|| format!("Moon {}", extraction.moon_id()));
+  let mut events = Vec::new();
+  if let Some(arrival) = extraction.chunk_arrival_time().clone() {
+    events.push(overlay_event(
+      extraction.corporation_id(),
+      synthetic_id(SOURCE_EXTRACTION_ARRIVAL, extraction.structure_id()),
+      SOURCE_EXTRACTION,
+      format!("{moon} \u{2014} chunk arrival"),
+      "Mining chunk arrives and is ready to fracture.".to_owned(),
+      arrival,
+    ));
+  }
+  if let Some(decay) = extraction.natural_decay_time().clone() {
+    events.push(overlay_event(
+      extraction.corporation_id(),
+      synthetic_id(SOURCE_EXTRACTION_DECAY, extraction.structure_id()),
+      SOURCE_EXTRACTION,
+      format!("{moon} \u{2014} fracture"),
+      "Chunk fractures naturally if not detonated first.".to_owned(),
+      decay,
+    ));
+  }
+  events
 }
 
 fn group_thousands(value: i64) -> String {
@@ -472,15 +512,18 @@ async fn skill_overlay(db: &Database, names: &mut TypeNames, entry: &CharacterSk
 /// Returns a negative event ID that cannot collide with a real ESI calendar event ID (always positive).
 ///
 /// Each source gets a disjoint billion-wide range via a numeric discriminant: skill=1, market=2,
-/// contract=3, character industry=4, corporation industry=5.  Character and corporation job-id spaces
-/// overlap, so the two industry sources take distinct discriminants.  The low nine digits carry the
-/// original key, so IDs are stable across reloads.
+/// contract=3, character industry=4, corporation industry=5, extraction arrival=6, extraction
+/// decay=7.  Overlapping key spaces (character vs corporation job ids, an extraction's two timers off
+/// the same structure id) take distinct discriminants.  The low nine digits carry the original key, so
+/// IDs are stable across reloads.
 fn synthetic_id(source: &str, key: i64) -> i64 {
   let discriminant = match source {
     SOURCE_MARKET => 2,
     SOURCE_CONTRACT => 3,
     SOURCE_INDUSTRY => 4,
     SOURCE_INDUSTRY_CORP => 5,
+    SOURCE_EXTRACTION_ARRIVAL => 6,
+    SOURCE_EXTRACTION_DECAY => 7,
     _ => 1,
   };
   -(discriminant * 1_000_000_000 + (key % 1_000_000_000))
@@ -659,9 +702,9 @@ mod tests {
     use crate::store::{
       self,
       model::{
-        Alliance, Bloodline, Character, CharacterContract, CharacterIndustryJob, CharacterSkillqueue, Corporation,
-        CorporationIndustryJob, CorporationMemberRole, Gender, ItemCategory, ItemGroup, ItemType, MarketOrder,
-        OwnerType as CredentialOwner, Race,
+        Alliance, Bloodline, Character, CharacterContract, CharacterIndustryJob, CharacterSkillqueue, Constellation,
+        Corporation, CorporationIndustryJob, CorporationMemberRole, CorporationMiningExtraction, Gender, ItemCategory,
+        ItemGroup, ItemType, MarketOrder, Moon, OwnerType as CredentialOwner, Race, Region, SolarSystem,
       },
       repo::{character, finance, industry, infra, org, sde},
     };
@@ -844,6 +887,79 @@ mod tests {
         status: "active".to_owned(),
         successful_runs: None,
       }
+    }
+
+    fn extraction(corporation_id: i64, structure_id: i64, moon_id: i64) -> CorporationMiningExtraction {
+      CorporationMiningExtraction {
+        chunk_arrival_time: Some("2026-06-20T00:00:00Z".to_owned()),
+        corporation_id,
+        extraction_start_time: Some("2026-06-13T00:00:00Z".to_owned()),
+        moon_id,
+        moon_name: None,
+        natural_decay_time: Some("2026-06-21T00:00:00Z".to_owned()),
+        security_status: None,
+        solar_system_id: None,
+        structure_id,
+      }
+    }
+
+    async fn seed_moon(db: &Database, moon_id: i64, solar_system_id: i64) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: 10_000_001,
+          name: "Test Region".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: 20_000_001,
+          name: "Test Constellation".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: 10_000_001,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: 20_000_001,
+          id: solar_system_id,
+          name: "Test System".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.5,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_many_moons(
+        db,
+        &[Moon {
+          id: moon_id,
+          name: "Test System I - Moon 1".to_owned(),
+          orbit_index: Some(1),
+          planet_id: Some(40_000_001),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          radius: None,
+          solar_system_id,
+          type_id: Some(14),
+        }],
+      )
+      .await
+      .unwrap();
     }
 
     async fn own_corporation(db: &Database, corporation_id: i64, authorized_by: i64) {
@@ -1101,6 +1217,133 @@ mod tests {
       let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
       assert_eq!(overlays.len(), 2);
       assert_ne!(ids[0], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_mining_extraction_as_arrival_and_decay_events() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_moon(&db, 40_000_001, 30_000_001).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_001)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 2);
+      assert!(
+        overlays
+          .iter()
+          .all(|event| event.source.as_deref() == Some(SOURCE_EXTRACTION))
+      );
+      let arrival = overlays
+        .iter()
+        .find(|event| event.title == "Test System I - Moon 1 \u{2014} chunk arrival")
+        .unwrap();
+      let decay = overlays
+        .iter()
+        .find(|event| event.title == "Test System I - Moon 1 \u{2014} fracture")
+        .unwrap();
+      assert_eq!(arrival.timestamp, "2026-06-20T00:00:00Z");
+      assert_eq!(decay.timestamp, "2026-06-21T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn it_keeps_extraction_arrival_and_decay_synthetic_ids_disjoint() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
+      assert_eq!(overlays.len(), 2);
+      assert_ne!(ids[0], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_moon_id_when_the_moon_is_not_in_the_sde() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(
+        overlays
+          .iter()
+          .any(|event| event.title == "Moon 40000999 \u{2014} chunk arrival")
+      );
+    }
+
+    #[tokio::test]
+    async fn it_skips_extraction_events_with_a_missing_timestamp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      let mut without_decay = extraction(90_000_001, 1_021_000_000_001, 40_000_999);
+      without_decay.natural_decay_time = None;
+      org::replace_extractions_for_corporation(&db, 90_000_001, &[without_decay])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert!(overlays[0].title.ends_with("chunk arrival"));
+    }
+
+    #[tokio::test]
+    async fn it_removes_extraction_overlays_when_the_industry_feature_is_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+      features.set_enabled(Feature::Industry, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(overlays.is_empty());
     }
   }
 }

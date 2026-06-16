@@ -47,7 +47,7 @@ pub(super) fn view<'a>(cards: &'a [StockpileCard], expanded: &HashSet<i64>) -> E
 
 fn empty_state<'a>() -> Element<'a, Message> {
   let copy = Column::with_children(vec![
-    Icon::assets()
+    Icon::stockpiles()
       .color(color::text::tertiary())
       .size(EMPTY_ICON_SIZE)
       .render(),

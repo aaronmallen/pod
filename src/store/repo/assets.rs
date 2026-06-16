@@ -1061,6 +1061,34 @@ pub async fn inventory_totals_for_combined(
   combined_inventory_totals(db, character_ids, &corporation_ids, filter, location_ids, me_id).await
 }
 
+/// Sums on-hand quantity per `(location_id, type_id)` for items sitting directly in a build-site hangar.
+///
+/// "Directly in the hangar" is the codebase's top-level marker `container_id IS NULL` (an item nested in a
+/// container or ship carries its parent's `item_id` as `container_id`), intersected with the requested build-site
+/// `location_id`s. Character assets are always counted; corporation assets only for authorized corporations.
+pub async fn on_hand_at_build_sites(db: &Database, location_ids: &[i64]) -> Result<HashMap<(i64, i64), i64>, Error> {
+  if location_ids.is_empty() {
+    return Ok(HashMap::new());
+  }
+
+  let mut totals: HashMap<(i64, i64), i64> = HashMap::new();
+  accumulate_on_hand(db, "character_assets", location_ids, None, &mut totals).await?;
+
+  let corporation_ids = corporations_with_assets_at(db, location_ids).await?;
+  for corporation_id in authorized_corporation_ids(db, &corporation_ids).await? {
+    accumulate_on_hand(
+      db,
+      "corporation_assets",
+      location_ids,
+      Some(("corporation_id", corporation_id)),
+      &mut totals,
+    )
+    .await?;
+  }
+
+  Ok(totals)
+}
+
 macro_rules! historical_unit_price_expr {
   () => {
     "CASE \
@@ -1333,6 +1361,51 @@ async fn ancestors_of_match(
   builder.push(recurse_tail);
   push_owner_predicate(&mut builder, owner_ids);
   builder.push(" AND a.container_id IS NOT NULL) SELECT DISTINCT container_id FROM ancestors ORDER BY container_id");
+
+  let rows = builder.build_query_scalar::<i64>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+async fn accumulate_on_hand(
+  db: &Database,
+  table: &'static str,
+  location_ids: &[i64],
+  owner: Option<(&'static str, i64)>,
+  totals: &mut HashMap<(i64, i64), i64>,
+) -> Result<(), Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new("SELECT location_id, type_id, SUM(quantity) FROM ");
+  builder.push(table);
+  builder.push(" WHERE container_id IS NULL AND location_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in location_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
+
+  if let Some((owner_column, owner_id)) = owner {
+    builder.push(" AND ");
+    builder.push(owner_column);
+    builder.push(" = ");
+    builder.push_bind(owner_id);
+  }
+
+  builder.push(" GROUP BY location_id, type_id");
+
+  let rows = builder.build_query_as::<(i64, i64, i64)>().fetch_all(&db.0).await?;
+  for (location_id, type_id, quantity) in rows {
+    *totals.entry((location_id, type_id)).or_insert(0) += quantity;
+  }
+  Ok(())
+}
+
+async fn corporations_with_assets_at(db: &Database, location_ids: &[i64]) -> Result<Vec<i64>, Error> {
+  let mut builder =
+    QueryBuilder::<Sqlite>::new("SELECT DISTINCT corporation_id FROM corporation_assets WHERE location_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in location_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
 
   let rows = builder.build_query_scalar::<i64>().fetch_all(&db.0).await?;
   Ok(rows)
@@ -5925,6 +5998,106 @@ mod asset_tests {
         .unwrap();
 
       assert_eq!(ancestors, [100]);
+    }
+  }
+
+  mod on_hand_at_build_sites {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const SITE_A: i64 = 60_003_760;
+    const SITE_B: i64 = 60_008_494;
+
+    #[tokio::test]
+    async fn it_is_empty_with_no_locations() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(on_hand_at_build_sites(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_sums_only_in_hangar_items_excluding_nested_ones() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut hangar = char_asset(100, 42, None);
+      hangar.type_id = 34;
+      hangar.quantity = 30;
+      let mut container = char_asset(200, 42, None);
+      container.is_container = true;
+      container.type_id = 11_488;
+      let mut nested = char_asset(201, 42, Some(200));
+      nested.type_id = 34;
+      nested.quantity = 7;
+
+      replace_for_character(&db, 42, &[hangar, container, nested])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(30));
+      assert_eq!(totals.get(&(SITE_A, 11_488)).copied(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn it_keys_by_location_and_type() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut at_a = char_asset(100, 42, None);
+      at_a.location_id = SITE_A;
+      at_a.type_id = 34;
+      at_a.quantity = 10;
+      let mut at_b = char_asset(101, 42, None);
+      at_b.location_id = SITE_B;
+      at_b.type_id = 34;
+      at_b.quantity = 5;
+
+      replace_for_character(&db, 42, &[at_a, at_b]).await.unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A, SITE_B]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(10));
+      assert_eq!(totals.get(&(SITE_B, 34)).copied(), Some(5));
+    }
+
+    #[tokio::test]
+    async fn it_sums_character_and_corporation_stock_together() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let mut char_stock = char_asset(100, 42, None);
+      char_stock.location_id = SITE_A;
+      char_stock.type_id = 34;
+      char_stock.quantity = 12;
+      let mut corp_stock = corp_asset(300, CORP_ID, None);
+      corp_stock.location_id = SITE_A;
+      corp_stock.type_id = 34;
+      corp_stock.quantity = 8;
+      let mut corp_nested = corp_asset(301, CORP_ID, Some(300));
+      corp_nested.location_id = SITE_A;
+      corp_nested.type_id = 34;
+      corp_nested.quantity = 100;
+
+      replace_for_character(&db, 42, &[char_stock]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp_stock, corp_nested])
+        .await
+        .unwrap();
+
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(20));
+    }
+
+    #[tokio::test]
+    async fn it_omits_corporation_stock_when_unauthorized() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut corp_stock = corp_asset(300, CORP_ID, None);
+      corp_stock.location_id = SITE_A;
+      corp_stock.type_id = 34;
+      corp_stock.quantity = 8;
+
+      replace_for_corporation(&db, CORP_ID, &[corp_stock]).await.unwrap();
+
+      assert!(on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap().is_empty());
     }
   }
 

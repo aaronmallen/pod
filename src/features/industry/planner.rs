@@ -5,7 +5,7 @@ use iced::Point;
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan},
+  planner_model::{BuildNode, BuildPlan, StockAllocation, StockSelection, allocate_stock},
 };
 use crate::{
   store::repo::industry::{PlanTree, PlanType},
@@ -259,6 +259,9 @@ pub struct Planner {
   /// Whether the recursive Material Plan table is expanded. Collapsed on initial open.
   material_plan_open: bool,
   menu: Option<MaterialMenu>,
+  /// On-hand quantity at the build sites keyed by `(site, type_id)`, the input to [`allocate_stock`]. Loaded
+  /// from `store::repo::assets::on_hand_at_build_sites`; empty until that load lands.
+  on_hand: std::collections::HashMap<(i64, i64), i64>,
   /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
   /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
   pending_blueprint_seed: Option<i64>,
@@ -275,6 +278,10 @@ pub struct Planner {
   /// Per-TYPE ME/TE/facility, keyed by `type_id` (the root product included). Editing a type here applies
   /// to every occurrence of it in the derived build tree.
   settings: BTreeMap<i64, TypeSettings>,
+  /// The ORDERED list of jobs the user opted to draw from on-hand stock. Order is load-bearing:
+  /// [`allocate_stock`] drains each shared `(site, type_id)` pool in this order so no unit is double-counted.
+  /// A later UI task appends to this; the netting reads it through [`Planner::stock_allocation`].
+  stock_selections: Vec<StockSelection>,
 }
 
 impl Planner {
@@ -295,6 +302,7 @@ impl Planner {
       loaded: false,
       material_plan_open: false,
       menu: None,
+      on_hand: std::collections::HashMap::new(),
       pending_blueprint_seed: None,
       picker_open: false,
       picker_scroll_offset: 0.0,
@@ -307,6 +315,7 @@ impl Planner {
       saved: Vec::new(),
       search: String::new(),
       settings: BTreeMap::new(),
+      stock_selections: Vec::new(),
     }
   }
 
@@ -521,6 +530,7 @@ impl Planner {
       .filter(|kind| kind.built)
       .map(|kind| kind.type_id)
       .collect();
+    self.stock_selections.clear();
     self.facility_picker = None;
     self.material_plan_open = false;
     self.push_recent(tree.product_type_id);
@@ -564,6 +574,13 @@ impl Planner {
     self.facility_defaults = defaults;
   }
 
+  /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass. The
+  /// loader that calls this lands with the "Use Stock" UI task; the netting seam exists ahead of it.
+  #[allow(dead_code)]
+  pub fn set_on_hand(&mut self, on_hand: std::collections::HashMap<(i64, i64), i64>) {
+    self.on_hand = on_hand;
+  }
+
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.detail_pane.set_host_width(host_width);
   }
@@ -582,11 +599,18 @@ impl Planner {
     }
   }
 
+  /// The on-hand stock allocated to the current use-stock selections, draining each shared `(site, type_id)`
+  /// pool in selection order. Drives the netted [`BuildPlan::raw_totals_after_stock`] the buy list surfaces;
+  /// empty (no draws) until the user opts a job into stock, leaving raw totals unchanged.
+  pub fn stock_allocation(&self) -> StockAllocation {
+    allocate_stock(&self.on_hand, &self.stock_selections)
+  }
+
   pub fn shopping_list(&self) -> String {
     let Some(plan) = self.plan() else {
       return String::new();
     };
-    let mut totals = plan.raw_totals();
+    let mut totals = plan.raw_totals_after_stock(&self.stock_allocation());
     totals.sort_by(|a, b| {
       let cost_a = a.qty as f64 * self.data.price(a.type_id);
       let cost_b = b.qty as f64 * self.data.price(b.type_id);
@@ -1017,6 +1041,7 @@ impl Planner {
     // A fresh product resets every per-type decision; its own default settings seed lazily via `settings_for`.
     self.settings.clear();
     self.built.clear();
+    self.stock_selections.clear();
     self.material_plan_open = false;
     self.facility_picker = None;
   }

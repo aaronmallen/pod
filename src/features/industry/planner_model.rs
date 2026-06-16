@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// ESI activity id for reactions in pod (the design reference used a synthetic 9). Reaction nodes ignore ME.
 pub const REACTION_ACTIVITY_ID: i64 = 11;
@@ -228,6 +228,27 @@ impl BuildPlan {
       })
       .collect()
   }
+
+  /// [`raw_totals`](Self::raw_totals) with reserved on-hand stock netted out: each raw type's demand is reduced
+  /// by the stock `allocation` drew for it (capped at the demand, never negative), and a type fully covered by
+  /// stock drops off the buy list entirely. With an empty allocation this equals [`raw_totals`](Self::raw_totals).
+  ///
+  /// Allocation is computed against the buildable demand the caller surfaced, so a breakdown on a partially
+  /// covered job naturally applies only to the uncovered remainder: the breakdown deepens the build tree, the
+  /// netting subtracts the same drawn stock from whatever raw inputs that remainder rolls up to.
+  pub fn raw_totals_after_stock(&self, allocation: &StockAllocation) -> Vec<RawTotal> {
+    self
+      .raw_totals()
+      .into_iter()
+      .filter_map(|total| {
+        let net = (total.qty - allocation.drawn_for_type(total.type_id)).max(0);
+        (net > 0).then_some(RawTotal {
+          qty: net,
+          type_id: total.type_id,
+        })
+      })
+      .collect()
+  }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -269,6 +290,47 @@ pub struct RawTotal {
   pub type_id: i64,
 }
 
+/// The outcome of a [`allocate_stock`] pass: one [`StockDraw`] per input selection (parallel by index) plus
+/// the total drawn per `(site, type_id)` pool, used to net reserved stock through [`BuildPlan::raw_totals`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StockAllocation {
+  pub draws: Vec<StockDraw>,
+  pub drawn_by_pool: HashMap<(i64, i64), i64>,
+}
+
+impl StockAllocation {
+  /// Total stock drawn for `type_id` across every site, the amount [`BuildPlan::raw_totals_after_stock`]
+  /// subtracts from that type's raw demand.
+  pub fn drawn_for_type(&self, type_id: i64) -> i64 {
+    self
+      .drawn_by_pool
+      .iter()
+      .filter(|((_, pool_type), _)| *pool_type == type_id)
+      .map(|(_, &qty)| qty)
+      .sum()
+  }
+}
+
+/// How much one [`StockSelection`] drew from on-hand stock and how much it must still buy. `buy` is the
+/// uncovered remainder a breakdown then applies to (only the part stock did not cover).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StockDraw {
+  pub buy: i64,
+  pub drawn: i64,
+  pub site: i64,
+  pub type_id: i64,
+}
+
+/// One job the user opted to draw from on-hand stock: `needed` units of `type_id` wanted at `site`. Several
+/// selections can name the same `(site, type_id)` pool; [`allocate_stock`] drains it in selection order so no
+/// physical unit is counted twice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StockSelection {
+  pub needed: i64,
+  pub site: i64,
+  pub type_id: i64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubBuild {
   pub depth: usize,
@@ -277,6 +339,49 @@ pub struct SubBuild {
   pub path: Vec<i64>,
   pub runs: i64,
   pub type_id: i64,
+}
+
+/// Allocates on-hand stock to an ORDERED list of use-stock selections, draining each `(site, type_id)` pool in
+/// selection order so no physical unit is counted twice across competing jobs that share a pool.
+///
+/// `on_hand` is the available quantity keyed by `(site, type_id)` (the shape of
+/// `store::repo::assets::on_hand_at_build_sites`); the caller passes it in so this stays DB-free and
+/// deterministic. Each selection draws `min(remaining pool, needed)`; the rest is left to buy. Returns the
+/// per-selection draws (parallel to `selections` by index) plus the total drawn per pool for netting.
+pub fn allocate_stock(on_hand: &HashMap<(i64, i64), i64>, selections: &[StockSelection]) -> StockAllocation {
+  let mut remaining: HashMap<(i64, i64), i64> = on_hand.clone();
+  let mut allocation = StockAllocation::default();
+
+  for selection in selections {
+    allocation.draws.push(draw_from_pool(&mut remaining, selection));
+  }
+
+  for ((site, type_id), &available) in on_hand {
+    let left = remaining.get(&(*site, *type_id)).copied().unwrap_or(0);
+    let drawn = available - left;
+    if drawn > 0 {
+      allocation.drawn_by_pool.insert((*site, *type_id), drawn);
+    }
+  }
+
+  allocation
+}
+
+/// Draws one selection's demand from its `(site, type_id)` pool, decrementing `remaining` so a later
+/// selection on the same pool sees only what is left.
+fn draw_from_pool(remaining: &mut HashMap<(i64, i64), i64>, selection: &StockSelection) -> StockDraw {
+  let key = (selection.site, selection.type_id);
+  let needed = selection.needed.max(0);
+  let pool = remaining.entry(key).or_insert(0);
+  let drawn = needed.min(*pool).max(0);
+  *pool -= drawn;
+
+  StockDraw {
+    buy: needed - drawn,
+    drawn,
+    site: selection.site,
+    type_id: selection.type_id,
+  }
 }
 
 /// Effective material need: `ceil(base * (1 - me/100))` floored at 1 per run, then scaled by runs. Reactions
@@ -667,6 +772,174 @@ mod tests {
           }]
         );
       }
+    }
+
+    mod raw_totals_after_stock {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      const SITE: i64 = 60_003_760;
+
+      #[test]
+      fn it_is_unchanged_with_an_empty_allocation() {
+        let plan = hulk_plan();
+
+        let netted = plan.raw_totals_after_stock(&StockAllocation::default());
+
+        assert_eq!(netted, plan.raw_totals());
+      }
+
+      #[test]
+      fn it_subtracts_drawn_stock_from_a_types_demand() {
+        // hulk_plan rolls up to 15 Tritanium; drawing 6 from stock leaves 9 to buy.
+        let plan = hulk_plan();
+        let on_hand = HashMap::from([((SITE, TRITANIUM), 6)]);
+        let selections = [StockSelection {
+          needed: 6,
+          site: SITE,
+          type_id: TRITANIUM,
+        }];
+
+        let allocation = allocate_stock(&on_hand, &selections);
+        let netted = plan.raw_totals_after_stock(&allocation);
+
+        assert_eq!(
+          netted,
+          vec![RawTotal {
+            qty: 9,
+            type_id: TRITANIUM,
+          }]
+        );
+      }
+
+      #[test]
+      fn it_drops_a_type_fully_covered_by_stock() {
+        let plan = hulk_plan();
+        let on_hand = HashMap::from([((SITE, TRITANIUM), 100)]);
+        let selections = [StockSelection {
+          needed: 15,
+          site: SITE,
+          type_id: TRITANIUM,
+        }];
+
+        let allocation = allocate_stock(&on_hand, &selections);
+        let netted = plan.raw_totals_after_stock(&allocation);
+
+        assert!(netted.is_empty());
+      }
+    }
+  }
+
+  mod allocate_stock {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const COMPONENT_A: i64 = 700;
+    const SITE_A: i64 = 60_003_760;
+    const SITE_B: i64 = 60_008_494;
+    const TRITANIUM: i64 = 34;
+
+    #[test]
+    fn it_drains_a_shared_pool_in_selection_order() {
+      // Example 1: A needs 2000 Trit, B needs 1000, 1000 on hand at the site. "Use Stock" on A first
+      // draws all 1000; B then finds the pool empty and must buy its full 1000.
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
+      let selections = [
+        StockSelection {
+          needed: 2000,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+        StockSelection {
+          needed: 1000,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+      ];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 1000);
+      assert_eq!(allocation.draws[0].buy, 1000);
+      assert_eq!(allocation.draws[1].drawn, 0);
+      assert_eq!(allocation.draws[1].buy, 1000);
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 1000);
+    }
+
+    #[test]
+    fn it_leaves_the_uncovered_remainder_to_break_down() {
+      // Example 2: Fenrir needs 10 of Component A, 5 on hand. The draw is 5 from stock; the remaining 5
+      // (the `buy` field) is the uncovered remainder a later breakdown applies to.
+      let on_hand = HashMap::from([((SITE_A, COMPONENT_A), 5)]);
+      let selections = [StockSelection {
+        needed: 10,
+        site: SITE_A,
+        type_id: COMPONENT_A,
+      }];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 5);
+      assert_eq!(allocation.draws[0].buy, 5);
+    }
+
+    #[test]
+    fn it_leaves_an_empty_on_hand_map_untouched() {
+      let selections = [StockSelection {
+        needed: 100,
+        site: SITE_A,
+        type_id: TRITANIUM,
+      }];
+
+      let allocation = allocate_stock(&HashMap::new(), &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 0);
+      assert_eq!(allocation.draws[0].buy, 100);
+      assert!(allocation.drawn_by_pool.is_empty());
+    }
+
+    #[test]
+    fn it_caps_the_draw_at_the_demand_when_stock_oversupplies() {
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
+      let selections = [StockSelection {
+        needed: 300,
+        site: SITE_A,
+        type_id: TRITANIUM,
+      }];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 300);
+      assert_eq!(allocation.draws[0].buy, 0);
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 300);
+    }
+
+    #[test]
+    fn it_keys_pools_separately_per_site() {
+      // Same type at two sites: each draws from its own pool, never the other's.
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 100), ((SITE_B, TRITANIUM), 40)]);
+      let selections = [
+        StockSelection {
+          needed: 500,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+        StockSelection {
+          needed: 500,
+          site: SITE_B,
+          type_id: TRITANIUM,
+        },
+      ];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 100);
+      assert_eq!(allocation.draws[1].drawn, 40);
+      assert_eq!(allocation.drawn_by_pool.get(&(SITE_A, TRITANIUM)).copied(), Some(100));
+      assert_eq!(allocation.drawn_by_pool.get(&(SITE_B, TRITANIUM)).copied(), Some(40));
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 140);
     }
   }
 

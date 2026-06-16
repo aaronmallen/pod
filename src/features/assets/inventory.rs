@@ -36,6 +36,11 @@ const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
 const TOGGLE_WIDTH: f32 = 16.0;
 
+/// Relative flex widths for the inventory columns, in column order:
+/// Item, Group, Category, Qty, Volume, Unit, Value, Owner, Location.
+/// Header and data rows share these so they stay aligned.
+const COLUMN_PORTIONS: [u16; 9] = [4, 2, 1, 2, 2, 2, 2, 2, 2];
+
 const FILTER_HELP_EXAMPLES: [(&str, &str); 6] = [
   ("category:ship", "all ships"),
   ("region:\"The Forge\"", "in The Forge"),
@@ -421,10 +426,10 @@ fn column_header<'a>(sort: SortColumn, dir: SortDirection) -> Element<'a, Messag
 
   let mut cells: Vec<Element<'a, Message>> =
     vec![Space::new().width(Length::Fixed(TOGGLE_WIDTH)).into(), header_spacer()];
-  for (label, column, right) in columns {
-    cells.push(header_cell(label, column, right, sort, dir));
+  for ((label, column, right), &portion) in columns.into_iter().zip(COLUMN_PORTIONS.iter()) {
+    cells.push(portioned(header_cell(label, column, right, sort, dir), portion));
   }
-  cells.push(plain_header("Location"));
+  cells.push(portioned(plain_header("Location"), COLUMN_PORTIONS[8]));
 
   container(
     Row::with_children(cells)
@@ -454,6 +459,10 @@ fn column_header<'a>(sort: SortColumn, dir: SortDirection) -> Element<'a, Messag
 
 fn header_spacer<'a>() -> Element<'a, Message> {
   Space::new().width(Length::Fixed(ICON_BOX)).into()
+}
+
+fn portioned<'a>(cell: Element<'a, Message>, portion: u16) -> Element<'a, Message> {
+  container(cell).width(Length::FillPortion(portion)).into()
 }
 
 fn plain_header<'a>(label: &'a str) -> Element<'a, Message> {
@@ -531,17 +540,26 @@ fn table_row<'a>(
   let cells: Vec<Element<'a, Message>> = vec![
     row_prefix(inventory_row, expanded),
     row_icon(inventory_row),
-    name_cell(inventory_row),
-    group_cell(inventory_row),
-    category_cell(inventory_row),
-    numeric_cell(fmt_count(inventory_row.quantity), color::text::PRIMARY),
-    numeric_cell(fmt_volume(inventory_row.row_volume), color::text::secondary()),
-    numeric_cell(fmt_isk(inventory_row.unit_price), color::text::secondary()),
-    numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY),
-    owner_cell(inventory_row.owner_id, roster, corporations),
-    text_cell(
-      inventory_row.location_label.clone().unwrap_or_default(),
-      color::text::secondary(),
+    portioned(name_cell(inventory_row), COLUMN_PORTIONS[0]),
+    portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
+    portioned(category_cell(inventory_row), COLUMN_PORTIONS[2]),
+    portioned(numeric_cell(fmt_count(inventory_row.quantity), color::text::PRIMARY), COLUMN_PORTIONS[3]),
+    portioned(
+      numeric_cell(fmt_volume(inventory_row.row_volume), color::text::secondary()),
+      COLUMN_PORTIONS[4],
+    ),
+    portioned(
+      numeric_cell(fmt_isk(inventory_row.unit_price), color::text::secondary()),
+      COLUMN_PORTIONS[5],
+    ),
+    portioned(numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY), COLUMN_PORTIONS[6]),
+    portioned(owner_cell(inventory_row.owner_id, roster, corporations), COLUMN_PORTIONS[7]),
+    portioned(
+      text_cell(
+        inventory_row.location_label.clone().unwrap_or_default(),
+        color::text::secondary(),
+      ),
+      COLUMN_PORTIONS[8],
     ),
   ];
 

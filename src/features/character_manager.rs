@@ -3719,6 +3719,79 @@ mod tests {
       assert_eq!(load_error(&state), Some("boom"));
     }
 
+    #[tokio::test]
+    async fn it_assigns_then_unassigns_a_tag_from_a_corporation_card() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let tag = infra::create(&db, "Industry", None, None).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::OpenAddTagModal {
+          entity_id: 90_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+        },
+        &db,
+      );
+      let modal = state.add_tag_modal.as_ref().expect("the corp add-tag modal is open");
+      assert_eq!(modal.entity_id, 90_000_001);
+      assert_eq!(modal.entity_type, ENTITY_TYPE_CORPORATION);
+
+      let _ = update(
+        &mut state,
+        Message::AssignTag {
+          entity_id: 90_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: tag.id(),
+        },
+        &db,
+      );
+      apply_tag_write(
+        &db,
+        TagWrite::Assign {
+          entity_id: 90_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: tag.id(),
+        },
+      )
+      .await
+      .unwrap();
+      let assigned = infra::memberships(&db, ENTITY_TYPE_CORPORATION).await.unwrap();
+      assert!(
+        assigned
+          .iter()
+          .any(|membership| membership.entity_id() == 90_000_001 && membership.tag_id() == tag.id())
+      );
+
+      let _ = update(
+        &mut state,
+        Message::UnassignTag {
+          entity_id: 90_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: tag.id(),
+        },
+        &db,
+      );
+      apply_tag_write(
+        &db,
+        TagWrite::Unassign {
+          entity_id: 90_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: tag.id(),
+        },
+      )
+      .await
+      .unwrap();
+      let remaining = infra::memberships(&db, ENTITY_TYPE_CORPORATION).await.unwrap();
+
+      assert!(
+        !remaining
+          .iter()
+          .any(|membership| membership.entity_id() == 90_000_001 && membership.tag_id() == tag.id())
+      );
+    }
+
     async fn reload_squad_of(state: &mut State, db: &Database, character_id: i64) -> Option<i64> {
       let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);

@@ -1,15 +1,15 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, Stack, container, mouse_area, text},
+  widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
 };
 
 use super::{Message, card::TagChip};
 use crate::{
-  store::images,
+  store::{images, model::ENTITY_TYPE_CORPORATION},
   sync::Phase,
   ui::{
-    components::{avatar::Avatar, chip::chip, eyebrow::eyebrow, rule, status},
+    components::{avatar::Avatar, chip::Chip, eyebrow::eyebrow, rule, status},
     style::{color, radius, spacing, typography},
   },
 };
@@ -17,6 +17,7 @@ use crate::{
 const REAUTH_BADGE_RADIUS: f32 = 4.0;
 
 const CHIP_GAP: f32 = 5.0;
+const CHIP_RADIUS: f32 = 999.0;
 const HAIRLINE: f32 = 1.0;
 const LOGO_SIZE: f32 = 72.0;
 const MEMBERS_VALUE_SIZE: f32 = 22.0;
@@ -157,7 +158,20 @@ fn identity(model: &CorpCardModel) -> Element<'_, Message> {
 }
 
 fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
-  let chips: Vec<Element<'_, Message>> = model.tags.iter().map(|tag| chip(tag.name.clone(), tag.color)).collect();
+  let mut chips: Vec<Element<'_, Message>> = model
+    .tags
+    .iter()
+    .map(|tag| {
+      Chip::new(tag.name.clone(), tag.color)
+        .on_remove(Message::UnassignTag {
+          entity_id: model.corporation_id,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: tag.id,
+        })
+        .view()
+    })
+    .collect();
+  chips.push(add_tag_affordance(model.corporation_id));
 
   container(Row::with_children(chips).spacing(CHIP_GAP))
     .padding(Padding {
@@ -167,6 +181,33 @@ fn tag_row(model: &CorpCardModel) -> Element<'_, Message> {
       left: spacing::SPACE_3_5,
     })
     .into()
+}
+
+fn add_tag_affordance<'a>(corporation_id: i64) -> Element<'a, Message> {
+  button(
+    text("+")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      }),
+  )
+  .padding([spacing::UNIT / 2.0, spacing::SPACE_2])
+  .on_press(Message::OpenAddTagModal {
+    entity_id: corporation_id,
+    entity_type: ENTITY_TYPE_CORPORATION,
+  })
+  .style(|_, _| button::Style {
+    background: None,
+    text_color: color::text::secondary(),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: HAIRLINE,
+      radius: CHIP_RADIUS.into(),
+    },
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn members_section(model: &CorpCardModel) -> Element<'_, Message> {

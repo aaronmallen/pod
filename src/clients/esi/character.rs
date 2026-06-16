@@ -7,9 +7,9 @@ use crate::clients::{
       blueprint::Blueprint,
       character::{
         Asset, Attributes, CalendarAttendee, CalendarEvent, CalendarEventDetail, CharacterInfo, CharacterSkills,
-        Clones, Contact, ContactLabel, Contract, CreateMailLabelRequest, Location, MailBody, MailHeader, MailLabels,
-        MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, RespondRequest, SendMailRequest, Ship,
-        SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
+        Clones, Contact, ContactLabel, Contract, ContractBid, ContractItem, CreateMailLabelRequest, Location, MailBody,
+        MailHeader, MailLabels, MarkReadRequest, MarketOrder, Notification, Online, RecentKillmail, RespondRequest,
+        SendMailRequest, Ship, SkillQueueEntry, Standing, WalletJournalEntry, WalletTransaction,
       },
       industry::IndustryJob,
     },
@@ -147,6 +147,24 @@ impl<'a> AuthenticatedClient<'a> {
     let url = self
       .esi
       .url(&format!("characters/{}/contacts/", self.grant.character_id()));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn contract_bids(&self, contract_id: i64) -> Result<Vec<ContractBid>, clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/contracts/{contract_id}/bids/",
+      self.grant.character_id()
+    ));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn contract_items(&self, contract_id: i64) -> Result<Vec<ContractItem>, clients::Error> {
+    let url = self.esi.url(&format!(
+      "characters/{}/contracts/{contract_id}/items/",
+      self.grant.character_id()
+    ));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
@@ -877,6 +895,69 @@ mod tests {
         assert!(contacts[0].standing.is_none());
         assert!(contacts[0].is_watched.is_none());
         assert!(contacts[0].label_ids.is_empty());
+      }
+    }
+
+    mod contract_bids {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_bids() {
+        let server = MockServer::start().await;
+        let body = r#"[{"bid_id":1,"bidder_id":1001,"amount":1500000.0,"date_bid":"2024-01-01T00:00:00Z"},{"bid_id":2,"bidder_id":1002,"amount":2000000.0,"date_bid":"2024-01-02T00:00:00Z"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/contracts/9/bids/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let bids = esi.character_authenticated(&grant).contract_bids(9).await.unwrap();
+
+        assert_eq!(bids.len(), 2);
+        assert_eq!(bids[0].bid_id, 1);
+        assert_eq!(bids[0].bidder_id, 1001);
+        assert_eq!(bids[0].amount, 1500000.0);
+        assert_eq!(bids[0].date_bid, "2024-01-01T00:00:00Z");
+        assert_eq!(bids[1].bid_id, 2);
+      }
+    }
+
+    mod contract_items {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_items() {
+        let server = MockServer::start().await;
+        let body = r#"[{"record_id":100,"type_id":587,"quantity":1,"raw_quantity":-1,"is_singleton":true,"is_included":true},{"record_id":101,"type_id":34,"quantity":500,"is_singleton":false,"is_included":false}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/contracts/9/items/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let items = esi.character_authenticated(&grant).contract_items(9).await.unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].record_id, 100);
+        assert_eq!(items[0].type_id, 587);
+        assert_eq!(items[0].quantity, 1);
+        assert_eq!(items[0].raw_quantity, Some(-1));
+        assert!(items[0].is_singleton);
+        assert!(items[0].is_included);
+        assert_eq!(items[1].record_id, 101);
+        assert_eq!(items[1].raw_quantity, None);
+        assert!(!items[1].is_singleton);
+        assert!(!items[1].is_included);
       }
     }
 

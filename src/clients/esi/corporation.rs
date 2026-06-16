@@ -5,7 +5,7 @@ use crate::clients::{
     models::{
       assets::AssetName,
       blueprint::Blueprint,
-      character::{Contact, ContactLabel, RecentKillmail, Standing},
+      character::{Contact, ContactLabel, Contract, ContractBid, ContractItem, RecentKillmail, Standing},
       corporation::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationStructure, CorporationWalletBalance,
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
@@ -61,6 +61,32 @@ impl<'a> AuthenticatedClient<'a> {
 
   pub async fn contacts(&self, corporation_id: i64) -> Result<Vec<Contact>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/contacts/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn contract_bids(&self, corporation_id: i64, contract_id: i64) -> Result<Vec<ContractBid>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("corporations/{corporation_id}/contracts/{contract_id}/bids/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn contract_items(
+    &self,
+    corporation_id: i64,
+    contract_id: i64,
+  ) -> Result<Vec<ContractItem>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("corporations/{corporation_id}/contracts/{contract_id}/items/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  #[allow(dead_code)]
+  pub async fn contracts(&self, corporation_id: i64) -> Result<Vec<Contract>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/contracts/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
@@ -422,6 +448,136 @@ mod tests {
         let result = esi.corporation_authenticated(&grant).contacts(2000).await;
 
         assert!(matches!(result, Err(clients::Error::Http(_))));
+      }
+    }
+
+    mod contract_bids {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"bid_id":1,"bidder_id":1001,"amount":1500000.0,"date_bid":"2024-01-01T00:00:00Z"}]"#;
+        let page_two = r#"[{"bid_id":2,"bidder_id":1002,"amount":2000000.0,"date_bid":"2024-01-02T00:00:00Z"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contracts/9/bids/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contracts/9/bids/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let bids = esi
+          .corporation_authenticated(&grant)
+          .contract_bids(2000, 9)
+          .await
+          .unwrap();
+
+        assert_eq!(bids.len(), 2);
+        assert_eq!(bids[0].bid_id, 1);
+        assert_eq!(bids[0].amount, 1500000.0);
+        assert_eq!(bids[1].bid_id, 2);
+      }
+    }
+
+    mod contract_items {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_items() {
+        let server = MockServer::start().await;
+        let body = r#"[{"record_id":100,"type_id":587,"quantity":1,"raw_quantity":-1,"is_singleton":true,"is_included":true},{"record_id":101,"type_id":34,"quantity":500,"is_singleton":false,"is_included":false}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contracts/9/items/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let items = esi
+          .corporation_authenticated(&grant)
+          .contract_items(2000, 9)
+          .await
+          .unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].record_id, 100);
+        assert_eq!(items[0].type_id, 587);
+        assert_eq!(items[0].raw_quantity, Some(-1));
+        assert!(items[0].is_singleton);
+        assert!(items[0].is_included);
+        assert_eq!(items[1].record_id, 101);
+        assert_eq!(items[1].raw_quantity, None);
+        assert!(!items[1].is_included);
+      }
+    }
+
+    mod contracts {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one = r#"[{"contract_id":1,"issuer_id":1001,"issuer_corporation_id":2000,"assignee_id":3003,"acceptor_id":0,"type":"item_exchange","status":"outstanding","for_corporation":true,"availability":"corporation","date_issued":"2024-01-01T00:00:00Z","date_expired":"2024-02-01T00:00:00Z","price":1000.0}]"#;
+        let page_two = r#"[{"contract_id":2,"issuer_id":1002,"issuer_corporation_id":2000,"assignee_id":0,"acceptor_id":0,"type":"courier","status":"in_progress","for_corporation":true,"availability":"corporation","date_issued":"2024-01-03T00:00:00Z","date_expired":"2024-02-03T00:00:00Z","reward":500.0,"collateral":100.0,"volume":1500.0}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contracts/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contracts/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let contracts = esi.corporation_authenticated(&grant).contracts(2000).await.unwrap();
+
+        assert_eq!(contracts.len(), 2);
+        assert_eq!(contracts[0].contract_id, 1);
+        assert_eq!(contracts[0].contract_type.as_deref(), Some("item_exchange"));
+        assert_eq!(contracts[0].for_corporation, Some(true));
+        assert_eq!(contracts[1].contract_id, 2);
+        assert_eq!(contracts[1].reward, Some(500.0));
       }
     }
 

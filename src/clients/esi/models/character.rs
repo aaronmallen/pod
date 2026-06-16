@@ -192,6 +192,27 @@ pub struct Contract {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct ContractBid {
+  pub amount: f64,
+  pub bid_id: i64,
+  pub bidder_id: i64,
+  pub date_bid: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct ContractItem {
+  pub is_included: bool,
+  pub is_singleton: bool,
+  pub quantity: i32,
+  #[serde(default)]
+  pub raw_quantity: Option<i32>,
+  pub record_id: i64,
+  pub type_id: i32,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct CreateMailLabelRequest {
   #[serde(skip_serializing_if = "Option::is_none")]

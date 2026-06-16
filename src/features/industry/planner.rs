@@ -248,9 +248,10 @@ impl NodeConfig {
 }
 
 /// A fresh, un-expanded node config for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
-/// blueprint's ME/TE or the planner defaults. Shared by [`Planner::fresh_node`] and the recursive break-down
-/// adapter so both seed identical defaults.
-fn fresh_node_config(data: &PlannerData, type_id: i64) -> NodeConfig {
+/// blueprint's ME/TE or the planner defaults, and the facility seeds from the configured default install
+/// structure for the node's own activity (manufacturing vs reaction). Shared by [`Planner::fresh_node`] and
+/// the recursive break-down adapter so every job — root or sub-build — honors the settings.
+fn fresh_node_config(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> NodeConfig {
   let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
   let owned = data.owned.get(&type_id);
   let (me, te) = if is_reaction {
@@ -263,16 +264,29 @@ fn fresh_node_config(data: &PlannerData, type_id: i64) -> NodeConfig {
   };
   NodeConfig {
     children: BTreeMap::new(),
-    facility_system: None,
+    facility_system: default_facility_system_for(data, defaults, is_reaction),
     me,
     te,
   }
+}
+
+/// Maps the configured default install structure for an activity to its solar system, when that facility is
+/// present in current data. Returns `None` — preserving the cheapest-index fallback — when no default is
+/// configured or the configured facility is gone (e.g. a pinned structure that is no longer accessible).
+fn default_facility_system_for(data: &PlannerData, defaults: &FacilityDefaults, is_reaction: bool) -> Option<i64> {
+  let facility_id = defaults.for_activity(is_reaction)?;
+  data
+    .facilities
+    .iter()
+    .find(|facility| facility.id == facility_id)
+    .map(|facility| facility.solar_system_id)
 }
 
 /// Adapts the planner's loaded recipe data into the pure [`planner_model::expand_to_raw`] lookup, exposing
 /// each type's buildable inputs (materials that have their own recipe) and fresh child configs.
 struct BuildableAdapter<'a> {
   data: &'a PlannerData,
+  defaults: &'a FacilityDefaults,
 }
 
 impl BuildableLookup<NodeConfig> for BuildableAdapter<'_> {
@@ -289,7 +303,7 @@ impl BuildableLookup<NodeConfig> for BuildableAdapter<'_> {
   }
 
   fn fresh_child(&self, type_id: i64) -> NodeConfig {
-    fresh_node_config(self.data, type_id)
+    fresh_node_config(self.data, self.defaults, type_id)
   }
 
   fn children_of<'a>(&self, child: &'a mut NodeConfig) -> &'a mut BTreeMap<i64, NodeConfig> {
@@ -487,6 +501,7 @@ impl Planner {
   pub fn has_buildable_inputs(&self) -> bool {
     let lookup = BuildableAdapter {
       data: &self.data,
+      defaults: &self.facility_defaults,
     };
     self
       .product
@@ -881,6 +896,7 @@ impl Planner {
     };
     let lookup = BuildableAdapter {
       data: &self.data,
+      defaults: &self.facility_defaults,
     };
     super::planner_model::expand_to_raw(&mut self.tree.children, product, &lookup);
   }
@@ -901,20 +917,6 @@ impl Planner {
       .unwrap_or(0.0)
   }
 
-  /// The solar-system id to seed a fresh root node from, resolved from the configured default install
-  /// facility (a station/structure id) for this activity. Returns `None` — preserving the cheapest-index
-  /// fallback — when no default is configured or the configured facility is absent from current data
-  /// (e.g. a pinned structure that is no longer accessible).
-  fn default_facility_system(&self, is_reaction: bool) -> Option<i64> {
-    let facility_id = self.facility_defaults.for_activity(is_reaction)?;
-    self
-      .data
-      .facilities
-      .iter()
-      .find(|facility| facility.id == facility_id)
-      .map(|facility| facility.solar_system_id)
-  }
-
   /// Applies a raw runs field edit: keeps only digits in the visible field, and reflows the plan from
   /// the parsed value clamped to the valid range (an empty or unparseable field holds at one run).
   fn edit_runs(&mut self, raw: String) {
@@ -924,7 +926,7 @@ impl Planner {
   }
 
   fn fresh_node(&self, type_id: i64) -> NodeConfig {
-    fresh_node_config(&self.data, type_id)
+    fresh_node_config(&self.data, &self.facility_defaults, type_id)
   }
 
   fn open_menu(&mut self, parent: Vec<i64>, mat: i64) {
@@ -992,9 +994,8 @@ impl Planner {
 
   fn select_product(&mut self, type_id: i64) {
     self.product = Some(type_id);
+    // `fresh_node` already seeds the root's facility from the configured default for its activity.
     self.tree = self.fresh_node(type_id);
-    let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
-    self.tree.facility_system = self.default_facility_system(is_reaction);
     self.facility_picker = None;
   }
 
@@ -3929,6 +3930,49 @@ mod tests {
       planner.update(Message::ProductPicked(HULK));
 
       assert_eq!(planner.node(&[]).facility_system, None);
+    }
+
+    #[test]
+    fn it_seeds_every_sub_build_from_the_per_activity_default() {
+      const WIDGET: i64 = 50_001;
+      const REACTED: i64 = 50_002;
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(WIDGET, recipe(WIDGET + 1, 1, false, vec![Material::new(REACTED, 10)]));
+      data.recipes.insert(
+        REACTED,
+        recipe(REACTED + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
+      );
+      data.names.insert(WIDGET, "Widget".to_owned());
+      data.names.insert(REACTED, "Reacted Goo".to_owned());
+      data.facilities = vec![
+        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
+        facility(60_000_003, 30_000_142, "Reaction Hub", 0.03),
+      ];
+      let mut planner = Planner::new();
+      planner.set_facility_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(60_000_003),
+      });
+      planner.apply_data(data);
+
+      planner.update(Message::ProductPicked(WIDGET));
+      planner.update(Message::NodeBrokenDown {
+        mat: REACTED,
+        parent: vec![],
+      });
+
+      assert_eq!(
+        planner.node(&[]).facility_system,
+        Some(30_002_187),
+        "the root manufacturing job seeds the manufacturing default"
+      );
+      assert_eq!(
+        planner.node(&[REACTED]).facility_system,
+        Some(30_000_142),
+        "the reaction sub-build seeds the reaction default, not the cheapest fallback"
+      );
     }
   }
 

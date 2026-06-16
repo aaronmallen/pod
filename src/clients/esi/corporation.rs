@@ -5,7 +5,7 @@ use crate::clients::{
     models::{
       assets::AssetName,
       blueprint::Blueprint,
-      character::{RecentKillmail, Standing},
+      character::{Contact, ContactLabel, RecentKillmail, Standing},
       corporation::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationStructure, CorporationWalletBalance,
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
@@ -51,6 +51,16 @@ impl<'a> AuthenticatedClient<'a> {
   #[allow(dead_code)]
   pub async fn blueprints(&self, corporation_id: i64) -> Result<Vec<Blueprint>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/blueprints/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  pub async fn contact_labels(&self, corporation_id: i64) -> Result<Vec<ContactLabel>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/contacts/labels/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  pub async fn contacts(&self, corporation_id: i64) -> Result<Vec<Contact>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/contacts/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
@@ -301,6 +311,117 @@ mod tests {
         assert_eq!(blueprints[0].material_efficiency, 10);
         assert_eq!(blueprints[1].item_id, 1000000000002);
         assert_eq!(blueprints[1].runs, 150);
+      }
+    }
+
+    mod contact_labels {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_labels() {
+        let server = MockServer::start().await;
+        let body = r#"[{"label_id":1,"label_name":"Friendlies"},{"label_id":2,"label_name":"Watchlist"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contacts/labels/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let labels = esi
+          .corporation_authenticated(&grant)
+          .contact_labels(2000)
+          .await
+          .unwrap();
+
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].label_id, 1);
+        assert_eq!(labels[0].label_name, "Friendlies");
+        assert_eq!(labels[1].label_id, 2);
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_on_5xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contacts/labels/"))
+          .respond_with(ResponseTemplate::new(500))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).contact_labels(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
+      }
+    }
+
+    mod contacts {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
+        let server = MockServer::start().await;
+        let page_one =
+          r#"[{"contact_id":95001,"contact_type":"character","is_watched":true,"label_ids":[1],"standing":7.5}]"#;
+        let page_two = r#"[{"contact_id":98001,"contact_type":"corporation","standing":-10.0}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contacts/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contacts/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let contacts = esi.corporation_authenticated(&grant).contacts(2000).await.unwrap();
+
+        assert_eq!(contacts.len(), 2);
+        assert_eq!(contacts[0].contact_id, 95001);
+        assert_eq!(contacts[0].contact_type, "character");
+        assert_eq!(contacts[0].is_watched, Some(true));
+        assert_eq!(contacts[0].label_ids, vec![1]);
+        assert_eq!(contacts[1].contact_id, 98001);
+        assert_eq!(contacts[1].standing, Some(-10.0));
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_on_5xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/contacts/"))
+          .respond_with(ResponseTemplate::new(500))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).contacts(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
       }
     }
 

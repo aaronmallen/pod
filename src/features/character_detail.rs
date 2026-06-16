@@ -83,6 +83,7 @@ impl DetailDataType {
       | JobKind::CharacterTelemetry
       | JobKind::CharacterWallet
       | JobKind::CorporationBlueprints
+      | JobKind::CorporationContacts
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationProfile
       | JobKind::CorporationStandings

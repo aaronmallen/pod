@@ -51,6 +51,8 @@ mod corporation;
 mod corporation_asset;
 mod corporation_blueprint;
 pub mod corporation_card;
+mod corporation_contact;
+mod corporation_contact_label;
 mod corporation_industry_job;
 mod corporation_member_role;
 mod corporation_net_worth_snapshot;
@@ -179,6 +181,10 @@ pub use corporation::Model as Corporation;
 pub use corporation_asset::Model as CorporationAsset;
 #[allow(unused_imports)]
 pub use corporation_blueprint::Model as CorporationBlueprint;
+#[allow(unused_imports)]
+pub use corporation_contact::Model as CorporationContact;
+#[allow(unused_imports)]
+pub use corporation_contact_label::Model as CorporationContactLabel;
 #[allow(unused_imports)]
 pub use corporation_industry_job::Model as CorporationIndustryJob;
 #[allow(unused_imports)]

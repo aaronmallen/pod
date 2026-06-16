@@ -5,7 +5,8 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    Alliance, Character, Corporation, CorporationMemberRole, CorporationStanding, Faction, OwnedCorporation, Station,
+    Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationMemberRole,
+    CorporationStanding, Faction, OwnedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
   repo::infra::like_pattern,
@@ -656,6 +657,65 @@ pub async fn replace_for_corporation(
     .execute(&mut *tx)
     .await?;
   }
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_contacts_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  contacts: &[CorporationContact],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_contacts WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for contact in contacts {
+    sqlx::query(
+      "INSERT INTO corporation_contacts \
+        (corporation_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(contact.corporation_id())
+    .bind(contact.contact_id())
+    .bind(contact.contact_type())
+    .bind(contact.standing())
+    .bind(contact.is_watched())
+    .bind(contact.is_blocked())
+    .bind(contact.label_ids())
+    .bind(contact.contact_name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_labels_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  labels: &[CorporationContactLabel],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_contact_labels WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for label in labels {
+    sqlx::query("INSERT INTO corporation_contact_labels (corporation_id, label_id, label_name) VALUES (?, ?, ?)")
+      .bind(label.corporation_id())
+      .bind(label.label_id())
+      .bind(label.label_name())
+      .execute(&mut *tx)
+      .await?;
+  }
+
   tx.commit().await?;
   Ok(())
 }

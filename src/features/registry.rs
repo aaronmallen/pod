@@ -44,7 +44,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: Some(Tab::Killlog),
     },
     Feature::Contacts => Descriptor {
-      jobs: &[JobKind::CharacterContacts],
+      jobs: &[JobKind::CharacterContacts, JobKind::CorporationContacts],
       rail: None,
       scopes: &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE],
       tab: Some(Tab::Contacts),

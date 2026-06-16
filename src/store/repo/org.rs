@@ -912,6 +912,38 @@ pub async fn corporation_killmails(db: &Database, corporation_id: i64) -> Result
   Ok(rows)
 }
 
+pub async fn corporation_killmails_page(
+  db: &Database,
+  corporation_id: i64,
+  after: Option<(String, i64)>,
+  limit: i64,
+) -> Result<Vec<CorporationKillEntry>, Error> {
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at FROM corporation_killmails WHERE corporation_id = ",
+  );
+  builder.push_bind(corporation_id);
+  if let Some((kill_time, killmail_id)) = after {
+    builder.push(" AND (kill_time < ");
+    builder.push_bind(kill_time.clone());
+    builder.push(" OR (kill_time = ");
+    builder.push_bind(kill_time);
+    builder.push(" AND killmail_id < ");
+    builder.push_bind(killmail_id);
+    builder.push("))");
+  }
+  builder.push(" ORDER BY kill_time DESC, killmail_id DESC LIMIT ");
+  builder.push_bind(limit);
+
+  let rows = builder
+    .build_query_as::<CorporationKillEntry>()
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows)
+}
+
 #[allow(dead_code)]
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMemberRole>, Error> {
   let rows = sqlx::query_as::<_, CorporationMemberRole>(
@@ -1474,6 +1506,97 @@ mod corporation_tests {
 
       let result = get_corporation(&db, 40002).await.unwrap().unwrap();
       assert_eq!(result.member_count(), Some(999));
+    }
+  }
+
+  mod corporation_killmails_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 4001;
+
+    fn kill(killmail_id: i64, kill_time: &str) -> CorporationKillEntry {
+      CorporationKillEntry {
+        attacker_count: 1,
+        corporation_id: CORP_ID,
+        final_blow: true,
+        is_kill: true,
+        kill_hash: format!("hash{killmail_id}"),
+        kill_time: kill_time.to_owned(),
+        killmail_id,
+        ship_type_id: 670,
+        synced_at: "2024-01-01T00:00:00Z".to_owned(),
+        system_id: 30_000_142,
+        value_destroyed_isk: 0.0,
+        value_final: false,
+        value_isk: 0.0,
+        value_recheck_count: 0,
+        value_source: "local".to_owned(),
+        victim_alliance_id: None,
+        victim_corp_id: None,
+        victim_damage_taken: 0,
+        victim_id: None,
+      }
+    }
+
+    fn ids(rows: &[CorporationKillEntry]) -> Vec<i64> {
+      rows.iter().map(|row| row.killmail_id()).collect()
+    }
+
+    async fn seed_kills(db: &store::Database) {
+      seed_character(db, CORP_ID, 7001).await;
+
+      // Two share a timestamp so the killmail_id tiebreaker is exercised.
+      upsert_corporation_killmail(db, &kill(100, "2024-03-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(101, "2024-02-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(102, "2024-02-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(103, "2024-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_kill_time_then_killmail_id_descending() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let rows = corporation_killmails_page(&db, CORP_ID, None, 100).await.unwrap();
+
+      assert_eq!(ids(&rows), vec![100, 102, 101, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_pages_through_kills_without_overlap_via_the_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let first = corporation_killmails_page(&db, CORP_ID, None, 2).await.unwrap();
+      assert_eq!(ids(&first), vec![100, 102]);
+
+      let last = first.last().unwrap();
+      let cursor = Some((last.kill_time().clone(), last.killmail_id()));
+      let second = corporation_killmails_page(&db, CORP_ID, cursor, 2).await.unwrap();
+
+      assert_eq!(ids(&second), vec![101, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_page_past_the_last_kill() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let beyond = corporation_killmails_page(&db, CORP_ID, Some(("2023-01-01T00:00:00Z".to_owned(), 0)), 10)
+        .await
+        .unwrap();
+
+      assert!(beyond.is_empty());
     }
   }
 }

@@ -1,3 +1,4 @@
+mod killmail_loader;
 mod tabs;
 
 use std::time::Duration;
@@ -9,8 +10,10 @@ use iced::{
 };
 
 pub use self::tabs::Tab;
+use self::tabs::killlog::{KillLogEntry, KilllogFilter};
 pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
+  features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
     repo::{character, org, sde, standings},
@@ -24,12 +27,20 @@ use crate::{
   },
 };
 
+const KILLLOG_PAGE_SIZE: i64 = 100;
+
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "corp-standings-search-input";
 
 const LOGO_SIZE: f32 = 44.0;
 const PLACEHOLDER: &str = "\u{2014}";
 const SEARCH_DEBOUNCE_MS: u64 = 200;
 const STANDINGS_PAGE_SIZE: i64 = 100;
+
+#[derive(Clone, Debug)]
+pub struct CorpDetail {
+  pub head: Option<CorpHead>,
+  pub killlog: LoadState<Vec<KillLogEntry>>,
+}
 
 #[derive(Clone, Debug)]
 pub struct CorpHead {
@@ -53,7 +64,13 @@ pub enum LoadState<T> {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  Loaded(Option<CorpHead>),
+  CloseKillmailDetail,
+  KilllogFilterChanged(KilllogFilter),
+  KilllogPageLoaded(Vec<KillLogEntry>),
+  KilllogScrolled { absolute: f32, relative: f32 },
+  KillmailDetailLoaded(Box<Option<KillmailDetail>>),
+  KillmailSelected(i64),
+  Loaded(Box<CorpDetail>),
   StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
   StandingsClearSearch,
   StandingsFilterChanged(tabs::standings::StandingsFilter),
@@ -68,6 +85,13 @@ pub struct State {
   active: i64,
   active_tab: Tab,
   head: Option<CorpHead>,
+  killlog: LoadState<Vec<KillLogEntry>>,
+  killlog_cursor: Option<(String, i64)>,
+  killlog_filter: KilllogFilter,
+  killlog_has_more: bool,
+  killlog_loading_more: bool,
+  killlog_scroll_offset: f32,
+  selected_killmail: Option<KillmailDetail>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
   standings_filter: tabs::standings::StandingsFilter,
@@ -84,6 +108,13 @@ impl State {
       active,
       active_tab: Tab::ORDER[0],
       head: None,
+      killlog: LoadState::Loading,
+      killlog_cursor: None,
+      killlog_filter: KilllogFilter::All,
+      killlog_has_more: false,
+      killlog_loading_more: false,
+      killlog_scroll_offset: 0.0,
+      selected_killmail: None,
       standings: LoadState::Loading,
       standings_agent_cursor: None,
       standings_filter: tabs::standings::StandingsFilter::All,
@@ -109,11 +140,26 @@ impl State {
     if let LoadState::Loaded(rows) = &self.standings {
       keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
     }
+    if let Some(detail) = &self.selected_killmail {
+      keys.extend(detail.stale_images());
+    }
     keys
   }
 
   pub(super) fn active_tab(&self) -> Tab {
     self.active_tab
+  }
+
+  pub(super) fn killlog(&self) -> &LoadState<Vec<KillLogEntry>> {
+    &self.killlog
+  }
+
+  pub(super) fn killlog_filter(&self) -> KilllogFilter {
+    self.killlog_filter
+  }
+
+  pub(super) fn killlog_scroll_offset(&self) -> f32 {
+    self.killlog_scroll_offset
   }
 
   pub(super) fn standings(&self) -> &LoadState<Vec<StandingsRow>> {
@@ -182,13 +228,64 @@ pub struct StandingsRow {
 
 pub fn load(db: &Database, corporation_id: i64) -> Task<Message> {
   let db = db.clone();
-  Task::perform(async move { load_head(&db, corporation_id).await }, Message::Loaded)
+  Task::perform(async move { load_detail(&db, corporation_id).await }, |detail| {
+    Message::Loaded(Box::new(detail))
+  })
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::Loaded(head) => {
+    Message::CloseKillmailDetail => {
+      state.selected_killmail = None;
+      Task::none()
+    }
+    Message::KilllogFilterChanged(filter) => {
+      state.killlog_filter = filter;
+      Task::none()
+    }
+    Message::KilllogPageLoaded(entries) => {
+      state.killlog_loading_more = false;
+      state.killlog_has_more = entries.len() as i64 == KILLLOG_PAGE_SIZE;
+      state.killlog_cursor = entries.last().map(killlog_cursor);
+      if let LoadState::Loaded(existing) = &mut state.killlog {
+        existing.extend(entries);
+      }
+      Task::none()
+    }
+    Message::KilllogScrolled {
+      absolute,
+      relative,
+    } => {
+      state.killlog_scroll_offset = absolute;
+      if relative < tabs::SCROLL_THRESHOLD || !state.killlog_has_more || state.killlog_loading_more {
+        return Task::none();
+      }
+      let Some(cursor) = state.killlog_cursor.clone() else {
+        return Task::none();
+      };
+      state.killlog_loading_more = true;
+      Task::perform(
+        load_killlog_page(db.clone(), state.active, Some(cursor)),
+        Message::KilllogPageLoaded,
+      )
+    }
+    Message::KillmailDetailLoaded(detail) => {
+      state.selected_killmail = *detail;
+      Task::none()
+    }
+    Message::KillmailSelected(killmail_id) => {
+      Task::perform(load_killmail_detail(db.clone(), state.active, killmail_id), |detail| {
+        Message::KillmailDetailLoaded(Box::new(detail))
+      })
+    }
+    Message::Loaded(detail) => {
+      let CorpDetail {
+        head,
+        killlog,
+      } = *detail;
       state.head = head;
+      state.killlog = killlog;
+      reset_killlog_pagination(state);
       trigger_standings_search(state, db)
     }
     Message::StandingsAgentsPageLoaded(page) => {
@@ -293,14 +390,35 @@ pub fn view(state: &State) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  container(body)
+  let base = container(body)
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(iced::Background::Color(color::surface::BASE)),
       ..container::Style::default()
-    })
-    .into()
+    });
+
+  if let Some(detail) = state.selected_killmail.as_ref() {
+    return killmail_detail::overlay(base.into(), detail, Message::CloseKillmailDetail);
+  }
+
+  base.into()
+}
+
+pub fn subscription(state: &State) -> iced::Subscription<Message> {
+  if state.selected_killmail.is_none() {
+    return iced::Subscription::none();
+  }
+  iced::event::listen_with(|event, _status, _id| {
+    matches!(
+      event,
+      iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+        ..
+      })
+    )
+    .then_some(Message::CloseKillmailDetail)
+  })
 }
 
 fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
@@ -433,6 +551,94 @@ fn standings_row(store: &images::Store, row: standings::CatalogRow) -> Standings
     region: row.region_name,
     system: row.system_name,
   }
+}
+
+async fn load_detail(db: &Database, corporation_id: i64) -> CorpDetail {
+  let head = load_head(db, corporation_id).await;
+  let killlog = load_killlog(db, corporation_id).await;
+
+  CorpDetail {
+    head,
+    killlog,
+  }
+}
+
+async fn load_killlog(db: &Database, corporation_id: i64) -> LoadState<Vec<KillLogEntry>> {
+  let rows = match org::corporation_killmails_page(db, corporation_id, None, KILLLOG_PAGE_SIZE).await {
+    Ok(rows) => rows,
+    Err(error) => return LoadState::Error(error.to_string()),
+  };
+
+  LoadState::Loaded(resolve_killlog_entries(db, rows).await)
+}
+
+async fn load_killlog_page(db: Database, corporation_id: i64, after: Option<(String, i64)>) -> Vec<KillLogEntry> {
+  let rows = match org::corporation_killmails_page(&db, corporation_id, after, KILLLOG_PAGE_SIZE).await {
+    Ok(rows) => rows,
+    Err(_) => return Vec::new(),
+  };
+
+  resolve_killlog_entries(&db, rows).await
+}
+
+async fn load_killmail_detail(db: Database, corporation_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
+  killmail_loader::load(&db, corporation_id, killmail_id).await
+}
+
+async fn resolve_killlog_entries(
+  db: &Database,
+  rows: Vec<crate::store::model::CorporationKillEntry>,
+) -> Vec<KillLogEntry> {
+  let mut entries = Vec::with_capacity(rows.len());
+  for row in rows {
+    let ship_name = sde::get_item_type(db, row.ship_type_id())
+      .await
+      .ok()
+      .flatten()
+      .map(|item| item.name().clone())
+      .unwrap_or_else(|| format!("Type {}", row.ship_type_id()));
+
+    let (system_name, system_security) = match sde::get_solar_system(db, row.system_id()).await.ok().flatten() {
+      Some(system) => (Some(system.name().clone()), system.security_status()),
+      None => (None, 0.0),
+    };
+
+    let victim_name = match row.victim_id() {
+      Some(id) => character::get(db, id)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.name().to_owned())
+        .unwrap_or_else(|| format!("Pilot {id}")),
+      None => "Unknown".to_owned(),
+    };
+    let victim_corp = match row.victim_corp_id() {
+      Some(id) => org::get_corporation(db, id)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.name().to_owned())
+        .unwrap_or_else(|| format!("Corp {id}")),
+      None => String::new(),
+    };
+
+    entries.push(KillLogEntry {
+      attacker_count: row.attacker_count(),
+      final_blow: row.final_blow(),
+      is_kill: row.is_kill(),
+      kill_time: row.kill_time().clone(),
+      killmail_id: row.killmail_id(),
+      ship_name,
+      ship_type_id: row.ship_type_id(),
+      system_name,
+      system_security,
+      value_destroyed_isk: row.value_destroyed_isk(),
+      value_isk: row.value_isk(),
+      victim_corp,
+      victim_name,
+    });
+  }
+  entries
 }
 
 async fn load_head(db: &Database, corporation_id: i64) -> Option<CorpHead> {
@@ -569,6 +775,39 @@ fn placeholder() -> String {
   PLACEHOLDER.to_owned()
 }
 
+pub(super) fn fmt_isk(balance: Option<f64>) -> String {
+  let Some(value) = balance else {
+    return "\u{2014}".to_owned();
+  };
+  let magnitude = value.abs();
+  if magnitude >= 1e9 {
+    format!("{:.2}B", value / 1e9)
+  } else if magnitude >= 1e6 {
+    format!("{:.1}M", value / 1e6)
+  } else if magnitude >= 1e3 {
+    format!("{:.1}K", value / 1e3)
+  } else {
+    format!("{value:.0}")
+  }
+}
+
+fn killlog_cursor(entry: &KillLogEntry) -> (String, i64) {
+  (entry.kill_time.clone(), entry.killmail_id)
+}
+
+fn reset_killlog_pagination(state: &mut State) {
+  state.killlog_loading_more = false;
+  state.killlog_scroll_offset = 0.0;
+  state.killlog_cursor = match &state.killlog {
+    LoadState::Loaded(entries) => entries.last().map(killlog_cursor),
+    _ => None,
+  };
+  state.killlog_has_more = match &state.killlog {
+    LoadState::Loaded(entries) => entries.len() as i64 == KILLLOG_PAGE_SIZE,
+    _ => false,
+  };
+}
+
 fn format_members(members: Option<i64>) -> String {
   let Some(value) = members else {
     return PLACEHOLDER.to_owned();
@@ -605,6 +844,38 @@ fn format_tax(tax_rate: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn detail() -> CorpDetail {
+    CorpDetail {
+      head: Some(head()),
+      killlog: LoadState::Loaded(Vec::new()),
+    }
+  }
+
+  fn killmail_detail_fixture() -> KillmailDetail {
+    KillmailDetail {
+      attackers: Vec::new(),
+      damage_taken: 0,
+      dropped_isk: 0.0,
+      is_kill: true,
+      kill_time: "2024-01-01T00:00:00Z".to_owned(),
+      killmail_id: 100,
+      ship_icon: images::IconResolution::Missing,
+      ship_name: "Rifter".to_owned(),
+      slots: Vec::new(),
+      system_name: Some("Jita".to_owned()),
+      system_security: 0.9,
+      value_destroyed_isk: 0.0,
+      value_isk: 1234.5,
+      victim_alliance: None,
+      victim_corp: None,
+      victim_name: "Target".to_owned(),
+      victim_portrait: images::ImageState::Stale {
+        id: 3,
+        kind: images::ImageKind::CharacterPortrait,
+      },
+    }
+  }
 
   fn head() -> CorpHead {
     CorpHead {
@@ -686,7 +957,7 @@ mod tests {
       let mut state = State::new(98_000_001);
       let db = crate::store::open_test().await.unwrap();
 
-      let _task = update(&mut state, Message::Loaded(Some(head())), &db);
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
 
       assert!(state.head.is_some());
     }
@@ -697,12 +968,38 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       assert!(state.stale_images().is_empty());
 
-      let _task = update(&mut state, Message::Loaded(Some(head())), &db);
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
 
       assert_eq!(
         state.stale_images(),
         vec![(images::ImageKind::CorporationLogo, 98_000_001)]
       );
+    }
+
+    #[tokio::test]
+    async fn it_changes_the_killlog_filter() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
+
+      assert_eq!(state.killlog_filter(), KilllogFilter::Kills);
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_killmail_detail_modal() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_killmail.is_some());
+
+      let _task = update(&mut state, Message::CloseKillmailDetail, &db);
+      assert!(state.selected_killmail.is_none());
     }
 
     #[tokio::test]

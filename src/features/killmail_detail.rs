@@ -5,15 +5,8 @@ use iced::{
   widget::{Column, Row, Space, container, image, scrollable, text},
 };
 
-use super::{Message, fmt_isk, tabs::killlog::relative_time};
 use crate::{
-  clients::eve_image::Size,
-  store::{
-    Database, images,
-    killmail_slot::SlotGroup,
-    model::CharacterKillEntry,
-    repo::{character, org, sde},
-  },
+  store::images,
   ui::{
     components::{backdrop, clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
     style::{color, radius, spacing, typography},
@@ -22,7 +15,6 @@ use crate::{
 
 const ATTACKER_ICON_BOX: f32 = 30.0;
 const ITEM_ICON_BOX: f32 = 22.0;
-const ITEM_ICON_SIZE: Size = Size::S64;
 const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
 const MODAL_MAX_WIDTH: f32 = 880.0;
 const PORTRAIT_BOX: f32 = 52.0;
@@ -97,206 +89,11 @@ pub struct SlotGroupView {
   pub label: &'static str,
 }
 
-/// `viewing_character_id` only flags the matching attacker row as `is_self`; `character_id` scopes every query.
-pub async fn load(
-  db: &Database,
-  character_id: i64,
-  killmail_id: i64,
-  viewing_character_id: i64,
-) -> Option<KillmailDetail> {
-  let rows = character::killmails(db, character_id).await.ok()?;
-  let row = rows.into_iter().find(|row| row.killmail_id() == killmail_id)?;
-
-  let ship_name = type_name(db, row.ship_type_id()).await;
-  let ship_icon = images::default_store().resolve_type_icon(row.ship_type_id(), None, ITEM_ICON_SIZE);
-
-  let (system_name, system_security) = match sde::get_solar_system(db, row.system_id()).await.ok().flatten() {
-    Some(system) => (Some(system.name().clone()), system.security_status()),
-    None => (None, 0.0),
-  };
-
-  let victim_name = victim_name(db, row.victim_id()).await;
-  let victim_portrait = match row.victim_id() {
-    Some(id) => images::resolve(&images::default_store(), images::ImageKind::CharacterPortrait, id),
-    None => images::ImageState::Stale {
-      id: 0,
-      kind: images::ImageKind::CharacterPortrait,
-    },
-  };
-  let victim_corp = corporation_view(db, row.victim_corp_id()).await;
-  let victim_alliance = alliance_view(db, row.victim_alliance_id()).await;
-
-  let slots = load_slots(db, character_id, killmail_id).await;
-  let attackers = load_attackers(db, character_id, killmail_id, viewing_character_id).await;
-
-  Some(KillmailDetail {
-    attackers,
-    damage_taken: row.victim_damage_taken(),
-    dropped_isk: dropped_isk(&row),
-    is_kill: row.is_kill(),
-    kill_time: row.kill_time().clone(),
-    killmail_id,
-    ship_icon,
-    ship_name,
-    slots,
-    system_name,
-    system_security,
-    value_destroyed_isk: row.value_destroyed_isk(),
-    value_isk: row.value_isk(),
-    victim_alliance,
-    victim_corp,
-    victim_name,
-    victim_portrait,
-  })
-}
-
-fn dropped_isk(row: &CharacterKillEntry) -> f64 {
-  (row.value_isk() - row.value_destroyed_isk()).max(0.0)
-}
-
-async fn load_attackers(
-  db: &Database,
-  character_id: i64,
-  killmail_id: i64,
-  viewing_character_id: i64,
-) -> Vec<AttackerView> {
-  let rows = character::killmail_attackers(db, character_id, killmail_id)
-    .await
-    .unwrap_or_default();
-  let total_damage: f64 = rows.iter().map(|row| row.damage_done() as f64).sum();
-
-  let mut attackers = Vec::with_capacity(rows.len());
-  for row in &rows {
-    let name = match row.attacker_character_id() {
-      Some(id) => character_name(db, id).await,
-      None => "Unknown".to_owned(),
-    };
-    let corp_name = match row.corporation_id() {
-      Some(id) => corporation_name(db, id).await,
-      None => String::new(),
-    };
-    let (ship_name, ship_icon) = match row.ship_type_id() {
-      Some(type_id) => (
-        type_name(db, type_id).await,
-        images::default_store().resolve_type_icon(type_id, None, ITEM_ICON_SIZE),
-      ),
-      None => ("Unknown".to_owned(), images::IconResolution::Missing),
-    };
-    let damage_share = if total_damage > 0.0 {
-      row.damage_done() as f64 / total_damage
-    } else {
-      0.0
-    };
-
-    attackers.push(AttackerView {
-      corp_name,
-      damage_share,
-      final_blow: row.final_blow(),
-      is_self: row.attacker_character_id() == Some(viewing_character_id),
-      name,
-      ship_icon,
-      ship_name,
-    });
-  }
-
-  attackers.sort_by(|a, b| {
-    b.final_blow
-      .cmp(&a.final_blow)
-      .then(b.damage_share.total_cmp(&a.damage_share))
-  });
-  attackers
-}
-
-async fn load_slots(db: &Database, character_id: i64, killmail_id: i64) -> Vec<SlotGroupView> {
-  let rows = character::killmail_items(db, character_id, killmail_id)
-    .await
-    .unwrap_or_default();
-
-  let mut groups: Vec<SlotGroupView> = Vec::new();
-  for &group in SlotGroup::display_order() {
-    let mut items = Vec::new();
-    for row in rows.iter().filter(|row| SlotGroup::from_flag(row.flag()) == group) {
-      // An entry is flagged green (dropped) when any of its stack survived, red otherwise; the displayed count is the
-      // whole stack so a partially-looted stack still reads honestly.
-      items.push(ItemView {
-        dropped: row.quantity_dropped() > 0,
-        icon: images::default_store().resolve_type_icon(row.type_id(), None, ITEM_ICON_SIZE),
-        name: type_name(db, row.type_id()).await,
-        quantity: row.quantity_destroyed() + row.quantity_dropped(),
-        value_isk: row.value_isk(),
-      });
-    }
-    if !items.is_empty() {
-      groups.push(SlotGroupView {
-        items,
-        label: group.label(),
-      });
-    }
-  }
-  groups
-}
-
-async fn alliance_view(db: &Database, alliance_id: Option<i64>) -> Option<EntityView> {
-  let id = alliance_id?;
-  let name = org::get_alliance(db, id)
-    .await
-    .ok()
-    .flatten()
-    .map(|alliance| alliance.name().clone())
-    .unwrap_or_else(|| format!("Alliance {id}"));
-  Some(EntityView {
-    logo: images::resolve(&images::default_store(), images::ImageKind::AllianceLogo, id),
-    name,
-  })
-}
-
-async fn character_name(db: &Database, id: i64) -> String {
-  character::get(db, id)
-    .await
-    .ok()
-    .flatten()
-    .map(|character| character.name().to_owned())
-    .unwrap_or_else(|| format!("Pilot {id}"))
-}
-
-async fn corporation_name(db: &Database, id: i64) -> String {
-  org::get_corporation(db, id)
-    .await
-    .ok()
-    .flatten()
-    .map(|corp| corp.name().to_owned())
-    .unwrap_or_else(|| format!("Corp {id}"))
-}
-
-async fn corporation_view(db: &Database, corp_id: Option<i64>) -> Option<EntityView> {
-  let id = corp_id?;
-  Some(EntityView {
-    logo: images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, id),
-    name: corporation_name(db, id).await,
-  })
-}
-
-async fn type_name(db: &Database, type_id: i64) -> String {
-  sde::get_item_type(db, type_id)
-    .await
-    .ok()
-    .flatten()
-    .map(|item| item.name().clone())
-    .unwrap_or_else(|| format!("Type {type_id}"))
-}
-
-async fn victim_name(db: &Database, victim_id: Option<i64>) -> String {
-  match victim_id {
-    Some(id) => character_name(db, id).await,
-    None => "Unknown".to_owned(),
-  }
-}
-
-pub fn overlay<'a>(base: Element<'a, Message>, detail: &'a KillmailDetail) -> Element<'a, Message> {
+pub fn overlay<'a, M: Clone + 'a>(base: Element<'a, M>, detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
   iced::widget::Stack::with_children(vec![
     base,
-    backdrop::backdrop(Message::CloseKillmailDetail),
-    container(modal(detail))
+    backdrop::backdrop(on_close.clone()),
+    container(modal(detail, on_close))
       .width(Length::Fill)
       .height(Length::Fill)
       .padding(spacing::SPACE_6)
@@ -309,7 +106,70 @@ pub fn overlay<'a>(base: Element<'a, Message>, detail: &'a KillmailDetail) -> El
   .into()
 }
 
-fn modal(detail: &KillmailDetail) -> Element<'_, Message> {
+pub fn relative_time(iso: &str) -> String {
+  let Some(ts) = parse_iso8601(iso) else {
+    return iso.to_owned();
+  };
+  let now = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs() as i64)
+    .unwrap_or(0);
+  let diff = now - ts;
+  if diff < 60 {
+    "just now".to_owned()
+  } else if diff < 3600 {
+    format!("{}m ago", diff / 60)
+  } else if diff < 86_400 {
+    format!("{}h ago", diff / 3600)
+  } else {
+    format!("{}d ago", diff / 86_400)
+  }
+}
+
+fn days_since_epoch(y: i64, m: i64, d: i64) -> i64 {
+  let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+  let era = if y >= 0 { y } else { y - 399 } / 400;
+  let yoe = y - era * 400;
+  let doy = (153 * m + 2) / 5 + d - 1;
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  era * 146_097 + doe - 719_468
+}
+
+fn parse_iso8601(s: &str) -> Option<i64> {
+  let s = s.trim().trim_end_matches('Z');
+  let (date, time) = s.split_once('T')?;
+  let date_parts: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
+  let time_parts: Vec<i64> = time
+    .split('+')
+    .next()
+    .unwrap_or("")
+    .split(':')
+    .filter_map(|p| p.parse::<f64>().ok().map(|v| v as i64))
+    .collect();
+  if date_parts.len() < 3 || time_parts.len() < 3 {
+    return None;
+  }
+  let days = days_since_epoch(date_parts[0], date_parts[1], date_parts[2]);
+  Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
+}
+
+fn fmt_isk(balance: Option<f64>) -> String {
+  let Some(value) = balance else {
+    return "\u{2014}".to_owned();
+  };
+  let magnitude = value.abs();
+  if magnitude >= 1e9 {
+    format!("{:.2}B", value / 1e9)
+  } else if magnitude >= 1e6 {
+    format!("{:.1}M", value / 1e6)
+  } else if magnitude >= 1e3 {
+    format!("{:.1}K", value / 1e3)
+  } else {
+    format!("{value:.0}")
+  }
+}
+
+fn modal<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
   let body = container(
     scrollable(
       Column::with_children(vec![
@@ -333,7 +193,7 @@ fn modal(detail: &KillmailDetail) -> Element<'_, Message> {
   .max_height(MODAL_CONTENT_MAX_HEIGHT);
 
   container(
-    Column::with_children(vec![header(detail), body.into()])
+    Column::with_children(vec![header(detail, on_close), body.into()])
       .width(Length::Fill)
       .height(Length::Shrink),
   )
@@ -351,7 +211,7 @@ fn modal(detail: &KillmailDetail) -> Element<'_, Message> {
   .into()
 }
 
-fn header(detail: &KillmailDetail) -> Element<'_, Message> {
+fn header<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
   let accent = side_accent(detail.is_kill);
 
   let title = Row::with_children(vec![
@@ -383,7 +243,7 @@ fn header(detail: &KillmailDetail) -> Element<'_, Message> {
     type_icon(&detail.ship_icon, SHIP_ICON_BOX),
     info.into(),
     Space::new().width(Length::Fill).into(),
-    close_button(),
+    close_button(on_close),
   ])
   .spacing(spacing::SPACE_3_5)
   .align_y(Vertical::Center)
@@ -430,12 +290,12 @@ fn header(detail: &KillmailDetail) -> Element<'_, Message> {
     .into()
 }
 
-fn victim_card(detail: &KillmailDetail) -> Element<'_, Message> {
+fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let label = if detail.is_kill { "Victim" } else { "Pilot lost" };
 
   let portrait = portrait_tile(&detail.victim_portrait, &detail.victim_name);
 
-  let mut name_lines: Vec<Element<'_, Message>> = vec![
+  let mut name_lines: Vec<Element<'a, M>> = vec![
     text(detail.victim_name.clone())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD + 2.0)
@@ -479,7 +339,7 @@ fn victim_card(detail: &KillmailDetail) -> Element<'_, Message> {
   )
 }
 
-fn value_card(detail: &KillmailDetail) -> Element<'_, Message> {
+fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let total = text(format!("{} ISK", fmt_isk(Some(detail.value_isk))))
     .font(typography::mono::MEDIUM)
     .size(24.0)
@@ -528,10 +388,10 @@ fn value_card(detail: &KillmailDetail) -> Element<'_, Message> {
   )
 }
 
-fn fitting_panel(detail: &KillmailDetail) -> Element<'_, Message> {
+fn fitting_panel<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let count: usize = detail.slots.iter().map(|group| group.items.len()).sum();
 
-  let mut sections: Vec<Element<'_, Message>> = Vec::new();
+  let mut sections: Vec<Element<'a, M>> = Vec::new();
   for (index, group) in detail.slots.iter().enumerate() {
     sections.push(slot_header(group.label, index > 0));
     for item in &group.items {
@@ -553,18 +413,18 @@ fn fitting_panel(detail: &KillmailDetail) -> Element<'_, Message> {
   )
 }
 
-fn attacker_panel(detail: &KillmailDetail) -> Element<'_, Message> {
+fn attacker_panel<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let count = detail.attackers.len();
   let suffix = if count == 1 { "pilot" } else { "pilots" };
 
-  let rows: Vec<Element<'_, Message>> = detail
+  let rows: Vec<Element<'a, M>> = detail
     .attackers
     .iter()
     .enumerate()
     .map(|(index, attacker)| attacker_row(attacker, index == count - 1))
     .collect();
 
-  let body: Element<'_, Message> = if rows.is_empty() {
+  let body: Element<'a, M> = if rows.is_empty() {
     container(subtitle("No attackers recorded", color::text::secondary()))
       .padding(spacing::SPACE_3)
       .into()
@@ -575,7 +435,7 @@ fn attacker_panel(detail: &KillmailDetail) -> Element<'_, Message> {
   panel_unpadded("Involved parties", Some(format!("{count} {suffix}")), body)
 }
 
-fn item_row(item: &ItemView) -> Element<'_, Message> {
+fn item_row<'a, M: 'a>(item: &'a ItemView) -> Element<'a, M> {
   let dot = container(Space::new())
     .width(Length::Fixed(7.0))
     .height(Length::Fixed(7.0))
@@ -592,7 +452,7 @@ fn item_row(item: &ItemView) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
-  let mut name_line: Vec<Element<'_, Message>> = vec![
+  let mut name_line: Vec<Element<'a, M>> = vec![
     type_icon(&item.icon, ITEM_ICON_BOX),
     text(item.name.clone())
       .font(typography::body::REGULAR)
@@ -647,7 +507,7 @@ fn item_row(item: &ItemView) -> Element<'_, Message> {
     .into()
 }
 
-fn attacker_row(attacker: &AttackerView, last: bool) -> Element<'_, Message> {
+fn attacker_row<'a, M: 'a>(attacker: &AttackerView, last: bool) -> Element<'a, M> {
   let name_color = if attacker.is_self {
     color::accent::PLASMA
   } else {
@@ -659,7 +519,7 @@ fn attacker_row(attacker: &AttackerView, last: bool) -> Element<'_, Message> {
     typography::body::REGULAR
   };
 
-  let mut name_line: Vec<Element<'_, Message>> = vec![
+  let mut name_line: Vec<Element<'a, M>> = vec![
     text(attacker.name.clone())
       .font(name_font)
       .size(typography::size::MD)
@@ -721,7 +581,7 @@ fn attacker_row(attacker: &AttackerView, last: bool) -> Element<'_, Message> {
     .into()
 }
 
-fn share_cell(attacker: &AttackerView) -> Element<'_, Message> {
+fn share_cell<'a, M: 'a>(attacker: &AttackerView) -> Element<'a, M> {
   let pct = (attacker.damage_share * 100.0).round() as i64;
   let fill_color = if attacker.final_blow {
     color::status::WARNING
@@ -766,7 +626,7 @@ fn share_cell(attacker: &AttackerView) -> Element<'_, Message> {
   .into()
 }
 
-fn slot_header(label: &str, top_rule: bool) -> Element<'_, Message> {
+fn slot_header<'a, M: 'a>(label: &str, top_rule: bool) -> Element<'a, M> {
   container(eyebrow_text(label, Some(color::text::tertiary())))
     .width(Length::Fill)
     .padding(Padding {
@@ -787,7 +647,7 @@ fn slot_header(label: &str, top_rule: bool) -> Element<'_, Message> {
     .into()
 }
 
-fn legend_cell<'a>(swatch: iced::Color, label: &str, value: f64, right: bool) -> Element<'a, Message> {
+fn legend_cell<'a, M: 'a>(swatch: iced::Color, label: &str, value: f64, right: bool) -> Element<'a, M> {
   let head = Row::with_children(vec![
     container(Space::new())
       .width(Length::Fixed(7.0))
@@ -825,7 +685,7 @@ fn legend_cell<'a>(swatch: iced::Color, label: &str, value: f64, right: bool) ->
   .into()
 }
 
-fn mini<'a>(label: &str, value: String) -> Element<'a, Message> {
+fn mini<'a, M: 'a>(label: &str, value: String) -> Element<'a, M> {
   container(
     Column::with_children(vec![
       eyebrow_text(label, Some(color::text::tertiary())).into(),
@@ -858,12 +718,12 @@ fn mini<'a>(label: &str, value: String) -> Element<'a, Message> {
   .into()
 }
 
-fn panel<'a>(label: &str, right: Option<String>, content: Element<'a, Message>) -> Element<'a, Message> {
+fn panel<'a, M: 'a>(label: &str, right: Option<String>, content: Element<'a, M>) -> Element<'a, M> {
   panel_unpadded(label, right, container(content).padding(spacing::SPACE_3_5).into())
 }
 
-fn panel_unpadded<'a>(label: &str, right: Option<String>, content: Element<'a, Message>) -> Element<'a, Message> {
-  let mut head: Vec<Element<'a, Message>> = vec![
+fn panel_unpadded<'a, M: 'a>(label: &str, right: Option<String>, content: Element<'a, M>) -> Element<'a, M> {
+  let mut head: Vec<Element<'a, M>> = vec![
     eyebrow_text(label, Some(color::text::secondary()))
       .width(Length::Fill)
       .into(),
@@ -923,7 +783,7 @@ fn panel_unpadded<'a>(label: &str, right: Option<String>, content: Element<'a, M
     .into()
 }
 
-fn close_button() -> Element<'static, Message> {
+fn close_button<'a, M: Clone + 'a>(on_close: M) -> Element<'a, M> {
   iced::widget::button(
     text("\u{2715}")
       .font(typography::mono::REGULAR)
@@ -933,7 +793,7 @@ fn close_button() -> Element<'static, Message> {
       }),
   )
   .padding(spacing::SPACE_2 - 1.0)
-  .on_press(Message::CloseKillmailDetail)
+  .on_press(on_close)
   .style(|_, _| iced::widget::button::Style {
     background: None,
     text_color: color::text::secondary(),
@@ -947,7 +807,7 @@ fn close_button() -> Element<'static, Message> {
   .into()
 }
 
-fn dot() -> Element<'static, Message> {
+fn dot<'a, M: 'a>() -> Element<'a, M> {
   container(Space::new())
     .width(Length::Fixed(3.0))
     .height(Length::Fixed(3.0))
@@ -962,7 +822,7 @@ fn dot() -> Element<'static, Message> {
     .into()
 }
 
-fn final_blow_chip() -> Element<'static, Message> {
+fn final_blow_chip<'a, M: 'a>() -> Element<'a, M> {
   container(
     text("FINAL BLOW")
       .font(typography::mono::REGULAR)
@@ -988,7 +848,7 @@ fn final_blow_chip() -> Element<'static, Message> {
   .into()
 }
 
-fn kind_badge(is_kill: bool) -> Element<'static, Message> {
+fn kind_badge<'a, M: 'a>(is_kill: bool) -> Element<'a, M> {
   let (label, tint) = if is_kill {
     ("KILL", color::status::ONLINE)
   } else {
@@ -1020,7 +880,7 @@ fn kind_badge(is_kill: bool) -> Element<'static, Message> {
   .into()
 }
 
-fn meta_text(value: String, tint: iced::Color) -> Element<'static, Message> {
+fn meta_text<'a, M: 'a>(value: String, tint: iced::Color) -> Element<'a, M> {
   text(value)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
@@ -1030,7 +890,7 @@ fn meta_text(value: String, tint: iced::Color) -> Element<'static, Message> {
     .into()
 }
 
-fn portrait_tile<'a>(portrait: &images::ImageState, name: &str) -> Element<'a, Message> {
+fn portrait_tile<'a, M: 'a>(portrait: &images::ImageState, name: &str) -> Element<'a, M> {
   match portrait.path() {
     Some(path) => container(clip_layer(
       image(image::Handle::from_path(path))
@@ -1064,7 +924,7 @@ fn side_accent(is_kill: bool) -> iced::Color {
   }
 }
 
-fn subtitle<'a>(value: &str, tint: iced::Color) -> Element<'a, Message> {
+fn subtitle<'a, M: 'a>(value: &str, tint: iced::Color) -> Element<'a, M> {
   text(value.to_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
@@ -1075,7 +935,7 @@ fn subtitle<'a>(value: &str, tint: iced::Color) -> Element<'a, Message> {
     .into()
 }
 
-fn system_label(detail: &KillmailDetail) -> Element<'_, Message> {
+fn system_label<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let Some(name) = detail.system_name.as_ref() else {
     return meta_text("\u{2014}".to_owned(), color::text::secondary());
   };
@@ -1104,7 +964,7 @@ fn system_label(detail: &KillmailDetail) -> Element<'_, Message> {
   .into()
 }
 
-fn type_icon<'a>(icon: &images::IconResolution, box_size: f32) -> Element<'a, Message> {
+fn type_icon<'a, M: 'a>(icon: &images::IconResolution, box_size: f32) -> Element<'a, M> {
   match icon {
     images::IconResolution::Found(path) => icon_tile(
       clip_layer(
@@ -1124,6 +984,11 @@ fn type_icon<'a>(icon: &images::IconResolution, box_size: f32) -> Element<'a, Me
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[derive(Clone, Debug)]
+  enum Msg {
+    Close,
+  }
 
   fn detail() -> KillmailDetail {
     KillmailDetail {
@@ -1196,13 +1061,13 @@ mod tests {
     #[test]
     fn it_renders_a_kill_and_a_loss() {
       let kill = detail();
-      let base: Element<'_, Message> = Space::new().into();
-      let _kill: Element<'_, Message> = overlay(base, &kill);
+      let base: Element<'_, Msg> = Space::new().into();
+      let _kill: Element<'_, Msg> = overlay(base, &kill, Msg::Close);
 
       let mut loss = detail();
       loss.is_kill = false;
-      let base: Element<'_, Message> = Space::new().into();
-      let _loss: Element<'_, Message> = overlay(base, &loss);
+      let base: Element<'_, Msg> = Space::new().into();
+      let _loss: Element<'_, Msg> = overlay(base, &loss, Msg::Close);
     }
 
     #[test]
@@ -1213,8 +1078,8 @@ mod tests {
       bare.slots = Vec::new();
       bare.attackers = Vec::new();
 
-      let base: Element<'_, Message> = Space::new().into();
-      let _el: Element<'_, Message> = overlay(base, &bare);
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
     }
 
     #[test]
@@ -1233,8 +1098,26 @@ mod tests {
         label: "High power",
       }];
 
-      let base: Element<'_, Message> = Space::new().into();
-      let _el: Element<'_, Message> = overlay(base, &heavy);
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &heavy, Msg::Close);
+    }
+  }
+
+  mod relative_time {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
+      assert_eq!(relative_time("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
+      let label = relative_time("2000-01-01T00:00:00Z");
+
+      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
     }
   }
 

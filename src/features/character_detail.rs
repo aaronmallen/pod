@@ -1,5 +1,5 @@
 mod header;
-mod killmail_detail;
+mod killmail_loader;
 mod tabs;
 
 use std::time::Duration;
@@ -19,6 +19,7 @@ use self::tabs::{
 pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   config::Feature,
+  features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
     model::{
@@ -203,7 +204,7 @@ pub enum Message {
     absolute: f32,
     relative: f32,
   },
-  KillmailDetailLoaded(Box<Option<killmail_detail::KillmailDetail>>),
+  KillmailDetailLoaded(Box<Option<KillmailDetail>>),
   KillmailSelected(i64),
   Loaded(Box<Loaded>),
   NotificationRead(i64),
@@ -315,7 +316,7 @@ pub struct State {
   notifications_filter: NotificationsFilter,
   picker_open: bool,
   roster: Vec<PickerPilot>,
-  selected_killmail: Option<killmail_detail::KillmailDetail>,
+  selected_killmail: Option<KillmailDetail>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
   standings_filter: tabs::standings::StandingsFilter,
@@ -1337,7 +1338,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     });
 
   if let Some(detail) = state.selected_killmail.as_ref() {
-    return killmail_detail::overlay(base.into(), detail);
+    return killmail_detail::overlay(base.into(), detail, Message::CloseKillmailDetail);
   }
 
   if state.picker_open {
@@ -1526,12 +1527,8 @@ async fn load_contacts_page(
   }
 }
 
-async fn load_killmail_detail(
-  db: Database,
-  character_id: i64,
-  killmail_id: i64,
-) -> Option<killmail_detail::KillmailDetail> {
-  killmail_detail::load(&db, character_id, killmail_id, character_id).await
+async fn load_killmail_detail(db: Database, character_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
+  killmail_loader::load(&db, character_id, killmail_id, character_id).await
 }
 
 async fn load_killlog(db: &Database, character_id: i64) -> LoadState<Vec<KillLogEntry>> {

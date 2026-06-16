@@ -1,3 +1,4 @@
+pub(crate) mod killlog;
 mod shared;
 pub(crate) mod standings;
 
@@ -89,7 +90,7 @@ pub(super) fn tab_strip<'a>(active: Tab) -> Element<'a, Message> {
 pub(super) fn tab_body(state: &State) -> Element<'_, Message> {
   match state.active_tab() {
     Tab::Contacts => placeholder(Tab::Contacts),
-    Tab::Killlog => placeholder(Tab::Killlog),
+    Tab::Killlog => windowed_killlog(state),
     Tab::Standings => windowed_standings(state),
   }
 }
@@ -168,6 +169,65 @@ fn windowed_standings(state: &State) -> Element<'_, Message> {
   });
 
   Column::with_children(vec![header.into(), scroll.into()])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Lays out the Kill Log tab: an optional hoisted, non-scrolling header above a height-filling scrollable whose sole
+/// content is the virtualized body. The header is absent in the loading/error/empty states (the body renders those as
+/// a full-height placeholder). The scrollable is nested inside `responsive` so the body builder receives the real
+/// viewport height; the scrollbar's offset drives the virtual window.
+fn windowed_killlog(state: &State) -> Element<'_, Message> {
+  let side = Padding {
+    top: 0.0,
+    right: TAB_BODY_PADDING,
+    bottom: 0.0,
+    left: TAB_BODY_PADDING,
+  };
+
+  let scroll = responsive(move |size| {
+    scrollable(
+      container(killlog::body(
+        state.killlog(),
+        state.killlog_filter(),
+        size.height,
+        state.killlog_scroll_offset(),
+      ))
+      .width(Length::Fill)
+      .padding(Padding {
+        top: 0.0,
+        right: TAB_BODY_PADDING,
+        bottom: spacing::SPACE_6,
+        left: TAB_BODY_PADDING,
+      }),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .on_scroll(|viewport| Message::KilllogScrolled {
+      absolute: viewport.absolute_offset().y,
+      relative: viewport.relative_offset().y,
+    })
+    .into()
+  });
+
+  let mut children: Vec<Element<'_, Message>> = Vec::with_capacity(2);
+  if let Some(header) = killlog::header(state.killlog(), state.killlog_filter()) {
+    children.push(
+      container(header)
+        .width(Length::Fill)
+        .padding(Padding {
+          top: spacing::SPACE_6,
+          bottom: spacing::SPACE_3_5,
+          ..side
+        })
+        .into(),
+    );
+  }
+  children.push(scroll.into());
+
+  Column::with_children(children)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()

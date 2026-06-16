@@ -18,6 +18,9 @@ pub struct BuildNode {
   /// from parent demand, so a child's own `output_per_run` is authoritative but its run count is not.
   pub children: BTreeMap<i64, BuildNode>,
   pub facility: Option<i64>,
+  /// The picked install structure/station id (the build site) for this type, when one was chosen. Keys a
+  /// per-site material pool in a later allocation pass; `facility` carries the same site's solar system.
+  pub facility_structure: Option<i64>,
   pub is_reaction: bool,
   pub materials: Vec<Material>,
   pub me: i64,
@@ -31,6 +34,7 @@ impl BuildNode {
     BuildNode {
       children: BTreeMap::new(),
       facility: None,
+      facility_structure: None,
       is_reaction,
       materials,
       me: 0,

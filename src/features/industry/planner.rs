@@ -127,6 +127,7 @@ pub enum Message {
     type_id: i64,
   },
   FacilitySelected {
+    facility_structure: i64,
     pin: Option<PinnedStructure>,
     solar_system_id: i64,
     type_id: i64,
@@ -176,6 +177,10 @@ pub enum Message {
 /// separately in [`Planner::built`], not here.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TypeSettings {
+  /// The picked install structure/station id (the build site). `None` until a facility is picked (the
+  /// cheapest-index default carries no structure id); persisted so a later allocation pass can key a
+  /// per-site material pool. `facility_system` is its solar system.
+  pub facility_structure: Option<i64>,
   pub facility_system: Option<i64>,
   pub me: i64,
   pub te: i64,
@@ -196,23 +201,33 @@ fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64)
       owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
     )
   };
+  let (facility_structure, facility_system) = default_facility_for(data, defaults, is_reaction);
   TypeSettings {
-    facility_system: default_facility_system_for(data, defaults, is_reaction),
+    facility_structure,
+    facility_system,
     me,
     te,
   }
 }
 
-/// Maps the configured default install structure for an activity to its solar system, when that facility is
-/// present in current data. Returns `None` — preserving the cheapest-index fallback — when no default is
-/// configured or the configured facility is gone (e.g. a pinned structure that is no longer accessible).
-fn default_facility_system_for(data: &PlannerData, defaults: &FacilityDefaults, is_reaction: bool) -> Option<i64> {
-  let facility_id = defaults.for_activity(is_reaction)?;
+/// Resolves the configured default install structure for an activity to `(structure id, solar system id)`,
+/// when that facility is present in current data. Returns `(None, None)` — preserving the cheapest-index
+/// fallback — when no default is configured or the configured facility is gone (e.g. a pinned structure that
+/// is no longer accessible), so the structure id and system stay consistent.
+fn default_facility_for(
+  data: &PlannerData,
+  defaults: &FacilityDefaults,
+  is_reaction: bool,
+) -> (Option<i64>, Option<i64>) {
+  let Some(facility_id) = defaults.for_activity(is_reaction) else {
+    return (None, None);
+  };
   data
     .facilities
     .iter()
     .find(|facility| facility.id == facility_id)
-    .map(|facility| facility.solar_system_id)
+    .map(|facility| (Some(facility.id), Some(facility.solar_system_id)))
+    .unwrap_or((None, None))
 }
 
 /// The buildable inputs of `type_id` (materials that have their own recipe), in recipe order. A material
@@ -492,6 +507,7 @@ impl Planner {
         (
           kind.type_id,
           TypeSettings {
+            facility_structure: kind.facility_structure,
             facility_system: kind.facility_system,
             me: kind.me,
             te: kind.te,
@@ -597,6 +613,7 @@ impl Planner {
         let settings = self.settings_for(type_id);
         PlanType {
           built: self.built.contains(&type_id),
+          facility_structure: settings.facility_structure,
           facility_system: settings.facility_system,
           me: settings.me,
           te: settings.te,
@@ -714,11 +731,14 @@ impl Planner {
         type_id,
       } => self.apply_facility_results(generation, type_id, results),
       Message::FacilitySelected {
+        facility_structure,
         solar_system_id,
         type_id,
         ..
       } => {
-        self.settings_mut(type_id).facility_system = Some(solar_system_id);
+        let settings = self.settings_mut(type_id);
+        settings.facility_structure = Some(facility_structure);
+        settings.facility_system = Some(solar_system_id);
         self.facility_picker = None;
       }
       _ => {}
@@ -852,6 +872,7 @@ impl Planner {
       recipe.materials.clone(),
     );
     node.facility = config.facility_system;
+    node.facility_structure = config.facility_structure;
     node.me = if recipe.is_reaction { 0 } else { config.me };
     node.te = if recipe.is_reaction { 0 } else { config.te };
     let materials: Vec<i64> = recipe.materials.iter().map(|material| material.type_id).collect();
@@ -1038,6 +1059,7 @@ impl Planner {
         (
           kind.type_id,
           TypeSettings {
+            facility_structure: kind.facility_structure,
             facility_system: kind.facility_system,
             me: kind.me,
             te: kind.te,
@@ -1934,6 +1956,7 @@ mod view {
         type_id,
       })
       .on_pick(move |facility: FacilityRef| Message::FacilitySelected {
+        facility_structure: facility.id,
         pin: pin_for(&facility),
         solar_system_id: facility.solar_system_id,
         type_id,
@@ -4417,11 +4440,13 @@ mod tests {
 
       planner.update(Message::FacilitySelected {
         type_id: HULK,
+        facility_structure: 60_000_001,
         pin: None,
         solar_system_id: 30_000_142,
       });
 
       assert_eq!(planner.settings_for(HULK).facility_system, Some(30_000_142));
+      assert_eq!(planner.settings_for(HULK).facility_structure, Some(60_000_001));
       assert_eq!(planner.selected_facility(HULK, false).unwrap().name, "Pricey Station");
       assert!(planner.facility_picker().is_none());
     }
@@ -4881,6 +4906,7 @@ mod tests {
       });
       planner.update(Message::FacilitySelected {
         type_id: HULK,
+        facility_structure: 60_000_001,
         pin: None,
         solar_system_id: 30_000_142,
       });
@@ -4893,6 +4919,7 @@ mod tests {
       });
       planner.update(Message::FacilitySelected {
         type_id: RETRIEVER,
+        facility_structure: 60_000_002,
         pin: None,
         solar_system_id: 30_002_187,
       });
@@ -4916,12 +4943,24 @@ mod tests {
 
       let root = snapshot.types.iter().find(|kind| kind.type_id == HULK).unwrap();
       assert_eq!((root.me, root.te, root.built), (7, 14, false));
+      assert_eq!(root.facility_structure, Some(60_000_001));
 
       let child = snapshot.types.iter().find(|kind| kind.type_id == RETRIEVER).unwrap();
       assert_eq!(
-        (child.me, child.facility_system, child.built),
-        (4, Some(30_002_187), true)
+        (child.me, child.facility_system, child.facility_structure, child.built),
+        (4, Some(30_002_187), Some(60_000_002), true)
       );
+    }
+
+    #[test]
+    fn it_threads_the_picked_structure_onto_the_derived_tree() {
+      let planner = configured_planner();
+
+      let plan = planner.plan().unwrap();
+
+      assert_eq!(plan.root.facility_structure, Some(60_000_001));
+      let retriever = plan.root.children.get(&RETRIEVER).unwrap();
+      assert_eq!(retriever.facility_structure, Some(60_000_002));
     }
 
     #[test]

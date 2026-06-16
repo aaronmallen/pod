@@ -1257,6 +1257,7 @@ mod tests {
         runs: 1,
         types: vec![PlanType {
           built: false,
+          facility_structure: None,
           facility_system: None,
           me: 10,
           te: 20,

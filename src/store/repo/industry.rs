@@ -17,6 +17,7 @@ pub struct AllIndustryJobs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanType {
   pub built: bool,
+  pub facility_structure: Option<i64>,
   pub facility_system: Option<i64>,
   pub me: i64,
   pub te: i64,
@@ -206,9 +207,9 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   .fetch_one(&mut *tx)
   .await?;
 
-  for chunk in tree.types.chunks(SQLITE_MAX_BIND_PARAMS / 6) {
+  for chunk in tree.types.chunks(SQLITE_MAX_BIND_PARAMS / 7) {
     let mut builder = QueryBuilder::<Sqlite>::new(
-      "INSERT INTO industry_plan_types (plan_id, type_id, me, te, facility_system, built) ",
+      "INSERT INTO industry_plan_types (plan_id, type_id, me, te, facility_system, facility_structure, built) ",
     );
     builder.push_values(chunk, |mut row, kind| {
       row
@@ -217,6 +218,7 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
         .push_bind(kind.me)
         .push_bind(kind.te)
         .push_bind(kind.facility_system)
+        .push_bind(kind.facility_structure)
         .push_bind(i64::from(kind.built));
     });
     builder.build().execute(&mut *tx).await?;
@@ -255,8 +257,9 @@ pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error
     return Ok(None);
   };
 
-  let rows = sqlx::query_as::<_, (i64, i64, i64, Option<i64>, i64)>(
-    "SELECT type_id, me, te, facility_system, built FROM industry_plan_types WHERE plan_id = ? ORDER BY type_id",
+  let rows = sqlx::query_as::<_, (i64, i64, i64, Option<i64>, Option<i64>, i64)>(
+    "SELECT type_id, me, te, facility_system, facility_structure, built \
+    FROM industry_plan_types WHERE plan_id = ? ORDER BY type_id",
   )
   .bind(id)
   .fetch_all(&db.0)
@@ -264,13 +267,16 @@ pub async fn load_plan(db: &Database, id: i64) -> Result<Option<PlanTree>, Error
 
   let types = rows
     .into_iter()
-    .map(|(type_id, me, te, facility_system, built)| PlanType {
-      built: built != 0,
-      facility_system,
-      me,
-      te,
-      type_id,
-    })
+    .map(
+      |(type_id, me, te, facility_system, facility_structure, built)| PlanType {
+        built: built != 0,
+        facility_structure,
+        facility_system,
+        me,
+        te,
+        type_id,
+      },
+    )
     .collect();
 
   Ok(Some(PlanTree {
@@ -925,6 +931,7 @@ mod tests {
         types: vec![
           PlanType {
             built: false,
+            facility_structure: Some(60_003_760),
             facility_system: Some(30_000_142),
             me: 10,
             te: 20,
@@ -932,6 +939,7 @@ mod tests {
           },
           PlanType {
             built: true,
+            facility_structure: None,
             facility_system: None,
             me: 8,
             te: 16,
@@ -939,6 +947,7 @@ mod tests {
           },
           PlanType {
             built: true,
+            facility_structure: Some(1_021_000_000_001),
             facility_system: Some(30_002_187),
             me: 5,
             te: 0,
@@ -946,6 +955,7 @@ mod tests {
           },
           PlanType {
             built: false,
+            facility_structure: None,
             facility_system: None,
             me: 9,
             te: 18,
@@ -985,6 +995,21 @@ mod tests {
         .map(|kind| kind.type_id)
         .collect();
       assert_eq!(built, vec![34, 17_478]);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_facility_structure() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let root = loaded.types.iter().find(|kind| kind.type_id == 22_544).unwrap();
+      let component = loaded.types.iter().find(|kind| kind.type_id == 34).unwrap();
+      let unset = loaded.types.iter().find(|kind| kind.type_id == 17_478).unwrap();
+      assert_eq!(root.facility_structure, Some(60_003_760));
+      assert_eq!(component.facility_structure, Some(1_021_000_000_001));
+      assert_eq!(unset.facility_structure, None);
     }
 
     #[tokio::test]

@@ -8,9 +8,10 @@ CREATE TABLE IF NOT EXISTS industry_plan_types (
   id              INTEGER PRIMARY KEY,
   plan_id         INTEGER NOT NULL REFERENCES industry_plans(id) ON DELETE CASCADE,
   type_id         INTEGER NOT NULL,
-  me              INTEGER NOT NULL,
-  te              INTEGER NOT NULL,
-  facility_system INTEGER,
-  built           INTEGER NOT NULL DEFAULT 0
+  me                 INTEGER NOT NULL,
+  te                 INTEGER NOT NULL,
+  facility_system    INTEGER,
+  facility_structure INTEGER,
+  built              INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_industry_plan_types ON industry_plan_types(plan_id, type_id);

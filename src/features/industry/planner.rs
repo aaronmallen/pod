@@ -850,6 +850,7 @@ impl Planner {
     let recipe = self.data.recipe(type_id)?;
     let materials: Vec<Material> = recipe.materials.clone();
     let mut node = BuildNode::new(type_id, recipe.output_per_run, recipe.is_reaction, materials);
+    node.facility = config.facility_system;
     node.me = if recipe.is_reaction { 0 } else { config.me };
     node.te = if recipe.is_reaction { 0 } else { config.te };
     for (&mat, child_config) in &config.children {

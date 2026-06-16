@@ -5,6 +5,7 @@ pub const REACTION_ACTIVITY_ID: i64 = 11;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuildJob {
+  pub needed_qty: i64,
   pub node: BuildNode,
   pub path: Vec<i64>,
   pub runs: i64,
@@ -16,6 +17,7 @@ pub struct BuildNode {
   /// Keyed by the material type_id that is built in-house rather than consumed raw; sub-build runs are derived
   /// from parent demand, so a child's own `output_per_run` is authoritative but its run count is not.
   pub children: BTreeMap<i64, BuildNode>,
+  pub facility: Option<i64>,
   pub is_reaction: bool,
   pub materials: Vec<Material>,
   pub me: i64,
@@ -28,6 +30,7 @@ impl BuildNode {
   pub fn new(type_id: i64, output_per_run: i64, is_reaction: bool, materials: Vec<Material>) -> Self {
     BuildNode {
       children: BTreeMap::new(),
+      facility: None,
       is_reaction,
       materials,
       me: 0,
@@ -74,17 +77,18 @@ impl BuildNode {
       .unwrap_or(0)
   }
 
-  fn order_into(&self, runs: i64, path: &[i64], out: &mut Vec<BuildJob>) {
+  fn order_into(&self, needed_qty: i64, runs: i64, path: &[i64], out: &mut Vec<BuildJob>) {
     for (&mat, child) in &self.children {
       let needed = self.needed_for(mat, runs);
       let child_runs = child.runs_for(needed);
       let mut child_path = path.to_vec();
       child_path.push(mat);
 
-      child.order_into(child_runs, &child_path, out);
+      child.order_into(needed, child_runs, &child_path, out);
     }
 
     out.push(BuildJob {
+      needed_qty,
       node: self.clone(),
       path: path.to_vec(),
       runs,
@@ -125,7 +129,8 @@ impl BuildPlan {
 
   pub fn build_order(&self) -> Vec<BuildJob> {
     let mut out = Vec::new();
-    self.root.order_into(self.runs, &[], &mut out);
+    let root_needed = self.runs * self.root.output_per_run;
+    self.root.order_into(root_needed, self.runs, &[], &mut out);
     out
   }
 
@@ -133,6 +138,75 @@ impl BuildPlan {
     let mut out = Vec::new();
     self.root.collect_into(self.runs, &[], 0, &mut out);
     out
+  }
+
+  /// Collapses [`build_order`] entries that share `(type_id, ME, TE, facility)` into one row at the first
+  /// occurrence, summing demand across instances and recomputing `runs = ceil(total_needed / output_per_run)`
+  /// — which can be strictly fewer than summing each instance's rounded-up runs. Producer-before-consumer
+  /// ordering is preserved; entries of the same type with differing settings stay separate rows.
+  pub fn merged_build_order(&self) -> Vec<MergedBuildJob> {
+    let order = self.build_order();
+    let mut merged: Vec<MergedBuildJob> = Vec::new();
+    let mut index: BTreeMap<(i64, i64, i64, Option<i64>), usize> = BTreeMap::new();
+
+    for job in order {
+      let key = (job.type_id, job.node.me, job.node.te, job.node.facility);
+      // `path` lists type ids from the root's first child down to this job, excluding the root: an empty
+      // path is the root product (no consumer), a length-1 path is consumed by the root, and otherwise the
+      // consumer is the second-to-last id.
+      let parent = match job.path.len() {
+        0 => None,
+        1 => Some(self.root.type_id),
+        len => Some(job.path[len - 2]),
+      };
+      match index.get(&key) {
+        Some(&at) => {
+          let row = &mut merged[at];
+          row.needed_qty += job.needed_qty;
+          if let Some(consumer) = parent {
+            if !row.consumers.contains(&consumer) {
+              row.consumers.push(consumer);
+            }
+          } else {
+            row.is_root = true;
+          }
+          row.runs = runs_for(row.needed_qty, row.node.output_per_run);
+        }
+        None => {
+          let mut consumers = Vec::new();
+          let mut is_root = false;
+          match parent {
+            Some(consumer) => consumers.push(consumer),
+            None => is_root = true,
+          }
+          index.insert(key, merged.len());
+          merged.push(MergedBuildJob {
+            consumers,
+            is_root,
+            needed_qty: job.needed_qty,
+            node: job.node.clone(),
+            runs: runs_for(job.needed_qty, job.node.output_per_run),
+            type_id: job.type_id,
+          });
+        }
+      }
+    }
+
+    merged
+  }
+
+  pub fn needed_blueprints(&self) -> Vec<NeededBlueprint> {
+    let mut acc: BTreeMap<i64, NeededBlueprint> = BTreeMap::new();
+    for row in self.merged_build_order() {
+      let entry = acc.entry(row.type_id).or_insert(NeededBlueprint {
+        jobs: 0,
+        runs: 0,
+        type_id: row.type_id,
+      });
+      entry.jobs += 1;
+      entry.runs += row.runs;
+    }
+    acc.into_values().collect()
   }
 
   pub fn node_count(&self) -> usize {
@@ -165,6 +239,24 @@ impl Material {
       type_id,
     }
   }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedBuildJob {
+  /// Distinct parent type ids that consume this row's output (empty when only the root product does).
+  pub consumers: Vec<i64>,
+  pub is_root: bool,
+  pub needed_qty: i64,
+  pub node: BuildNode,
+  pub runs: i64,
+  pub type_id: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeededBlueprint {
+  pub jobs: i64,
+  pub runs: i64,
+  pub type_id: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -313,6 +405,18 @@ mod tests {
         assert_eq!(order.last().unwrap().path, Vec::<i64>::new());
         assert_eq!(order.last().unwrap().runs, 1);
       }
+
+      #[test]
+      fn it_threads_the_needed_quantity_onto_each_job() {
+        let plan = hulk_plan();
+
+        let order = plan.build_order();
+
+        let retriever = order.iter().find(|job| job.type_id == RETRIEVER).unwrap();
+        let hulk = order.iter().find(|job| job.type_id == HULK).unwrap();
+        assert_eq!(retriever.needed_qty, 10);
+        assert_eq!(hulk.needed_qty, 1);
+      }
     }
 
     mod collect_builds {
@@ -344,6 +448,157 @@ mod tests {
 
         assert_eq!(builds[0].needed_qty, 18);
         assert_eq!(builds[0].runs, 18);
+      }
+    }
+
+    mod merged_build_order {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_keeps_divergent_facility_entries_separate() {
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let mut cog_a = BuildNode::new(COG, 1, false, vec![]);
+        cog_a.facility = Some(1);
+        let mut cog_b = BuildNode::new(COG, 1, false, vec![]);
+        cog_b.facility = Some(2);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 2)]);
+        widget.children.insert(COG, cog_a);
+        gadget.children.insert(COG, cog_b);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let merged = BuildPlan::new(root, 1).merged_build_order();
+
+        let cog_rows: Vec<&MergedBuildJob> = merged.iter().filter(|row| row.type_id == COG).collect();
+        assert_eq!(cog_rows.len(), 2);
+      }
+
+      #[test]
+      fn it_marks_the_root_product_row() {
+        let plan = hulk_plan();
+
+        let merged = plan.merged_build_order();
+
+        let hulk_row = merged.iter().find(|row| row.type_id == HULK).unwrap();
+        assert!(hulk_row.is_root);
+        assert!(hulk_row.consumers.is_empty());
+
+        let retriever_row = merged.iter().find(|row| row.type_id == RETRIEVER).unwrap();
+        assert!(!retriever_row.is_root);
+        assert_eq!(retriever_row.consumers, vec![HULK]);
+      }
+
+      #[test]
+      fn it_merges_same_setting_entries_and_recomputes_runs() {
+        // WIDGET needs 3 COGs; GADGET needs 2 COGs; one root run of each, so 5 COGs total.
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let cog = BuildNode::new(COG, 1, false, vec![]);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 2)]);
+        widget.children.insert(COG, cog.clone());
+        gadget.children.insert(COG, cog);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let merged = BuildPlan::new(root, 1).merged_build_order();
+
+        let cog_row = merged.iter().find(|row| row.type_id == COG).unwrap();
+        assert_eq!(cog_row.needed_qty, 5);
+        assert_eq!(cog_row.runs, 5);
+
+        let mut consumers = cog_row.consumers.clone();
+        consumers.sort();
+        assert_eq!(consumers, vec![WIDGET, GADGET]);
+      }
+
+      #[test]
+      fn it_preserves_producer_before_consumer_ordering() {
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let cog = BuildNode::new(COG, 1, false, vec![]);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 2)]);
+        widget.children.insert(COG, cog.clone());
+        gadget.children.insert(COG, cog);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let merged = BuildPlan::new(root, 1).merged_build_order();
+
+        let positions: BTreeMap<i64, usize> = merged.iter().enumerate().map(|(i, row)| (row.type_id, i)).collect();
+        assert!(positions[&COG] < positions[&WIDGET]);
+        assert!(positions[&COG] < positions[&GADGET]);
+        assert!(positions[&WIDGET] < positions[&HULK]);
+        assert!(positions[&GADGET] < positions[&HULK]);
+      }
+
+      #[test]
+      fn it_uses_ceil_of_summed_demand_not_sum_of_ceils() {
+        // Each parent demands 3 COGs at output_per_run 2: separately ceil(3/2)=2 each (4 runs), but
+        // merged ceil(6/2)=3 runs.
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let cog = BuildNode::new(COG, 2, false, vec![]);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 3)]);
+        widget.children.insert(COG, cog.clone());
+        gadget.children.insert(COG, cog);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let merged = BuildPlan::new(root, 1).merged_build_order();
+
+        let cog_row = merged.iter().find(|row| row.type_id == COG).unwrap();
+        assert_eq!(cog_row.needed_qty, 6);
+        assert_eq!(cog_row.runs, 3);
+      }
+    }
+
+    mod needed_blueprints {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_aggregates_the_merged_order_by_type() {
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let cog = BuildNode::new(COG, 1, false, vec![]);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 2)]);
+        widget.children.insert(COG, cog.clone());
+        gadget.children.insert(COG, cog);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let plan = BuildPlan::new(root, 1);
+        let blueprints = plan.needed_blueprints();
+
+        let cog_bp = blueprints.iter().find(|bp| bp.type_id == COG).unwrap();
+        assert_eq!(cog_bp.jobs, 1);
+        assert_eq!(cog_bp.runs, 5);
+
+        let total_runs: i64 = plan.merged_build_order().iter().map(|row| row.runs).sum();
+        assert_eq!(blueprints.iter().map(|bp| bp.runs).sum::<i64>(), total_runs);
+        assert_eq!(
+          blueprints.iter().map(|bp| bp.jobs).sum::<i64>(),
+          plan.merged_build_order().len() as i64
+        );
       }
     }
 

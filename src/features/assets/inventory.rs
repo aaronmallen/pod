@@ -543,7 +543,10 @@ fn table_row<'a>(
     portioned(name_cell(inventory_row), COLUMN_PORTIONS[0]),
     portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
     portioned(category_cell(inventory_row), COLUMN_PORTIONS[2]),
-    portioned(numeric_cell(fmt_count(inventory_row.quantity), color::text::PRIMARY), COLUMN_PORTIONS[3]),
+    portioned(
+      numeric_cell(fmt_count(inventory_row.quantity), color::text::PRIMARY),
+      COLUMN_PORTIONS[3],
+    ),
     portioned(
       numeric_cell(fmt_volume(inventory_row.row_volume), color::text::secondary()),
       COLUMN_PORTIONS[4],
@@ -552,8 +555,14 @@ fn table_row<'a>(
       numeric_cell(fmt_isk(inventory_row.unit_price), color::text::secondary()),
       COLUMN_PORTIONS[5],
     ),
-    portioned(numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY), COLUMN_PORTIONS[6]),
-    portioned(owner_cell(inventory_row.owner_id, roster, corporations), COLUMN_PORTIONS[7]),
+    portioned(
+      numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY),
+      COLUMN_PORTIONS[6],
+    ),
+    portioned(
+      owner_cell(inventory_row.owner_id, roster, corporations),
+      COLUMN_PORTIONS[7],
+    ),
     portioned(
       text_cell(
         inventory_row.location_label.clone().unwrap_or_default(),

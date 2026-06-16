@@ -292,11 +292,11 @@ fn filter_chip<'a>(
     .into()
 }
 
-fn fmt_clock(time: DateTime<Utc>) -> String {
+pub(super) fn fmt_clock(time: DateTime<Utc>) -> String {
   format!("{:02}:{:02}", time.hour(), time.minute())
 }
 
-fn fmt_day(time: DateTime<Utc>) -> String {
+pub(super) fn fmt_day(time: DateTime<Utc>) -> String {
   const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
   ];

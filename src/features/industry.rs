@@ -1,4 +1,5 @@
 mod blueprints;
+mod extractions;
 mod jobs;
 mod loaders;
 mod planner;
@@ -18,7 +19,7 @@ use iced::{Element, Subscription, Task};
 
 use self::planner::Planner;
 pub use self::{
-  loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner},
+  loaders::{Activity, Blueprint, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
   planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
   planner_loaders::PlannerFacility,
   planner_search::{pin_facility, search_facilities},
@@ -80,17 +81,19 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
   Blueprints,
+  Extractions,
   #[default]
   Jobs,
   Planner,
 }
 
 impl Tab {
-  pub const ALL: [Tab; 3] = [Tab::Jobs, Tab::Blueprints, Tab::Planner];
+  pub const ALL: [Tab; 4] = [Tab::Jobs, Tab::Blueprints, Tab::Planner, Tab::Extractions];
 
   pub fn label(self) -> &'static str {
     match self {
       Tab::Blueprints => "Blueprints",
+      Tab::Extractions => "Extractions",
       Tab::Jobs => "Jobs",
       Tab::Planner => "Planner",
     }
@@ -146,6 +149,7 @@ pub struct State {
   blueprint_search: String,
   blueprint_sort: BlueprintSort,
   blueprints: Vec<Blueprint>,
+  extractions: Vec<Extraction>,
   filter: Filter,
   group_by: GroupBy,
   jobs: Vec<IndustryJob>,
@@ -172,6 +176,7 @@ impl State {
       blueprint_search: String::new(),
       blueprint_sort: BlueprintSort::default(),
       blueprints: Vec::new(),
+      extractions: Vec::new(),
       filter: Filter::default(),
       group_by: GroupBy::default(),
       jobs: Vec::new(),
@@ -261,6 +266,25 @@ impl State {
       .collect()
   }
 
+  /// Moon extractions visible under the current scope. Extractions are corp-only: the combined view shows them all, a
+  /// corporation scope shows that corporation's, and a character scope shows that character's corporation's.
+  pub(super) fn visible_extractions(&self) -> Vec<&Extraction> {
+    let corporation = match self.active {
+      Scope::All => None,
+      Scope::Corp(id) => Some(id),
+      Scope::Char(id) => self
+        .roster
+        .iter()
+        .find(|owner| owner.id == id && !owner.is_corporation)
+        .and_then(|owner| owner.corporation_id),
+    };
+    self
+      .extractions
+      .iter()
+      .filter(|extraction| corporation.is_none_or(|id| extraction.corporation_id == id))
+      .collect()
+  }
+
   pub(super) fn filter(&self) -> Filter {
     self.filter
   }
@@ -321,6 +345,16 @@ impl State {
 
   pub(super) fn tab(&self) -> Tab {
     self.tab
+  }
+
+  #[cfg(test)]
+  pub(super) fn seed_extractions(&mut self, extractions: Vec<Extraction>) {
+    self.extractions = extractions;
+  }
+
+  #[cfg(test)]
+  pub(super) fn seed_tab(&mut self, tab: Tab) {
+    self.tab = tab;
   }
 
   pub(super) fn unauthorized_characters(&self) -> Vec<&RosterOwner> {
@@ -589,6 +623,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     Message::Loaded(loaded) => {
       let Loaded {
         blueprints,
+        extractions,
         jobs,
         roster,
         scope,
@@ -596,6 +631,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       // Drop results that belong to a scope the user already navigated away from.
       if scope == state.active {
         state.blueprints = blueprints;
+        state.extractions = extractions;
         state.jobs = jobs;
         state.roster = roster;
       }
@@ -697,6 +733,7 @@ mod tests {
   fn character_owner(id: i64, scopes: Option<&str>) -> RosterOwner {
     RosterOwner {
       corp: "TST".to_owned(),
+      corporation_id: Some(98),
       granted_scopes: scopes.map(str::to_owned),
       id,
       is_corporation: false,
@@ -717,6 +754,7 @@ mod tests {
   fn corporation_owner(id: i64) -> RosterOwner {
     RosterOwner {
       corp: "TSC".to_owned(),
+      corporation_id: None,
       granted_scopes: None,
       id,
       is_corporation: true,
@@ -783,6 +821,22 @@ mod tests {
       job(Owner::Corporation(98), 13, Activity::Reactions, "2026-06-13T16:00:00Z"),
     ];
     let mut state = state_with(Scope::All, roster, jobs);
+    state.extractions = vec![
+      extraction(
+        98,
+        1,
+        "2026-06-12T00:00:00Z",
+        "2026-06-14T00:00:00Z",
+        "2026-06-16T00:00:00Z",
+      ),
+      extraction(
+        98,
+        2,
+        "2026-06-13T00:00:00Z",
+        "2026-06-13T18:00:00Z",
+        "2026-06-15T00:00:00Z",
+      ),
+    ];
     state.blueprints = vec![
       blueprint(Owner::Character(1), 1, "Rifter Blueprint", -1, 10, 20, false),
       blueprint(Owner::Character(1), 2, "Hobgoblin I Blueprint", 12, 4, 8, false),
@@ -790,6 +844,20 @@ mod tests {
       blueprint(Owner::Corporation(98), 4, "Sulfuric Acid Reaction", -1, 0, 0, true),
     ];
     state
+  }
+
+  fn extraction(corporation_id: i64, moon_id: i64, start: &str, arrival: &str, decay: &str) -> Extraction {
+    Extraction {
+      chunk_arrival_time: Some(arrival.to_owned()),
+      corporation_id,
+      extraction_start_time: Some(start.to_owned()),
+      moon_id,
+      moon_name: Some(format!("Moon {moon_id}")),
+      natural_decay_time: Some(decay.to_owned()),
+      security: Some(0.5),
+      structure: "Athanor".to_owned(),
+      system_name: Some("Tama".to_owned()),
+    }
   }
 
   fn blueprint(owner: Owner, item_id: i64, name: &str, runs: i64, me: i64, te: i64, reaction: bool) -> Blueprint {
@@ -938,6 +1006,22 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_extractions_tab() {
+      let mut state = populated();
+      state.tab = Tab::Extractions;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_an_empty_extractions_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.tab = Tab::Extractions;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
     fn it_renders_an_empty_blueprints_tab() {
       let mut state = state_with(Scope::All, Vec::new(), Vec::new());
       state.tab = Tab::Blueprints;
@@ -1075,6 +1159,7 @@ mod tests {
       let _ = update(&mut state, Message::FilterSelected(Filter::Ready), &db, n);
       let _ = update(&mut state, Message::GroupBySelected(GroupBy::Activity), &db, n);
       let _ = update(&mut state, Message::TabSelected(Tab::Jobs), &db, n);
+      let _ = update(&mut state, Message::TabSelected(Tab::Extractions), &db, n);
       let _ = update(&mut state, Message::TabSelected(Tab::Blueprints), &db, n);
       let _ = update(
         &mut state,
@@ -1146,6 +1231,7 @@ mod tests {
 
       let fresh = Loaded {
         blueprints: Vec::new(),
+        extractions: Vec::new(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: state.active,
@@ -1153,6 +1239,7 @@ mod tests {
       let _ = update(&mut state, Message::Loaded(Box::new(fresh)), &db, n);
       let stale = Loaded {
         blueprints: Vec::new(),
+        extractions: Vec::new(),
         jobs: Vec::new(),
         roster: Vec::new(),
         scope: Scope::Char(424_242),
@@ -1255,6 +1342,67 @@ mod tests {
 
       assert_eq!(visible.len(), 2);
       assert!(visible.iter().all(|job| job.owner != Owner::Character(2)));
+    }
+  }
+
+  mod visible_extractions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn roster_and_extractions() -> (Vec<RosterOwner>, Vec<Extraction>) {
+      let granted = granted();
+      let roster = vec![character_owner(1, Some(&granted)), corporation_owner(98)];
+      let extractions = vec![
+        extraction(
+          98,
+          1,
+          "2026-06-12T00:00:00Z",
+          "2026-06-14T00:00:00Z",
+          "2026-06-16T00:00:00Z",
+        ),
+        extraction(
+          77,
+          2,
+          "2026-06-12T00:00:00Z",
+          "2026-06-14T00:00:00Z",
+          "2026-06-16T00:00:00Z",
+        ),
+      ];
+      (roster, extractions)
+    }
+
+    #[test]
+    fn it_shows_every_corporation_in_the_combined_scope() {
+      let (roster, extractions) = roster_and_extractions();
+      let mut state = state_with(Scope::All, roster, Vec::new());
+      state.extractions = extractions;
+
+      assert_eq!(state.visible_extractions().len(), 2);
+    }
+
+    #[test]
+    fn it_filters_to_one_corporation_in_a_corp_scope() {
+      let (roster, extractions) = roster_and_extractions();
+      let mut state = state_with(Scope::Corp(98), roster, Vec::new());
+      state.extractions = extractions;
+
+      let visible = state.visible_extractions();
+
+      assert_eq!(visible.len(), 1);
+      assert_eq!(visible[0].corporation_id, 98);
+    }
+
+    #[test]
+    fn it_resolves_a_character_scope_to_its_corporation() {
+      let (roster, extractions) = roster_and_extractions();
+      let mut state = state_with(Scope::Char(1), roster, Vec::new());
+      state.extractions = extractions;
+
+      let visible = state.visible_extractions();
+
+      assert_eq!(visible.len(), 1);
+      assert_eq!(visible[0].corporation_id, 98);
     }
   }
 

@@ -147,6 +147,7 @@ mod tests {
   fn character(id: i64) -> RosterOwner {
     RosterOwner {
       corp: "TST".to_owned(),
+      corporation_id: Some(98),
       granted_scopes: None,
       id,
       is_corporation: false,
@@ -163,6 +164,7 @@ mod tests {
   fn corporation(id: i64) -> RosterOwner {
     RosterOwner {
       corp: "TSC".to_owned(),
+      corporation_id: None,
       granted_scopes: None,
       id,
       is_corporation: true,

@@ -329,6 +329,7 @@ mod tests {
   fn owner(id: i64, is_corporation: bool) -> RosterOwner {
     RosterOwner {
       corp: "TST".to_owned(),
+      corporation_id: (!is_corporation).then_some(98),
       granted_scopes: None,
       id,
       is_corporation,

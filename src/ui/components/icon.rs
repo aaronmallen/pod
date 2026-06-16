@@ -168,6 +168,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/market.svg"))
   }
 
+  pub fn moon() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/moon.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn mutamarket() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/mutamarket.svg"))

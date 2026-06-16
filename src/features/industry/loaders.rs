@@ -17,6 +17,7 @@ const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 /// Reaction activity id in the seeded reference (the SDE seed maps "reaction" to 11, not the ESI job id 9); a
 /// blueprint whose only product is a reaction renders "n/a" for ME/TE.
 const REACTION_ACTIVITY_ID: i64 = 11;
+const SECONDS_PER_DAY: i64 = 86_400;
 
 // EVE skill type ids. Each slot bucket sums one base + one advanced skill (see `slot_caps`):
 // manufacturing = Mass Production + Advanced, reactions = Mass Reactions + Advanced, science = Laboratory Operation + Advanced.
@@ -113,9 +114,86 @@ pub enum SlotBucket {
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
   pub blueprints: Vec<Blueprint>,
+  pub extractions: Vec<Extraction>,
   pub jobs: Vec<IndustryJob>,
   pub roster: Vec<RosterOwner>,
   pub scope: Scope,
+}
+
+/// A single corporation moon-mining extraction resolved for the Extractions tab.
+#[derive(Clone, Debug)]
+pub struct Extraction {
+  pub chunk_arrival_time: Option<String>,
+  pub corporation_id: i64,
+  pub extraction_start_time: Option<String>,
+  pub moon_id: i64,
+  pub moon_name: Option<String>,
+  pub natural_decay_time: Option<String>,
+  pub security: Option<f64>,
+  pub structure: String,
+  pub system_name: Option<String>,
+}
+
+impl Extraction {
+  pub fn arrival(&self) -> Option<DateTime<Utc>> {
+    self.chunk_arrival_time.as_deref().and_then(parse_time)
+  }
+
+  pub fn decay(&self) -> Option<DateTime<Utc>> {
+    self.natural_decay_time.as_deref().and_then(parse_time)
+  }
+
+  pub fn moon_label(&self) -> String {
+    self
+      .moon_name
+      .clone()
+      .unwrap_or_else(|| format!("Moon {}", self.moon_id))
+  }
+
+  pub fn start(&self) -> Option<DateTime<Utc>> {
+    self.extraction_start_time.as_deref().and_then(parse_time)
+  }
+
+  /// Progress (0..=100) from extraction start to chunk arrival. Missing or zero-length spans render full.
+  pub fn progress(&self, now: DateTime<Utc>) -> f32 {
+    let (Some(start), Some(arrival)) = (self.start(), self.arrival()) else {
+      return 100.0;
+    };
+    let span = (arrival - start).num_seconds();
+    if span <= 0 {
+      return 100.0;
+    }
+    let elapsed = (now - start).num_seconds().max(0);
+    ((elapsed as f32 / span as f32) * 100.0).clamp(0.0, 100.0)
+  }
+
+  pub fn state(&self, now: DateTime<Utc>) -> ExtractionState {
+    match (self.arrival(), self.decay()) {
+      (_, Some(decay)) if now >= decay => ExtractionState::Fractured,
+      (Some(arrival), _) if now >= arrival => ExtractionState::Ready,
+      (Some(arrival), _) if (arrival - now).num_seconds() < SECONDS_PER_DAY => ExtractionState::Imminent,
+      _ => ExtractionState::Extracting,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExtractionState {
+  Extracting,
+  Fractured,
+  Imminent,
+  Ready,
+}
+
+impl ExtractionState {
+  pub fn label(self) -> &'static str {
+    match self {
+      ExtractionState::Extracting => "Extracting",
+      ExtractionState::Fractured => "Auto-fractured",
+      ExtractionState::Imminent => "Arriving soon",
+      ExtractionState::Ready => "Ready to fracture",
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -265,6 +343,8 @@ async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> Blueprint
 #[derive(Clone, Debug)]
 pub struct RosterOwner {
   pub corp: String,
+  /// The character's corporation id; `None` for corporation roster entries.
+  pub corporation_id: Option<i64>,
   pub granted_scopes: Option<String>,
   pub id: i64,
   pub is_corporation: bool,
@@ -517,13 +597,54 @@ pub(super) async fn load(db: Database, scope: Scope) -> Loaded {
   }
 
   let blueprints = collect_blueprints(db, scope).await;
+  let extractions = collect_extractions(db, &mut locations).await;
 
   Loaded {
     blueprints,
+    extractions,
     jobs,
     roster,
     scope,
   }
+}
+
+/// Collects every owned corporation's moon-mining extractions, resolving each structure / system name.
+///
+/// Extractions are corp-only data shown regardless of the active scope; the Extractions tab filters them down by scope
+/// itself. The structure name falls back to the raw id, and the system name / security come from the moon's joined
+/// solar system when present.
+async fn collect_extractions(db: &Database, locations: &mut LocationNames) -> Vec<Extraction> {
+  let corporations = org::all_owned_corporations(db).await.unwrap_or_default();
+  let mut out = Vec::new();
+  for corporation in &corporations {
+    let rows = org::corporation_mining_extractions(db, corporation.id())
+      .await
+      .unwrap_or_default();
+    for row in rows {
+      let location = locations.resolve(db, row.structure_id()).await;
+      let structure = location
+        .name
+        .clone()
+        .or_else(|| location.system_name.clone())
+        .unwrap_or_else(|| format!("Structure {}", row.structure_id()));
+      let system_name = match row.solar_system_id() {
+        Some(system_id) => system_meta(db, system_id).await.0,
+        None => location.system_name.clone(),
+      };
+      out.push(Extraction {
+        chunk_arrival_time: row.chunk_arrival_time().clone(),
+        corporation_id: row.corporation_id(),
+        extraction_start_time: row.extraction_start_time().clone(),
+        moon_id: row.moon_id(),
+        moon_name: row.moon_name().clone(),
+        natural_decay_time: row.natural_decay_time().clone(),
+        security: row.security_status(),
+        structure,
+        system_name,
+      });
+    }
+  }
+  out
 }
 
 async fn character_job(
@@ -709,6 +830,7 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
     );
     roster.push(RosterOwner {
       corp,
+      corporation_id: Some(character.corporation_id()),
       granted_scopes: scopes_by_id.get(&character.id()).cloned().flatten(),
       id: character.id(),
       is_corporation: false,
@@ -726,6 +848,7 @@ async fn load_roster(db: &Database) -> Vec<RosterOwner> {
     let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
     roster.push(RosterOwner {
       corp: corp.ticker().to_owned(),
+      corporation_id: None,
       granted_scopes: None,
       id: corp.id(),
       is_corporation: true,
@@ -972,6 +1095,7 @@ mod tests {
   fn roster_owner(id: i64, is_corporation: bool, name: &str) -> RosterOwner {
     RosterOwner {
       corp: "CORP".to_owned(),
+      corporation_id: (!is_corporation).then_some(98_000_000),
       granted_scopes: None,
       id,
       is_corporation,

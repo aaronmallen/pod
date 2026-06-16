@@ -2845,9 +2845,15 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     return task;
   }
   let updated = state.settings().clone();
+  propagate_feature_change(app, updated, task)
+}
 
+/// Pushes a just-changed feature set out to the runtime sync engine and every open feature screen
+/// (calendar, industry, character detail), reloading the active one and falling back to Characters
+/// when the current route's feature was disabled out from under it. A no-op without a runtime.
+fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, base: Task<Message>) -> Task<Message> {
   let Some(runtime) = app.runtime.as_mut() else {
-    return task;
+    return base;
   };
   runtime.settings = updated;
   let enabled = runtime.settings.features().enabled();
@@ -2855,7 +2861,7 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   let db = runtime.db.clone();
   runtime.sync.set_features(flags);
   let mut tasks = vec![
-    task,
+    base,
     character_manager::load(&db, enabled.clone()).map(Message::CharacterManager),
   ];
 
@@ -5959,6 +5965,92 @@ mod tests {
       assert!(
         !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
         "disabling Standings drops its detail tab live, not only on next navigation"
+      );
+    }
+
+    fn test_industry_state() -> industry::State {
+      industry::State::new(
+        industry::EMPTY_INDUSTRY_SELECTION,
+        Vec::new(),
+        industry::FacilityDefaults::default(),
+      )
+    }
+
+    #[tokio::test]
+    async fn handle_industry_records_a_pane_ratio_before_the_runtime_gate() {
+      let mut app = test_app();
+
+      let _ = handle_industry(
+        &mut app,
+        industry::Message::PaneSettled("industry.planner.detail", 0.42),
+      );
+
+      assert_eq!(
+        app.ui_state.panes.get("industry.planner.detail"),
+        Some(&0.42),
+        "a pane drag is recorded even without a runtime or industry screen"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_reauth_request_defers_an_auth_start() {
+      let mut app = test_app();
+
+      let _ = handle_industry(&mut app, industry::Message::ReauthRequested(7));
+
+      assert!(
+        app.pending_auth.is_some(),
+        "a re-auth request from the industry screen defers an auth Start"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_without_a_screen_is_a_no_op() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Planner));
+
+      assert!(
+        app.industry.is_none(),
+        "with no industry screen open the message is dropped"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_dispatches_a_message_through_the_reducer() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.industry = Some(test_industry_state());
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Blueprints));
+
+      assert!(
+        app.industry.is_some(),
+        "the industry screen stays open after a plain reducer message"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_seams_the_facility_search_for_the_planner() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.industry = Some(test_industry_state());
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(
+        &mut app,
+        industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
+          path: Vec::new(),
+          query: "jita".to_owned(),
+        }),
+      );
+
+      assert!(
+        app.industry.as_ref().unwrap().facility_search_target().is_some(),
+        "typing into the facility field opens the picker and arms a live search"
       );
     }
 

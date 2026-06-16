@@ -1192,6 +1192,7 @@ mod view {
         icon_tile::icon_tile,
         resizable_pane::pane_handle,
         rule,
+        tab_select::{Tab, TabLayout, tab_select_with},
         text_input::{TextInput, inner_style as text_input_inner_style},
         virtual_list::{self, VirtualList, VirtualListConfig},
       },
@@ -1211,6 +1212,7 @@ mod view {
   const RUNS_FIELD_WIDTH: f32 = 34.0;
   const RUNS_STEPPER_HEIGHT: f32 = 34.0;
   const RUNS_STEP_WIDTH: f32 = 30.0;
+  const TAB_STRIP_HEIGHT: f32 = 40.0;
   const TILE_BOX: f32 = 30.0;
   /// Must be S64 — `resolve_type_icon` only returns a bundled icon at this size; smaller sizes fall back to a placeholder glyph.
   const TILE_ICON: Size = Size::S64;
@@ -2577,11 +2579,20 @@ mod view {
   }
 
   fn right_pane<'a>(planner: &'a Planner, product: Option<i64>) -> Element<'a, Message> {
-    let tabs = Row::with_children(vec![
-      right_tab_button("Detail", RightTab::Detail, planner.right_tab()),
-      right_tab_button("Plans", RightTab::Plans, planner.right_tab()),
-    ])
-    .spacing(spacing::SPACE_3);
+    let active = planner.right_tab();
+    let plans_count = match planner.saved().len() {
+      0 => String::new(),
+      count => count.to_string(),
+    };
+    let tabs = container(tab_select_with(
+      vec![
+        right_tab("Detail", active == RightTab::Detail, RightTab::Detail, String::new()),
+        right_tab("Plans", active == RightTab::Plans, RightTab::Plans, plans_count),
+      ],
+      TabLayout::Fill,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fixed(TAB_STRIP_HEIGHT));
 
     let content: Element<'a, Message> = match planner.right_tab() {
       RightTab::Detail => match product {
@@ -2597,15 +2608,7 @@ mod view {
     };
 
     let column = Column::with_children(vec![
-      container(tabs)
-        .width(Length::Fill)
-        .padding(Padding {
-          top: 0.0,
-          bottom: 0.0,
-          left: spacing::SPACE_3,
-          right: spacing::SPACE_3,
-        })
-        .into(),
+      tabs.into(),
       rule::horizontal(),
       container(scrollable(content).style(crate::ui::style::control::scrollbar))
         .width(Length::Fill)
@@ -3097,43 +3100,14 @@ mod view {
     .into()
   }
 
-  fn right_tab_button<'a>(label: &str, tab: RightTab, active: RightTab) -> Element<'a, Message> {
-    let on = tab == active;
-    button(
-      text(label.to_owned())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(if on {
-          color::text::PRIMARY
-        } else {
-          color::text::secondary()
-        })),
-    )
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_2,
-      right: spacing::SPACE_2,
-    })
-    .on_press(Message::RightTabSelected(tab))
-    .style(move |_, _| button::Style {
-      border: Border {
-        color: if on {
-          color::accent::PLASMA
-        } else {
-          iced::Color::TRANSPARENT
-        },
-        radius: 0.0.into(),
-        width: 0.0,
-      },
-      text_color: if on {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
-      ..button::Style::default()
-    })
-    .into()
+  fn right_tab<'a>(label: &'a str, selected: bool, target: RightTab, count: String) -> Tab<'a, Message> {
+    Tab {
+      count,
+      icon: None,
+      label,
+      on_press: Some(Message::RightTabSelected(target)),
+      selected,
+    }
   }
 
   fn metric<'a>(label: &str, value: &str, value_color: iced::Color) -> Element<'a, Message> {

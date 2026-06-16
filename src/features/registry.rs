@@ -108,7 +108,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
       tab: None,
     },
     Feature::Standings => Descriptor {
-      jobs: &[JobKind::CharacterStandings],
+      jobs: &[JobKind::CharacterStandings, JobKind::CorporationStandings],
       rail: None,
       scopes: &[scopes::CHARACTER_STANDINGS],
       tab: Some(Tab::Standings),

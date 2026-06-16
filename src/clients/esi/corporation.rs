@@ -5,7 +5,7 @@ use crate::clients::{
     models::{
       assets::AssetName,
       blueprint::Blueprint,
-      character::RecentKillmail,
+      character::{RecentKillmail, Standing},
       corporation::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationStructure, CorporationWalletBalance,
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
@@ -75,6 +75,11 @@ impl<'a> AuthenticatedClient<'a> {
       .esi
       .url(&format!("corporations/{corporation_id}/killmails/recent/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
+  }
+
+  pub async fn standings(&self, corporation_id: i64) -> Result<Vec<Standing>, clients::Error> {
+    let url = self.esi.url(&format!("corporations/{corporation_id}/standings/"));
+    self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn structures(&self, corporation_id: i64) -> Result<Vec<CorporationStructure>, clients::Error> {
@@ -478,6 +483,51 @@ mod tests {
         let grant = Grant::new_test("corp-token", 42);
 
         let result = esi.corporation_authenticated(&grant).recent_killmails(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
+      }
+    }
+
+    mod standings {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_standings() {
+        let server = MockServer::start().await;
+        let body = r#"[{"from_id":500003,"from_type":"faction","standing":7.5},{"from_id":1000125,"from_type":"npc_corp","standing":-2.5}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/standings/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let standings = esi.corporation_authenticated(&grant).standings(2000).await.unwrap();
+
+        assert_eq!(standings.len(), 2);
+        assert_eq!(standings[0].from_id, 500003);
+        assert_eq!(standings[0].from_type, "faction");
+        assert_eq!(standings[0].standing, 7.5);
+        assert_eq!(standings[1].from_id, 1000125);
+        assert_eq!(standings[1].standing, -2.5);
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_on_5xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporations/2000/standings/"))
+          .respond_with(ResponseTemplate::new(500))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).standings(2000).await;
 
         assert!(matches!(result, Err(clients::Error::Http(_))));
       }

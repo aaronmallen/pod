@@ -54,6 +54,7 @@ pub mod corporation_card;
 mod corporation_industry_job;
 mod corporation_member_role;
 mod corporation_net_worth_snapshot;
+mod corporation_standing;
 mod corporation_wallet_division;
 mod corporation_wallet_journal;
 mod corporation_wallet_transaction;
@@ -184,6 +185,8 @@ pub use corporation_industry_job::Model as CorporationIndustryJob;
 pub use corporation_member_role::Model as CorporationMemberRole;
 #[allow(unused_imports)]
 pub use corporation_net_worth_snapshot::Model as CorporationNetWorthSnapshot;
+#[allow(unused_imports)]
+pub use corporation_standing::Model as CorporationStanding;
 #[allow(unused_imports)]
 pub use corporation_wallet_division::Model as CorporationWalletDivision;
 #[allow(unused_imports)]

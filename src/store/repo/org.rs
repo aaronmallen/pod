@@ -5,7 +5,7 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    Alliance, Character, Corporation, CorporationMemberRole, Faction, OwnedCorporation, Station,
+    Alliance, Character, Corporation, CorporationMemberRole, CorporationStanding, Faction, OwnedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
   repo::infra::like_pattern,
@@ -656,6 +656,36 @@ pub async fn replace_for_corporation(
     .execute(&mut *tx)
     .await?;
   }
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_standings_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  standings: &[CorporationStanding],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_standings WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for standing in standings {
+    sqlx::query(
+      "INSERT INTO corporation_standings (corporation_id, from_id, from_type, standing, from_name) \
+      VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(standing.corporation_id())
+    .bind(standing.from_id())
+    .bind(standing.from_type())
+    .bind(standing.standing())
+    .bind(standing.from_name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
   tx.commit().await?;
   Ok(())
 }

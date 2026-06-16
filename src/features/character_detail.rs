@@ -85,6 +85,7 @@ impl DetailDataType {
       | JobKind::CorporationBlueprints
       | JobKind::CorporationIndustryJobs
       | JobKind::CorporationProfile
+      | JobKind::CorporationStandings
       | JobKind::CorporationStructures
       | JobKind::CorporationWallet
       | JobKind::IndustryCostIndices

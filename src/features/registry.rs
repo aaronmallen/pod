@@ -62,6 +62,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
         JobKind::CharacterIndustryJobs,
         JobKind::CorporationBlueprints,
         JobKind::CorporationIndustryJobs,
+        JobKind::CorporationMiningExtractions,
         JobKind::CorporationStructures,
       ],
       rail: Some(Destination::Industry),

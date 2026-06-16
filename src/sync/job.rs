@@ -31,6 +31,7 @@ pub enum JobKind {
   CorporationContracts,
   CorporationIndustryJobs,
   CorporationKillmails,
+  CorporationMiningExtractions,
   CorporationProfile,
   CorporationStandings,
   CorporationStructures,
@@ -67,6 +68,7 @@ impl JobKind {
     JobKind::CorporationContracts,
     JobKind::CorporationIndustryJobs,
     JobKind::CorporationKillmails,
+    JobKind::CorporationMiningExtractions,
     JobKind::CorporationProfile,
     JobKind::CorporationStandings,
     JobKind::CorporationStructures,
@@ -151,6 +153,7 @@ impl JobKind {
       (Self::CorporationContracts, _) => Some(scopes::CORPORATION_CONTRACTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
       (Self::CorporationKillmails, _) => Some(scopes::CORPORATION_KILLMAILS),
+      (Self::CorporationMiningExtractions, _) => Some(scopes::CORPORATION_MINING_EXTRACTIONS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
       (Self::CorporationStandings, _) => Some(scopes::CORPORATION_STANDINGS),
       (Self::CorporationStructures, _) => Some(scopes::CORPORATION_STRUCTURES),
@@ -188,6 +191,7 @@ impl JobKind {
           | Self::CorporationContracts
           | Self::CorporationIndustryJobs
           | Self::CorporationKillmails
+          | Self::CorporationMiningExtractions
           | Self::CorporationProfile
           | Self::CorporationStandings
           | Self::CorporationStructures
@@ -219,6 +223,7 @@ impl JobKind {
       | Self::CorporationStructures
       | Self::CorporationWallet
       | Self::IndustryCostIndices => Duration::from_secs(3600),
+      Self::CorporationMiningExtractions => Duration::from_secs(1800),
       Self::CharacterSkills => Duration::from_secs(60),
       Self::CharacterCalendar
       | Self::CharacterKillmails
@@ -267,6 +272,7 @@ impl JobKind {
       Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
       Self::CorporationKillmails => &[scopes::CORPORATION_KILLMAILS],
+      Self::CorporationMiningExtractions => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_MINING_EXTRACTIONS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
       Self::CorporationStandings => &[scopes::CORPORATION_STANDINGS],
       Self::CorporationStructures => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_STRUCTURES],
@@ -383,6 +389,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::CorporationContacts => super::jobs::corporation_contacts::run(ctx).await,
     JobKind::CorporationContracts => super::jobs::corporation_contracts::run(ctx).await,
     JobKind::CorporationKillmails => super::jobs::corporation_killmails::run(ctx).await,
+    JobKind::CorporationMiningExtractions => super::jobs::mining_extractions::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationStandings => super::jobs::corporation_standings::run(ctx).await,
     JobKind::CorporationStructures => super::jobs::corporation_structures::run(ctx).await,

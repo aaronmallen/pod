@@ -6,8 +6,8 @@ use crate::store::{
   Database, Error,
   model::{
     Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationKillEntry,
-    CorporationKillmailAttacker, CorporationKillmailItem, CorporationMemberRole, CorporationStanding, Faction,
-    OwnedCorporation, Station,
+    CorporationKillmailAttacker, CorporationKillmailItem, CorporationMemberRole, CorporationMiningExtraction,
+    CorporationStanding, Faction, OwnedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
   repo::{
@@ -833,6 +833,66 @@ pub async fn replace_standings_for_corporation(
     .bind(standing.from_type())
     .bind(standing.standing())
     .bind(standing.from_name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn corporation_mining_extractions(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<Vec<CorporationMiningExtraction>, Error> {
+  let rows = sqlx::query_as::<_, CorporationMiningExtraction>(
+    "SELECT \
+      cme.corporation_id, \
+      cme.structure_id, \
+      cme.moon_id, \
+      cme.chunk_arrival_time, \
+      cme.extraction_start_time, \
+      cme.natural_decay_time, \
+      moons.name AS moon_name, \
+      moons.solar_system_id AS solar_system_id, \
+      solar_systems.security_status AS security_status \
+    FROM corporation_mining_extractions cme \
+    LEFT JOIN moons ON moons.id = cme.moon_id \
+    LEFT JOIN solar_systems ON solar_systems.id = moons.solar_system_id \
+    WHERE cme.corporation_id = ? \
+    ORDER BY cme.chunk_arrival_time",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn replace_extractions_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  extractions: &[CorporationMiningExtraction],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_mining_extractions WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for extraction in extractions {
+    sqlx::query(
+      "INSERT INTO corporation_mining_extractions \
+        (corporation_id, structure_id, moon_id, chunk_arrival_time, extraction_start_time, natural_decay_time) \
+      VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(extraction.corporation_id())
+    .bind(extraction.structure_id())
+    .bind(extraction.moon_id())
+    .bind(extraction.chunk_arrival_time())
+    .bind(extraction.extraction_start_time())
+    .bind(extraction.natural_decay_time())
     .execute(&mut *tx)
     .await?;
   }
@@ -2210,6 +2270,174 @@ mod member_role_tests {
         .unwrap();
 
       assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
+    }
+  }
+}
+
+#[cfg(test)]
+mod mining_extraction_tests {
+  use super::*;
+  use crate::store::{
+    self,
+    model::{Constellation, Corporation, Moon, Region, SolarSystem},
+    repo::{org, sde},
+  };
+
+  const CORP_ID: i64 = 90_000_001;
+
+  fn extraction(corporation_id: i64, structure_id: i64, moon_id: i64) -> CorporationMiningExtraction {
+    CorporationMiningExtraction {
+      chunk_arrival_time: Some("2026-06-20T00:00:00Z".to_owned()),
+      corporation_id,
+      extraction_start_time: Some("2026-06-13T00:00:00Z".to_owned()),
+      moon_id,
+      moon_name: None,
+      natural_decay_time: Some("2026-06-21T00:00:00Z".to_owned()),
+      security_status: None,
+      solar_system_id: None,
+      structure_id,
+    }
+  }
+
+  async fn seed_corp(db: &store::Database) {
+    let mut corp = Corporation::new(CORP_ID, "Test Corp", "TST");
+    corp.set_ceo_id(100);
+    corp.set_creator_id(100);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.1);
+    org::upsert_corporation(db, &corp).await.unwrap();
+  }
+
+  async fn seed_moon(db: &store::Database, moon_id: i64, solar_system_id: i64) {
+    sde::upsert_region(
+      db,
+      &Region {
+        description: None,
+        id: 10_000_001,
+        name: "Test Region".to_owned(),
+      },
+    )
+    .await
+    .unwrap();
+    sde::upsert_constellation(
+      db,
+      &Constellation {
+        id: 20_000_001,
+        name: "Test Constellation".to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        region_id: 10_000_001,
+      },
+    )
+    .await
+    .unwrap();
+    sde::upsert_solar_system(
+      db,
+      &SolarSystem {
+        constellation_id: 20_000_001,
+        id: solar_system_id,
+        name: "Test System".to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        security_class: None,
+        security_status: 0.5,
+        star_id: None,
+      },
+    )
+    .await
+    .unwrap();
+    sde::upsert_many_moons(
+      db,
+      &[Moon {
+        id: moon_id,
+        name: "Test System I - Moon 1".to_owned(),
+        orbit_index: Some(1),
+        planet_id: Some(40_000_001),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        radius: None,
+        solar_system_id,
+        type_id: Some(14),
+      }],
+    )
+    .await
+    .unwrap();
+  }
+
+  mod corporation_mining_extractions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_joins_the_moon_name_system_and_security_status() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_moon(&db, 40_000_001, 30_000_001).await;
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_001)])
+        .await
+        .unwrap();
+
+      let rows = corporation_mining_extractions(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].moon_name().as_deref(), Some("Test System I - Moon 1"));
+      assert_eq!(rows[0].solar_system_id(), Some(30_000_001));
+      assert_eq!(rows[0].security_status(), Some(0.5));
+    }
+
+    #[tokio::test]
+    async fn it_returns_a_row_with_null_geo_when_the_moon_is_not_in_the_sde() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_999)])
+        .await
+        .unwrap();
+
+      let rows = corporation_mining_extractions(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].moon_name(), &None);
+      assert_eq!(rows[0].moon_id(), 40_000_999);
+    }
+  }
+
+  mod replace_extractions_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_full_replaces_the_prior_extraction_set() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_001)])
+        .await
+        .unwrap();
+
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_002, 40_000_002)])
+        .await
+        .unwrap();
+
+      let rows = corporation_mining_extractions(&db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].structure_id(), 1_021_000_000_002);
+    }
+
+    #[tokio::test]
+    async fn it_clears_extractions_with_an_empty_slice() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_001)])
+        .await
+        .unwrap();
+
+      replace_extractions_for_corporation(&db, CORP_ID, &[]).await.unwrap();
+
+      assert!(corporation_mining_extractions(&db, CORP_ID).await.unwrap().is_empty());
     }
   }
 }

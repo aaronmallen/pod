@@ -63,6 +63,7 @@ mod corporation_killmail;
 mod corporation_killmail_attacker;
 mod corporation_killmail_item;
 mod corporation_member_role;
+mod corporation_mining_extraction;
 mod corporation_net_worth_snapshot;
 mod corporation_standing;
 mod corporation_wallet_division;
@@ -214,6 +215,8 @@ pub use corporation_killmail_attacker::Model as CorporationKillmailAttacker;
 pub use corporation_killmail_item::Model as CorporationKillmailItem;
 #[allow(unused_imports)]
 pub use corporation_member_role::Model as CorporationMemberRole;
+#[allow(unused_imports)]
+pub use corporation_mining_extraction::Model as CorporationMiningExtraction;
 #[allow(unused_imports)]
 pub use corporation_net_worth_snapshot::Model as CorporationNetWorthSnapshot;
 #[allow(unused_imports)]

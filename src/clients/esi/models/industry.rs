@@ -47,3 +47,12 @@ pub struct IndustryJob {
   #[serde(default)]
   pub successful_runs: Option<i32>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MiningExtraction {
+  pub chunk_arrival_time: String,
+  pub extraction_start_time: String,
+  pub moon_id: i64,
+  pub natural_decay_time: String,
+  pub structure_id: i64,
+}

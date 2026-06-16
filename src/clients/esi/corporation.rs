@@ -10,7 +10,7 @@ use crate::clients::{
         CorporationAsset, CorporationDivisions, CorporationInfo, CorporationStructure, CorporationWalletBalance,
         CorporationWalletJournalEntry, CorporationWalletTransaction, MemberRole,
       },
-      industry::IndustryJob,
+      industry::{IndustryJob, MiningExtraction},
     },
   },
   eve_sso::Grant,
@@ -104,6 +104,13 @@ impl<'a> AuthenticatedClient<'a> {
   pub async fn member_roles(&self, corporation_id: i64) -> Result<Vec<MemberRole>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/roles/"));
     self.esi.get_json(&url, Some(self.grant.access_token())).await
+  }
+
+  pub async fn mining_extractions(&self, corporation_id: i64) -> Result<Vec<MiningExtraction>, clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("corporation/{corporation_id}/mining/extractions/"));
+    self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
   pub async fn recent_killmails(&self, corporation_id: i64) -> Result<Vec<RecentKillmail>, clients::Error> {
@@ -698,6 +705,57 @@ mod tests {
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0].character_id, 123);
         assert_eq!(roles[0].roles, vec!["Director", "Accountant"]);
+      }
+    }
+
+    mod mining_extractions {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_extractions() {
+        let server = MockServer::start().await;
+        let body = r#"[{"chunk_arrival_time":"2026-06-20T00:00:00Z","extraction_start_time":"2026-06-13T00:00:00Z","moon_id":40000001,"natural_decay_time":"2026-06-21T00:00:00Z","structure_id":1021000000001}]"#;
+        Mock::given(method("GET"))
+          .and(path("/corporation/2000/mining/extractions/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "1")
+              .set_body_raw(body, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let extractions = esi
+          .corporation_authenticated(&grant)
+          .mining_extractions(2000)
+          .await
+          .unwrap();
+
+        assert_eq!(extractions.len(), 1);
+        assert_eq!(extractions[0].moon_id, 40000001);
+        assert_eq!(extractions[0].structure_id, 1021000000001);
+        assert_eq!(extractions[0].chunk_arrival_time, "2026-06-20T00:00:00Z");
+      }
+
+      #[tokio::test]
+      async fn it_surfaces_an_http_error_when_the_token_lacks_station_manager_role() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/corporation/2000/mining/extractions/"))
+          .respond_with(ResponseTemplate::new(403))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let result = esi.corporation_authenticated(&grant).mining_extractions(2000).await;
+
+        assert!(matches!(result, Err(clients::Error::Http(_))));
       }
     }
 

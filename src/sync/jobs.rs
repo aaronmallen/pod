@@ -27,6 +27,7 @@ pub mod killmail_detail_backfill;
 pub mod killmail_reconcile;
 pub mod killmail_value;
 pub mod market_prices;
+pub mod mining_extractions;
 pub mod names;
 pub mod net_worth_snapshot;
 pub mod resolve;

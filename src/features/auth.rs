@@ -527,6 +527,16 @@ mod tests {
     }
 
     #[test]
+    fn it_derives_corp_mining_extractions_when_industry_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Industry]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_MINING_EXTRACTIONS),
+        "an enabled Industry feature must request the corp mining extractions scope, got {requested:?}"
+      );
+    }
+
+    #[test]
     fn it_always_requests_the_baseline_companions() {
       let requested = corp_scopes_for(&[]);
 

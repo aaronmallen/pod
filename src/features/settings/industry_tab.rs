@@ -109,16 +109,7 @@ struct Picker {
 }
 
 fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
-  FacilityRef {
-    cost_index: facility.index_for(is_reaction),
-    id: facility.id,
-    name: facility.name.clone(),
-    region: facility.region.clone(),
-    security_status: facility.security_status,
-    solar_system: facility.solar_system_id.to_string(),
-    solar_system_id: facility.solar_system_id,
-    type_id: facility.type_id,
-  }
+  facility.to_ref(is_reaction)
 }
 
 /// Returns a pin only for player structures; NPC stations resolve from static data and yield `None`.

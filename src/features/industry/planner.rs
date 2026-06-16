@@ -1228,14 +1228,22 @@ mod view {
   }
 
   pub(super) fn body(planner: &Planner) -> Element<'_, Message> {
-    let Some(product) = planner.product() else {
-      return empty(planner);
-    };
-    let Some(recipe) = planner.data().recipe(product) else {
-      return empty(planner);
+    // The right pane (Detail / Plans) stays mounted whether or not a product is chosen, so saved plans
+    // and the cost summary are always reachable. Only the left column swaps to the empty search state.
+    let product = planner
+      .product()
+      .filter(|product| planner.data().recipe(*product).is_some());
+
+    let left_content: Element<'_, Message> = match product {
+      Some(product) => left_pane(
+        planner,
+        product,
+        planner.data().recipe(product).expect("recipe checked"),
+      ),
+      None => empty_left(planner),
     };
 
-    let left = scrollable(left_pane(planner, product, recipe))
+    let left = scrollable(left_content)
       .id(MATERIAL_PLAN_SCROLL_ID)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
@@ -1885,30 +1893,15 @@ mod view {
           .map(|recipe| recipe.is_reaction)
       })
       .unwrap_or(false);
-    let needle = state.query.trim().to_lowercase();
-    let live = state.query.trim().chars().count() >= super::FACILITY_SEARCH_MIN_CHARS;
     let selected = planner
       .selected_facility(path, is_reaction)
       .map(|f| facility_ref(f, is_reaction));
 
-    // A query long enough to search surfaces the live ESI results (any reachable station/structure);
-    // a shorter one filters the locally known accessible facilities.
-    let facilities: Vec<FacilityRef> = if live {
-      state.results.iter().map(|f| facility_ref(f, is_reaction)).collect()
-    } else {
-      planner
-        .data()
-        .facilities
-        .iter()
-        .filter(|facility| facility.index_for(is_reaction).is_some())
-        .filter(|facility| {
-          needle.is_empty()
-            || facility.name.to_lowercase().contains(&needle)
-            || facility.solar_system_id.to_string().contains(&needle)
-        })
-        .map(|f| facility_ref(f, is_reaction))
-        .collect()
-    };
+    // Type-to-search only (live ESI over any reachable station/structure), identical to the Settings
+    // Industry picker. The full accessible-facility set is thousands of NPC stations, so rendering it
+    // unprompted made the picker lag — the trigger already shows the current selection, and a query
+    // surfaces the rest on demand.
+    let facilities: Vec<FacilityRef> = state.results.iter().map(|f| facility_ref(f, is_reaction)).collect();
 
     let search_path = path.to_vec();
     let pick_path = path.to_vec();
@@ -1954,16 +1947,7 @@ mod view {
   /// Projects a [`PlannerFacility`] into the shared [`FacilityRef`], carrying the cost index for the active
   /// activity (manufacturing or reaction) so the combobox can surface it per-row.
   fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
-    FacilityRef {
-      cost_index: facility.index_for(is_reaction),
-      id: facility.id,
-      name: facility.name.clone(),
-      region: facility.region.clone(),
-      security_status: facility.security_status,
-      solar_system: facility.solar_system.clone().unwrap_or_default(),
-      solar_system_id: facility.solar_system_id,
-      type_id: facility.type_id,
-    }
+    facility.to_ref(is_reaction)
   }
 
   fn build_vs_buy<'a>(planner: &'a Planner, type_id: i64, recipe: &'a Recipe, sub: &SubBuild) -> Element<'a, Message> {
@@ -2591,7 +2575,7 @@ mod view {
     }
   }
 
-  fn right_pane<'a>(planner: &'a Planner, product: i64) -> Element<'a, Message> {
+  fn right_pane<'a>(planner: &'a Planner, product: Option<i64>) -> Element<'a, Message> {
     let tabs = Row::with_children(vec![
       right_tab_button("Detail", RightTab::Detail, planner.right_tab()),
       right_tab_button("Plans", RightTab::Plans, planner.right_tab()),
@@ -2599,7 +2583,15 @@ mod view {
     .spacing(spacing::SPACE_3);
 
     let content: Element<'a, Message> = match planner.right_tab() {
-      RightTab::Detail => detail_pane(planner, product),
+      RightTab::Detail => match product {
+        Some(product) => detail_pane(planner, product),
+        None => centered(
+          text("Search a product to see its cost, profit, and shopping list.")
+            .font(typography::body::REGULAR)
+            .size(typography::size::MD)
+            .style(typography::colored(color::text::tertiary())),
+        ),
+      },
       RightTab::Plans => plans_pane(planner),
     };
 
@@ -3355,10 +3347,11 @@ mod view {
     }
   }
 
-  /// The no-product cold-open state. The product search bar stays pinned at the top (so the user can
-  /// actually search for something to build); a centered hint fills the space below until the picker is
-  /// opened or a query is typed, at which point the picker's own results take over.
-  fn empty(planner: &Planner) -> Element<'_, Message> {
+  /// The left column's no-product cold-open state. The product search bar stays pinned at the top (so the
+  /// user can actually search for something to build); a centered hint fills the space below until the
+  /// picker is opened or a query is typed, at which point the picker's own results take over. Returned
+  /// bare (no scrollable) — [`body`] wraps the left column in the shared scrollable.
+  fn empty_left(planner: &Planner) -> Element<'_, Message> {
     let mut children: Vec<Element<'_, Message>> = vec![picker(planner)];
 
     if !planner.picker_open() && planner.search().is_empty() {
@@ -3370,14 +3363,9 @@ mod view {
       ));
     }
 
-    let content = Column::with_children(children)
+    Column::with_children(children)
       .spacing(spacing::SPACE_3)
       .padding(PANE_PADDING)
-      .width(Length::Fill)
-      .height(Length::Fill);
-
-    scrollable(content)
-      .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)
       .into()

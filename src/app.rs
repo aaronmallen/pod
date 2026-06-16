@@ -2802,6 +2802,14 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     task = Task::batch(vec![task, migrate_storage(request.previous, next)]);
   }
 
+  // Keep the long-lived runtime settings' industry defaults in lock-step with the settings screen, so
+  // the planner (which reads `runtime.settings` when it opens) honors a freshly-changed default without
+  // waiting for a restart. Feature/accessibility sections sync via their own paths below.
+  if let Some(runtime) = app.runtime.as_mut() {
+    let industry = *state.settings().industry();
+    *runtime.settings.industry_mut() = industry;
+  }
+
   match outcome {
     settings::Outcome::AccessibilityChanged => {
       let accessibility = *state.settings().accessibility();
@@ -5965,6 +5973,41 @@ mod tests {
       assert!(
         !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
         "disabling Standings drops its detail tab live, not only on next navigation"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_syncs_industry_defaults_onto_the_runtime() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      // Picking an NPC station as the Manufacturing default persists it; the planner reads the runtime
+      // copy on open, so it must mirror the change immediately (not only after a restart).
+      let facility = crate::ui::components::facility_combobox::FacilityRef {
+        cost_index: Some(0.05),
+        id: 60_003_760,
+        name: "Jita IV - Moon 4 - CNAP".to_owned(),
+        region: Some("The Forge".to_owned()),
+        security_status: Some(0.9),
+        solar_system: "Jita".to_owned(),
+        solar_system_id: 30_000_142,
+        type_id: None,
+      };
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
+          activity: 1,
+          facility,
+        }),
+      );
+
+      assert_eq!(
+        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
+        Some(60_003_760),
+        "the runtime industry config mirrors the settings screen so the planner honors the new default"
       );
     }
 

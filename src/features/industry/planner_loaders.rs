@@ -4,10 +4,13 @@ use super::{
   Scope,
   planner_model::{Material, REACTION_ACTIVITY_ID},
 };
-use crate::store::{
-  Database,
-  model::Facility,
-  repo::{blueprints, finance, industry},
+use crate::{
+  store::{
+    Database,
+    model::Facility,
+    repo::{blueprints, finance, industry},
+  },
+  ui::components::facility_combobox::FacilityRef,
 };
 
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
@@ -165,6 +168,22 @@ impl PlannerFacility {
       self.reaction_index
     } else {
       self.manufacturing_index
+    }
+  }
+
+  /// Projects into the shared [`FacilityRef`] the facility combobox renders. The single source of this
+  /// conversion so the planner picker and the Settings Industry tab display facilities identically —
+  /// notably the resolved solar-system **name** (not the raw id) and the activity's cost index.
+  pub fn to_ref(&self, is_reaction: bool) -> FacilityRef {
+    FacilityRef {
+      cost_index: self.index_for(is_reaction),
+      id: self.id,
+      name: self.name.clone(),
+      region: self.region.clone(),
+      security_status: self.security_status,
+      solar_system: self.solar_system.clone().unwrap_or_default(),
+      solar_system_id: self.solar_system_id,
+      type_id: self.type_id,
     }
   }
 }

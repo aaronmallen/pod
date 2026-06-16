@@ -205,14 +205,41 @@ pub async fn catalog(
   }
   let skills = social_skills(db, character_id).await?;
   let raw = raw_standings(db, character_id).await?;
+  catalog_from(db, &facets, &raw, skills, force_agents, limit).await
+}
+
+/// Builds the combined faction/corporation/agent catalog for a corporation's raw standings.
+///
+/// Corporations carry no social-skill modifiers (so `effective_standing == raw_standing`) and have no location, so
+/// the `near_me` system resolution is skipped: the agent SQL never narrows by the corp's location.
+pub async fn corporation_catalog(
+  db: &Database,
+  corporation_id: i64,
+  query: &ParsedQuery,
+  force_agents: bool,
+  limit: Option<i64>,
+) -> Result<Vec<CatalogRow>, Error> {
+  let facets = Facets::from_query(query);
+  let raw = corporation_raw_standings(db, corporation_id).await?;
+  catalog_from(db, &facets, &raw, SocialSkills::default(), force_agents, limit).await
+}
+
+async fn catalog_from(
+  db: &Database,
+  facets: &Facets,
+  raw: &RawStandings,
+  skills: SocialSkills,
+  force_agents: bool,
+  limit: Option<i64>,
+) -> Result<Vec<CatalogRow>, Error> {
   let names = NameIndex::load(db).await?;
 
   let mut rows = Vec::new();
-  rows.extend(faction_rows(db, &raw, skills).await?);
-  rows.extend(corporation_rows(db, &raw, skills).await?);
+  rows.extend(faction_rows(db, raw, skills).await?);
+  rows.extend(corporation_rows(db, raw, skills).await?);
   if force_agents || facets.surfaces_agents() {
     let bound = limit.unwrap_or(DEFAULT_LIMIT);
-    rows.extend(agent_rows(db, &facets, &names, &raw, skills, None, bound).await?);
+    rows.extend(agent_rows(db, facets, &names, raw, skills, None, bound).await?);
   }
 
   rows.retain(|row| facets.keeps(row, &names));
@@ -245,9 +272,50 @@ pub async fn agent_page(
   }
   let skills = social_skills(db, character_id).await?;
   let raw = raw_standings(db, character_id).await?;
+  agent_page_from(db, &facets, &raw, skills, force_agents, after, limit).await
+}
+
+/// Fetches a single keyset page of agent rows for a corporation's standings catalog.
+///
+/// As with [`corporation_catalog`], corporations carry no social-skill modifiers and no location, so `near_me` is not
+/// resolved.
+pub async fn corporation_agent_page(
+  db: &Database,
+  corporation_id: i64,
+  query: &ParsedQuery,
+  force_agents: bool,
+  after: Option<(String, i64)>,
+  limit: i64,
+) -> Result<AgentPage, Error> {
+  let facets = Facets::from_query(query);
+  if !force_agents && !facets.surfaces_agents() {
+    return Ok(AgentPage {
+      next_cursor: None,
+      rows: Vec::new(),
+    });
+  }
+  let raw = corporation_raw_standings(db, corporation_id).await?;
+  agent_page_from(db, &facets, &raw, SocialSkills::default(), force_agents, after, limit).await
+}
+
+async fn agent_page_from(
+  db: &Database,
+  facets: &Facets,
+  raw: &RawStandings,
+  skills: SocialSkills,
+  force_agents: bool,
+  after: Option<(String, i64)>,
+  limit: i64,
+) -> Result<AgentPage, Error> {
+  if !force_agents && !facets.surfaces_agents() {
+    return Ok(AgentPage {
+      next_cursor: None,
+      rows: Vec::new(),
+    });
+  }
   let names = NameIndex::load(db).await?;
 
-  let mut rows = agent_rows(db, &facets, &names, &raw, skills, after.as_ref(), limit).await?;
+  let mut rows = agent_rows(db, facets, &names, raw, skills, after.as_ref(), limit).await?;
   // The raw page count (pre-`keeps`) drives exhaustion; the cursor seeks past the last raw row so a
   // fully-filtered page still advances. `keeps` then drops rows the SQL predicates could not express.
   let next_cursor = (rows.len() as i64 == limit)
@@ -592,6 +660,17 @@ fn push_security_predicate(builder: &mut QueryBuilder<Sqlite>, class: SecurityCl
   };
 }
 
+async fn corporation_raw_standings(db: &Database, corporation_id: i64) -> Result<RawStandings, Error> {
+  let rows = sqlx::query_as::<_, (i64, String, f64)>(
+    "SELECT from_id, from_type, standing FROM corporation_standings WHERE corporation_id = ?",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+
+  Ok(collect_raw_standings(rows))
+}
+
 async fn raw_standings(db: &Database, character_id: i64) -> Result<RawStandings, Error> {
   let rows = sqlx::query_as::<_, (i64, String, f64)>(
     "SELECT from_id, from_type, standing FROM character_standings WHERE character_id = ?",
@@ -600,6 +679,10 @@ async fn raw_standings(db: &Database, character_id: i64) -> Result<RawStandings,
   .fetch_all(&db.0)
   .await?;
 
+  Ok(collect_raw_standings(rows))
+}
+
+fn collect_raw_standings(rows: Vec<(i64, String, f64)>) -> RawStandings {
   let mut standings = RawStandings::default();
   for (from_id, from_type, standing) in rows {
     match from_type.as_str() {
@@ -615,7 +698,7 @@ async fn raw_standings(db: &Database, character_id: i64) -> Result<RawStandings,
       _ => {}
     }
   }
-  Ok(standings)
+  standings
 }
 
 async fn social_skills(db: &Database, character_id: i64) -> Result<SocialSkills, Error> {
@@ -1656,6 +1739,176 @@ mod tests {
         assert_eq!(only.rows.len(), 4);
         assert_eq!(only.next_cursor, None);
       }
+    }
+  }
+
+  mod corporation_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    const CALDARI_FACTION: i64 = 500_001;
+    const CORPORATION: i64 = 98_000_001;
+
+    async fn exec(db: &store::Database, sql: &'static str) {
+      sqlx::query(sql).execute(&db.0).await.unwrap();
+    }
+
+    async fn seed(db: &store::Database) {
+      exec(
+        db,
+        "INSERT INTO factions (id, corporation_id, description, is_unique, name, size_factor, station_count, \
+        station_system_count) VALUES (500001, NULL, '', 1, 'Caldari State', 1.0, 0, 0)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO corporations (id, ceo_id, creator_id, faction_id, member_count, name, tax_rate, ticker) VALUES \
+        (1000001, 0, 0, 500001, 0, 'Caldari Navy', 0.0, 'CN'), \
+        (98000001, 0, 0, NULL, 0, 'Cobalt Syndicate', 0.0, 'COBSY')",
+      )
+      .await;
+      exec(db, "INSERT INTO agent_types (id, name) VALUES (1, 'BasicAgent')").await;
+      exec(
+        db,
+        "INSERT INTO npc_corporation_divisions (id, name) VALUES (22, 'Security')",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO regions (id, description, name) VALUES (10000001, '', 'The Forge')",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO constellations (id, name, region_id, position_x, position_y, position_z) \
+        VALUES (20000001, 'Kimotoro', 10000001, 0, 0, 0)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO solar_systems (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (30000001, 20000001, 'Jita', 0.0, 0.0, 0.0, 0.9)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO item_categories (id, name, published) VALUES (1, 'Skill', 1)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO item_groups (id, category_id, name, published) VALUES (1, 1, 'Science', 1)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO item_types (id, group_id, description, name, published) VALUES \
+        (11433, 1, '', 'Caldari Starship Engineering', 1)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO stations \
+        (id, max_dockable_ship_volume, name, office_rental_cost, position_x, position_y, position_z, \
+        reprocessing_efficiency, reprocessing_stations_take, services, system_id, type_id) VALUES \
+        (60000001, 0, 'Jita Station', 0, 0, 0, 0, 0, 0, '[]', 30000001, 11433)",
+      )
+      .await;
+      exec(
+        db,
+        "INSERT INTO npc_agents (id, agent_type_id, corporation_id, division_id, level, location_id, name) VALUES \
+        (3000001, 1, 1000001, 22, 4, 60000001, 'Navy Sec Agent')",
+      )
+      .await;
+    }
+
+    fn of_kind(rows: &[CatalogRow], kind: CatalogKind) -> Vec<&str> {
+      rows
+        .iter()
+        .filter(|row| row.kind == kind)
+        .map(|row| row.name.as_str())
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_full_catalog_with_no_standings_by_default() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = corporation_catalog(&db, CORPORATION, &parse(""), false, Some(500))
+        .await
+        .unwrap();
+
+      assert_eq!(of_kind(&rows, CatalogKind::Faction), vec!["Caldari State"]);
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation), vec!["Caldari Navy"]);
+      assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
+      assert!(rows.iter().all(|row| row.raw_standing == 0.0));
+    }
+
+    #[tokio::test]
+    async fn it_uses_the_corporation_raw_standing_and_treats_effective_as_raw() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO corporation_standings (corporation_id, from_id, from_type, standing, from_name) VALUES \
+        (98000001, 500001, 'faction', 6.0, 'Caldari State')",
+      )
+      .await;
+
+      let rows = corporation_catalog(&db, CORPORATION, &parse("faction:Caldari"), false, Some(500))
+        .await
+        .unwrap();
+
+      let faction = rows.iter().find(|row| row.id == CALDARI_FACTION).unwrap();
+      assert_eq!(faction.raw_standing, 6.0);
+      // No social-skill modifiers for a corporation: effective equals raw even with a positive empire standing.
+      assert_eq!(faction.effective_standing, 6.0);
+    }
+
+    #[tokio::test]
+    async fn it_cascades_a_corp_standing_to_an_agent_without_social_skills() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO corporation_standings (corporation_id, from_id, from_type, standing, from_name) VALUES \
+        (98000001, 1000001, 'npc_corp', 5.0, 'Caldari Navy')",
+      )
+      .await;
+
+      let rows = corporation_catalog(&db, CORPORATION, &parse("corp:Navy level:4"), false, Some(500))
+        .await
+        .unwrap();
+
+      let agent = rows.iter().find(|row| row.name == "Navy Sec Agent").unwrap();
+      assert_eq!(agent.raw_standing, 5.0);
+      // No social-skill modifiers for a corporation, so the cascaded corp standing stays raw (5.0), which exactly
+      // meets a level-4 agent's 5.0 access threshold.
+      assert_eq!(agent.effective_standing, 5.0);
+      assert_eq!(agent.accessible, Some(true));
+    }
+
+    #[tokio::test]
+    async fn it_pages_corporation_agents() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let empty = corporation_agent_page(&db, CORPORATION, &parse(""), false, None, 100)
+        .await
+        .unwrap();
+      assert!(empty.rows.is_empty());
+
+      let forced = corporation_agent_page(&db, CORPORATION, &parse(""), true, None, 100)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        forced.rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+        vec!["Navy Sec Agent"]
+      );
     }
   }
 

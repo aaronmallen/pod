@@ -1,29 +1,35 @@
+mod tabs;
+
+use std::time::Duration;
+
 use iced::{
   Element, Length, Task,
-  alignment::{Horizontal, Vertical},
-  widget::{Column, Row, container, text},
+  alignment::Vertical,
+  widget::{Column, Row, container, operation, text},
 };
 
+pub use self::tabs::Tab;
+pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   store::{
     Database, images,
-    repo::{character, org, sde},
+    repo::{character, org, sde, standings},
   },
   ui::{
     components::{
       avatar::Avatar,
       header::{header as header_band, header_divider, stat_block},
-      rule,
-      tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
     },
     style::{color, radius, spacing, typography},
   },
 };
 
+pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "corp-standings-search-input";
+
 const LOGO_SIZE: f32 = 44.0;
 const PLACEHOLDER: &str = "\u{2014}";
-const TAB_BODY_PADDING: f32 = 28.0;
-const TAB_STRIP_HEIGHT: f32 = 48.0;
+const SEARCH_DEBOUNCE_MS: u64 = 200;
+const STANDINGS_PAGE_SIZE: i64 = 100;
 
 #[derive(Clone, Debug)]
 pub struct CorpHead {
@@ -39,23 +45,53 @@ pub struct CorpHead {
 }
 
 #[derive(Clone, Debug)]
+pub enum LoadState<T> {
+  Error(String),
+  Loaded(T),
+  Loading,
+}
+
+#[derive(Clone, Debug)]
 pub enum Message {
   Loaded(Option<CorpHead>),
+  StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
+  StandingsClearSearch,
+  StandingsFilterChanged(tabs::standings::StandingsFilter),
+  StandingsResults(Box<StandingsResult>),
+  StandingsScrolled { absolute: f32, relative: f32 },
+  StandingsSearchChanged(String),
   TabChanged(Tab),
 }
 
+#[derive(Debug)]
 pub struct State {
   active: i64,
   active_tab: Tab,
   head: Option<CorpHead>,
+  standings: LoadState<Vec<StandingsRow>>,
+  standings_agent_cursor: Option<(String, i64)>,
+  standings_filter: tabs::standings::StandingsFilter,
+  standings_generation: u64,
+  standings_has_more: bool,
+  standings_loading_more: bool,
+  standings_query: String,
+  standings_scroll_offset: f32,
 }
 
 impl State {
   pub fn new(active: i64) -> Self {
-    Self {
+    State {
       active,
       active_tab: Tab::ORDER[0],
       head: None,
+      standings: LoadState::Loading,
+      standings_agent_cursor: None,
+      standings_filter: tabs::standings::StandingsFilter::All,
+      standings_generation: 0,
+      standings_has_more: false,
+      standings_loading_more: false,
+      standings_query: String::new(),
+      standings_scroll_offset: 0.0,
     }
   }
 
@@ -64,48 +100,84 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    self
+    let mut keys: Vec<(images::ImageKind, i64)> = self
       .head
       .as_ref()
       .and_then(|head| head.logo.stale_key())
       .into_iter()
-      .collect()
+      .collect();
+    if let LoadState::Loaded(rows) = &self.standings {
+      keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
+    }
+    keys
+  }
+
+  pub(super) fn active_tab(&self) -> Tab {
+    self.active_tab
+  }
+
+  pub(super) fn standings(&self) -> &LoadState<Vec<StandingsRow>> {
+    &self.standings
+  }
+
+  pub(super) fn standings_filter(&self) -> tabs::standings::StandingsFilter {
+    self.standings_filter
+  }
+
+  pub(super) fn standings_has_filters(&self) -> bool {
+    !self.standings_query.trim().is_empty()
+  }
+
+  pub(super) fn standings_query(&self) -> &str {
+    &self.standings_query
+  }
+
+  pub(super) fn standings_scroll_offset(&self) -> f32 {
+    self.standings_scroll_offset
+  }
+
+  fn has_loaded_agents(&self) -> bool {
+    matches!(&self.standings, LoadState::Loaded(rows) if rows.iter().any(|row| row.kind == StandingKind::Agent))
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Tab {
-  Contacts,
-  Killlog,
-  Standings,
+#[derive(Clone, Debug)]
+pub struct StandingsAgentsPage {
+  generation: u64,
+  next_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
 }
 
-impl Tab {
-  const ORDER: [Tab; 3] = [Tab::Standings, Tab::Contacts, Tab::Killlog];
+#[derive(Clone, Debug)]
+pub struct StandingsCatalog {
+  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
+  agent_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
+}
 
-  fn label(self) -> &'static str {
-    match self {
-      Tab::Contacts => "Contacts",
-      Tab::Killlog => "Kill Log",
-      Tab::Standings => "Standings",
-    }
-  }
+#[derive(Clone, Debug)]
+pub struct StandingsResult {
+  /// Snapshot of `State::standings_generation` at dispatch; results whose generation no longer matches are stale
+  /// (superseded by a newer debounced search) and discarded.
+  generation: u64,
+  result: Result<StandingsCatalog, String>,
+}
 
-  fn placeholder_subtitle(self) -> &'static str {
-    match self {
-      Tab::Contacts => "Corporation contacts will appear here once contact sync ships.",
-      Tab::Killlog => "The corporation kill log will appear here once killmail sync ships.",
-      Tab::Standings => "Corporation standings will appear here once standings sync ships.",
-    }
-  }
-
-  fn placeholder_title(self) -> &'static str {
-    match self {
-      Tab::Contacts => "No contacts yet",
-      Tab::Killlog => "No kills yet",
-      Tab::Standings => "No standings yet",
-    }
-  }
+#[derive(Clone, Debug)]
+pub struct StandingsRow {
+  pub accessible: Option<bool>,
+  pub agent_type: Option<String>,
+  pub division: Option<String>,
+  pub effective: f64,
+  pub faction_id: Option<i64>,
+  pub id: i64,
+  pub image: images::ImageState,
+  pub kind: StandingKind,
+  pub level: Option<i64>,
+  pub name: String,
+  pub raw: f64,
+  pub region: Option<String>,
+  pub system: Option<String>,
 }
 
 pub fn load(db: &Database, corporation_id: i64) -> Task<Message> {
@@ -113,11 +185,97 @@ pub fn load(db: &Database, corporation_id: i64) -> Task<Message> {
   Task::perform(async move { load_head(&db, corporation_id).await }, Message::Loaded)
 }
 
-pub fn update(state: &mut State, message: Message) -> Task<Message> {
+pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::Loaded(head) => {
       state.head = head;
+      trigger_standings_search(state, db)
+    }
+    Message::StandingsAgentsPageLoaded(page) => {
+      let StandingsAgentsPage {
+        generation,
+        next_cursor,
+        rows,
+      } = *page;
+      state.standings_loading_more = false;
+      if generation != state.standings_generation {
+        return Task::none();
+      }
+      state.standings_has_more = next_cursor.is_some();
+      state.standings_agent_cursor = next_cursor;
+      if let LoadState::Loaded(existing) = &mut state.standings {
+        existing.extend(rows);
+      }
       Task::none()
+    }
+    Message::StandingsClearSearch => {
+      state.standings_query.clear();
+      Task::batch([
+        trigger_standings_search(state, db),
+        operation::focus(STANDINGS_SEARCH_INPUT_ID),
+      ])
+    }
+    Message::StandingsFilterChanged(filter) => {
+      state.standings_filter = filter;
+      // Filtering is in-memory: agents are already loaded from the default All initial load. Reload only as a safety
+      // net when switching to an agent-surfacing filter that has no agent rows loaded and a load is not in flight.
+      if filter.surfaces_agents() && !state.has_loaded_agents() && !matches!(state.standings, LoadState::Loading) {
+        trigger_standings_search(state, db)
+      } else {
+        Task::none()
+      }
+    }
+    Message::StandingsResults(results) => {
+      let StandingsResult {
+        generation,
+        result,
+      } = *results;
+      if generation == state.standings_generation {
+        state.standings = match result {
+          Ok(catalog) => {
+            state.standings_has_more = catalog.agent_cursor.is_some();
+            state.standings_agent_cursor = catalog.agent_cursor;
+            LoadState::Loaded(catalog.rows)
+          }
+          Err(error) => {
+            state.standings_has_more = false;
+            state.standings_agent_cursor = None;
+            LoadState::Error(error)
+          }
+        };
+      }
+      Task::none()
+    }
+    Message::StandingsScrolled {
+      absolute,
+      relative,
+    } => {
+      state.standings_scroll_offset = absolute;
+      // Only the agent-surfacing filters paginate agents; under Factions/Corps/Other a forced-false page
+      // would come back empty and clobber `standings_has_more`, so skip the fetch entirely.
+      if relative < tabs::SCROLL_THRESHOLD
+        || !state.standings_has_more
+        || state.standings_loading_more
+        || !state.standings_filter.surfaces_agents()
+      {
+        return Task::none();
+      }
+      let Some(cursor) = state.standings_agent_cursor.clone() else {
+        return Task::none();
+      };
+      state.standings_loading_more = true;
+      run_standings_agent_page(
+        db.clone(),
+        state.active,
+        state.standings_query.clone(),
+        state.standings_filter.surfaces_agents(),
+        cursor,
+        state.standings_generation,
+      )
+    }
+    Message::StandingsSearchChanged(query) => {
+      state.standings_query = query;
+      trigger_standings_search(state, db)
     }
     Message::TabChanged(tab) => {
       state.active_tab = tab;
@@ -129,8 +287,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 pub fn view(state: &State) -> Element<'_, Message> {
   let body = Column::with_children(vec![
     header(state),
-    tab_strip(state.active_tab),
-    tab_body(state.active_tab),
+    tabs::tab_strip(state.active_tab),
+    tabs::tab_body(state),
   ])
   .width(Length::Fill)
   .height(Length::Fill);
@@ -143,6 +301,138 @@ pub fn view(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
+  state.standings_generation = state.standings_generation.wrapping_add(1);
+  state.standings = LoadState::Loading;
+  state.standings_has_more = false;
+  state.standings_agent_cursor = None;
+  state.standings_loading_more = false;
+  run_standings_search(
+    db.clone(),
+    state.active,
+    state.standings_query.clone(),
+    state.standings_filter.surfaces_agents(),
+    state.standings_generation,
+  )
+}
+
+fn run_standings_agent_page(
+  db: Database,
+  corporation_id: i64,
+  query: String,
+  force_agents: bool,
+  cursor: (String, i64),
+  generation: u64,
+) -> Task<Message> {
+  Task::perform(
+    async move { load_standings_agent_page(&db, corporation_id, &query, force_agents, cursor).await },
+    move |page| {
+      let (next_cursor, rows) = page.unwrap_or((None, Vec::new()));
+      Message::StandingsAgentsPageLoaded(Box::new(StandingsAgentsPage {
+        generation,
+        next_cursor,
+        rows,
+      }))
+    },
+  )
+}
+
+fn run_standings_search(
+  db: Database,
+  corporation_id: i64,
+  query: String,
+  force_agents: bool,
+  generation: u64,
+) -> Task<Message> {
+  Task::perform(
+    async move {
+      tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+      load_standings_catalog(&db, corporation_id, &query, force_agents).await
+    },
+    move |result| {
+      Message::StandingsResults(Box::new(StandingsResult {
+        generation,
+        result,
+      }))
+    },
+  )
+}
+
+// Factions and corporations are loaded in full (limit 0 suppresses the catalog's own agent page); agents come from
+// the first keyset page so the result carries a cursor for infinite scroll. `force_agents` lets the active segment
+// filter surface the agent catalog with no narrowing text facet.
+async fn load_standings_catalog(
+  db: &Database,
+  corporation_id: i64,
+  query: &str,
+  force_agents: bool,
+) -> Result<StandingsCatalog, String> {
+  let parsed = standings::parse(query);
+  let context = standings::corporation_catalog(db, corporation_id, &parsed, force_agents, Some(0))
+    .await
+    .map_err(|error| error.to_string())?;
+  let agents = standings::corporation_agent_page(db, corporation_id, &parsed, force_agents, None, STANDINGS_PAGE_SIZE)
+    .await
+    .map_err(|error| error.to_string())?;
+
+  let store = images::default_store();
+  let mut rows: Vec<StandingsRow> = context.into_iter().map(|row| standings_row(&store, row)).collect();
+  rows.extend(agents.rows.into_iter().map(|row| standings_row(&store, row)));
+  Ok(StandingsCatalog {
+    agent_cursor: agents.next_cursor,
+    rows,
+  })
+}
+
+async fn load_standings_agent_page(
+  db: &Database,
+  corporation_id: i64,
+  query: &str,
+  force_agents: bool,
+  cursor: (String, i64),
+) -> Result<(Option<(String, i64)>, Vec<StandingsRow>), String> {
+  let parsed = standings::parse(query);
+  let page = standings::corporation_agent_page(
+    db,
+    corporation_id,
+    &parsed,
+    force_agents,
+    Some(cursor),
+    STANDINGS_PAGE_SIZE,
+  )
+  .await
+  .map_err(|error| error.to_string())?;
+
+  let store = images::default_store();
+  let rows = page.rows.into_iter().map(|row| standings_row(&store, row)).collect();
+  Ok((page.next_cursor, rows))
+}
+
+fn standings_row(store: &images::Store, row: standings::CatalogRow) -> StandingsRow {
+  let (image_kind, image_id) = match row.kind {
+    StandingKind::Agent => (images::ImageKind::CharacterPortrait, row.id),
+    StandingKind::Corporation => (images::ImageKind::CorporationLogo, row.id),
+    // A faction has no logo of its own; use its corporation's, falling back to the faction id.
+    StandingKind::Faction => (images::ImageKind::CorporationLogo, row.corporation_id.unwrap_or(row.id)),
+  };
+
+  StandingsRow {
+    accessible: row.accessible,
+    agent_type: row.agent_type,
+    division: row.division,
+    effective: row.effective_standing,
+    faction_id: row.faction_id,
+    id: row.id,
+    image: images::resolve(store, image_kind, image_id),
+    kind: row.kind,
+    level: row.level,
+    name: row.name,
+    raw: row.raw_standing,
+    region: row.region_name,
+    system: row.system_name,
+  }
 }
 
 async fn load_head(db: &Database, corporation_id: i64) -> Option<CorpHead> {
@@ -275,54 +565,6 @@ fn loading_identity<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn tab_strip<'a>(active: Tab) -> Element<'a, Message> {
-  let tabs: Vec<SelectTab<'a, Message>> = Tab::ORDER
-    .into_iter()
-    .map(|tab| {
-      let selected = tab == active;
-      SelectTab {
-        count: String::new(),
-        icon: None,
-        label: tab.label(),
-        on_press: (!selected).then_some(Message::TabChanged(tab)),
-        selected,
-      }
-    })
-    .collect();
-
-  let strip = container(tab_select_with(tabs, TabLayout::Start))
-    .width(Length::Fill)
-    .height(Length::Fixed(TAB_STRIP_HEIGHT))
-    .padding([0.0, TAB_BODY_PADDING]);
-
-  Column::with_children(vec![strip.into(), rule::horizontal()])
-    .width(Length::Fill)
-    .into()
-}
-
-fn tab_body<'a>(active: Tab) -> Element<'a, Message> {
-  let content = Column::with_children(vec![
-    text(active.placeholder_title())
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(active.placeholder_subtitle())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_x(Horizontal::Center);
-
-  container(content)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .into()
-}
-
 fn placeholder() -> String {
   PLACEHOLDER.to_owned()
 }
@@ -426,38 +668,56 @@ mod tests {
       let state = State::new(98_000_001);
 
       assert_eq!(state.active(), 98_000_001);
-      assert_eq!(state.active_tab, Tab::Standings);
-    }
-
-    #[test]
-    fn it_switches_the_active_tab() {
-      let mut state = State::new(98_000_001);
-
-      let _task = update(&mut state, Message::TabChanged(Tab::Contacts));
-
       assert_eq!(state.active_tab, Tab::Contacts);
     }
 
-    #[test]
-    fn it_stores_the_loaded_head() {
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
       let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
 
-      let _task = update(&mut state, Message::Loaded(Some(head())));
+      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+
+    #[tokio::test]
+    async fn it_stores_the_loaded_head() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::Loaded(Some(head())), &db);
 
       assert!(state.head.is_some());
     }
 
-    #[test]
-    fn it_reports_a_stale_logo_only_once_loaded() {
+    #[tokio::test]
+    async fn it_reports_a_stale_logo_only_once_loaded() {
       let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
       assert!(state.stale_images().is_empty());
 
-      let _task = update(&mut state, Message::Loaded(Some(head())));
+      let _task = update(&mut state, Message::Loaded(Some(head())), &db);
 
       assert_eq!(
         state.stale_images(),
         vec![(images::ImageKind::CorporationLogo, 98_000_001)]
       );
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_standings_search_query() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::StandingsSearchChanged("faction:caldari".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.standings_query(), "faction:caldari");
+      assert!(state.standings_has_filters());
     }
   }
 

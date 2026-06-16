@@ -3601,9 +3601,9 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
 }
 
 fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) -> Task<Message> {
-  match app.corporation_detail.as_mut() {
-    Some(state) => corporation_detail::update(state, msg).map(Message::CorporationDetail),
-    None => Task::none(),
+  match (app.corporation_detail.as_mut(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => corporation_detail::update(state, msg, &runtime.db).map(Message::CorporationDetail),
+    _ => Task::none(),
   }
 }
 

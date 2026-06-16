@@ -267,6 +267,23 @@ impl Default for FeatureFlags {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct IndustryConfig {
+  #[getset(get = "pub")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  manufacturing: Option<i64>,
+  #[getset(get = "pub")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  reactions: Option<i64>,
+}
+
+impl IndustryConfig {
+  fn is_default(&self) -> bool {
+    *self == IndustryConfig::default()
+  }
+}
+
 #[derive(Clone, Debug, Deserialize, Getters, MutGetters, Serialize, Setters)]
 pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
@@ -279,6 +296,9 @@ pub struct Settings {
   #[serde(default)]
   features: FeatureFlags,
   #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default, skip_serializing_if = "IndustryConfig::is_default")]
+  industry: IndustryConfig,
+  #[getset(get = "pub", get_mut = "pub")]
   #[serde(default)]
   storage: StorageConfig,
 }
@@ -289,6 +309,7 @@ impl Default for Settings {
       accessibility: AccessibilityConfig::default(),
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
+      industry: IndustryConfig::default(),
       storage: StorageConfig::default(),
     }
   }
@@ -1179,6 +1200,49 @@ mod tests {
         !toml.contains("log_level"),
         "a default (Quiet) log_level must not leak to disk: {toml}"
       );
+    }
+
+    #[test]
+    fn a_default_industry_config_serializes_without_any_keys() {
+      let toml = toml::to_string_pretty(&IndustryConfig::default()).unwrap();
+
+      assert!(
+        !toml.contains("manufacturing"),
+        "an unset manufacturing facility must not leak to disk: {toml}"
+      );
+      assert!(
+        !toml.contains("reactions"),
+        "an unset reactions facility must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn a_default_settings_serializes_without_an_industry_table() {
+      let toml = toml::to_string_pretty(&Settings::default()).unwrap();
+
+      assert!(
+        !toml.contains("[industry]"),
+        "a default industry table must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn an_industry_config_with_one_activity_set_round_trips_through_toml() {
+      let mut industry = IndustryConfig::default();
+      industry.set_manufacturing(Some(60003760));
+
+      let toml = toml::to_string_pretty(&industry).unwrap();
+      let restored: IndustryConfig = toml::from_str(&toml).unwrap();
+
+      assert!(
+        toml.contains("manufacturing = 60003760"),
+        "a set manufacturing facility must persist: {toml}"
+      );
+      assert!(
+        !toml.contains("reactions"),
+        "an unset reactions facility must not leak to disk: {toml}"
+      );
+      assert_eq!(restored, industry);
     }
 
     #[test]

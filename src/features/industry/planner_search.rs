@@ -93,7 +93,9 @@ async fn facility_from(
   solar_system_id: i64,
   type_id: Option<i64>,
 ) -> PlannerFacility {
-  let (security_status, region) = industry::system_geo(db, solar_system_id).await.unwrap_or((None, None));
+  let (security_status, region, solar_system) = industry::system_geo(db, solar_system_id)
+    .await
+    .unwrap_or((None, None, None));
   PlannerFacility {
     id,
     manufacturing_index: super::planner_loaders::cost_index(db, solar_system_id, MANUFACTURING_ACTIVITY_ID).await,
@@ -101,6 +103,7 @@ async fn facility_from(
     reaction_index: super::planner_loaders::cost_index(db, solar_system_id, REACTION_ACTIVITY_ID).await,
     region,
     security_status,
+    solar_system,
     solar_system_id,
     type_id,
   }

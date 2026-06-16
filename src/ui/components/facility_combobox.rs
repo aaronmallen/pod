@@ -130,8 +130,9 @@ impl FacilitySearch {
 pub struct FacilityCombobox<'a, M> {
   highlight: Option<usize>,
   on_clear: Option<M>,
-  on_input: Box<dyn Fn(String) -> M + 'a>,
-  on_pick: Box<dyn Fn(FacilityRef) -> M + 'a>,
+  on_input: Option<Box<dyn Fn(String) -> M + 'a>>,
+  on_pick: Option<Box<dyn Fn(FacilityRef) -> M + 'a>>,
+  on_toggle: Option<M>,
   placeholder: &'a str,
   query: &'a str,
   results: Vec<FacilityRef>,
@@ -140,21 +141,23 @@ pub struct FacilityCombobox<'a, M> {
   width: Length,
 }
 
+impl<M: Clone + 'static> Default for FacilityCombobox<'_, M> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
-  pub fn new(
-    query: &'a str,
-    results: Vec<FacilityRef>,
-    on_input: impl Fn(String) -> M + 'a,
-    on_pick: impl Fn(FacilityRef) -> M + 'a,
-  ) -> Self {
+  pub fn new() -> Self {
     Self {
       highlight: None,
       on_clear: None,
-      on_input: Box::new(on_input),
-      on_pick: Box::new(on_pick),
+      on_input: None,
+      on_pick: None,
+      on_toggle: None,
       placeholder: "Search stations & structures\u{2026}",
-      query,
-      results,
+      query: "",
+      results: Vec::new(),
       searching: false,
       selection: None,
       width: Length::Fill,
@@ -166,6 +169,24 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     self
   }
 
+  /// Sets the search-input handler used by [`FacilityCombobox::popover`].
+  pub fn on_input(mut self, on_input: impl Fn(String) -> M + 'a) -> Self {
+    self.on_input = Some(Box::new(on_input));
+    self
+  }
+
+  /// Sets the row-selection handler used by [`FacilityCombobox::popover`].
+  pub fn on_pick(mut self, on_pick: impl Fn(FacilityRef) -> M + 'a) -> Self {
+    self.on_pick = Some(Box::new(on_pick));
+    self
+  }
+
+  /// Sets the message emitted when the [`FacilityCombobox::trigger`] button is pressed (open/close).
+  pub fn on_toggle(mut self, message: M) -> Self {
+    self.on_toggle = Some(message);
+    self
+  }
+
   pub fn on_clear(mut self, message: M) -> Self {
     self.on_clear = Some(message);
     self
@@ -173,6 +194,16 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
 
   pub fn placeholder(mut self, placeholder: &'a str) -> Self {
     self.placeholder = placeholder;
+    self
+  }
+
+  pub fn query(mut self, query: &'a str) -> Self {
+    self.query = query;
+    self
+  }
+
+  pub fn results(mut self, results: Vec<FacilityRef>) -> Self {
+    self.results = results;
     self
   }
 
@@ -191,30 +222,110 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     self
   }
 
-  /// The always-visible field showing the current selection (or empty state), used as the popover anchor.
+  /// The always-visible, compact field showing the current selection (or empty placeholder). Pressing it
+  /// toggles the [`FacilityCombobox::popover`] open; the popover (not this button) owns the search input.
   pub fn trigger(self) -> Element<'a, M> {
-    let input = TextInput::new(self.placeholder, self.query, self.on_input)
-      .leading_icon(Icon::search().color(color::text::secondary()))
-      .background(color::surface::SUNKEN)
-      .width(Length::Fill)
-      .render();
-
-    let detail: Element<'a, M> = match &self.selection {
-      Some(facility) => facility_subtitle(facility),
-      None => Space::new().into(),
+    let label = match &self.selection {
+      Some(facility) => {
+        let system = facility.solar_system.trim();
+        match (system.is_empty(), facility.name.is_empty()) {
+          (false, false) => format!("{} \u{00B7} {}", system, facility.name),
+          (true, false) => facility.name.clone(),
+          _ => system.to_owned(),
+        }
+      }
+      None => self.placeholder.to_owned(),
+    };
+    let label_color = if self.selection.is_some() {
+      color::text::PRIMARY
+    } else {
+      color::text::tertiary()
     };
 
-    Column::with_children(vec![container(input).width(Length::Fill).into(), detail])
+    let mut row = Row::new()
       .spacing(spacing::SPACE_2)
-      .width(self.width)
+      .align_y(Vertical::Center)
+      .width(Length::Fill)
+      .push(Icon::search().color(color::text::secondary()).size(14.0).render::<M>())
+      .push(
+        container(
+          text(label)
+            .font(typography::body::REGULAR)
+            .size(typography::size::MD)
+            .style(typography::colored(label_color)),
+        )
+        .width(Length::Fill)
+        .clip(true),
+      );
+
+    if let Some(index) = self.selection.as_ref().and_then(|facility| facility.cost_index) {
+      row = row.push(
+        text(format!("{:.2}%", index * 100.0))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS_PLUS)
+          .style(typography::colored(color::text::secondary())),
+      );
+    }
+
+    row = row.push(Icon::chevron().color(color::text::secondary()).size(14.0).render::<M>());
+
+    let mut field = button(row).width(self.width).padding(Padding {
+      top: spacing::SPACE_2,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+      right: spacing::SPACE_2,
+    });
+    if let Some(message) = self.on_toggle {
+      field = field.on_press(message);
+    }
+    field
+      .style(|_, status| {
+        let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+          background: Some(Background::Color(color::surface::SUNKEN)),
+          border: Border {
+            color: if active {
+              color::accent::PLASMA
+            } else {
+              color::rule_strong()
+            },
+            radius: radius::CONTROL.into(),
+            width: 1.0,
+          },
+          text_color: color::text::PRIMARY,
+          ..button::Style::default()
+        }
+      })
       .into()
   }
 
-  /// The floating results popover: result-count chip, result rows, and the clear/"Ask each install"
-  /// footer. Hosts anchor this under the [`FacilityCombobox::trigger`] field (whose input drives the
-  /// search), so the trigger + popover together read as one combobox.
+  /// The floating results popover: a search input, a result-count chip, the result rows, and an optional
+  /// clear/"Ask each install" footer. Hosts anchor this under the [`FacilityCombobox::trigger`] button so
+  /// the two read as one combobox.
   pub fn popover(self) -> Element<'a, M> {
-    let count: i64 = self.results.len() as i64;
+    let Self {
+      highlight,
+      on_clear,
+      on_input,
+      on_pick,
+      placeholder,
+      query,
+      results,
+      searching,
+      selection,
+      width,
+      ..
+    } = self;
+
+    let search: Element<'a, M> = match on_input {
+      Some(on_input) => TextInput::new(placeholder, query, on_input)
+        .leading_icon(Icon::search().color(color::text::secondary()))
+        .background(color::surface::SUNKEN)
+        .width(Length::Fill)
+        .render(),
+      None => Space::new().into(),
+    };
+
     let header = Row::with_children(vec![
       text("Facilities")
         .font(typography::body::MEDIUM)
@@ -222,26 +333,28 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
         .style(typography::colored(color::text::secondary()))
         .into(),
       Space::new().width(Length::Fill).into(),
-      count_badge(count, color::accent::PLASMA),
+      count_badge(results.len() as i64, color::accent::PLASMA),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
 
-    let selected_system = self.selection.as_ref().map(|facility| facility.solar_system_id);
-    let rows: Vec<Element<'a, M>> = self
-      .results
-      .iter()
-      .enumerate()
-      .map(|(index, facility)| {
-        let selected = selected_system == Some(facility.solar_system_id);
-        result_row(facility, self.highlight == Some(index), selected, &self.on_pick)
-      })
-      .collect();
+    let selected_system = selection.as_ref().map(|facility| facility.solar_system_id);
+    let rows: Vec<Element<'a, M>> = match &on_pick {
+      Some(on_pick) => results
+        .iter()
+        .enumerate()
+        .map(|(index, facility)| {
+          let selected = selected_system == Some(facility.solar_system_id);
+          result_row(facility, highlight == Some(index), selected, &**on_pick)
+        })
+        .collect(),
+      None => Vec::new(),
+    };
 
     let list: Element<'a, M> = if rows.is_empty() {
-      centered(status_label(if self.searching {
+      centered(status_label(if searching {
         "Searching\u{2026}"
-      } else if searchable(self.query) {
+      } else if searchable(query) {
         "No facilities found."
       } else {
         "Type to search stations & structures."
@@ -254,8 +367,8 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
         .into()
     };
 
-    let mut body: Vec<Element<'a, M>> = vec![header.into(), list];
-    if let Some(message) = self.on_clear {
+    let mut body: Vec<Element<'a, M>> = vec![search, header.into(), list];
+    if let Some(message) = on_clear {
       body.push(footer(message));
     }
 
@@ -264,7 +377,7 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
         .spacing(spacing::SPACE_2)
         .width(Length::Fill),
     )
-    .width(self.width)
+    .width(width)
     .padding(spacing::SPACE_2)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
@@ -285,22 +398,6 @@ fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     .height(Length::Fixed(LIST_HEIGHT))
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
-    .into()
-}
-
-fn facility_subtitle<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
-  let mut parts: Vec<String> = vec![facility.solar_system.clone()];
-  if let Some(region) = &facility.region {
-    parts.push(region.clone());
-  }
-  if let Some(index) = facility.cost_index {
-    parts.push(format!("{:.2}% index", index * 100.0));
-  }
-
-  text(parts.join(" \u{00B7} "))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS)
-    .style(typography::colored(color::text::tertiary()))
     .into()
 }
 
@@ -339,7 +436,7 @@ fn result_row<'a, M: Clone + 'a>(
   facility: &FacilityRef,
   highlighted: bool,
   selected: bool,
-  on_pick: &impl Fn(FacilityRef) -> M,
+  on_pick: &dyn Fn(FacilityRef) -> M,
 ) -> Element<'a, M> {
   let name = text(facility.name.clone())
     .font(typography::body::REGULAR)
@@ -352,12 +449,14 @@ fn result_row<'a, M: Clone + 'a>(
 
   let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
   meta = meta.push(sec_label(facility.security_status));
-  meta = meta.push(
-    text(facility.solar_system.clone())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary())),
-  );
+  if !facility.solar_system.trim().is_empty() {
+    meta = meta.push(
+      text(facility.solar_system.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary())),
+    );
+  }
   if let Some(region) = &facility.region {
     meta = meta.push(
       text(region.clone())
@@ -573,16 +672,17 @@ mod tests {
 
     #[test]
     fn it_renders_an_empty_trigger() {
-      let _el: Element<'_, Message> = FacilityCombobox::new("", Vec::new(), Message::Input, |f| Message::Picked(f.id))
+      let _el: Element<'_, Message> = FacilityCombobox::new()
         .placeholder("Ask each install")
+        .on_toggle(Message::Cleared)
         .trigger();
     }
 
     #[test]
     fn it_renders_a_trigger_with_a_selection() {
-      let _el: Element<'_, Message> = FacilityCombobox::new("", Vec::new(), Message::Input, |f| Message::Picked(f.id))
+      let _el: Element<'_, Message> = FacilityCombobox::new()
         .selection(Some(sample(1, "Jita Keepstar")))
-        .placeholder("Jita Keepstar")
+        .on_toggle(Message::Cleared)
         .trigger();
     }
 
@@ -590,7 +690,11 @@ mod tests {
     fn it_renders_a_popover_with_results_and_a_footer() {
       let results = vec![sample(1, "Jita Keepstar"), sample(2, "Perimeter Tranquility")];
 
-      let _el: Element<'_, Message> = FacilityCombobox::new("Jita", results, Message::Input, |f| Message::Picked(f.id))
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .query("Jita")
+        .results(results)
+        .on_input(Message::Input)
+        .on_pick(|f| Message::Picked(f.id))
         .highlight(Some(0))
         .on_clear(Message::Cleared)
         .popover();
@@ -598,10 +702,12 @@ mod tests {
 
     #[test]
     fn it_renders_the_searching_state() {
-      let _el: Element<'_, Message> =
-        FacilityCombobox::new("Jita", Vec::new(), Message::Input, |f| Message::Picked(f.id))
-          .searching(true)
-          .popover();
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .query("Jita")
+        .on_input(Message::Input)
+        .on_pick(|f| Message::Picked(f.id))
+        .searching(true)
+        .popover();
     }
   }
 }

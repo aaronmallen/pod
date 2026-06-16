@@ -153,6 +153,8 @@ pub struct PlannerFacility {
   pub reaction_index: Option<f64>,
   pub region: Option<String>,
   pub security_status: Option<f64>,
+  /// The SDE-resolved solar system name (e.g. "Jita"); `None` when the system is not in the SDE.
+  pub solar_system: Option<String>,
   pub solar_system_id: i64,
   pub type_id: Option<i64>,
 }
@@ -423,6 +425,7 @@ async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
       reaction_index,
       region: facility.region().clone(),
       security_status: facility.security_status(),
+      solar_system: facility.solar_system().clone(),
       solar_system_id: system,
       type_id: facility.type_id(),
     });

@@ -1228,10 +1228,10 @@ mod view {
 
   pub(super) fn body(planner: &Planner) -> Element<'_, Message> {
     let Some(product) = planner.product() else {
-      return empty();
+      return empty(planner);
     };
     let Some(recipe) = planner.data().recipe(product) else {
-      return empty();
+      return empty(planner);
     };
 
     let left = scrollable(left_pane(planner, product, recipe))
@@ -1839,35 +1839,21 @@ mod view {
 
   fn facility_control<'a>(planner: &'a Planner, path: &[i64], is_reaction: bool) -> Element<'a, Message> {
     let selected = planner.selected_facility(path, is_reaction);
-    let open = planner.facility_picker().is_some_and(|state| state.path == path);
 
-    let query = if open {
-      planner
-        .facility_picker()
-        .map(|state| state.query.as_str())
-        .unwrap_or("")
+    let placeholder: &'a str = if planner.data().facilities.is_empty() {
+      "No facilities available"
     } else {
-      ""
-    };
-
-    let placeholder: &'a str = match selected {
-      Some(facility) => facility.name.as_str(),
-      None => "No facilities available",
+      "Select a facility\u{2026}"
     };
 
     let owned_path = path.to_vec();
-    let trigger = FacilityCombobox::new(
-      query,
-      Vec::new(),
-      move |value| Message::FacilitySearchChanged {
-        path: owned_path.clone(),
-        query: value,
-      },
-      |_| Message::MenuClosed,
-    )
-    .placeholder(placeholder)
-    .selection(selected.map(|facility| facility_ref(facility, is_reaction)))
-    .trigger();
+    let trigger = FacilityCombobox::new()
+      .placeholder(placeholder)
+      .selection(selected.map(|facility| facility_ref(facility, is_reaction)))
+      .on_toggle(Message::FacilityPickerToggled {
+        path: owned_path,
+      })
+      .trigger();
 
     Column::with_children(vec![micro_label("Build at"), trigger])
       .spacing(spacing::SPACE_2)
@@ -1922,21 +1908,24 @@ mod view {
         .collect()
     };
 
-    let owned_path = path.to_vec();
-    let popover = FacilityCombobox::new(
-      state.query.as_str(),
-      facilities,
-      |_| Message::MenuClosed,
-      move |facility: FacilityRef| Message::FacilitySelected {
-        path: owned_path.clone(),
+    let search_path = path.to_vec();
+    let pick_path = path.to_vec();
+    let popover = FacilityCombobox::new()
+      .query(state.query.as_str())
+      .results(facilities)
+      .on_input(move |value| Message::FacilitySearchChanged {
+        path: search_path.clone(),
+        query: value,
+      })
+      .on_pick(move |facility: FacilityRef| Message::FacilitySelected {
+        path: pick_path.clone(),
         pin: pin_for(&facility),
         solar_system_id: facility.solar_system_id,
-      },
-    )
-    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-    .searching(state.searching)
-    .selection(selected)
-    .popover();
+      })
+      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+      .searching(state.searching)
+      .selection(selected)
+      .popover();
 
     let panel = container(popover).style(|_| container::Style {
       shadow: crate::ui::style::shadow::CARD,
@@ -1969,7 +1958,7 @@ mod view {
       name: facility.name.clone(),
       region: facility.region.clone(),
       security_status: facility.security_status,
-      solar_system: facility.solar_system_id.to_string(),
+      solar_system: facility.solar_system.clone().unwrap_or_default(),
       solar_system_id: facility.solar_system_id,
       type_id: facility.type_id,
     }
@@ -3199,13 +3188,32 @@ mod view {
     }
   }
 
-  fn empty<'a>() -> Element<'a, Message> {
-    centered(
-      text("Search a product to start planning a build.")
-        .font(typography::body::REGULAR)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::tertiary())),
-    )
+  /// The no-product cold-open state. The product search bar stays pinned at the top (so the user can
+  /// actually search for something to build); a centered hint fills the space below until the picker is
+  /// opened or a query is typed, at which point the picker's own results take over.
+  fn empty(planner: &Planner) -> Element<'_, Message> {
+    let mut children: Vec<Element<'_, Message>> = vec![picker(planner)];
+
+    if !planner.picker_open() && planner.search().is_empty() {
+      children.push(centered(
+        text("Search a product to start planning a build.")
+          .font(typography::body::REGULAR)
+          .size(typography::size::LG)
+          .style(typography::colored(color::text::tertiary())),
+      ));
+    }
+
+    let content = Column::with_children(children)
+      .spacing(spacing::SPACE_3)
+      .padding(PANE_PADDING)
+      .width(Length::Fill)
+      .height(Length::Fill);
+
+    scrollable(content)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into()
   }
 
   fn centered<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
@@ -3326,6 +3334,7 @@ mod tests {
       reaction_index: Some(manufacturing_index),
       region: None,
       security_status: None,
+      solar_system: None,
       solar_system_id,
       type_id: None,
     }

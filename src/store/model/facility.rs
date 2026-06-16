@@ -15,6 +15,8 @@ pub struct Model {
   pub region: Option<String>,
   #[getset(get_copy = "pub")]
   pub security_status: Option<f64>,
+  #[getset(get = "pub")]
+  pub solar_system: Option<String>,
   #[getset(get_copy = "pub")]
   pub solar_system_id: i64,
   #[getset(get_copy = "pub")]

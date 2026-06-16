@@ -59,7 +59,7 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
     ) \
     SELECT f.id AS id, ci.manufacturing AS manufacturing_index, f.name AS name, \
       f.owner_id AS owner_id, reg.name AS region, ss.security_status AS security_status, \
-      f.solar_system_id AS solar_system_id, f.type_id AS type_id \
+      ss.name AS solar_system, f.solar_system_id AS solar_system_id, f.type_id AS type_id \
     FROM ( \
       SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
       UNION ALL \
@@ -103,13 +103,16 @@ pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Res
   Ok(row)
 }
 
-/// Resolves a system's security status and region name via the SDE geography joins
+/// Resolves a system's security status, region name, and system name via the SDE geography joins
 /// (solar_systems → constellations → regions), for facilities resolved outside [`accessible_facilities`]
-/// such as live ESI search hits.
+/// such as live ESI search hits. Returns `(security_status, region, system_name)`.
 #[allow(dead_code)]
-pub async fn system_geo(db: &Database, solar_system_id: i64) -> Result<(Option<f64>, Option<String>), Error> {
-  let row: Option<(Option<f64>, Option<String>)> = sqlx::query_as(
-    "SELECT ss.security_status, reg.name FROM solar_systems ss \
+pub async fn system_geo(
+  db: &Database,
+  solar_system_id: i64,
+) -> Result<(Option<f64>, Option<String>, Option<String>), Error> {
+  let row: Option<(Option<f64>, Option<String>, Option<String>)> = sqlx::query_as(
+    "SELECT ss.security_status, reg.name, ss.name FROM solar_systems ss \
     LEFT JOIN constellations con ON con.id = ss.constellation_id \
     LEFT JOIN regions reg ON reg.id = con.region_id \
     WHERE ss.id = ?",
@@ -117,7 +120,7 @@ pub async fn system_geo(db: &Database, solar_system_id: i64) -> Result<(Option<f
   .bind(solar_system_id)
   .fetch_optional(&db.0)
   .await?;
-  Ok(row.unwrap_or((None, None)))
+  Ok(row.unwrap_or((None, None, None)))
 }
 
 pub async fn list_all(db: &Database) -> Result<AllIndustryJobs, Error> {
@@ -1370,10 +1373,11 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_system(&db).await;
 
-      let (security, region) = super::system_geo(&db, 30_000_142).await.unwrap();
+      let (security, region, system) = super::system_geo(&db, 30_000_142).await.unwrap();
 
       assert_eq!(security, Some(0.9));
       assert_eq!(region, Some("The Forge".to_owned()));
+      assert_eq!(system, Some("Jita".to_owned()));
     }
 
     #[tokio::test]
@@ -1382,7 +1386,7 @@ mod tests {
 
       let geo = super::system_geo(&db, 30_000_142).await.unwrap();
 
-      assert_eq!(geo, (None, None));
+      assert_eq!(geo, (None, None, None));
     }
   }
 }

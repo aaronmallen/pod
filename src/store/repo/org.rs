@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
   model::{
-    Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationMemberRole,
-    CorporationStanding, Faction, OwnedCorporation, Station,
+    Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationKillEntry,
+    CorporationKillmailAttacker, CorporationKillmailItem, CorporationMemberRole, CorporationStanding, Faction,
+    OwnedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
   repo::infra::like_pattern,
@@ -748,6 +749,167 @@ pub async fn replace_standings_for_corporation(
 
   tx.commit().await?;
   Ok(())
+}
+
+pub async fn upsert_corporation_killmail(db: &Database, killmail: &CorporationKillEntry) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO corporation_killmails \
+      (corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT (corporation_id, killmail_id) DO UPDATE SET \
+      kill_hash = excluded.kill_hash, is_kill = excluded.is_kill, ship_type_id = excluded.ship_type_id, \
+      victim_id = excluded.victim_id, victim_corp_id = excluded.victim_corp_id, \
+      victim_alliance_id = excluded.victim_alliance_id, victim_damage_taken = excluded.victim_damage_taken, \
+      system_id = excluded.system_id, \
+      value_isk = excluded.value_isk, value_destroyed_isk = excluded.value_destroyed_isk, \
+      value_source = excluded.value_source, value_recheck_count = excluded.value_recheck_count, \
+      value_final = excluded.value_final, attacker_count = excluded.attacker_count, \
+      final_blow = excluded.final_blow, kill_time = excluded.kill_time, synced_at = excluded.synced_at",
+  )
+  .bind(killmail.corporation_id())
+  .bind(killmail.killmail_id())
+  .bind(killmail.kill_hash())
+  .bind(killmail.is_kill())
+  .bind(killmail.ship_type_id())
+  .bind(killmail.victim_id())
+  .bind(killmail.victim_corp_id())
+  .bind(killmail.victim_alliance_id())
+  .bind(killmail.victim_damage_taken())
+  .bind(killmail.system_id())
+  .bind(killmail.value_isk())
+  .bind(killmail.value_destroyed_isk())
+  .bind(killmail.value_source())
+  .bind(killmail.value_recheck_count())
+  .bind(killmail.value_final())
+  .bind(killmail.attacker_count())
+  .bind(killmail.final_blow())
+  .bind(killmail.kill_time())
+  .bind(killmail.synced_at())
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
+pub async fn corporation_killmail_ids(db: &Database, corporation_id: i64) -> Result<HashSet<i64>, Error> {
+  let ids = sqlx::query_scalar::<_, i64>("SELECT killmail_id FROM corporation_killmails WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .fetch_all(&db.0)
+    .await?;
+  Ok(ids.into_iter().collect())
+}
+
+pub async fn upsert_corporation_killmail_detail(
+  db: &Database,
+  corporation_id: i64,
+  killmail_id: i64,
+  attackers: &[CorporationKillmailAttacker],
+  items: &[CorporationKillmailItem],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_killmail_attackers WHERE corporation_id = ? AND killmail_id = ?")
+    .bind(corporation_id)
+    .bind(killmail_id)
+    .execute(&mut *tx)
+    .await?;
+  sqlx::query("DELETE FROM corporation_killmail_items WHERE corporation_id = ? AND killmail_id = ?")
+    .bind(corporation_id)
+    .bind(killmail_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for attacker in attackers {
+    sqlx::query(
+      "INSERT INTO corporation_killmail_attackers \
+        (corporation_id, killmail_id, ordinal, attacker_character_id, attacker_corporation_id, alliance_id, \
+        ship_type_id, damage_done, final_blow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(attacker.corporation_id())
+    .bind(attacker.killmail_id())
+    .bind(attacker.ordinal())
+    .bind(attacker.attacker_character_id())
+    .bind(attacker.attacker_corporation_id())
+    .bind(attacker.alliance_id())
+    .bind(attacker.ship_type_id())
+    .bind(attacker.damage_done())
+    .bind(attacker.final_blow())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  for item in items {
+    sqlx::query(
+      "INSERT INTO corporation_killmail_items \
+        (corporation_id, killmail_id, ordinal, type_id, flag, quantity_destroyed, quantity_dropped, value_isk) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item.corporation_id())
+    .bind(item.killmail_id())
+    .bind(item.ordinal())
+    .bind(item.type_id())
+    .bind(item.flag())
+    .bind(item.quantity_destroyed())
+    .bind(item.quantity_dropped())
+    .bind(item.value_isk())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn corporation_killmail_attackers(
+  db: &Database,
+  corporation_id: i64,
+  killmail_id: i64,
+) -> Result<Vec<CorporationKillmailAttacker>, Error> {
+  let rows = sqlx::query_as::<_, CorporationKillmailAttacker>(
+    "SELECT alliance_id, attacker_character_id, attacker_corporation_id, corporation_id, damage_done, final_blow, \
+      killmail_id, ordinal, ship_type_id FROM corporation_killmail_attackers \
+    WHERE corporation_id = ? AND killmail_id = ? ORDER BY ordinal",
+  )
+  .bind(corporation_id)
+  .bind(killmail_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[allow(dead_code)]
+pub async fn corporation_killmail_items(
+  db: &Database,
+  corporation_id: i64,
+  killmail_id: i64,
+) -> Result<Vec<CorporationKillmailItem>, Error> {
+  let rows = sqlx::query_as::<_, CorporationKillmailItem>(
+    "SELECT corporation_id, flag, killmail_id, ordinal, quantity_destroyed, quantity_dropped, type_id, value_isk \
+    FROM corporation_killmail_items WHERE corporation_id = ? AND killmail_id = ? ORDER BY ordinal",
+  )
+  .bind(corporation_id)
+  .bind(killmail_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+#[allow(dead_code)]
+pub async fn corporation_killmails(db: &Database, corporation_id: i64) -> Result<Vec<CorporationKillEntry>, Error> {
+  let rows = sqlx::query_as::<_, CorporationKillEntry>(
+    "SELECT corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
+      victim_alliance_id, victim_damage_taken, system_id, \
+      value_isk, value_destroyed_isk, value_source, value_recheck_count, value_final, \
+      attacker_count, final_blow, kill_time, synced_at FROM corporation_killmails \
+    WHERE corporation_id = ? ORDER BY kill_time DESC, killmail_id DESC",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 #[allow(dead_code)]

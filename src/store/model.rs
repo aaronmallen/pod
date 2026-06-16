@@ -54,6 +54,9 @@ pub mod corporation_card;
 mod corporation_contact;
 mod corporation_contact_label;
 mod corporation_industry_job;
+mod corporation_killmail;
+mod corporation_killmail_attacker;
+mod corporation_killmail_item;
 mod corporation_member_role;
 mod corporation_net_worth_snapshot;
 mod corporation_standing;
@@ -187,6 +190,12 @@ pub use corporation_contact::Model as CorporationContact;
 pub use corporation_contact_label::Model as CorporationContactLabel;
 #[allow(unused_imports)]
 pub use corporation_industry_job::Model as CorporationIndustryJob;
+#[allow(unused_imports)]
+pub use corporation_killmail::Model as CorporationKillEntry;
+#[allow(unused_imports)]
+pub use corporation_killmail_attacker::Model as CorporationKillmailAttacker;
+#[allow(unused_imports)]
+pub use corporation_killmail_item::Model as CorporationKillmailItem;
 #[allow(unused_imports)]
 pub use corporation_member_role::Model as CorporationMemberRole;
 #[allow(unused_imports)]

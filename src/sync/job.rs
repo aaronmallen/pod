@@ -29,6 +29,7 @@ pub enum JobKind {
   CorporationBlueprints,
   CorporationContacts,
   CorporationIndustryJobs,
+  CorporationKillmails,
   CorporationProfile,
   CorporationStandings,
   CorporationStructures,
@@ -63,6 +64,7 @@ impl JobKind {
     JobKind::CorporationBlueprints,
     JobKind::CorporationContacts,
     JobKind::CorporationIndustryJobs,
+    JobKind::CorporationKillmails,
     JobKind::CorporationProfile,
     JobKind::CorporationStandings,
     JobKind::CorporationStructures,
@@ -145,6 +147,7 @@ impl JobKind {
       (Self::CorporationBlueprints, _) => Some(scopes::CORPORATION_BLUEPRINTS),
       (Self::CorporationContacts, _) => Some(scopes::CORPORATION_CONTACTS),
       (Self::CorporationIndustryJobs, _) => Some(scopes::CORPORATION_INDUSTRY_JOBS),
+      (Self::CorporationKillmails, _) => Some(scopes::CORPORATION_KILLMAILS),
       (Self::CorporationProfile, _) => Some(scopes::CORPORATION_ROLES),
       (Self::CorporationStandings, _) => Some(scopes::CORPORATION_STANDINGS),
       (Self::CorporationStructures, _) => Some(scopes::CORPORATION_STRUCTURES),
@@ -180,6 +183,7 @@ impl JobKind {
           | Self::CorporationBlueprints
           | Self::CorporationContacts
           | Self::CorporationIndustryJobs
+          | Self::CorporationKillmails
           | Self::CorporationProfile
           | Self::CorporationStandings
           | Self::CorporationStructures
@@ -215,7 +219,8 @@ impl JobKind {
       | Self::CharacterKillmails
       | Self::CharacterMail
       | Self::CharacterNotifications
-      | Self::CharacterTelemetry => Duration::from_secs(300),
+      | Self::CharacterTelemetry
+      | Self::CorporationKillmails => Duration::from_secs(300),
       Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
       // Re-validate every stored token and re-check feature scopes every 20 minutes (tunable). A
@@ -255,6 +260,7 @@ impl JobKind {
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationContacts => &[scopes::CORPORATION_CONTACTS],
       Self::CorporationIndustryJobs => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_INDUSTRY_JOBS],
+      Self::CorporationKillmails => &[scopes::CORPORATION_KILLMAILS],
       Self::CorporationProfile => &[scopes::CORPORATION_ROLES],
       Self::CorporationStandings => &[scopes::CORPORATION_STANDINGS],
       Self::CorporationStructures => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_STRUCTURES],
@@ -369,6 +375,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::KillmailDetailBackfill => super::jobs::killmail_detail_backfill::run(ctx).await,
     JobKind::KillmailReconcile => super::jobs::killmail_reconcile::run(ctx).await,
     JobKind::CorporationContacts => super::jobs::corporation_contacts::run(ctx).await,
+    JobKind::CorporationKillmails => super::jobs::corporation_killmails::run(ctx).await,
     JobKind::CorporationProfile => super::jobs::corporation_profile::run(ctx).await,
     JobKind::CorporationStandings => super::jobs::corporation_standings::run(ctx).await,
     JobKind::CorporationStructures => super::jobs::corporation_structures::run(ctx).await,

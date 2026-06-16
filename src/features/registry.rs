@@ -36,6 +36,7 @@ pub fn descriptor(feature: Feature) -> Descriptor {
     Feature::CombatLog => Descriptor {
       jobs: &[
         JobKind::CharacterKillmails,
+        JobKind::CorporationKillmails,
         JobKind::KillmailDetailBackfill,
         JobKind::KillmailReconcile,
       ],

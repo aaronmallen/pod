@@ -5,19 +5,23 @@ use chrono::{DateTime, Duration, Utc};
 use super::palette::{OwnerType, Response};
 use crate::{
   config::{Feature, FeatureFlags},
-  features::skills::queue_timing::roman,
+  features::{industry::Activity, skills::queue_timing::roman},
   store::{
     Database, images,
     model::{
-      AttendeeTally, CharacterCalendarEvent, CharacterContract, CharacterSkillqueue, MarketOrder,
-      OwnerType as CredentialOwner,
+      AttendeeTally, CharacterCalendarEvent, CharacterContract, CharacterIndustryJob, CharacterSkillqueue,
+      CorporationIndustryJob, MarketOrder, OwnerType as CredentialOwner,
     },
-    repo::{calendar, character, finance, infra, org, sde},
+    repo::{calendar, character, finance, industry, infra, org, sde},
   },
 };
 
 const OVERLAY_OWNER: &str = "pod";
 const SOURCE_CONTRACT: &str = "contract";
+const SOURCE_INDUSTRY: &str = "industry";
+/// Discriminant only: corp jobs display `source = SOURCE_INDUSTRY`, but get a distinct `synthetic_id`
+/// range so character and corporation job-id spaces never collide.
+const SOURCE_INDUSTRY_CORP: &str = "industry-corp";
 const SOURCE_MARKET: &str = "market";
 const SOURCE_SKILL: &str = "skill";
 
@@ -91,6 +95,21 @@ pub struct RosterPilot {
   pub portrait: images::ImageState,
 }
 
+struct IndustryJobView<'a> {
+  activity_id: i64,
+  blueprint_type_id: i64,
+  character_id: i64,
+  completed_date: Option<&'a str>,
+  cost: Option<f64>,
+  end_date: &'a str,
+  id_source: &'a str,
+  job_id: i64,
+  pause_date: Option<&'a str>,
+  product_type_id: Option<i64>,
+  runs: i64,
+  status: &'a str,
+}
+
 #[derive(Debug, Default)]
 struct TypeNames {
   cache: HashMap<i64, Option<String>>,
@@ -141,7 +160,8 @@ pub(super) async fn load_events(db: &Database, character_id: i64) -> Vec<Calenda
 pub(super) async fn load_overlays(db: &Database, character_ids: &[i64], features: FeatureFlags) -> Vec<CalendarEvent> {
   let skills = features.is_enabled(Feature::SkillMonitoring);
   let wallet = features.is_enabled(Feature::Wallet);
-  if !skills && !wallet {
+  let industry = features.is_enabled(Feature::Industry);
+  if !skills && !wallet && !industry {
     return Vec::new();
   }
 
@@ -163,6 +183,25 @@ pub(super) async fn load_overlays(db: &Database, character_ids: &[i64], features
       }
       for contract in finance::contracts(db, character_id).await.unwrap_or_default() {
         if let Some(event) = contract_overlay(&contract) {
+          overlays.push(event);
+        }
+      }
+    }
+    if industry {
+      for job in industry::list_for_character(db, character_id).await.unwrap_or_default() {
+        if let Some(event) = character_industry_overlay(db, &mut names, &job).await {
+          overlays.push(event);
+        }
+      }
+    }
+  }
+  if industry {
+    for corporation in org::all_owned_corporations(db).await.unwrap_or_default() {
+      for job in industry::list_for_corporation(db, corporation.id())
+        .await
+        .unwrap_or_default()
+      {
+        if let Some(event) = corporation_industry_overlay(db, &mut names, &job).await {
           overlays.push(event);
         }
       }
@@ -204,6 +243,32 @@ pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   roster
 }
 
+async fn character_industry_overlay(
+  db: &Database,
+  names: &mut TypeNames,
+  job: &CharacterIndustryJob,
+) -> Option<CalendarEvent> {
+  industry_overlay(
+    db,
+    names,
+    IndustryJobView {
+      activity_id: job.activity_id(),
+      blueprint_type_id: job.blueprint_type_id(),
+      character_id: job.character_id(),
+      completed_date: job.completed_date().as_deref(),
+      cost: job.cost(),
+      end_date: job.end_date(),
+      id_source: SOURCE_INDUSTRY,
+      job_id: job.job_id(),
+      pause_date: job.pause_date().as_deref(),
+      product_type_id: job.product_type_id(),
+      runs: job.runs(),
+      status: job.status(),
+    },
+  )
+  .await
+}
+
 fn contract_overlay(contract: &CharacterContract) -> Option<CalendarEvent> {
   if contract.status() != "outstanding" {
     return None;
@@ -226,6 +291,32 @@ fn contract_overlay(contract: &CharacterContract) -> Option<CalendarEvent> {
     body,
     expires,
   ))
+}
+
+async fn corporation_industry_overlay(
+  db: &Database,
+  names: &mut TypeNames,
+  job: &CorporationIndustryJob,
+) -> Option<CalendarEvent> {
+  industry_overlay(
+    db,
+    names,
+    IndustryJobView {
+      activity_id: job.activity_id(),
+      blueprint_type_id: job.blueprint_type_id(),
+      character_id: job.installer_id(),
+      completed_date: job.completed_date().as_deref(),
+      cost: job.cost(),
+      end_date: job.end_date(),
+      id_source: SOURCE_INDUSTRY_CORP,
+      job_id: job.job_id(),
+      pause_date: job.pause_date().as_deref(),
+      product_type_id: job.product_type_id(),
+      runs: job.runs(),
+      status: job.status(),
+    },
+  )
+  .await
 }
 
 fn group_thousands(value: i64) -> String {
@@ -256,6 +347,55 @@ fn humanize(value: &str) -> String {
     })
     .collect::<Vec<_>>()
     .join(" ")
+}
+
+async fn industry_overlay(db: &Database, names: &mut TypeNames, job: IndustryJobView<'_>) -> Option<CalendarEvent> {
+  let activity = Activity::from_id(job.activity_id);
+  let product = match job.product_type_id {
+    Some(type_id) => names.resolve(db, type_id).await,
+    None => None,
+  };
+  let label = match product {
+    Some(name) => name,
+    None => match names.resolve(db, job.blueprint_type_id).await {
+      Some(name) => name,
+      None => activity.label().to_owned(),
+    },
+  };
+  let verb = industry_verb(job.status, job.completed_date, job.pause_date);
+  let title = format!(
+    "{label} \u{00D7}{} {verb} \u{2014} {}",
+    group_thousands(job.runs),
+    activity.label()
+  );
+  let body = match job.cost {
+    Some(cost) => format!(
+      "{} job, {} run(s). Cost {} ISK.",
+      activity.label(),
+      group_thousands(job.runs),
+      group_thousands(cost.round() as i64)
+    ),
+    None => format!("{} job, {} run(s).", activity.label(), group_thousands(job.runs)),
+  };
+  Some(overlay_event(
+    job.character_id,
+    synthetic_id(job.id_source, job.job_id),
+    SOURCE_INDUSTRY,
+    title,
+    body,
+    job.end_date.to_owned(),
+  ))
+}
+
+fn industry_verb(status: &str, completed_date: Option<&str>, pause_date: Option<&str>) -> &'static str {
+  match status {
+    "delivered" | "ready" => "delivered",
+    "cancelled" | "reverted" => "cancelled",
+    "paused" => "paused",
+    _ if completed_date.is_some() => "delivered",
+    _ if pause_date.is_some() => "paused",
+    _ => "completes",
+  }
 }
 
 async fn market_overlay(db: &Database, names: &mut TypeNames, order: &MarketOrder) -> Option<CalendarEvent> {
@@ -332,11 +472,15 @@ async fn skill_overlay(db: &Database, names: &mut TypeNames, entry: &CharacterSk
 /// Returns a negative event ID that cannot collide with a real ESI calendar event ID (always positive).
 ///
 /// Each source gets a disjoint billion-wide range via a numeric discriminant: skill=1, market=2,
-/// contract=3.  The low nine digits carry the original key, so IDs are stable across reloads.
+/// contract=3, character industry=4, corporation industry=5.  Character and corporation job-id spaces
+/// overlap, so the two industry sources take distinct discriminants.  The low nine digits carry the
+/// original key, so IDs are stable across reloads.
 fn synthetic_id(source: &str, key: i64) -> i64 {
   let discriminant = match source {
     SOURCE_MARKET => 2,
     SOURCE_CONTRACT => 3,
+    SOURCE_INDUSTRY => 4,
+    SOURCE_INDUSTRY_CORP => 5,
     _ => 1,
   };
   -(discriminant * 1_000_000_000 + (key % 1_000_000_000))
@@ -431,7 +575,7 @@ mod tests {
   }
 
   mod synthetic_id {
-    use pretty_assertions::assert_ne;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     use super::*;
 
@@ -440,26 +584,86 @@ mod tests {
       assert!(synthetic_id(SOURCE_SKILL, 3300) < 0);
       assert!(synthetic_id(SOURCE_MARKET, 1001) < 0);
       assert!(synthetic_id(SOURCE_CONTRACT, 42) < 0);
+      assert!(synthetic_id(SOURCE_INDUSTRY, 5) < 0);
+      assert!(synthetic_id(SOURCE_INDUSTRY_CORP, 5) < 0);
     }
 
     #[test]
     fn it_keeps_sources_in_disjoint_ranges() {
       assert_ne!(synthetic_id(SOURCE_SKILL, 7), synthetic_id(SOURCE_MARKET, 7));
       assert_ne!(synthetic_id(SOURCE_MARKET, 7), synthetic_id(SOURCE_CONTRACT, 7));
+      assert_ne!(synthetic_id(SOURCE_CONTRACT, 7), synthetic_id(SOURCE_INDUSTRY, 7));
+      assert_ne!(synthetic_id(SOURCE_INDUSTRY, 7), synthetic_id(SOURCE_INDUSTRY_CORP, 7));
+    }
+
+    #[test]
+    fn it_keeps_character_and_corporation_industry_jobs_distinct_for_the_same_job_id() {
+      assert_ne!(
+        synthetic_id(SOURCE_INDUSTRY, 99),
+        synthetic_id(SOURCE_INDUSTRY_CORP, 99)
+      );
+    }
+
+    #[test]
+    fn it_is_stable_across_reloads() {
+      assert_eq!(
+        synthetic_id(SOURCE_INDUSTRY, 12_345),
+        synthetic_id(SOURCE_INDUSTRY, 12_345)
+      );
+    }
+  }
+
+  mod industry_verb {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_running_jobs_to_completes() {
+      assert_eq!(industry_verb("active", None, None), "completes");
+    }
+
+    #[test]
+    fn it_maps_delivered_jobs_to_delivered() {
+      assert_eq!(industry_verb("delivered", None, None), "delivered");
+    }
+
+    #[test]
+    fn it_maps_cancelled_jobs_to_cancelled() {
+      assert_eq!(industry_verb("cancelled", None, None), "cancelled");
+    }
+
+    #[test]
+    fn it_maps_paused_jobs_to_paused() {
+      assert_eq!(industry_verb("paused", None, None), "paused");
+    }
+
+    #[test]
+    fn it_falls_back_to_completed_date_when_status_is_unknown() {
+      assert_eq!(
+        industry_verb("mystery", Some("2026-06-20T00:00:00Z"), None),
+        "delivered"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_pause_date_when_status_is_unknown() {
+      assert_eq!(industry_verb("mystery", None, Some("2026-06-19T00:00:00Z")), "paused");
     }
   }
 
   mod load_overlays {
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     use super::*;
     use crate::store::{
       self,
       model::{
-        Alliance, Bloodline, Character, CharacterContract, CharacterSkillqueue, Corporation, Gender, ItemCategory,
-        ItemGroup, ItemType, MarketOrder, Race,
+        Alliance, Bloodline, Character, CharacterContract, CharacterIndustryJob, CharacterSkillqueue, Corporation,
+        CorporationIndustryJob, CorporationMemberRole, Gender, ItemCategory, ItemGroup, ItemType, MarketOrder,
+        OwnerType as CredentialOwner, Race,
       },
-      repo::{character, finance, sde},
+      repo::{character, finance, industry, infra, org, sde},
     };
 
     async fn seed_character(db: &Database, id: i64) {
@@ -573,6 +777,85 @@ mod tests {
         .unwrap();
     }
 
+    fn character_job(
+      character_id: i64,
+      job_id: i64,
+      activity_id: i64,
+      product_type_id: Option<i64>,
+      status: &str,
+    ) -> CharacterIndustryJob {
+      CharacterIndustryJob {
+        activity_id,
+        blueprint_id: 1_000_000_000 + job_id,
+        blueprint_location_id: 60_003_760,
+        blueprint_type_id: 962,
+        character_id,
+        completed_character_id: None,
+        completed_date: None,
+        cost: Some(1_250.0),
+        duration: 3_600,
+        end_date: "2026-06-21T08:00:00Z".to_owned(),
+        facility_id: 60_003_760,
+        installer_id: character_id,
+        job_id,
+        licensed_runs: None,
+        output_location_id: 60_003_760,
+        pause_date: None,
+        probability: None,
+        product_type_id,
+        runs: 10,
+        start_date: "2026-06-20T08:00:00Z".to_owned(),
+        station_id: Some(60_003_760),
+        status: status.to_owned(),
+        successful_runs: None,
+      }
+    }
+
+    fn corporation_job(corporation_id: i64, installer_id: i64, job_id: i64) -> CorporationIndustryJob {
+      CorporationIndustryJob {
+        activity_id: 1,
+        blueprint_id: 2_000_000_000 + job_id,
+        blueprint_location_id: 60_003_760,
+        blueprint_type_id: 962,
+        completed_character_id: None,
+        completed_date: None,
+        corporation_id,
+        cost: Some(9_000.0),
+        duration: 7_200,
+        end_date: "2026-06-22T09:00:00Z".to_owned(),
+        facility_id: 60_003_760,
+        installer_id,
+        job_id,
+        licensed_runs: None,
+        output_location_id: 60_003_760,
+        pause_date: None,
+        probability: None,
+        product_type_id: Some(34),
+        runs: 3,
+        start_date: "2026-06-21T09:00:00Z".to_owned(),
+        station_id: Some(60_003_760),
+        status: "active".to_owned(),
+        successful_runs: None,
+      }
+    }
+
+    async fn own_corporation(db: &Database, corporation_id: i64, authorized_by: i64) {
+      infra::upsert(
+        db,
+        corporation_id,
+        CredentialOwner::Corporation,
+        "tok",
+        "rt",
+        9_999,
+        Some(authorized_by),
+        None,
+      )
+      .await
+      .unwrap();
+      let role = CorporationMemberRole::from((corporation_id, authorized_by, "Director".to_owned()));
+      org::replace_for_corporation(db, corporation_id, &[role]).await.unwrap();
+    }
+
     #[tokio::test]
     async fn it_derives_one_overlay_per_source_when_both_features_are_enabled() {
       let db = store::open_test().await.unwrap();
@@ -646,17 +929,171 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_derives_nothing_when_both_features_are_disabled() {
+    async fn it_derives_nothing_when_all_overlay_features_are_disabled() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_sources(&db, 42).await;
       let mut features = FeatureFlags::default();
       features.set_enabled(Feature::SkillMonitoring, false);
       features.set_enabled(Feature::Wallet, false);
+      features.set_enabled(Feature::Industry, false);
 
       let overlays = super::super::load_overlays(&db, &[42], features).await;
 
       assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_character_industry_job_at_its_end_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 1, 1, Some(587), "active")])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert_eq!(overlays[0].source.as_deref(), Some(SOURCE_INDUSTRY));
+      assert_eq!(overlays[0].title, "Rifter \u{00D7}10 completes \u{2014} Manufacturing");
+      assert_eq!(overlays[0].timestamp, "2026-06-21T08:00:00Z");
+      assert!(overlays[0].is_synthetic());
+      assert!(!overlays[0].owner_kind().respondable());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_corporation_industry_job() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 34, "Tritanium").await;
+      own_corporation(&db, 90_000_001, 42).await;
+      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 7)])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert_eq!(overlays[0].source.as_deref(), Some(SOURCE_INDUSTRY));
+      assert_eq!(
+        overlays[0].title,
+        "Tritanium \u{00D7}3 completes \u{2014} Manufacturing"
+      );
+      assert_eq!(overlays[0].timestamp, "2026-06-22T09:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_jobs_of_every_status() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      industry::replace_for_character(
+        &db,
+        42,
+        &[
+          character_job(42, 1, 1, Some(587), "active"),
+          character_job(42, 2, 1, Some(587), "delivered"),
+          character_job(42, 3, 1, Some(587), "cancelled"),
+          character_job(42, 4, 1, Some(587), "paused"),
+        ],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      let verbs: Vec<&str> = overlays
+        .iter()
+        .filter_map(|event| event.title.split(" \u{2014} ").next())
+        .filter_map(|head| head.rsplit(' ').next())
+        .collect();
+      assert_eq!(overlays.len(), 4);
+      assert!(verbs.contains(&"completes"));
+      assert!(verbs.contains(&"delivered"));
+      assert!(verbs.contains(&"cancelled"));
+      assert!(verbs.contains(&"paused"));
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_blueprint_name_for_a_null_product() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 1, 5, None, "active")])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert_eq!(
+        overlays[0].title,
+        "Ibis Blueprint \u{00D7}10 completes \u{2014} Copying"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_removes_industry_overlays_when_the_feature_is_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      own_corporation(&db, 90_000_001, 42).await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 1, 1, Some(587), "active")])
+        .await
+        .unwrap();
+      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 7)])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+      features.set_enabled(Feature::Industry, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_keeps_character_and_corporation_job_ids_disjoint() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      seed_item(&db, 34, "Tritanium").await;
+      own_corporation(&db, 90_000_001, 42).await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 5, 1, Some(587), "active")])
+        .await
+        .unwrap();
+      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 5)])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
+      assert_eq!(overlays.len(), 2);
+      assert_ne!(ids[0], ids[1]);
     }
   }
 }

@@ -81,6 +81,25 @@ pub struct PinnedStructure {
   pub type_id: Option<i64>,
 }
 
+/// The configured default install facilities (station or structure ids) per activity, threaded in from
+/// `config::IndustryConfig`. A `None` activity preserves the cheapest-cost-index fallback. Applied when a
+/// product is selected, not live-synced into an already-open planner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FacilityDefaults {
+  pub manufacturing: Option<i64>,
+  pub reactions: Option<i64>,
+}
+
+impl FacilityDefaults {
+  fn for_activity(&self, is_reaction: bool) -> Option<i64> {
+    if is_reaction {
+      self.reactions
+    } else {
+      self.manufacturing
+    }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialMenu {
   pub anchor: Point,
@@ -284,6 +303,7 @@ pub struct Planner {
   cursor: Option<Point>,
   data: PlannerData,
   detail_pane: PaneDrag,
+  facility_defaults: FacilityDefaults,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
@@ -315,6 +335,7 @@ impl Planner {
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       )
       .right_anchored(true),
+      facility_defaults: FacilityDefaults::default(),
       facility_picker: None,
       loaded: false,
       menu: None,
@@ -343,16 +364,10 @@ impl Planner {
     if self.recent.is_empty() {
       self.recent = self.seed_recent();
     }
-    // A "Plan Build" queued before the catalog loaded wins over the default recent selection.
-    if let Some(blueprint_type_id) = self.pending_blueprint_seed.take()
-      && self.seed_from_blueprint(blueprint_type_id)
-    {
-      return;
-    }
-    if self.product.is_none()
-      && let Some(first) = self.recent.first().copied()
-    {
-      self.select_product(first);
+    // Cold-open lands on the empty no-product state; only a "Plan Build" queued before the catalog
+    // loaded (or a restored plan) pre-populates a product. `seed_recent` still feeds the picker list.
+    if let Some(blueprint_type_id) = self.pending_blueprint_seed.take() {
+      self.seed_from_blueprint(blueprint_type_id);
     }
   }
 
@@ -555,6 +570,10 @@ impl Planner {
     } else {
       &self.placeholder
     }
+  }
+
+  pub fn set_facility_defaults(&mut self, defaults: FacilityDefaults) {
+    self.facility_defaults = defaults;
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
@@ -881,6 +900,20 @@ impl Planner {
       .unwrap_or(0.0)
   }
 
+  /// The solar-system id to seed a fresh root node from, resolved from the configured default install
+  /// facility (a station/structure id) for this activity. Returns `None` — preserving the cheapest-index
+  /// fallback — when no default is configured or the configured facility is absent from current data
+  /// (e.g. a pinned structure that is no longer accessible).
+  fn default_facility_system(&self, is_reaction: bool) -> Option<i64> {
+    let facility_id = self.facility_defaults.for_activity(is_reaction)?;
+    self
+      .data
+      .facilities
+      .iter()
+      .find(|facility| facility.id == facility_id)
+      .map(|facility| facility.solar_system_id)
+  }
+
   /// Applies a raw runs field edit: keeps only digits in the visible field, and reflows the plan from
   /// the parsed value clamped to the valid range (an empty or unparseable field holds at one run).
   fn edit_runs(&mut self, raw: String) {
@@ -959,6 +992,8 @@ impl Planner {
   fn select_product(&mut self, type_id: i64) {
     self.product = Some(type_id);
     self.tree = self.fresh_node(type_id);
+    let is_reaction = self.data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
+    self.tree.facility_system = self.default_facility_system(is_reaction);
     self.facility_picker = None;
   }
 
@@ -3348,6 +3383,40 @@ mod tests {
     planner
   }
 
+  mod apply_data {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_lands_on_the_empty_state_without_auto_selecting_a_product() {
+      let mut planner = Planner::new();
+
+      planner.apply_data(PlannerData::default());
+
+      assert_eq!(planner.product(), None);
+    }
+
+    #[test]
+    fn it_still_seeds_the_picker_recent_list() {
+      let mut data = PlannerData::default();
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Mining Barge".to_owned(),
+        is_reaction: false,
+        name: "Hulk".to_owned(),
+        type_id: HULK,
+        volume: 3_750.0,
+      });
+      let mut planner = Planner::new();
+
+      planner.apply_data(data);
+
+      assert_eq!(planner.recent(), &[HULK]);
+      assert_eq!(planner.product(), None);
+    }
+  }
+
   mod break_down {
     use pretty_assertions::assert_eq;
 
@@ -3536,6 +3605,81 @@ mod tests {
       planner.apply_data(data);
 
       assert_eq!(planner.product(), Some(HULK));
+    }
+  }
+
+  mod select_product {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn planner_with_defaults(defaults: FacilityDefaults) -> Planner {
+      const SULFURIC: i64 = 16_011;
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
+      data.recipes.insert(
+        SULFURIC,
+        recipe(SULFURIC + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
+      );
+      data.names.insert(HULK, "Hulk".to_owned());
+      data.names.insert(SULFURIC, "Sulfuric Acid".to_owned());
+      data.facilities = vec![
+        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
+        facility(1_021_000_000_009, 30_000_142, "Reaction Fortizar", 0.03),
+      ];
+
+      let mut planner = Planner::new();
+      planner.set_facility_defaults(defaults);
+      planner.apply_data(data);
+      planner
+    }
+
+    #[test]
+    fn it_seeds_the_root_facility_from_the_manufacturing_default() {
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: None,
+      });
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.node(&[]).facility_system, Some(30_002_187));
+    }
+
+    #[test]
+    fn it_seeds_the_root_facility_from_the_reaction_default_for_a_reaction_product() {
+      const SULFURIC: i64 = 16_011;
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+
+      planner.update(Message::ProductPicked(SULFURIC));
+
+      assert_eq!(planner.node(&[]).facility_system, Some(30_000_142));
+    }
+
+    #[test]
+    fn it_leaves_the_root_facility_unset_when_no_default_is_configured() {
+      let mut planner = planner_with_defaults(FacilityDefaults::default());
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.node(&[]).facility_system, None);
+    }
+
+    #[test]
+    fn it_leaves_the_root_facility_unset_when_the_default_is_absent_from_data() {
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(70_000_000),
+        reactions: None,
+      });
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.node(&[]).facility_system, None);
     }
   }
 

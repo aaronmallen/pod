@@ -347,7 +347,11 @@ mod tests {
   }
 
   fn state_with(active: Scope) -> State {
-    let mut state = State::new(super::super::EMPTY_INDUSTRY_SELECTION, Vec::new());
+    let mut state = State::new(
+      super::super::EMPTY_INDUSTRY_SELECTION,
+      Vec::new(),
+      super::super::FacilityDefaults::default(),
+    );
     state.active = active;
     state.roster = vec![owner(1, false), owner(2, false), owner(98, true)];
     state

@@ -1269,7 +1269,13 @@ fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Industry);
   let required = industry_required_scopes();
   let selection = target.unwrap_or(industry::EMPTY_INDUSTRY_SELECTION);
-  app.industry = Some(industry::State::new(selection, required.clone()).with_restored_panes(&app.ui_state));
+  let facility_defaults = app
+    .runtime
+    .as_ref()
+    .map(|runtime| industry::FacilityDefaults::from(runtime.settings.industry()))
+    .unwrap_or_default();
+  app.industry =
+    Some(industry::State::new(selection, required.clone(), facility_defaults).with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => industry::load(&runtime.db, selection, &required).map(Message::Industry),
     None => Task::none(),
@@ -5231,7 +5237,11 @@ mod tests {
       app.splash = Some(splash::State::default());
       app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
       app.calendar = Some(calendar::State::new(1, app.now, calendar_features(&app)));
-      app.industry = Some(industry::State::new(1, industry_required_scopes()));
+      app.industry = Some(industry::State::new(
+        1,
+        industry_required_scopes(),
+        industry::FacilityDefaults::default(),
+      ));
       app.runtime = Some(runtime);
       app.sync_popover_open = true;
       app.status.apply(&crate::sync::Event::Started {

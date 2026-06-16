@@ -19,7 +19,7 @@ use iced::{Element, Subscription, Task};
 use self::planner::Planner;
 pub use self::{
   loaders::{Activity, Blueprint, IndustryJob, Loaded, Owner, RosterOwner},
-  planner::{Message as PlannerMessage, PinnedStructure},
+  planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
 };
 use crate::{
   clients::{esi, eve_sso},
@@ -30,6 +30,15 @@ use crate::{
 pub const EMPTY_INDUSTRY_SELECTION: i64 = 0;
 
 const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
+
+impl From<&crate::config::IndustryConfig> for FacilityDefaults {
+  fn from(config: &crate::config::IndustryConfig) -> Self {
+    FacilityDefaults {
+      manufacturing: *config.manufacturing(),
+      reactions: *config.reactions(),
+    }
+  }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Filter {
@@ -133,7 +142,9 @@ pub struct State {
 }
 
 impl State {
-  pub fn new(active: i64, required_scopes: Vec<&'static str>) -> Self {
+  pub fn new(active: i64, required_scopes: Vec<&'static str>, facility_defaults: FacilityDefaults) -> Self {
+    let mut planner = Planner::new();
+    planner.set_facility_defaults(facility_defaults);
     State {
       active: if active == EMPTY_INDUSTRY_SELECTION {
         Scope::All
@@ -149,7 +160,7 @@ impl State {
       group_by: GroupBy::default(),
       jobs: Vec::new(),
       picker_open: false,
-      planner: Planner::new(),
+      planner,
       required_scopes,
       roster: Vec::new(),
       tab: Tab::default(),
@@ -650,7 +661,7 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>, jobs: Vec<IndustryJob>) -> State {
-    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required());
+    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required(), FacilityDefaults::default());
     state.active = active;
     state.roster = roster;
     state.jobs = jobs;
@@ -696,6 +707,31 @@ mod tests {
       system_name: Some("Jita".to_owned()),
       time_efficiency: te,
       type_id: 681,
+    }
+  }
+
+  mod facility_defaults {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_an_industry_config_to_per_activity_defaults() {
+      let mut config = crate::config::IndustryConfig::default();
+      config.set_manufacturing(Some(60_003_760));
+      config.set_reactions(Some(1_021_000_000_009));
+
+      let defaults = FacilityDefaults::from(&config);
+
+      assert_eq!(defaults.manufacturing, Some(60_003_760));
+      assert_eq!(defaults.reactions, Some(1_021_000_000_009));
+    }
+
+    #[test]
+    fn it_maps_an_unset_config_to_no_defaults() {
+      let defaults = FacilityDefaults::from(&crate::config::IndustryConfig::default());
+
+      assert_eq!(defaults, FacilityDefaults::default());
     }
   }
 
@@ -860,6 +896,8 @@ mod tests {
         volume: 3_750.0,
       });
       state.planner.apply_data(data);
+      // Cold open no longer auto-selects a product; pick one explicitly to exercise the loaded body.
+      state.planner.update(planner::Message::ProductPicked(22_544));
 
       // Exercise the loaded body, a breakdown, the Plans stub, and a context menu.
       {

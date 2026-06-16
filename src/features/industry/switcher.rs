@@ -177,7 +177,11 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>) -> State {
-    let mut state = State::new(0, vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS]);
+    let mut state = State::new(
+      0,
+      vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS],
+      super::super::FacilityDefaults::default(),
+    );
     state.active = active;
     state.roster = roster;
     state

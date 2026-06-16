@@ -7,7 +7,7 @@ use crate::store::{
   Database, Error,
   model::{
     AgentType, Bloodline, Constellation, DogmaAttribute, Faction, InaccessibleStructure, ItemCategory, ItemGroup,
-    ItemType, MarketGroup, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType, Race, Region, SolarSystem,
+    ItemType, MarketGroup, Moon, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType, Race, Region, SolarSystem,
     Station, Structure,
   },
 };
@@ -748,6 +748,19 @@ pub async fn mark_inaccessible_structure(
   Ok(())
 }
 
+pub async fn moon_with_system(db: &Database, id: i64) -> Result<Option<(String, i64, f64)>, Error> {
+  let row = sqlx::query_as::<_, (String, i64, f64)>(
+    "SELECT moons.name, moons.solar_system_id, solar_systems.security_status \
+    FROM moons \
+    JOIN solar_systems ON solar_systems.id = moons.solar_system_id \
+    WHERE moons.id = ?",
+  )
+  .bind(id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row)
+}
+
 pub async fn pin_structure(
   db: &Database,
   id: i64,
@@ -949,6 +962,44 @@ pub async fn upsert_many_npc_corporation_divisions(
     )
     .bind(division.id())
     .bind(division.name())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn upsert_many_moons(db: &Database, moons: &[Moon]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for moon in moons {
+    sqlx::query(
+      "INSERT INTO moons \
+        (id, name, orbit_index, planet_id, position_x, position_y, position_z, \
+        radius, solar_system_id, type_id) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+      ON CONFLICT(id) DO UPDATE SET \
+        name            = excluded.name, \
+        orbit_index     = excluded.orbit_index, \
+        planet_id       = excluded.planet_id, \
+        position_x      = excluded.position_x, \
+        position_y      = excluded.position_y, \
+        position_z      = excluded.position_z, \
+        radius          = excluded.radius, \
+        solar_system_id = excluded.solar_system_id, \
+        type_id         = excluded.type_id",
+    )
+    .bind(moon.id())
+    .bind(moon.name())
+    .bind(moon.orbit_index())
+    .bind(moon.planet_id())
+    .bind(moon.position_x())
+    .bind(moon.position_y())
+    .bind(moon.position_z())
+    .bind(moon.radius())
+    .bind(moon.solar_system_id())
+    .bind(moon.type_id())
     .execute(&mut *tx)
     .await?;
   }
@@ -1736,6 +1787,21 @@ mod universe_tests {
     }
   }
 
+  fn make_moon(id: i64, solar_system_id: i64) -> Moon {
+    Moon {
+      id,
+      name: "Test System I - Moon 1".to_string(),
+      orbit_index: Some(1),
+      planet_id: Some(40000001),
+      position_x: 0.0,
+      position_y: 0.0,
+      position_z: 0.0,
+      radius: None,
+      solar_system_id,
+      type_id: Some(14),
+    }
+  }
+
   fn make_region(id: i64) -> Region {
     Region {
       description: None,
@@ -2050,6 +2116,42 @@ mod universe_tests {
     }
   }
 
+  mod moon_with_system {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_system(db: &Database, id: i64) {
+      upsert_region(db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      let mut system = make_solar_system(id, 20000001);
+      system.security_status = 0.5;
+      upsert_solar_system(db, &system).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_moon() {
+      let db = store::open_test().await.unwrap();
+
+      let result = moon_with_system(&db, 9999).await.unwrap();
+
+      assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_name_system_and_security_status() {
+      let db = store::open_test().await.unwrap();
+      seed_system(&db, 30000001).await;
+      upsert_many_moons(&db, &[make_moon(40000001, 30000001)]).await.unwrap();
+
+      let result = moon_with_system(&db, 40000001).await.unwrap();
+
+      assert_eq!(result, Some(("Test System I - Moon 1".to_string(), 30000001, 0.5)));
+    }
+  }
+
   mod pin_structure {
     use pretty_assertions::assert_eq;
 
@@ -2103,6 +2205,47 @@ mod universe_tests {
         pinned_row(&db, 1_021_000_000_001).await,
         Some(("New Name".to_string(), 30000002))
       );
+    }
+  }
+
+  mod upsert_many_moons {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_system(db: &Database, id: i64) {
+      upsert_region(db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      upsert_solar_system(db, &make_solar_system(id, 20000001)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_inserts_all_moons_in_one_transaction() {
+      let db = store::open_test().await.unwrap();
+      seed_system(&db, 30000001).await;
+
+      upsert_many_moons(&db, &[make_moon(40000001, 30000001), make_moon(40000002, 30000001)])
+        .await
+        .unwrap();
+
+      assert!(moon_with_system(&db, 40000001).await.unwrap().is_some());
+      assert!(moon_with_system(&db, 40000002).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_updates_an_existing_moon_on_conflict() {
+      let db = store::open_test().await.unwrap();
+      seed_system(&db, 30000001).await;
+      upsert_many_moons(&db, &[make_moon(40000001, 30000001)]).await.unwrap();
+
+      let mut updated = make_moon(40000001, 30000001);
+      updated.name = "Renamed Moon".to_string();
+      upsert_many_moons(&db, &[updated]).await.unwrap();
+
+      let result = moon_with_system(&db, 40000001).await.unwrap().unwrap();
+      assert_eq!(result.0, "Renamed Moon");
     }
   }
 

@@ -91,6 +91,7 @@ mod mail_triage;
 mod market_group;
 mod market_order;
 mod market_price;
+mod moon;
 mod npc_agent;
 mod npc_agent_skill;
 mod npc_corporation_division;
@@ -250,6 +251,8 @@ pub use mail_triage::Model as MailTriage;
 pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;
+#[allow(unused_imports)]
+pub use moon::Model as Moon;
 #[allow(unused_imports)]
 pub use npc_agent::Model as NpcAgent;
 #[allow(unused_imports)]

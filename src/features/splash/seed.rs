@@ -13,14 +13,14 @@ use crate::{
     Database,
     model::{
       AbyssalModuleStat, AgentType, Bloodline, Certificate, CertificateSkill, Constellation,
-      DogmaAttribute as DogmaAttributeMeta, Faction, ItemCategory, ItemGroup, ItemType, MarketGroup, NpcAgent,
+      DogmaAttribute as DogmaAttributeMeta, Faction, ItemCategory, ItemGroup, ItemType, MarketGroup, Moon, NpcAgent,
       NpcAgentSkill, NpcCorporationDivision, Race, Region, ShipMastery, SkillMetadata, SolarSystem, Station,
     },
     repo::{assets, org, sde, skills},
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 5;
+const SEED_FORMAT_REVISION: u32 = 6;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 const SKILL_RANK_ATTR_ID: i32 = 275;
@@ -314,6 +314,12 @@ struct SdeMapMoonEntry {
   orbit_id: i64,
   #[serde(rename = "orbitIndex")]
   orbit_index: i32,
+  position: Option<SdePosition>,
+  radius: Option<f64>,
+  #[serde(rename = "solarSystemID")]
+  solar_system_id: Option<i64>,
+  #[serde(rename = "typeID")]
+  type_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -547,6 +553,9 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
 
   step(tx, "Seeding NPC stations\u{2026}").await;
   seed_npc_stations(db, r).await?;
+
+  step(tx, "Seeding moons\u{2026}").await;
+  seed_moons(db, r).await?;
 
   step(tx, "Seeding agent types\u{2026}").await;
   seed_agent_types(db, &r.join("agentTypes.yaml")).await?;
@@ -1054,6 +1063,38 @@ async fn seed_npc_stations(db: &Database, r: &Path) -> Result<(), String> {
     .collect();
 
   sde::seed_many_stations(db, &records).await.map_err(|e| e.to_string())
+}
+
+async fn seed_moons(db: &Database, r: &Path) -> Result<(), String> {
+  let moons: HashMap<i64, SdeMapMoonEntry> = read_yaml(&r.join("mapMoons.yaml")).await?;
+  let planets: HashMap<i64, SdeMapPlanetEntry> = read_yaml(&r.join("mapPlanets.yaml")).await?;
+  let systems = sde::solar_system_names(db).await.map_err(|e| e.to_string())?;
+
+  let records: Vec<Moon> = moons
+    .iter()
+    .filter_map(|(&id, e)| {
+      let solar_system_id = e
+        .solar_system_id
+        .or_else(|| planets.get(&e.orbit_id).map(|planet| planet.solar_system_id))?;
+      let name = derive_orbit_name(Some(id), &planets, &moons, &systems)?;
+      let position = e.position.as_ref();
+
+      Some(Moon {
+        id,
+        name,
+        orbit_index: Some(i64::from(e.orbit_index)),
+        planet_id: Some(e.orbit_id),
+        position_x: position.map(|p| p.x).unwrap_or_default(),
+        position_y: position.map(|p| p.y).unwrap_or_default(),
+        position_z: position.map(|p| p.z).unwrap_or_default(),
+        radius: e.radius,
+        solar_system_id,
+        type_id: e.type_id,
+      })
+    })
+    .collect();
+
+  sde::upsert_many_moons(db, &records).await.map_err(|e| e.to_string())
 }
 
 async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
@@ -2646,6 +2687,10 @@ mod tests {
         SdeMapMoonEntry {
           orbit_id: 40009082,
           orbit_index: 4,
+          position: None,
+          radius: None,
+          solar_system_id: None,
+          type_id: None,
         },
       )]);
       let systems = HashMap::from([(30000142, "Jita".to_owned())]);

@@ -10,7 +10,7 @@ use crate::{
   clients::eve_image::Size,
   store::images::{self, IconResolution},
   ui::{
-    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile, rule},
+    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile, resizable_pane::pane_handle, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -37,6 +37,7 @@ pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Messa
 
   let children: Vec<Element<'a, Message>> = vec![
     container(left).width(Length::Fill).height(Length::Fill).into(),
+    pane_handle(Message::RailPaneDragStart),
     super::side_rail::rail(state, now),
   ];
 

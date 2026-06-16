@@ -26,6 +26,7 @@ pub use self::{
 use crate::{
   clients::{esi, eve_sso},
   store::{Database, images},
+  ui::components::resizable_pane::{self, PaneDrag},
 };
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
@@ -35,6 +36,12 @@ pub const FACILITY_SEARCH_DEBOUNCE_MS: u64 = 200;
 
 /// Re-exported so the Settings Industry tab's app-layer search seam shares the planner's min-char gate.
 pub const FACILITY_SEARCH_MIN_CHARS: usize = planner::FACILITY_SEARCH_MIN_CHARS;
+
+/// Window-state key under which the Jobs tab's right rail width (as a host-width ratio) persists.
+pub const RAIL_PANE_KEY: &str = "industry.jobs.rail";
+
+const RAIL_PANE_DEFAULT_WIDTH: f32 = 280.0;
+const RAIL_PANE_MIN_WIDTH: f32 = 240.0;
 
 impl From<&crate::config::IndustryConfig> for FacilityDefaults {
   fn from(config: &crate::config::IndustryConfig) -> Self {
@@ -122,6 +129,9 @@ pub enum Message {
   PlanBuild(i64),
   Planner(planner::Message),
   PlannerLoaded(Box<planner_loaders::PlannerData>),
+  RailPaneDrag(f32),
+  RailPaneDragEnd,
+  RailPaneDragStart,
   ReauthRequested(i64),
   ScopeSelected(Scope),
   TabSelected(Tab),
@@ -141,6 +151,7 @@ pub struct State {
   jobs: Vec<IndustryJob>,
   picker_open: bool,
   planner: Planner,
+  rail_pane: PaneDrag,
   required_scopes: Vec<&'static str>,
   roster: Vec<RosterOwner>,
   tab: Tab,
@@ -166,6 +177,12 @@ impl State {
       jobs: Vec::new(),
       picker_open: false,
       planner,
+      rail_pane: PaneDrag::with_min_width(
+        RAIL_PANE_DEFAULT_WIDTH,
+        RAIL_PANE_MIN_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      )
+      .right_anchored(true),
       required_scopes,
       roster: Vec::new(),
       tab: Tab::default(),
@@ -178,6 +195,7 @@ impl State {
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.planner.set_pane_host_width(host_width);
+    self.rail_pane.set_host_width(host_width);
   }
 
   pub fn set_required_scopes(&mut self, scopes: Vec<&'static str>) {
@@ -196,6 +214,15 @@ impl State {
 
   pub fn with_restored_panes(mut self, ui: &crate::window_state::UiState) -> Self {
     self.planner = self.planner.with_restored_panes(ui);
+    let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
+    self.rail_pane = PaneDrag::from_store_with_min(
+      ui,
+      RAIL_PANE_KEY,
+      RAIL_PANE_DEFAULT_WIDTH,
+      RAIL_PANE_MIN_WIDTH,
+      host_width,
+    )
+    .right_anchored(true);
     self
   }
 
@@ -256,6 +283,14 @@ impl State {
 
   pub(super) fn planner(&self) -> &Planner {
     &self.planner
+  }
+
+  pub(super) fn rail_pane_width(&self) -> f32 {
+    self.rail_pane.width()
+  }
+
+  fn is_dragging_rail(&self) -> bool {
+    self.rail_pane.is_active()
   }
 
   pub(super) fn required_scopes(&self) -> &[&'static str] {
@@ -487,16 +522,21 @@ fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::Pl
 
 pub fn subscription(state: &State) -> Subscription<Message> {
   let tick = iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick);
-  if !state.planner.is_dragging_pane() {
+  let drag = if state.planner.is_dragging_pane() {
+    iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(
+        event,
+        |x| Message::Planner(planner::Message::PaneDrag(x)),
+        Message::Planner(planner::Message::PaneDragEnd),
+      )
+    })
+  } else if state.is_dragging_rail() {
+    iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(event, Message::RailPaneDrag, Message::RailPaneDragEnd)
+    })
+  } else {
     return tick;
-  }
-  let drag = iced::event::listen_with(|event, _status, _id| {
-    crate::ui::components::resizable_pane::drag_event(
-      event,
-      |x| Message::Planner(planner::Message::PaneDrag(x)),
-      Message::Planner(planner::Message::PaneDragEnd),
-    )
-  });
+  };
   Subscription::batch([tick, drag])
 }
 
@@ -593,6 +633,19 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     },
     Message::PlannerLoaded(data) => {
       state.planner.apply_data(*data);
+      Task::none()
+    }
+    Message::RailPaneDrag(x) => {
+      state.rail_pane.drag_to(x);
+      Task::none()
+    }
+    // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
+    Message::RailPaneDragEnd => {
+      state.rail_pane.end();
+      Task::done(Message::PaneSettled(RAIL_PANE_KEY, state.rail_pane.ratio()))
+    }
+    Message::RailPaneDragStart => {
+      state.rail_pane.start();
       Task::none()
     }
     Message::ReauthRequested(_) => Task::none(),
@@ -1084,6 +1137,9 @@ mod tests {
         n,
       );
       let _ = update(&mut state, Message::Tick, &db, n);
+      let _ = update(&mut state, Message::RailPaneDragStart, &db, n);
+      let _ = update(&mut state, Message::RailPaneDrag(640.0), &db, n);
+      let _ = update(&mut state, Message::RailPaneDragEnd, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Char(1)), &db, n);

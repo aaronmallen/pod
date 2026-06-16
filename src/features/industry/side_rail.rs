@@ -17,23 +17,22 @@ use crate::ui::{
   style::{color, radius, spacing, typography},
 };
 
-const RAIL_WIDTH: f32 = 280.0;
 const SLOT_GAP: f32 = 3.0;
 const SLOT_HEIGHT: f32 = 6.0;
 
 pub(super) fn rail<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let jobs = state.visible_jobs();
   let body = Column::with_children(vec![
-    slots_section(state),
-    rule::horizontal(),
     next_section(&jobs, now),
     rule::horizontal(),
     activity_section(&jobs),
+    rule::horizontal(),
+    slots_section(state),
   ])
   .width(Length::Fill);
 
   container(scrollable(body).style(crate::ui::style::control::scrollbar))
-    .width(Length::Fixed(RAIL_WIDTH))
+    .width(Length::Fixed(state.rail_pane_width()))
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),

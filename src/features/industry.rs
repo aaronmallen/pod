@@ -12,7 +12,7 @@ mod shell;
 mod side_rail;
 mod switcher;
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use chrono::{DateTime, Utc};
 use iced::{Element, Subscription, Task};
@@ -132,6 +132,7 @@ pub enum Message {
   PlanBuild(i64),
   Planner(planner::Message),
   PlannerLoaded(Box<planner_loaders::PlannerData>),
+  PlannerOnHandLoaded(HashMap<(i64, i64), i64>),
   RailPaneDrag(f32),
   RailPaneDragEnd,
   RailPaneDragStart,
@@ -460,6 +461,57 @@ fn load_planner(db: &Database, scope: Scope) -> Task<Message> {
   planner::load(db.clone(), scope).map(|data| Message::PlannerLoaded(Box::new(data)))
 }
 
+/// Routes a planner sub-message: a few arms round-trip the database (clipboard, save/load/delete, pane
+/// persist); the rest mutate planner state and refresh on-hand stock only when the picked build sites change.
+fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -> Task<Message> {
+  match message {
+    planner::Message::ShoppingListCopied => {
+      state.planner.update(message);
+      iced::clipboard::write(state.planner.shopping_list())
+    }
+    planner::Message::PlanSaveRequested => match (state.planner.snapshot(), state.planner.save_name()) {
+      (Some(tree), Some(name)) => save_plan(db, name, tree),
+      _ => Task::none(),
+    },
+    planner::Message::PlanLoadRequested(id) => load_plan(db, id),
+    planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
+    // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
+    planner::Message::PaneDragEnd => {
+      state.planner.update(message);
+      Task::done(Message::PaneSettled(
+        planner::DETAIL_PANE_KEY,
+        state.planner.detail_pane_ratio(),
+      ))
+    }
+    other => {
+      let before = state.planner.build_sites();
+      state.planner.update(other);
+      let after = state.planner.build_sites();
+      // Only hit the DB when the picked build sites actually changed (product/facility/breakdown), not on
+      // every cursor move or slider tick.
+      if before == after {
+        Task::none()
+      } else {
+        load_on_hand(db, after)
+      }
+    }
+  }
+}
+
+/// Refreshes the planner's on-hand stock map for its current build sites, so "Use Stock" reflects what each
+/// consuming facility actually holds. A no-op (empty map) when no facility has been picked yet.
+fn load_on_hand(db: &Database, sites: Vec<i64>) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      crate::store::repo::assets::on_hand_at_build_sites(&db, &sites)
+        .await
+        .unwrap_or_default()
+    },
+    Message::PlannerOnHandLoaded,
+  )
+}
+
 /// Returns `Task::none()` until the query reaches [`planner::FACILITY_SEARCH_MIN_CHARS`]; otherwise
 /// results are stamped with `generation` so the reducer can discard stale responses.
 pub fn facility_search(
@@ -643,32 +695,13 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     }
     Message::PaneSettled(..) => Task::none(),
     Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
-    Message::Planner(planner_message) => match planner_message {
-      planner::Message::ShoppingListCopied => {
-        state.planner.update(planner_message);
-        iced::clipboard::write(state.planner.shopping_list())
-      }
-      planner::Message::PlanSaveRequested => match (state.planner.snapshot(), state.planner.save_name()) {
-        (Some(tree), Some(name)) => save_plan(db, name, tree),
-        _ => Task::none(),
-      },
-      planner::Message::PlanLoadRequested(id) => load_plan(db, id),
-      planner::Message::PlanDeleteRequested(id) => delete_plan(db, id),
-      // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
-      planner::Message::PaneDragEnd => {
-        state.planner.update(planner_message);
-        Task::done(Message::PaneSettled(
-          planner::DETAIL_PANE_KEY,
-          state.planner.detail_pane_ratio(),
-        ))
-      }
-      other => {
-        state.planner.update(other);
-        Task::none()
-      }
-    },
+    Message::Planner(planner_message) => handle_planner(state, db, planner_message),
     Message::PlannerLoaded(data) => {
       state.planner.apply_data(*data);
+      load_on_hand(db, state.planner.build_sites())
+    }
+    Message::PlannerOnHandLoaded(on_hand) => {
+      state.planner.set_on_hand(on_hand);
       Task::none()
     }
     Message::RailPaneDrag(x) => {

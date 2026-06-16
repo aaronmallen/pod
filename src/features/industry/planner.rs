@@ -5,7 +5,7 @@ use iced::Point;
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan, StockAllocation, StockSelection, allocate_stock},
+  planner_model::{BuildNode, BuildPlan, RawTotal, StockAllocation, StockSelection, allocate_stock},
 };
 use crate::{
   store::repo::industry::{PlanTree, PlanType},
@@ -165,6 +165,10 @@ pub enum Message {
   RunsInputChanged(String),
   SearchChanged(String),
   ShoppingListCopied,
+  StockSelectionToggled {
+    site: i64,
+    type_id: i64,
+  },
   TimeEfficiencyChanged {
     te: i64,
     type_id: i64,
@@ -334,6 +338,24 @@ impl Planner {
     if let Some(blueprint_type_id) = self.pending_blueprint_seed.take() {
       self.seed_from_blueprint(blueprint_type_id);
     }
+  }
+
+  /// The distinct picked build-site structure/station ids across the current plan: the root product plus every
+  /// configured type that has a facility pinned. The input to `on_hand_at_build_sites`, whose result then feeds
+  /// [`set_on_hand`]. Empty when no product is chosen or no facility has been picked yet.
+  pub fn build_sites(&self) -> Vec<i64> {
+    let mut sites: BTreeSet<i64> = BTreeSet::new();
+    if let Some(product) = self.product
+      && let Some(site) = self.settings_for(product).facility_structure
+    {
+      sites.insert(site);
+    }
+    for settings in self.settings.values() {
+      if let Some(site) = settings.facility_structure {
+        sites.insert(site);
+      }
+    }
+    sites.into_iter().collect()
   }
 
   pub fn category(&self) -> Category {
@@ -574,9 +596,8 @@ impl Planner {
     self.facility_defaults = defaults;
   }
 
-  /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass. The
-  /// loader that calls this lands with the "Use Stock" UI task; the netting seam exists ahead of it.
-  #[allow(dead_code)]
+  /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass, loaded
+  /// from `store::repo::assets::on_hand_at_build_sites` for the plan's build sites.
   pub fn set_on_hand(&mut self, on_hand: std::collections::HashMap<(i64, i64), i64>) {
     self.on_hand = on_hand;
   }
@@ -604,6 +625,32 @@ impl Planner {
   /// empty (no draws) until the user opts a job into stock, leaving raw totals unchanged.
   pub fn stock_allocation(&self) -> StockAllocation {
     allocate_stock(&self.on_hand, &self.stock_selections)
+  }
+
+  /// Whether `(site, type_id)` is currently opted into on-hand stock.
+  pub fn is_stock_selected(&self, site: i64, type_id: i64) -> bool {
+    self
+      .stock_selections
+      .iter()
+      .any(|selection| selection.site == site && selection.type_id == type_id)
+  }
+
+  /// On-hand quantity sitting in `site`'s hangar for `type_id`, before any reservation.
+  pub fn on_hand_at(&self, site: i64, type_id: i64) -> i64 {
+    self.on_hand.get(&(site, type_id)).copied().unwrap_or(0)
+  }
+
+  /// Stock left in `site`'s `type_id` pool after the current selections drew against it: the on-hand total
+  /// minus what the allocation already reserved. Drives "Use Stock" button visibility — a depleted pool
+  /// (selected here, or consumed by an earlier toggle on the same shared pool) hides the button.
+  pub fn remaining_pool(&self, site: i64, type_id: i64) -> i64 {
+    let drawn = self
+      .stock_allocation()
+      .drawn_by_pool
+      .get(&(site, type_id))
+      .copied()
+      .unwrap_or(0);
+    (self.on_hand_at(site, type_id) - drawn).max(0)
   }
 
   pub fn shopping_list(&self) -> String {
@@ -736,6 +783,10 @@ impl Planner {
       }
       // Clipboard write is handled by the parent industry::update; nothing to do here.
       Message::ShoppingListCopied => {}
+      Message::StockSelectionToggled {
+        site,
+        type_id,
+      } => self.toggle_stock_selection(site, type_id),
     }
   }
 
@@ -1051,6 +1102,39 @@ impl Planner {
     self.runs_input = self.runs.to_string();
   }
 
+  /// Adds or removes the `(site, type_id)` use-stock selection. Toggling off drops every selection naming the
+  /// pool; toggling on appends one demanding the type's whole raw need (the draw is capped at the pool in
+  /// [`allocate_stock`], so over-demanding is harmless). Append order is load-bearing for shared-pool draining.
+  fn toggle_stock_selection(&mut self, site: i64, type_id: i64) {
+    if self.is_stock_selected(site, type_id) {
+      self
+        .stock_selections
+        .retain(|selection| !(selection.site == site && selection.type_id == type_id));
+      return;
+    }
+    self.stock_selections.push(StockSelection {
+      needed: self.raw_demand_for(type_id),
+      site,
+      type_id,
+    });
+  }
+
+  /// The whole raw (to-acquire) demand of `type_id` across the current plan, before stock netting. Used as a
+  /// selection's `needed` so a use-stock toggle reaches for as much of the pool as the plan can absorb.
+  fn raw_demand_for(&self, type_id: i64) -> i64 {
+    self
+      .plan()
+      .map(|plan| {
+        plan
+          .raw_totals()
+          .iter()
+          .find(|total| total.type_id == type_id)
+          .map(|total| total.qty)
+          .unwrap_or(0)
+      })
+      .unwrap_or(0)
+  }
+
   fn toggle_facility_picker(&mut self, type_id: i64) {
     if self
       .facility_picker
@@ -1290,6 +1374,7 @@ mod view {
   const TILE_ICON: Size = Size::S64;
   const TREE_INDENT: f32 = 22.0;
 
+  const COL_BOM_QTY: f32 = 96.0;
   const COL_COST: f32 = 140.0;
   const COL_PRICE: f32 = 120.0;
   const COL_QTY: f32 = 120.0;
@@ -1299,6 +1384,7 @@ mod view {
     cost: f64,
     depth: usize,
     qty: i64,
+    site: Option<i64>,
     unit: f64,
   }
 
@@ -2141,29 +2227,42 @@ mod view {
   }
 
   fn material_plan<'a>(planner: &'a Planner, recipe: &'a Recipe) -> Element<'a, Message> {
-    let mut rows: Vec<Element<'a, Message>> = vec![grid_header()];
-    let mut total = 0.0;
-    let mut seen = std::collections::BTreeSet::new();
-    material_rows(planner, recipe, planner.runs(), 0, &mut seen, &mut rows, &mut total);
+    let site = planner
+      .product()
+      .and_then(|product| planner.settings_for(product).facility_structure);
+    let mut acc = MaterialRowsAcc {
+      out: vec![grid_header()],
+      seen: std::collections::BTreeSet::new(),
+      total: 0.0,
+    };
+    material_rows(planner, recipe, planner.runs(), site, 0, &mut acc);
 
-    rows.push(footer_row("Material cost", &fmt_isk_full(total)));
+    acc.out.push(footer_row("Material cost", &fmt_isk_full(acc.total)));
 
-    container(Column::with_children(rows).width(Length::Fill))
+    container(Column::with_children(acc.out).width(Length::Fill))
       .width(Length::Fill)
       .style(bordered_table)
       .into()
   }
 
+  /// The mutable accumulators threaded through the recursive [`material_rows`] walk: the emitted rows, the
+  /// cycle guard, and the running depth-0 material cost.
+  struct MaterialRowsAcc<'a> {
+    out: Vec<Element<'a, Message>>,
+    seen: std::collections::BTreeSet<i64>,
+    total: f64,
+  }
+
   /// Recursively emits the material-plan rows for `recipe`, descending into a material when its type is built
-  /// in-house (keyed per-TYPE, not per tree position). `seen` guards against a recipe cycle recursing forever.
+  /// in-house (keyed per-TYPE, not per tree position). The accumulator's `seen` set guards against a recipe
+  /// cycle recursing forever.
   fn material_rows<'a>(
     planner: &'a Planner,
     recipe: &'a Recipe,
     runs: i64,
+    site: Option<i64>,
     depth: usize,
-    seen: &mut std::collections::BTreeSet<i64>,
-    out: &mut Vec<Element<'a, Message>>,
-    total: &mut f64,
+    acc: &mut MaterialRowsAcc<'a>,
   ) {
     let data = planner.data();
     for material in &recipe.materials {
@@ -2172,10 +2271,10 @@ mod view {
       let cost = qty as f64 * unit;
       let child = planner.is_built(material.type_id);
       if depth == 0 {
-        *total += cost;
+        acc.total += cost;
       }
 
-      out.push(material_row(
+      acc.out.push(material_row(
         planner,
         material.type_id,
         MaterialLine {
@@ -2183,17 +2282,19 @@ mod view {
           cost,
           depth,
           qty,
+          site,
           unit,
         },
       ));
 
       if child
-        && seen.insert(material.type_id)
+        && acc.seen.insert(material.type_id)
         && let Some(child_recipe) = data.recipe(material.type_id)
       {
         let child_runs = runs_for(qty, child_recipe.output_per_run);
-        material_rows(planner, child_recipe, child_runs, depth + 1, seen, out, total);
-        seen.remove(&material.type_id);
+        let child_site = planner.settings_for(material.type_id).facility_structure;
+        material_rows(planner, child_recipe, child_runs, child_site, depth + 1, acc);
+        acc.seen.remove(&material.type_id);
       }
     }
   }
@@ -2253,16 +2354,195 @@ mod view {
       .into()
   }
 
+  /// "Use Stock" toggle shown on a material-plan row when its consuming build site still holds uncommitted
+  /// on-hand stock of the type. Fires [`Message::StockSelectionToggled`] keyed by `(site, type)`.
+  fn use_stock_button<'a>(site: i64, type_id: i64) -> Element<'a, Message> {
+    let inner = Row::with_children(vec![
+      Icon::assets()
+        .color(color::status::ONLINE)
+        .size(11.0)
+        .render::<Message>(),
+      text("Use Stock")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::status::ONLINE))
+        .into(),
+    ])
+    .spacing(spacing::UNIT + 1.0)
+    .align_y(Vertical::Center);
+
+    button(inner)
+      .padding(Padding {
+        top: spacing::UNIT,
+        bottom: spacing::UNIT,
+        left: spacing::SPACE_2,
+        right: spacing::SPACE_2,
+      })
+      .on_press(Message::StockSelectionToggled {
+        site,
+        type_id,
+      })
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(color::with_alpha(color::status::ONLINE, 0.1))),
+        border: Border {
+          color: color::with_alpha(color::status::ONLINE, 0.3),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::status::ONLINE,
+        ..button::Style::default()
+      })
+      .into()
+  }
+
+  /// The active "STOCK" chip a use-stock row shows in place of the toggle; clicking it stops drawing stock.
+  fn stock_chip<'a>(site: i64, type_id: i64) -> Element<'a, Message> {
+    let inner = Row::with_children(vec![
+      Icon::check().color(color::status::ONLINE).size(9.0).render::<Message>(),
+      text("STOCK")
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS)
+        .style(typography::colored(color::status::ONLINE))
+        .into(),
+    ])
+    .spacing(spacing::UNIT)
+    .align_y(Vertical::Center);
+
+    button(inner)
+      .padding(Padding {
+        top: spacing::UNIT,
+        bottom: spacing::UNIT,
+        left: spacing::SPACE_2,
+        right: spacing::SPACE_2,
+      })
+      .on_press(Message::StockSelectionToggled {
+        site,
+        type_id,
+      })
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(color::with_alpha(color::status::ONLINE, 0.18))),
+        border: Border {
+          color: color::with_alpha(color::status::ONLINE, 0.44),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::status::ONLINE,
+        ..button::Style::default()
+      })
+      .into()
+  }
+
+  /// The quantity cell with a from-stock / to-buy split subline. When stock covers part of the line, the total
+  /// sits above a `{drawn} stock \u{00B7} {remaining} {build|buy}` breakdown; an uncovered line shows only the total.
+  fn qty_split_cell<'a>(qty: i64, drawn: i64, remaining: i64, building: bool) -> Element<'a, Message> {
+    let total = container(
+      text(fmt_num(qty))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::PRIMARY)),
+    )
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
+
+    let mut column = Column::with_children(vec![total.into()]).spacing(spacing::UNIT);
+
+    if drawn > 0 {
+      let mut tokens: Vec<Element<'a, Message>> = vec![
+        text(format!("{} stock", fmt_num(drawn)))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::status::ONLINE))
+          .into(),
+      ];
+      if remaining > 0 {
+        let (label, tint) = if building {
+          (format!("{} build", fmt_num(remaining)), color::status::WARNING)
+        } else {
+          (format!("{} buy", fmt_num(remaining)), color::text::tertiary())
+        };
+        tokens.push(
+          text("\u{00B7}")
+            .font(typography::mono::REGULAR)
+            .size(typography::size::XS)
+            .style(typography::colored(color::text::tertiary()))
+            .into(),
+        );
+        tokens.push(
+          text(label)
+            .font(typography::mono::REGULAR)
+            .size(typography::size::XS)
+            .style(typography::colored(tint))
+            .into(),
+        );
+      }
+      column = column.push(
+        container(
+          Row::with_children(tokens)
+            .spacing(spacing::UNIT + 1.0)
+            .align_y(Vertical::Center),
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+      );
+    }
+
+    container(column).width(Length::Fixed(COL_QTY)).into()
+  }
+
+  /// How a material-plan line is sourced from on-hand stock: whether it is opted in, how much the toggle draws
+  /// from the site pool (capped at the line's demand), what is left, and whether an unselected pool still has
+  /// uncommitted stock (so the "Use Stock" button should show).
+  struct StockSplit {
+    can_use: bool,
+    drawn: i64,
+    remaining: i64,
+    site: Option<i64>,
+    using: bool,
+  }
+
+  /// Resolves the [`StockSplit`] for `type_id` at its consuming build `site`: a selected line draws
+  /// `min(on_hand, qty)`; an unselected one can use stock when the pool still has an uncommitted remainder
+  /// (its own, or a shared pool an earlier toggle has not drained).
+  fn stock_split(planner: &Planner, type_id: i64, qty: i64, site: Option<i64>) -> StockSplit {
+    let using = site.is_some_and(|site| planner.is_stock_selected(site, type_id));
+    let drawn = match site {
+      Some(site) if using => planner.on_hand_at(site, type_id).min(qty),
+      _ => 0,
+    };
+    StockSplit {
+      can_use: !using && site.is_some_and(|site| planner.remaining_pool(site, type_id) > 0),
+      drawn,
+      remaining: (qty - drawn).max(0),
+      site,
+      using,
+    }
+  }
+
+  /// The stock affordance for a material-plan row: the active "STOCK" chip when opted in, the "Use Stock"
+  /// button when the site pool still has uncommitted stock, or nothing.
+  fn stock_affordance<'a>(type_id: i64, split: &StockSplit) -> Option<Element<'a, Message>> {
+    let site = split.site?;
+    if split.using {
+      Some(stock_chip(site, type_id))
+    } else if split.can_use {
+      Some(use_stock_button(site, type_id))
+    } else {
+      None
+    }
+  }
+
   fn material_row<'a>(planner: &'a Planner, type_id: i64, line: MaterialLine) -> Element<'a, Message> {
     let MaterialLine {
       building,
       cost,
       depth,
       qty,
+      site,
       unit,
     } = line;
     let data = planner.data();
     let buildable = data.recipe(type_id).is_some();
+    let split = stock_split(planner, type_id, qty, site);
 
     let mut name_row = Row::with_children(vec![type_tile(type_id)])
       .spacing(spacing::SPACE_2)
@@ -2275,7 +2555,11 @@ mod view {
     );
     if building {
       name_row = name_row.push(badge("BUILDING", Some(color::status::WARNING)));
-    } else if buildable {
+    }
+    if let Some(affordance) = stock_affordance(type_id, &split) {
+      name_row = name_row.push(affordance);
+    }
+    if !building && buildable {
       name_row = name_row.push(breakdown_button(type_id));
     }
 
@@ -2286,7 +2570,7 @@ mod view {
 
     let grid = Row::with_children(vec![
       container(name_cell).width(Length::Fill).into(),
-      grid_value(&fmt_num(qty), COL_QTY, color::text::PRIMARY),
+      qty_split_cell(qty, split.drawn, split.remaining, building),
       grid_value(&fmt_price(unit), COL_PRICE, color::text::secondary()),
       grid_value(
         &fmt_isk(cost),
@@ -2302,7 +2586,9 @@ mod view {
     .align_y(Vertical::Center)
     .width(Length::Fill);
 
-    let background = if building {
+    let background = if split.using {
+      color::with_alpha(color::status::ONLINE, 0.07)
+    } else if building {
       color::with_alpha(color::status::WARNING, 0.07)
     } else if depth > 0 {
       color::with_alpha(color::surface::SUNKEN, 0.45)
@@ -2341,70 +2627,181 @@ mod view {
 
   fn bill_of_materials<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
     let data = planner.data();
+    let allocation = planner.stock_allocation();
     let mut totals = plan.raw_totals();
     totals.sort_by(|a, b| (b.qty as f64 * data.price(b.type_id)).total_cmp(&(a.qty as f64 * data.price(a.type_id))));
-    let acquisition: f64 = totals.iter().map(|t| t.qty as f64 * data.price(t.type_id)).sum();
 
-    let mut rows: Vec<Element<'a, Message>> = vec![grid_header()];
+    // To-buy cost subtracts the drawn-from-stock units from each type's buy quantity; the inventory value is
+    // those same drawn units priced at market. Buy + inventory equals the un-netted acquisition total.
+    let buy_cost: f64 = totals
+      .iter()
+      .map(|total| to_buy_qty(&allocation, total) as f64 * data.price(total.type_id))
+      .sum();
+    let inventory_value: f64 = totals
+      .iter()
+      .map(|total| drawn_qty(&allocation, total) as f64 * data.price(total.type_id))
+      .sum();
+    let stocked = totals.iter().filter(|total| drawn_qty(&allocation, total) > 0).count();
+
+    let mut rows: Vec<Element<'a, Message>> = vec![bom_grid_header()];
     for total in &totals {
-      let unit = data.price(total.type_id);
-      let cost = total.qty as f64 * unit;
-      rows.push(
-        container(
-          Row::with_children(vec![
-            container(
-              Row::with_children(vec![
-                type_tile(total.type_id),
-                text(data.name(total.type_id))
-                  .font(typography::body::REGULAR)
-                  .size(typography::size::MD)
-                  .style(typography::colored(color::text::PRIMARY))
-                  .into(),
-              ])
-              .spacing(spacing::SPACE_2)
-              .align_y(Vertical::Center),
-            )
-            .width(Length::Fill)
-            .into(),
-            grid_value(&fmt_num(total.qty), COL_QTY, color::text::PRIMARY),
-            grid_value(&fmt_price(unit), COL_PRICE, color::text::secondary()),
-            grid_value(&fmt_isk(cost), COL_COST, color::text::PRIMARY),
-          ])
-          .spacing(spacing::SPACE_3)
-          .align_y(Vertical::Center)
-          .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .padding(Padding {
-          top: spacing::SPACE_2_5,
-          bottom: spacing::SPACE_2_5,
-          left: spacing::SPACE_3,
-          right: spacing::SPACE_3,
-        })
-        .style(|_| container::Style {
-          border: Border {
-            color: color::rule(),
-            radius: 0.0.into(),
-            width: 1.0,
-          },
-          ..container::Style::default()
-        })
-        .into(),
-      );
+      rows.push(bom_row(planner, &allocation, total));
     }
-    rows.push(footer_row("Acquisition cost", &fmt_isk_full(acquisition)));
+    if inventory_value > 0.0 {
+      rows.push(footer_row("Covered from inventory", &fmt_isk_full(inventory_value)));
+    }
+    let footer_label = if inventory_value > 0.0 {
+      "Cost to buy"
+    } else {
+      "Acquisition cost"
+    };
+    rows.push(footer_row(footer_label, &fmt_isk_full(buy_cost)));
+
+    let hint = if stocked > 0 {
+      format!(
+        "raw inputs to acquire \u{00B7} {} items \u{00B7} {stocked} drawn from stock",
+        totals.len()
+      )
+    } else {
+      format!("raw inputs to acquire \u{00B7} {} items", totals.len())
+    };
 
     Column::with_children(vec![
-      section_label(
-        "Bill of materials",
-        Some(format!("raw inputs to acquire \u{00B7} {} items", totals.len())),
-      ),
+      section_label("Bill of materials", Some(hint)),
       container(Column::with_children(rows).width(Length::Fill))
         .width(Length::Fill)
         .style(bordered_table)
         .into(),
     ])
     .spacing(spacing::SPACE_3)
+    .into()
+  }
+
+  /// Stock drawn for a bill-of-materials line, capped at its demand (never more than the line needs).
+  fn drawn_qty(allocation: &super::StockAllocation, total: &super::RawTotal) -> i64 {
+    allocation.drawn_for_type(total.type_id).min(total.qty).max(0)
+  }
+
+  /// The to-buy remainder of a bill-of-materials line: its raw demand minus the stock drawn for the type.
+  fn to_buy_qty(allocation: &super::StockAllocation, total: &super::RawTotal) -> i64 {
+    (total.qty - drawn_qty(allocation, total)).max(0)
+  }
+
+  fn bom_row<'a>(
+    planner: &'a Planner,
+    allocation: &super::StockAllocation,
+    total: &super::RawTotal,
+  ) -> Element<'a, Message> {
+    let data = planner.data();
+    let drawn = drawn_qty(allocation, total);
+    let to_buy = to_buy_qty(allocation, total);
+    let unit = data.price(total.type_id);
+    let buy_cost = to_buy as f64 * unit;
+    let stocked = drawn > 0;
+
+    let name = container(
+      Row::with_children(vec![
+        type_tile(total.type_id),
+        text(data.name(total.type_id))
+          .font(typography::body::REGULAR)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::PRIMARY))
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center),
+    )
+    .width(Length::Fill);
+
+    let from_stock = if stocked {
+      grid_value(&fmt_num(drawn), COL_BOM_QTY, color::status::ONLINE)
+    } else {
+      grid_value("\u{2014}", COL_BOM_QTY, color::text::tertiary())
+    };
+    let to_buy_cell = if to_buy > 0 {
+      grid_value(&fmt_num(to_buy), COL_BOM_QTY, color::text::PRIMARY)
+    } else {
+      grid_value("0", COL_BOM_QTY, color::status::ONLINE)
+    };
+    let subtotal = if to_buy > 0 {
+      grid_value(&fmt_isk(buy_cost), COL_COST, color::text::PRIMARY)
+    } else {
+      grid_value("\u{2014}", COL_COST, color::text::tertiary())
+    };
+
+    let row = Row::with_children(vec![
+      name.into(),
+      grid_value(&fmt_num(total.qty), COL_BOM_QTY, color::text::PRIMARY),
+      from_stock,
+      to_buy_cell,
+      subtotal,
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+    let background = if stocked {
+      color::with_alpha(color::status::ONLINE, 0.06)
+    } else {
+      iced::Color::TRANSPARENT
+    };
+
+    container(row)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_2_5,
+        bottom: spacing::SPACE_2_5,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .style(move |_| container::Style {
+        background: Some(Background::Color(background)),
+        border: Border {
+          color: color::rule(),
+          radius: 0.0.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+
+  fn bom_grid_header<'a>() -> Element<'a, Message> {
+    let head = |label: &str, width: Option<f32>| -> Element<'a, Message> {
+      let content = text(label.to_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::secondary()));
+      match width {
+        Some(width) => container(container(content).width(Length::Fill).align_x(Horizontal::Right))
+          .width(Length::Fixed(width))
+          .into(),
+        None => container(content).width(Length::Fill).into(),
+      }
+    };
+
+    container(
+      Row::with_children(vec![
+        head("MATERIAL", None),
+        head("TOTAL", Some(COL_BOM_QTY)),
+        head("FROM STOCK", Some(COL_BOM_QTY)),
+        head("TO BUY", Some(COL_BOM_QTY)),
+        head("SUBTOTAL", Some(COL_COST)),
+      ])
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center),
+    )
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    })
     .into()
   }
 
@@ -4910,6 +5307,149 @@ mod tests {
 
       assert!(list.contains("25\tTritanium"));
       assert!(!list.contains("Retriever"));
+    }
+  }
+
+  mod stock_selection {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const SITE: i64 = 60_000_001;
+    const SITE_SYSTEM: i64 = 30_000_142;
+
+    /// A planner whose HULK root is pinned to `SITE`, with `on_hand` stock keyed by `(SITE, type)`.
+    fn sited_planner(on_hand: HashMap<(i64, i64), i64>) -> Planner {
+      let mut planner = planner();
+      planner.update(Message::FacilitySelected {
+        facility_structure: SITE,
+        pin: None,
+        solar_system_id: SITE_SYSTEM,
+        type_id: HULK,
+      });
+      planner.set_on_hand(on_hand);
+      planner
+    }
+
+    #[test]
+    fn it_reports_the_picked_build_site() {
+      let planner = sited_planner(HashMap::new());
+
+      assert_eq!(planner.build_sites(), vec![SITE]);
+    }
+
+    #[test]
+    fn it_shows_a_remaining_pool_for_a_material_with_site_stock() {
+      let planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 4);
+      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
+    }
+
+    #[test]
+    fn it_shows_no_pool_for_a_material_without_site_stock() {
+      let planner = sited_planner(HashMap::new());
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+    }
+
+    #[test]
+    fn it_toggling_adds_then_removes_the_selection() {
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(planner.is_stock_selected(SITE, TRITANIUM));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
+    }
+
+    #[test]
+    fn it_drains_the_pool_when_a_material_is_opted_into_stock() {
+      // HULK root consumes 5 Tritanium directly; 4 on hand draws all 4, leaving the pool empty.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 4);
+    }
+
+    #[test]
+    fn it_nets_drawn_stock_off_the_bill_of_materials() {
+      // 5 Tritanium needed, 4 drawn from stock leaves 1 to buy.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      let netted = planner
+        .plan()
+        .unwrap()
+        .raw_totals_after_stock(&planner.stock_allocation());
+
+      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
+      assert_eq!(trit.qty, 1);
+    }
+
+    #[test]
+    fn it_hides_the_button_for_a_later_consumer_once_the_shared_pool_is_drained() {
+      // Both the HULK row and the broken-down RETRIEVER row consume Tritanium at the same site/pool. Opting
+      // the first into stock drains the 6-unit pool, so the shared pool is empty for the second consumer.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      assert!(planner.remaining_pool(SITE, TRITANIUM) > 0);
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+    }
+
+    #[test]
+    fn it_composes_stock_with_a_breakdown_on_the_remainder() {
+      // Break RETRIEVER down so the plan rolls up to 25 Tritanium (5 direct + 2*10), draw 6 from stock,
+      // leaving 19 to buy: the breakdown deepens the tree, the netting subtracts the drawn stock.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 0,
+        type_id: HULK,
+      });
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 0,
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      let netted = planner
+        .plan()
+        .unwrap()
+        .raw_totals_after_stock(&planner.stock_allocation());
+
+      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
+      assert_eq!(trit.qty, 19);
     }
   }
 

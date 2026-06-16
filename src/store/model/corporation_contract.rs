@@ -16,11 +16,11 @@ pub struct Model {
   #[getset(get = "pub")]
   pub availability: Option<String>,
   #[getset(get_copy = "pub")]
-  pub character_id: i64,
-  #[getset(get_copy = "pub")]
   pub collateral: Option<f64>,
   #[getset(get_copy = "pub")]
   pub contract_id: i64,
+  #[getset(get_copy = "pub")]
+  pub corporation_id: i64,
   #[getset(get = "pub")]
   pub date_accepted: Option<String>,
   #[getset(get = "pub")]
@@ -55,16 +55,4 @@ pub struct Model {
   pub r#type: String,
   #[getset(get_copy = "pub")]
   pub volume: Option<f64>,
-}
-
-#[derive(Clone, CopyGetters, Debug, FromRow, PartialEq)]
-pub struct ContractEscrow {
-  #[getset(get_copy = "pub")]
-  pub character_id: i64,
-  #[getset(get_copy = "pub")]
-  pub escrow: f64,
-  #[getset(get_copy = "pub")]
-  pub escrow_collateral: f64,
-  #[getset(get_copy = "pub")]
-  pub escrow_price: f64,
 }

@@ -6,9 +6,10 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    CharacterContract, CharacterNetWorthSnapshot, CharacterWalletJournal, CharacterWalletTransaction,
-    CombinedNetWorthPoint, ContractEscrow, CorporationNetWorthSnapshot, CorporationWalletDivision,
-    CorporationWalletJournal, CorporationWalletTransaction, MarketOrder, MarketPrice, TypePriceHistory,
+    CharacterContract, CharacterContractBid, CharacterContractItem, CharacterNetWorthSnapshot, CharacterWalletJournal,
+    CharacterWalletTransaction, CombinedNetWorthPoint, ContractEscrow, CorporationContract, CorporationContractBid,
+    CorporationContractItem, CorporationNetWorthSnapshot, CorporationWalletDivision, CorporationWalletJournal,
+    CorporationWalletTransaction, MarketOrder, MarketPrice, TypePriceHistory,
     character_financials::CharacterFinancials,
     character_net_worth_series::{PeriodDelta, Scope, SeriesPoint, Timeframe},
     character_wallet_period_summary::CharacterWalletPeriodSummary,
@@ -31,11 +32,13 @@ pub async fn replace_for_character(
     .execute(&mut *tx)
     .await?;
 
-  for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 18) {
+  for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 25) {
     let mut builder = QueryBuilder::<Sqlite>::new(
       "INSERT INTO character_contracts \
         (character_id, contract_id, type, status, issuer_id, issuer_name, assignee_id, assignee_name, acceptor_id, \
-        acceptor_name, price, reward, collateral, volume, for_corporation, date_issued, date_expired, date_completed) ",
+        acceptor_name, price, reward, collateral, volume, for_corporation, date_issued, date_expired, date_completed, \
+        title, availability, days_to_complete, start_location_id, end_location_id, date_accepted, \
+        issuer_corporation_id) ",
     );
     builder.push_values(chunk, |mut row, contract| {
       row
@@ -56,7 +59,14 @@ pub async fn replace_for_character(
         .push_bind(contract.for_corporation())
         .push_bind(contract.date_issued())
         .push_bind(contract.date_expired())
-        .push_bind(contract.date_completed());
+        .push_bind(contract.date_completed())
+        .push_bind(contract.title())
+        .push_bind(contract.availability())
+        .push_bind(contract.days_to_complete())
+        .push_bind(contract.start_location_id())
+        .push_bind(contract.end_location_id())
+        .push_bind(contract.date_accepted())
+        .push_bind(contract.issuer_corporation_id());
     });
     builder.build().execute(&mut *tx).await?;
   }
@@ -65,10 +75,206 @@ pub async fn replace_for_character(
   Ok(())
 }
 
+pub async fn replace_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  contracts: &[CorporationContract],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_contracts WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for chunk in contracts.chunks(SQLITE_MAX_BIND_PARAMS / 25) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO corporation_contracts \
+        (corporation_id, contract_id, type, status, issuer_id, issuer_name, assignee_id, assignee_name, acceptor_id, \
+        acceptor_name, price, reward, collateral, volume, for_corporation, date_issued, date_expired, date_completed, \
+        title, availability, days_to_complete, start_location_id, end_location_id, date_accepted, \
+        issuer_corporation_id) ",
+    );
+    builder.push_values(chunk, |mut row, contract| {
+      row
+        .push_bind(contract.corporation_id())
+        .push_bind(contract.contract_id())
+        .push_bind(contract.r#type())
+        .push_bind(contract.status())
+        .push_bind(contract.issuer_id())
+        .push_bind(contract.issuer_name())
+        .push_bind(contract.assignee_id())
+        .push_bind(contract.assignee_name())
+        .push_bind(contract.acceptor_id())
+        .push_bind(contract.acceptor_name())
+        .push_bind(contract.price())
+        .push_bind(contract.reward())
+        .push_bind(contract.collateral())
+        .push_bind(contract.volume())
+        .push_bind(contract.for_corporation())
+        .push_bind(contract.date_issued())
+        .push_bind(contract.date_expired())
+        .push_bind(contract.date_completed())
+        .push_bind(contract.title())
+        .push_bind(contract.availability())
+        .push_bind(contract.days_to_complete())
+        .push_bind(contract.start_location_id())
+        .push_bind(contract.end_location_id())
+        .push_bind(contract.date_accepted())
+        .push_bind(contract.issuer_corporation_id());
+    });
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_contract_bids_for_character(
+  db: &Database,
+  character_id: i64,
+  contract_id: i64,
+  bids: &[CharacterContractBid],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM character_contract_bids WHERE character_id = ? AND contract_id = ?")
+    .bind(character_id)
+    .bind(contract_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for bid in bids {
+    sqlx::query(
+      "INSERT INTO character_contract_bids (character_id, contract_id, bid_id, bidder_id, amount, date_bid) \
+        VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(bid.character_id())
+    .bind(bid.contract_id())
+    .bind(bid.bid_id())
+    .bind(bid.bidder_id())
+    .bind(bid.amount())
+    .bind(bid.date_bid())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_contract_bids_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  contract_id: i64,
+  bids: &[CorporationContractBid],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_contract_bids WHERE corporation_id = ? AND contract_id = ?")
+    .bind(corporation_id)
+    .bind(contract_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for bid in bids {
+    sqlx::query(
+      "INSERT INTO corporation_contract_bids (corporation_id, contract_id, bid_id, bidder_id, amount, date_bid) \
+        VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(bid.corporation_id())
+    .bind(bid.contract_id())
+    .bind(bid.bid_id())
+    .bind(bid.bidder_id())
+    .bind(bid.amount())
+    .bind(bid.date_bid())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_contract_items_for_character(
+  db: &Database,
+  character_id: i64,
+  contract_id: i64,
+  items: &[CharacterContractItem],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM character_contract_items WHERE character_id = ? AND contract_id = ?")
+    .bind(character_id)
+    .bind(contract_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for item in items {
+    sqlx::query(
+      "INSERT INTO character_contract_items \
+        (character_id, contract_id, record_id, type_id, quantity, raw_quantity, is_singleton, is_included, value_isk) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item.character_id())
+    .bind(item.contract_id())
+    .bind(item.record_id())
+    .bind(item.type_id())
+    .bind(item.quantity())
+    .bind(item.raw_quantity())
+    .bind(item.is_singleton())
+    .bind(item.is_included())
+    .bind(item.value_isk())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+pub async fn replace_contract_items_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  contract_id: i64,
+  items: &[CorporationContractItem],
+) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query("DELETE FROM corporation_contract_items WHERE corporation_id = ? AND contract_id = ?")
+    .bind(corporation_id)
+    .bind(contract_id)
+    .execute(&mut *tx)
+    .await?;
+
+  for item in items {
+    sqlx::query(
+      "INSERT INTO corporation_contract_items \
+        (corporation_id, contract_id, record_id, type_id, quantity, raw_quantity, is_singleton, is_included, \
+        value_isk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item.corporation_id())
+    .bind(item.contract_id())
+    .bind(item.record_id())
+    .bind(item.type_id())
+    .bind(item.quantity())
+    .bind(item.raw_quantity())
+    .bind(item.is_singleton())
+    .bind(item.is_included())
+    .bind(item.value_isk())
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
 pub async fn contracts(db: &Database, character_id: i64) -> Result<Vec<CharacterContract>, Error> {
   let rows = sqlx::query_as::<_, CharacterContract>(
-    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, character_id, collateral, contract_id, \
-    date_completed, date_expired, date_issued, for_corporation, issuer_id, issuer_name, price, reward, status, \
+    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, availability, character_id, collateral, \
+    contract_id, date_accepted, date_completed, date_expired, date_issued, days_to_complete, end_location_id, \
+    for_corporation, issuer_corporation_id, issuer_id, issuer_name, price, reward, start_location_id, status, title, \
     type, volume FROM character_contracts WHERE character_id = ? ORDER BY date_issued DESC, contract_id DESC",
   )
   .bind(character_id)
@@ -88,8 +294,9 @@ pub async fn contracts_page(
     None => (None, None),
   };
   let rows = sqlx::query_as::<_, CharacterContract>(
-    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, character_id, collateral, contract_id, \
-    date_completed, date_expired, date_issued, for_corporation, issuer_id, issuer_name, price, reward, status, \
+    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, availability, character_id, collateral, \
+    contract_id, date_accepted, date_completed, date_expired, date_issued, days_to_complete, end_location_id, \
+    for_corporation, issuer_corporation_id, issuer_id, issuer_name, price, reward, start_location_id, status, title, \
     type, volume FROM character_contracts \
     WHERE character_id = ? AND (\
       ? IS NULL \
@@ -115,6 +322,124 @@ pub async fn count_contracts_for_character(db: &Database, character_id: i64) -> 
     .fetch_one(&db.0)
     .await?;
   Ok(count)
+}
+
+pub async fn count_contracts_for_corporation(db: &Database, corporation_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_contracts WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
+pub async fn contract_bids(
+  db: &Database,
+  character_id: i64,
+  contract_id: i64,
+) -> Result<Vec<CharacterContractBid>, Error> {
+  let rows = sqlx::query_as::<_, CharacterContractBid>(
+    "SELECT amount, bid_id, bidder_id, character_id, contract_id, date_bid FROM character_contract_bids \
+    WHERE character_id = ? AND contract_id = ? ORDER BY bid_id",
+  )
+  .bind(character_id)
+  .bind(contract_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn contract_items(
+  db: &Database,
+  character_id: i64,
+  contract_id: i64,
+) -> Result<Vec<CharacterContractItem>, Error> {
+  let rows = sqlx::query_as::<_, CharacterContractItem>(
+    "SELECT character_id, contract_id, is_included, is_singleton, quantity, raw_quantity, record_id, type_id, \
+    value_isk FROM character_contract_items WHERE character_id = ? AND contract_id = ? ORDER BY record_id",
+  )
+  .bind(character_id)
+  .bind(contract_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn corporation_contract_bids(
+  db: &Database,
+  corporation_id: i64,
+  contract_id: i64,
+) -> Result<Vec<CorporationContractBid>, Error> {
+  let rows = sqlx::query_as::<_, CorporationContractBid>(
+    "SELECT amount, bid_id, bidder_id, contract_id, corporation_id, date_bid FROM corporation_contract_bids \
+    WHERE corporation_id = ? AND contract_id = ? ORDER BY bid_id",
+  )
+  .bind(corporation_id)
+  .bind(contract_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn corporation_contract_items(
+  db: &Database,
+  corporation_id: i64,
+  contract_id: i64,
+) -> Result<Vec<CorporationContractItem>, Error> {
+  let rows = sqlx::query_as::<_, CorporationContractItem>(
+    "SELECT contract_id, corporation_id, is_included, is_singleton, quantity, raw_quantity, record_id, type_id, \
+    value_isk FROM corporation_contract_items WHERE corporation_id = ? AND contract_id = ? ORDER BY record_id",
+  )
+  .bind(corporation_id)
+  .bind(contract_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn corporation_contracts(db: &Database, corporation_id: i64) -> Result<Vec<CorporationContract>, Error> {
+  let rows = sqlx::query_as::<_, CorporationContract>(
+    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, availability, collateral, contract_id, \
+    corporation_id, date_accepted, date_completed, date_expired, date_issued, days_to_complete, end_location_id, \
+    for_corporation, issuer_corporation_id, issuer_id, issuer_name, price, reward, start_location_id, status, title, \
+    type, volume FROM corporation_contracts WHERE corporation_id = ? ORDER BY date_issued DESC, contract_id DESC",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn corporation_contracts_page(
+  db: &Database,
+  corporation_id: i64,
+  after: Option<(&str, i64)>,
+  limit: i64,
+) -> Result<Vec<CorporationContract>, Error> {
+  let (after_date, after_id) = match after {
+    Some((date, id)) => (Some(date.to_owned()), Some(id)),
+    None => (None, None),
+  };
+  let rows = sqlx::query_as::<_, CorporationContract>(
+    "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, availability, collateral, contract_id, \
+    corporation_id, date_accepted, date_completed, date_expired, date_issued, days_to_complete, end_location_id, \
+    for_corporation, issuer_corporation_id, issuer_id, issuer_name, price, reward, start_location_id, status, title, \
+    type, volume FROM corporation_contracts \
+    WHERE corporation_id = ? AND (\
+      ? IS NULL \
+      OR date_issued < ? \
+      OR (date_issued = ? AND contract_id < ?)\
+    ) \
+    ORDER BY date_issued DESC, contract_id DESC LIMIT ?",
+  )
+  .bind(corporation_id)
+  .bind(after_date.clone())
+  .bind(after_date.clone())
+  .bind(after_date)
+  .bind(after_id)
+  .bind(limit)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 pub async fn count_journal_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
@@ -1088,18 +1413,25 @@ mod contract_tests {
         acceptor_name: None,
         assignee_id: Some(95_002),
         assignee_name: Some("Assignee Pilot".to_owned()),
+        availability: Some("personal".to_owned()),
         character_id,
         collateral,
         contract_id,
+        date_accepted: Some("2026-03-02T00:00:00Z".to_owned()),
         date_completed: None,
         date_expired: None,
         date_issued: "2026-03-01T00:00:00Z".to_owned(),
+        days_to_complete: Some(7),
+        end_location_id: Some(60_003_761),
         for_corporation: false,
+        issuer_corporation_id: Some(98_000_001),
         issuer_id: 95_001,
         issuer_name: Some("Issuer Pilot".to_owned()),
         price: Some(200.0),
         reward: None,
+        start_location_id: Some(60_003_760),
         status: status.to_owned(),
+        title: Some("Haul to Jita".to_owned()),
         r#type: "courier".to_owned(),
         volume: Some(1000.0),
       }
@@ -1138,6 +1470,19 @@ mod contract_tests {
       super::replace_for_character(&db, 42, &[]).await.unwrap();
 
       assert!(super::contracts(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_all_new_header_fields() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::replace_for_character(&db, 42, &[contract(42, 7, "outstanding", Some(5000.0))])
+        .await
+        .unwrap();
+
+      let result = super::contracts(&db, 42).await.unwrap();
+      assert_eq!(result, vec![contract(42, 7, "outstanding", Some(5000.0))]);
     }
   }
 }
@@ -3426,6 +3771,330 @@ mod wallet_tests {
       insert_journal(&db, 1, 2, "2026-01-01T00:00:00Z", Some(500.0)).await;
 
       assert!(wallet_period_summaries_get(&db, 1).await.unwrap().is_empty());
+    }
+  }
+}
+
+#[cfg(test)]
+mod contract_detail_tests {
+  use super::*;
+  use crate::store::{
+    self, Database,
+    model::{
+      Alliance, Bloodline, Character, CharacterContractBid, CharacterContractItem, Corporation, CorporationContract,
+      CorporationContractBid, CorporationContractItem, Gender, Race,
+    },
+    repo::{character, org},
+  };
+
+  async fn seed_character(db: &Database, id: i64) {
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
+  }
+
+  async fn seed_corporation(db: &Database, id: i64) {
+    let mut corporation = Corporation::new(id, "Test Corporation", "TSTC");
+    corporation.set_ceo_id(12_345_678);
+    corporation.set_creator_id(12_345_678);
+    corporation.set_member_count(100);
+    corporation.set_tax_rate(0.1);
+    org::upsert_corporation(db, &corporation).await.unwrap();
+  }
+
+  fn corp_contract(corporation_id: i64, contract_id: i64, status: &str, date_issued: &str) -> CorporationContract {
+    CorporationContract {
+      acceptor_id: None,
+      acceptor_name: None,
+      assignee_id: Some(95_002),
+      assignee_name: Some("Assignee Pilot".to_owned()),
+      availability: Some("corporation".to_owned()),
+      collateral: Some(5000.0),
+      contract_id,
+      corporation_id,
+      date_accepted: Some("2026-03-02T00:00:00Z".to_owned()),
+      date_completed: None,
+      date_expired: Some("2026-04-01T00:00:00Z".to_owned()),
+      date_issued: date_issued.to_owned(),
+      days_to_complete: Some(7),
+      end_location_id: Some(60_003_761),
+      for_corporation: true,
+      issuer_corporation_id: Some(98_000_001),
+      issuer_id: 95_001,
+      issuer_name: Some("Issuer Pilot".to_owned()),
+      price: Some(200.0),
+      reward: Some(10.0),
+      start_location_id: Some(60_003_760),
+      status: status.to_owned(),
+      title: Some("Haul to Jita".to_owned()),
+      r#type: "courier".to_owned(),
+      volume: Some(1000.0),
+    }
+  }
+
+  mod replace_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_all_header_fields() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
+      assert_eq!(
+        result,
+        vec![corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_existing_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 1, "finished", "2025-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 2, "outstanding", "2026-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
+      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2]);
+    }
+  }
+
+  mod corporation_contracts_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_pages_newest_first_and_seeks_past_a_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[
+          corp_contract(98_000_002, 1, "finished", "2026-01-01T00:00:00Z"),
+          corp_contract(98_000_002, 2, "finished", "2026-02-01T00:00:00Z"),
+          corp_contract(98_000_002, 3, "finished", "2026-03-01T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let first = super::corporation_contracts_page(&db, 98_000_002, None, 2)
+        .await
+        .unwrap();
+      let next = super::corporation_contracts_page(&db, 98_000_002, Some(("2026-02-01T00:00:00Z", 2)), 2)
+        .await
+        .unwrap();
+
+      assert_eq!(first.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [3, 2]);
+      assert_eq!(next.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [1]);
+    }
+  }
+
+  mod count_contracts_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_corporations_contracts() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      seed_corporation(&db, 98_000_003).await;
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[
+          corp_contract(98_000_002, 1, "finished", "2026-01-01T00:00:00Z"),
+          corp_contract(98_000_002, 2, "finished", "2026-02-01T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      super::replace_for_corporation(
+        &db,
+        98_000_003,
+        &[corp_contract(98_000_003, 3, "finished", "2026-03-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        super::count_contracts_for_corporation(&db, 98_000_002).await.unwrap(),
+        2
+      );
+      assert_eq!(
+        super::count_contracts_for_corporation(&db, 98_000_003).await.unwrap(),
+        1
+      );
+      assert_eq!(super::count_contracts_for_corporation(&db, 99).await.unwrap(), 0);
+    }
+  }
+
+  mod replace_contract_items_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn item(character_id: i64, contract_id: i64, record_id: i64) -> CharacterContractItem {
+      CharacterContractItem {
+        character_id,
+        contract_id,
+        is_included: true,
+        is_singleton: false,
+        quantity: 5,
+        raw_quantity: Some(-1),
+        record_id,
+        type_id: 34,
+        value_isk: 12.5,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_items_and_replaces_per_contract() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_contract_items_for_character(&db, 42, 1, &[item(42, 1, 100), item(42, 1, 101)])
+        .await
+        .unwrap();
+
+      super::replace_contract_items_for_character(&db, 42, 1, &[item(42, 1, 200)])
+        .await
+        .unwrap();
+
+      let result = super::contract_items(&db, 42, 1).await.unwrap();
+      assert_eq!(result, vec![item(42, 1, 200)]);
+    }
+  }
+
+  mod replace_contract_items_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn item(corporation_id: i64, contract_id: i64, record_id: i64) -> CorporationContractItem {
+      CorporationContractItem {
+        contract_id,
+        corporation_id,
+        is_included: false,
+        is_singleton: true,
+        quantity: 1,
+        raw_quantity: None,
+        record_id,
+        type_id: 587,
+        value_isk: 99.0,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_items() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+
+      super::replace_contract_items_for_corporation(&db, 98_000_002, 1, &[item(98_000_002, 1, 100)])
+        .await
+        .unwrap();
+
+      let result = super::corporation_contract_items(&db, 98_000_002, 1).await.unwrap();
+      assert_eq!(result, vec![item(98_000_002, 1, 100)]);
+    }
+  }
+
+  mod replace_contract_bids_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn bid(character_id: i64, contract_id: i64, bid_id: i64) -> CharacterContractBid {
+      CharacterContractBid {
+        amount: 1500.0,
+        bid_id,
+        bidder_id: 95_010,
+        character_id,
+        contract_id,
+        date_bid: "2026-03-01T00:00:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_bids_and_replaces_per_contract() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 10), bid(42, 1, 11)])
+        .await
+        .unwrap();
+
+      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 20)])
+        .await
+        .unwrap();
+
+      let result = super::contract_bids(&db, 42, 1).await.unwrap();
+      assert_eq!(result, vec![bid(42, 1, 20)]);
+    }
+  }
+
+  mod replace_contract_bids_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn bid(corporation_id: i64, contract_id: i64, bid_id: i64) -> CorporationContractBid {
+      CorporationContractBid {
+        amount: 2500.0,
+        bid_id,
+        bidder_id: 95_010,
+        contract_id,
+        corporation_id,
+        date_bid: "2026-03-01T00:00:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_bids() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+
+      super::replace_contract_bids_for_corporation(&db, 98_000_002, 1, &[bid(98_000_002, 1, 10)])
+        .await
+        .unwrap();
+
+      let result = super::corporation_contract_bids(&db, 98_000_002, 1).await.unwrap();
+      assert_eq!(result, vec![bid(98_000_002, 1, 10)]);
     }
   }
 }

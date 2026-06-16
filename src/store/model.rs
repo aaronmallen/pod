@@ -23,6 +23,8 @@ mod character_contact;
 mod character_contact_label;
 pub mod character_contacts_view;
 mod character_contract;
+mod character_contract_bid;
+mod character_contract_item;
 pub mod character_financials;
 mod character_implant;
 mod character_industry_job;
@@ -53,6 +55,9 @@ mod corporation_blueprint;
 pub mod corporation_card;
 mod corporation_contact;
 mod corporation_contact_label;
+mod corporation_contract;
+mod corporation_contract_bid;
+mod corporation_contract_item;
 mod corporation_industry_job;
 mod corporation_killmail;
 mod corporation_killmail_attacker;
@@ -148,6 +153,10 @@ pub use character_contact::Model as CharacterContact;
 pub use character_contact_label::Model as CharacterContactLabel;
 #[allow(unused_imports)]
 pub use character_contract::{ContractEscrow, Model as CharacterContract};
+#[allow(unused_imports)]
+pub use character_contract_bid::Model as CharacterContractBid;
+#[allow(unused_imports)]
+pub use character_contract_item::Model as CharacterContractItem;
 pub use character_implant::Model as CharacterImplant;
 #[allow(unused_imports)]
 pub use character_industry_job::Model as CharacterIndustryJob;
@@ -188,6 +197,12 @@ pub use corporation_blueprint::Model as CorporationBlueprint;
 pub use corporation_contact::Model as CorporationContact;
 #[allow(unused_imports)]
 pub use corporation_contact_label::Model as CorporationContactLabel;
+#[allow(unused_imports)]
+pub use corporation_contract::Model as CorporationContract;
+#[allow(unused_imports)]
+pub use corporation_contract_bid::Model as CorporationContractBid;
+#[allow(unused_imports)]
+pub use corporation_contract_item::Model as CorporationContractItem;
 #[allow(unused_imports)]
 pub use corporation_industry_job::Model as CorporationIndustryJob;
 #[allow(unused_imports)]

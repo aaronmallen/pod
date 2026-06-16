@@ -151,6 +151,8 @@ pub struct PlannerFacility {
   pub manufacturing_index: Option<f64>,
   pub name: String,
   pub reaction_index: Option<f64>,
+  pub region: Option<String>,
+  pub security_status: Option<f64>,
   pub solar_system_id: i64,
   pub type_id: Option<i64>,
 }
@@ -419,6 +421,8 @@ async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
       manufacturing_index: facility.manufacturing_index(),
       name: facility.name().clone(),
       reaction_index,
+      region: facility.region().clone(),
+      security_status: facility.security_status(),
       solar_system_id: system,
       type_id: facility.type_id(),
     });

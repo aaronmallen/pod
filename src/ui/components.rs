@@ -13,6 +13,7 @@ pub mod entity_search;
 pub mod esi_status;
 pub mod eve_time;
 pub mod eyebrow;
+pub mod facility_combobox;
 pub mod forbidden;
 pub mod glyph_badge;
 pub mod header;

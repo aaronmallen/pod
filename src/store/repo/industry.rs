@@ -58,7 +58,8 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
       WHERE ina.id IS NULL \
     ) \
     SELECT f.id AS id, ci.manufacturing AS manufacturing_index, f.name AS name, \
-      f.owner_id AS owner_id, f.solar_system_id AS solar_system_id, f.type_id AS type_id \
+      f.owner_id AS owner_id, reg.name AS region, ss.security_status AS security_status, \
+      f.solar_system_id AS solar_system_id, f.type_id AS type_id \
     FROM ( \
       SELECT id, NULL AS owner_id, name, system_id AS solar_system_id, type_id FROM stations \
       UNION ALL \
@@ -68,6 +69,9 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
       WHERE p.id NOT IN (SELECT id FROM accessible_structures) \
     ) f \
     LEFT JOIN industry_cost_indices ci ON ci.solar_system_id = f.solar_system_id \
+    LEFT JOIN solar_systems ss ON ss.id = f.solar_system_id \
+    LEFT JOIN constellations con ON con.id = ss.constellation_id \
+    LEFT JOIN regions reg ON reg.id = con.region_id \
     ORDER BY ci.manufacturing IS NULL, ci.manufacturing, f.name, f.id",
   )
   .bind(STRUCTURE_FACILITY_ROLES[0])
@@ -97,6 +101,23 @@ pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Res
   .fetch_optional(&db.0)
   .await?;
   Ok(row)
+}
+
+/// Resolves a system's security status and region name via the SDE geography joins
+/// (solar_systems → constellations → regions), for facilities resolved outside [`accessible_facilities`]
+/// such as live ESI search hits.
+#[allow(dead_code)]
+pub async fn system_geo(db: &Database, solar_system_id: i64) -> Result<(Option<f64>, Option<String>), Error> {
+  let row: Option<(Option<f64>, Option<String>)> = sqlx::query_as(
+    "SELECT ss.security_status, reg.name FROM solar_systems ss \
+    LEFT JOIN constellations con ON con.id = ss.constellation_id \
+    LEFT JOIN regions reg ON reg.id = con.region_id \
+    WHERE ss.id = ?",
+  )
+  .bind(solar_system_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row.unwrap_or((None, None)))
 }
 
 pub async fn list_all(db: &Database) -> Result<AllIndustryJobs, Error> {
@@ -1138,6 +1159,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_enriches_facilities_with_security_status_and_region() {
+      let db = store::open_test().await.unwrap();
+      seed_station(&db, 60_000_001, 30_000_142, "Jita IV - Moon 4").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
+      assert_eq!(station.security_status(), Some(1.0));
+      assert_eq!(station.region(), &Some("Test Region".to_owned()));
+    }
+
+    #[tokio::test]
     async fn it_orders_by_manufacturing_index_ascending() {
       let db = store::open_test().await.unwrap();
       seed_station(&db, 60_000_001, 30_000_142, "Pricey System").await;
@@ -1302,6 +1335,54 @@ mod tests {
       assert_eq!(matching, 1);
       let facility = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
       assert_eq!(facility.owner_id(), Some(CORPORATION_ID));
+    }
+  }
+
+  mod system_geo {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_system(db: &Database) {
+      sqlx::query("INSERT INTO regions (id, name) VALUES (10000002, 'The Forge')")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO constellations (id, name, position_x, position_y, position_z, region_id) \
+        VALUES (20000002, 'Kimotoro', 0, 0, 0, 10000002)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+      sqlx::query(
+        "INSERT INTO solar_systems \
+          (id, constellation_id, name, position_x, position_y, position_z, security_status) \
+        VALUES (30000142, 20000002, 'Jita', 0, 0, 0, 0.9)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_resolves_security_status_and_region_for_a_known_system() {
+      let db = store::open_test().await.unwrap();
+      seed_system(&db).await;
+
+      let (security, region) = super::system_geo(&db, 30_000_142).await.unwrap();
+
+      assert_eq!(security, Some(0.9));
+      assert_eq!(region, Some("The Forge".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_system() {
+      let db = store::open_test().await.unwrap();
+
+      let geo = super::system_geo(&db, 30_000_142).await.unwrap();
+
+      assert_eq!(geo, (None, None));
     }
   }
 }

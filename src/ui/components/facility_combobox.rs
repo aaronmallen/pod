@@ -1,0 +1,607 @@
+#![allow(dead_code)]
+
+use iced::{
+  Background, Border, Color, Element, Length, Padding,
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, button, container, scrollable, text},
+};
+
+use crate::ui::{
+  components::{count_badge::count_badge, icon::Icon, text_input::TextInput},
+  style::{color, control, radius, spacing, typography},
+};
+
+const LIST_HEIGHT: f32 = 230.0;
+const SEARCH_MIN_CHARS: usize = 3;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FacilityRef {
+  pub cost_index: Option<f64>,
+  pub id: i64,
+  pub name: String,
+  pub region: Option<String>,
+  pub security_status: Option<f64>,
+  pub solar_system: String,
+  pub solar_system_id: i64,
+  pub type_id: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FacilitySearch {
+  generation: u64,
+  highlight: Option<usize>,
+  query: String,
+  results: Vec<FacilityRef>,
+  searching: bool,
+}
+
+impl FacilitySearch {
+  /// Installs search results if `generation` matches the current one; returns `false` and discards
+  /// results that arrive from a superseded query.
+  pub fn accept_results(&mut self, generation: u64, results: Vec<FacilityRef>) -> bool {
+    if generation != self.generation {
+      return false;
+    }
+
+    self.highlight = None;
+    self.results = results;
+    self.searching = false;
+    true
+  }
+
+  pub fn clear(&mut self) {
+    self.generation = self.generation.wrapping_add(1);
+    self.highlight = None;
+    self.query.clear();
+    self.results.clear();
+    self.searching = false;
+  }
+
+  pub fn generation(&self) -> u64 {
+    self.generation
+  }
+
+  pub fn highlight(&self) -> Option<usize> {
+    self.highlight
+  }
+
+  pub fn highlight_next(&mut self) {
+    if self.results.is_empty() {
+      self.highlight = None;
+      return;
+    }
+    self.highlight = Some(match self.highlight {
+      Some(index) if index + 1 < self.results.len() => index + 1,
+      Some(index) => index,
+      None => 0,
+    });
+  }
+
+  pub fn highlight_prev(&mut self) {
+    if self.results.is_empty() {
+      self.highlight = None;
+      return;
+    }
+    self.highlight = Some(match self.highlight {
+      Some(0) | None => 0,
+      Some(index) => index - 1,
+    });
+  }
+
+  pub fn highlighted(&self) -> Option<&FacilityRef> {
+    self.highlight.and_then(|index| self.results.get(index))
+  }
+
+  pub fn query(&self) -> &str {
+    &self.query
+  }
+
+  pub fn results(&self) -> &[FacilityRef] {
+    &self.results
+  }
+
+  pub fn searchable(&self) -> bool {
+    searchable(&self.query)
+  }
+
+  pub fn searching(&self) -> bool {
+    self.searching
+  }
+
+  /// Updates the query, bumps the generation counter, and returns the new generation.
+  ///
+  /// Callers should tag their async search request with the returned generation and pass it back
+  /// to `accept_results` so stale responses are discarded.
+  pub fn set_query(&mut self, query: String) -> u64 {
+    self.generation = self.generation.wrapping_add(1);
+    self.highlight = None;
+    let active = searchable(&query);
+    self.query = query;
+    if active {
+      self.searching = true;
+    } else {
+      self.results.clear();
+      self.searching = false;
+    }
+    self.generation
+  }
+}
+
+pub struct FacilityCombobox<'a, M> {
+  highlight: Option<usize>,
+  on_clear: Option<M>,
+  on_input: Box<dyn Fn(String) -> M + 'a>,
+  on_pick: Box<dyn Fn(FacilityRef) -> M + 'a>,
+  placeholder: &'a str,
+  query: &'a str,
+  results: Vec<FacilityRef>,
+  searching: bool,
+  selection: Option<FacilityRef>,
+  width: Length,
+}
+
+impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
+  pub fn new(
+    query: &'a str,
+    results: Vec<FacilityRef>,
+    on_input: impl Fn(String) -> M + 'a,
+    on_pick: impl Fn(FacilityRef) -> M + 'a,
+  ) -> Self {
+    Self {
+      highlight: None,
+      on_clear: None,
+      on_input: Box::new(on_input),
+      on_pick: Box::new(on_pick),
+      placeholder: "Search stations & structures\u{2026}",
+      query,
+      results,
+      searching: false,
+      selection: None,
+      width: Length::Fill,
+    }
+  }
+
+  pub fn highlight(mut self, highlight: Option<usize>) -> Self {
+    self.highlight = highlight;
+    self
+  }
+
+  pub fn on_clear(mut self, message: M) -> Self {
+    self.on_clear = Some(message);
+    self
+  }
+
+  pub fn placeholder(mut self, placeholder: &'a str) -> Self {
+    self.placeholder = placeholder;
+    self
+  }
+
+  pub fn searching(mut self, searching: bool) -> Self {
+    self.searching = searching;
+    self
+  }
+
+  pub fn selection(mut self, selection: Option<FacilityRef>) -> Self {
+    self.selection = selection;
+    self
+  }
+
+  pub fn width(mut self, width: Length) -> Self {
+    self.width = width;
+    self
+  }
+
+  /// The always-visible field showing the current selection (or empty state), used as the popover anchor.
+  pub fn trigger(self) -> Element<'a, M> {
+    let input = TextInput::new(self.placeholder, self.query, self.on_input)
+      .leading_icon(Icon::search().color(color::text::secondary()))
+      .background(color::surface::SUNKEN)
+      .width(Length::Fill)
+      .render();
+
+    let detail: Element<'a, M> = match &self.selection {
+      Some(facility) => facility_subtitle(facility),
+      None => Space::new().into(),
+    };
+
+    Column::with_children(vec![container(input).width(Length::Fill).into(), detail])
+      .spacing(spacing::SPACE_2)
+      .width(self.width)
+      .into()
+  }
+
+  /// The floating results popover: result-count chip, result rows, and the clear/"Ask each install"
+  /// footer. Hosts anchor this under the [`FacilityCombobox::trigger`] field (whose input drives the
+  /// search), so the trigger + popover together read as one combobox.
+  pub fn popover(self) -> Element<'a, M> {
+    let count: i64 = self.results.len() as i64;
+    let header = Row::with_children(vec![
+      text("Facilities")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      Space::new().width(Length::Fill).into(),
+      count_badge(count, color::accent::PLASMA),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center);
+
+    let selected_system = self.selection.as_ref().map(|facility| facility.solar_system_id);
+    let rows: Vec<Element<'a, M>> = self
+      .results
+      .iter()
+      .enumerate()
+      .map(|(index, facility)| {
+        let selected = selected_system == Some(facility.solar_system_id);
+        result_row(facility, self.highlight == Some(index), selected, &self.on_pick)
+      })
+      .collect();
+
+    let list: Element<'a, M> = if rows.is_empty() {
+      centered(status_label(if self.searching {
+        "Searching\u{2026}"
+      } else if searchable(self.query) {
+        "No facilities found."
+      } else {
+        "Type to search stations & structures."
+      }))
+    } else {
+      scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
+        .style(control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fixed(LIST_HEIGHT))
+        .into()
+    };
+
+    let mut body: Vec<Element<'a, M>> = vec![header.into(), list];
+    if let Some(message) = self.on_clear {
+      body.push(footer(message));
+    }
+
+    container(
+      Column::with_children(body)
+        .spacing(spacing::SPACE_2)
+        .width(Length::Fill),
+    )
+    .width(self.width)
+    .padding(spacing::SPACE_2)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::CARD.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+  }
+}
+
+fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
+  container(content)
+    .width(Length::Fill)
+    .height(Length::Fixed(LIST_HEIGHT))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn facility_subtitle<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
+  let mut parts: Vec<String> = vec![facility.solar_system.clone()];
+  if let Some(region) = &facility.region {
+    parts.push(region.clone());
+  }
+  if let Some(index) = facility.cost_index {
+    parts.push(format!("{:.2}% index", index * 100.0));
+  }
+
+  text(parts.join(" \u{00B7} "))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()))
+    .into()
+}
+
+fn footer<'a, M: Clone + 'a>(on_clear: M) -> Element<'a, M> {
+  button(
+    text("Clear \u{2192} Ask each install")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+    right: spacing::SPACE_2_5,
+  })
+  .on_press(on_clear)
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if hover { color::rule_strong() } else { color::rule() },
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn result_row<'a, M: Clone + 'a>(
+  facility: &FacilityRef,
+  highlighted: bool,
+  selected: bool,
+  on_pick: &impl Fn(FacilityRef) -> M,
+) -> Element<'a, M> {
+  let name = text(facility.name.clone())
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(if selected {
+      color::accent::PLASMA
+    } else {
+      color::text::PRIMARY
+    }));
+
+  let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+  meta = meta.push(sec_label(facility.security_status));
+  meta = meta.push(
+    text(facility.solar_system.clone())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary())),
+  );
+  if let Some(region) = &facility.region {
+    meta = meta.push(
+      text(region.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary())),
+    );
+  }
+
+  let details = Column::with_children(vec![name.into(), meta.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let pct = facility.cost_index.unwrap_or(0.0) * 100.0;
+  let pct_label = text(format!("{pct:.2}%"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::secondary()));
+
+  let row = Row::with_children(vec![details.into(), pct_label.into()])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+      right: spacing::SPACE_2_5,
+    })
+    .on_press(on_pick(facility.clone()))
+    .style(move |_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      let lit = highlighted || hover || selected;
+      button::Style {
+        background: lit.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        border: Border {
+          radius: radius::CONTROL.into(),
+          ..Border::default()
+        },
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+fn searchable(query: &str) -> bool {
+  query.trim().chars().count() >= SEARCH_MIN_CHARS
+}
+
+fn sec_label<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
+  let Some(sec) = security_status else {
+    return text("\u{2014}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into();
+  };
+  let sec_color = if sec >= 0.5 {
+    color::status::ONLINE
+  } else if sec > 0.0 {
+    color::status::WARNING
+  } else {
+    color::status::DANGER
+  };
+  text(format!("{sec:.1}"))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(move |_| text::Style {
+      color: Some(sec_color),
+    })
+    .into()
+}
+
+fn status_label<'a, M: 'a>(label: &str) -> Element<'a, M> {
+  text(label.to_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::tertiary()))
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[derive(Clone, Debug, Eq, PartialEq)]
+  enum Message {
+    Cleared,
+    Input(String),
+    Picked(i64),
+  }
+
+  fn sample(id: i64, name: &str) -> FacilityRef {
+    FacilityRef {
+      cost_index: Some(0.05),
+      id,
+      name: name.to_owned(),
+      region: Some("The Forge".to_owned()),
+      security_status: Some(0.9),
+      solar_system: "Jita".to_owned(),
+      solar_system_id: 30_000_142,
+      type_id: Some(35_834),
+    }
+  }
+
+  mod facility_search {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_bumps_the_generation_and_marks_searching_above_min_chars() {
+      let mut search = FacilitySearch::default();
+
+      let generation = search.set_query("Jita".to_owned());
+
+      assert_eq!(generation, 1);
+      assert_eq!(search.generation(), 1);
+      assert_eq!(search.query(), "Jita");
+      assert!(search.searching());
+    }
+
+    #[test]
+    fn it_clears_results_below_min_chars_without_searching() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "Jita Keepstar")]);
+
+      search.set_query("Ji".to_owned());
+
+      assert!(search.results().is_empty());
+      assert!(!search.searching());
+    }
+
+    #[test]
+    fn it_accepts_results_only_for_the_current_generation() {
+      let mut search = FacilitySearch::default();
+      let stale = search.set_query("Jita".to_owned());
+      let current = search.set_query("Jita IV".to_owned());
+
+      let accepted_stale = search.accept_results(stale, vec![sample(1, "Stale")]);
+      let accepted_current = search.accept_results(current, vec![sample(2, "Current")]);
+
+      assert!(!accepted_stale);
+      assert!(accepted_current);
+      assert_eq!(search.results(), &[sample(2, "Current")]);
+      assert!(!search.searching());
+    }
+
+    #[test]
+    fn it_clears_query_results_and_bumps_the_generation() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "Jita Keepstar")]);
+
+      search.clear();
+
+      assert_eq!(search.query(), "");
+      assert!(search.results().is_empty());
+      assert!(!search.searching());
+      assert_eq!(search.generation(), 2);
+    }
+
+    #[test]
+    fn it_steps_the_highlight_within_result_bounds() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "A"), sample(2, "B")]);
+
+      search.highlight_next();
+      assert_eq!(search.highlight(), Some(0));
+
+      search.highlight_next();
+      assert_eq!(search.highlight(), Some(1));
+
+      search.highlight_next();
+      assert_eq!(search.highlight(), Some(1));
+
+      search.highlight_prev();
+      assert_eq!(search.highlight(), Some(0));
+
+      search.highlight_prev();
+      assert_eq!(search.highlight(), Some(0));
+    }
+
+    #[test]
+    fn it_resolves_the_highlighted_result() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "A"), sample(2, "B")]);
+      search.highlight_next();
+      search.highlight_next();
+
+      assert_eq!(search.highlighted(), Some(&sample(2, "B")));
+    }
+
+    #[test]
+    fn it_clears_the_highlight_when_results_are_empty() {
+      let mut search = FacilitySearch::default();
+
+      search.highlight_next();
+
+      assert_eq!(search.highlight(), None);
+    }
+  }
+
+  mod facility_combobox {
+    use super::*;
+
+    #[test]
+    fn it_renders_an_empty_trigger() {
+      let _el: Element<'_, Message> = FacilityCombobox::new("", Vec::new(), Message::Input, |f| Message::Picked(f.id))
+        .placeholder("Ask each install")
+        .trigger();
+    }
+
+    #[test]
+    fn it_renders_a_trigger_with_a_selection() {
+      let _el: Element<'_, Message> = FacilityCombobox::new("", Vec::new(), Message::Input, |f| Message::Picked(f.id))
+        .selection(Some(sample(1, "Jita Keepstar")))
+        .placeholder("Jita Keepstar")
+        .trigger();
+    }
+
+    #[test]
+    fn it_renders_a_popover_with_results_and_a_footer() {
+      let results = vec![sample(1, "Jita Keepstar"), sample(2, "Perimeter Tranquility")];
+
+      let _el: Element<'_, Message> = FacilityCombobox::new("Jita", results, Message::Input, |f| Message::Picked(f.id))
+        .highlight(Some(0))
+        .on_clear(Message::Cleared)
+        .popover();
+    }
+
+    #[test]
+    fn it_renders_the_searching_state() {
+      let _el: Element<'_, Message> =
+        FacilityCombobox::new("Jita", Vec::new(), Message::Input, |f| Message::Picked(f.id))
+          .searching(true)
+          .popover();
+    }
+  }
+}

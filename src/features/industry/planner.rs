@@ -1150,6 +1150,7 @@ mod view {
       components::{
         badge::badge,
         clip::clip_layer,
+        facility_combobox::{FacilityCombobox, FacilityRef},
         icon::Icon,
         icon_tile::icon_tile,
         resizable_pane::pane_handle,
@@ -1163,7 +1164,6 @@ mod view {
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
   const FACILITY_PICKER_GAP: f32 = 6.0;
-  const FACILITY_PICKER_LIST_HEIGHT: f32 = 230.0;
   const FACILITY_PICKER_WIDTH: f32 = 320.0;
   /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
   /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
@@ -1821,39 +1821,23 @@ mod view {
     };
 
     let owned_path = path.to_vec();
-    let input = TextInput::new(placeholder, query, move |value| Message::FacilitySearchChanged {
-      path: owned_path.clone(),
-      query: value,
-    })
-    .leading_icon(Icon::search().color(if open {
-      color::accent::PLASMA
-    } else {
-      color::text::secondary()
-    }))
-    .background(color::surface::SUNKEN)
-    .width(Length::Fill)
-    .render();
+    let trigger = FacilityCombobox::new(
+      query,
+      Vec::new(),
+      move |value| Message::FacilitySearchChanged {
+        path: owned_path.clone(),
+        query: value,
+      },
+      |_| Message::MenuClosed,
+    )
+    .placeholder(placeholder)
+    .selection(selected.map(|facility| facility_ref(facility, is_reaction)))
+    .trigger();
 
-    let percent: Element<'a, Message> = match selected {
-      Some(facility) => text(format!(
-        "{:.2}% index",
-        facility.index_for(is_reaction).unwrap_or(0.0) * 100.0
-      ))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-      None => Space::new().into(),
-    };
-
-    Column::with_children(vec![
-      micro_label("Build at"),
-      container(input).width(Length::Fill).into(),
-      percent,
-    ])
-    .spacing(spacing::SPACE_2)
-    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-    .into()
+    Column::with_children(vec![micro_label("Build at"), trigger])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+      .into()
   }
 
   /// Floating results for the open "Build at" picker. Rendered in the planner's overlay Stack and anchored
@@ -1880,16 +1864,14 @@ mod view {
       .unwrap_or(false);
     let needle = state.query.trim().to_lowercase();
     let live = state.query.trim().chars().count() >= super::FACILITY_SEARCH_MIN_CHARS;
-    let selected_system = planner.selected_facility(path, is_reaction).map(|f| f.solar_system_id);
+    let selected = planner
+      .selected_facility(path, is_reaction)
+      .map(|f| facility_ref(f, is_reaction));
 
     // A query long enough to search surfaces the live ESI results (any reachable station/structure);
     // a shorter one filters the locally known accessible facilities.
-    let rows: Vec<Element<'_, Message>> = if live {
-      state
-        .results
-        .iter()
-        .map(|facility| facility_row(path, facility, is_reaction, selected_system))
-        .collect()
+    let facilities: Vec<FacilityRef> = if live {
+      state.results.iter().map(|f| facility_ref(f, is_reaction)).collect()
     } else {
       planner
         .data()
@@ -1901,45 +1883,30 @@ mod view {
             || facility.name.to_lowercase().contains(&needle)
             || facility.solar_system_id.to_string().contains(&needle)
         })
-        .map(|facility| facility_row(path, facility, is_reaction, selected_system))
+        .map(|f| facility_ref(f, is_reaction))
         .collect()
     };
 
-    let list: Element<'_, Message> = if rows.is_empty() {
-      let message = if state.searching {
-        "Searching\u{2026}"
-      } else if live {
-        "No facilities found."
-      } else {
-        "No facilities match."
-      };
-      centered(
-        text(message)
-          .font(typography::body::REGULAR)
-          .size(typography::size::SM)
-          .style(typography::colored(color::text::tertiary())),
-      )
-    } else {
-      scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
-        .style(crate::ui::style::control::scrollbar)
-        .width(Length::Fill)
-        .height(Length::Fixed(FACILITY_PICKER_LIST_HEIGHT))
-        .into()
-    };
+    let owned_path = path.to_vec();
+    let popover = FacilityCombobox::new(
+      state.query.as_str(),
+      facilities,
+      |_| Message::MenuClosed,
+      move |facility: FacilityRef| Message::FacilitySelected {
+        path: owned_path.clone(),
+        pin: pin_for(&facility),
+        solar_system_id: facility.solar_system_id,
+      },
+    )
+    .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+    .searching(state.searching)
+    .selection(selected)
+    .popover();
 
-    let panel = container(list)
-      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
-      .padding(spacing::SPACE_2)
-      .style(|_| container::Style {
-        background: Some(Background::Color(color::surface::RAISED)),
-        border: Border {
-          color: color::rule_strong(),
-          radius: radius::CARD.into(),
-          width: 1.0,
-        },
-        shadow: crate::ui::style::shadow::CARD,
-        ..container::Style::default()
-      });
+    let panel = container(popover).style(|_| container::Style {
+      shadow: crate::ui::style::shadow::CARD,
+      ..container::Style::default()
+    });
 
     // Right padding clears the detail pane and the card/pane gutters so the panel's right edge lines up with
     // the right-floated facility input rather than the planner's right edge.
@@ -1949,7 +1916,7 @@ mod view {
 
   /// The pin descriptor for a selected facility: `Some` for a player structure that must be persisted,
   /// `None` for an NPC station already known to the SDE.
-  fn pin_for(facility: &PlannerFacility) -> Option<super::PinnedStructure> {
+  fn pin_for(facility: &FacilityRef) -> Option<super::PinnedStructure> {
     (facility.id >= MIN_STRUCTURE_ID).then(|| super::PinnedStructure {
       id: facility.id,
       name: facility.name.clone(),
@@ -1958,65 +1925,19 @@ mod view {
     })
   }
 
-  fn facility_row<'a>(
-    path: &[i64],
-    facility: &'a PlannerFacility,
-    is_reaction: bool,
-    selected_system: Option<i64>,
-  ) -> Element<'a, Message> {
-    let on = selected_system == Some(facility.solar_system_id);
-    let pct = facility.index_for(is_reaction).unwrap_or(0.0) * 100.0;
-
-    let name = text(facility.name.clone())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(if on {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      }));
-    let system = text(facility.solar_system_id.to_string())
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary()));
-
-    let details = Column::with_children(vec![name.into(), system.into()])
-      .spacing(spacing::UNIT)
-      .width(Length::Fill);
-
-    let pct_label = text(format!("{pct:.2}%"))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::secondary()));
-
-    let row = Row::with_children(vec![details.into(), pct_label.into()])
-      .spacing(spacing::SPACE_2_5)
-      .align_y(Vertical::Center)
-      .width(Length::Fill);
-
-    button(row)
-      .width(Length::Fill)
-      .padding(Padding {
-        top: spacing::SPACE_2,
-        bottom: spacing::SPACE_2,
-        left: spacing::SPACE_2_5,
-        right: spacing::SPACE_2_5,
-      })
-      .on_press(Message::FacilitySelected {
-        path: path.to_vec(),
-        pin: pin_for(facility),
-        solar_system_id: facility.solar_system_id,
-      })
-      .style(move |_, _| button::Style {
-        background: on.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
-        border: Border {
-          radius: radius::CONTROL.into(),
-          ..Border::default()
-        },
-        text_color: color::text::PRIMARY,
-        ..button::Style::default()
-      })
-      .into()
+  /// Projects a [`PlannerFacility`] into the shared [`FacilityRef`], carrying the cost index for the active
+  /// activity (manufacturing or reaction) so the combobox can surface it per-row.
+  fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
+    FacilityRef {
+      cost_index: facility.index_for(is_reaction),
+      id: facility.id,
+      name: facility.name.clone(),
+      region: facility.region.clone(),
+      security_status: facility.security_status,
+      solar_system: facility.solar_system_id.to_string(),
+      solar_system_id: facility.solar_system_id,
+      type_id: facility.type_id,
+    }
   }
 
   fn build_vs_buy<'a>(planner: &'a Planner, type_id: i64, recipe: &'a Recipe, sub: &SubBuild) -> Element<'a, Message> {
@@ -3368,6 +3289,8 @@ mod tests {
       manufacturing_index: Some(manufacturing_index),
       name: name.to_owned(),
       reaction_index: Some(manufacturing_index),
+      region: None,
+      security_status: None,
       solar_system_id,
       type_id: None,
     }

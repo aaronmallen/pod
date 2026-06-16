@@ -1178,8 +1178,8 @@ mod view {
   use crate::{
     clients::eve_image::Size,
     features::industry::{
-      planner_loaders::{Category, PlannerData, PlannerFacility, Recipe},
-      planner_model::{SubBuild, eff_qty, runs_for},
+      planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
+      planner_model::{MergedBuildJob, NeededBlueprint, SubBuild, eff_qty, runs_for},
     },
     store::images::{self, IconResolution},
     ui::{
@@ -1289,6 +1289,7 @@ mod view {
 
     if let Some(plan) = plan.as_ref() {
       children.push(bill_of_materials(planner, plan));
+      children.push(needed_blueprints(planner, plan));
       children.push(build_order(planner, plan));
     }
 
@@ -2316,23 +2317,14 @@ mod view {
 
   fn build_order<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
     let data = planner.data();
-    let jobs = plan.build_order();
+    let jobs = plan.merged_build_order();
     let count = jobs.len();
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for (index, job) in jobs.iter().enumerate() {
-      let is_final = job.path.is_empty();
+      let is_final = job.is_root;
       let time = node_build_time(&recipe_for(data, job.type_id), job.runs, job.node.te);
-      let parent_name = if is_final {
-        "final product".to_owned()
-      } else {
-        let parent = if job.path.len() >= 2 {
-          job.path[job.path.len() - 2]
-        } else {
-          plan.root.type_id
-        };
-        format!("feeds \u{2192} {}", data.name(parent))
-      };
+      let parent_name = merged_feeds_line(data, job);
 
       let body = Row::with_children(vec![
         text(format!("{:02}", index + 1))
@@ -2423,6 +2415,180 @@ mod view {
     ])
     .spacing(spacing::SPACE_3)
     .into()
+  }
+
+  fn merged_feeds_line(data: &PlannerData, job: &MergedBuildJob) -> String {
+    if job.is_root {
+      return "final product".to_owned();
+    }
+    match job.consumers.as_slice() {
+      [consumer] => format!("feeds \u{2192} {}", data.name(*consumer)),
+      consumers => format!("feeds \u{2192} {} jobs", consumers.len()),
+    }
+  }
+
+  fn needed_blueprints<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
+    let data = planner.data();
+    let blueprints = plan.needed_blueprints();
+    let count = blueprints.len();
+    let missing = blueprints
+      .iter()
+      .filter(|bp| !data.owned.contains_key(&bp.type_id))
+      .count();
+
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    for blueprint in &blueprints {
+      rows.push(needed_blueprint_row(planner, blueprint));
+    }
+
+    let hint = format!(
+      "{count} blueprint{} \u{00B7} {}",
+      if count == 1 { "" } else { "s" },
+      if missing > 0 {
+        format!("{missing} to acquire")
+      } else {
+        "all owned".to_owned()
+      }
+    );
+
+    Column::with_children(vec![
+      section_label("Needed blueprints", Some(hint)),
+      container(Column::with_children(rows).width(Length::Fill))
+        .width(Length::Fill)
+        .style(bordered_table)
+        .into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .into()
+  }
+
+  fn needed_blueprint_row<'a>(planner: &'a Planner, blueprint: &NeededBlueprint) -> Element<'a, Message> {
+    let data = planner.data();
+    let recipe = recipe_for(data, blueprint.type_id);
+    let owned = data.owned.get(&blueprint.type_id);
+    let kind_word = if recipe.is_reaction { "Formula" } else { "Blueprint" };
+    let unit = if recipe.is_reaction { "cycles" } else { "runs" };
+
+    let name_row = Row::with_children(vec![
+      Row::with_children(vec![
+        text(data.name(blueprint.type_id))
+          .font(typography::body::MEDIUM)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::PRIMARY))
+          .into(),
+        text(kind_word)
+          .font(typography::body::REGULAR)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .spacing(spacing::UNIT + 1.0)
+      .align_y(Vertical::Center)
+      .into(),
+      activity_badge(recipe.is_reaction),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center);
+
+    let body = Row::with_children(vec![
+      blueprint_tile(recipe.blueprint_type_id, owned.map(|summary| !summary.is_original)),
+      Column::with_children(vec![
+        name_row.into(),
+        text(format!(
+          "{} job{} \u{00B7} \u{00D7}{} {unit} total",
+          blueprint.jobs,
+          if blueprint.jobs == 1 { "" } else { "s" },
+          fmt_num(blueprint.runs)
+        ))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill)
+      .into(),
+      blueprint_status_pill(owned),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+    let tinted = owned.is_none();
+    container(body)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_3,
+        bottom: spacing::SPACE_3,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .style(move |_| container::Style {
+        background: tinted.then(|| Background::Color(color::with_alpha(color::status::WARNING, 0.06))),
+        border: Border {
+          color: color::rule(),
+          radius: 0.0.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+
+  /// The acquire-status pill: owned reuses the BPO/BPC + ME badge wording (in-scope vs held-elsewhere), and a
+  /// missing blueprint shows the amber "BUY / INVENT" pill.
+  fn blueprint_status_pill<'a>(owned: Option<&OwnedSummary>) -> Element<'a, Message> {
+    match owned {
+      Some(summary) => {
+        let mut label = if summary.is_original {
+          "BPO".to_owned()
+        } else {
+          "BPC".to_owned()
+        };
+        if summary.material_efficiency > 0 {
+          label.push_str(&format!(" \u{00B7} ME{}", summary.material_efficiency));
+        }
+        if !summary.in_scope {
+          label.push_str(" \u{00B7} ELSEWHERE");
+        }
+        badge(
+          label,
+          Some(if summary.in_scope {
+            color::status::ONLINE
+          } else {
+            color::text::secondary()
+          }),
+        )
+      }
+      None => badge("BUY / INVENT", Some(color::status::WARNING)),
+    }
+  }
+
+  /// Resolves the blueprint (BPO/BPC) icon keyed on the recipe's `blueprint_type_id` — mirrors the Blueprints
+  /// tab tile. `is_copy` selects the BPC variant; `None` falls back to the BPO variant (unowned defaults to
+  /// BPO). Missing icons fall back to the copy glyph.
+  fn blueprint_tile<'a>(blueprint_type_id: i64, is_copy: Option<bool>) -> Element<'a, Message> {
+    let copy = is_copy.unwrap_or(false);
+    match images::default_store().resolve_type_icon(blueprint_type_id, Some(copy), TILE_ICON) {
+      IconResolution::Found(path) => icon_tile(
+        clip_layer(
+          image(image::Handle::from_path(path))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .content_fit(ContentFit::Cover),
+          Length::Fill,
+          Length::Fill,
+        ),
+        TILE_BOX,
+      ),
+      IconResolution::Missing => icon_tile(
+        Icon::copy()
+          .color(color::text::tertiary())
+          .size(TILE_BOX * 0.45)
+          .render::<Message>(),
+        TILE_BOX,
+      ),
+    }
   }
 
   fn right_pane<'a>(planner: &'a Planner, product: i64) -> Element<'a, Message> {
@@ -3295,8 +3461,10 @@ mod view {
 
   #[cfg(test)]
   mod tests {
+    use iced::advanced::widget::Tree;
+
     use super::*;
-    use crate::store::images::Store;
+    use crate::{features::industry::planner_model::BuildNode, store::images::Store};
 
     #[test]
     fn it_renders_type_tiles_at_the_bundled_icon_size() {
@@ -3313,6 +3481,89 @@ mod view {
       let resolved = store.resolve_type_icon(34, None, TILE_ICON);
 
       assert!(matches!(resolved, IconResolution::Found(_)));
+    }
+
+    #[test]
+    fn it_resolves_the_blueprint_tile_with_the_owned_copy_variant() {
+      // The Needed-blueprints tile keys on `Some(is_copy)`: an owned BPC resolves the `_bpc` variant, while a
+      // BPO resolves the plain icon — proving the tile asks for the blueprint variant, not the item icon.
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("999_bpc.png"), [1]).unwrap();
+      std::fs::write(committed.path().join("999.png"), [1]).unwrap();
+
+      let copy = store.resolve_type_icon(999, Some(true), TILE_ICON);
+      let original = store.resolve_type_icon(999, Some(false), TILE_ICON);
+
+      let IconResolution::Found(copy_path) = copy else {
+        panic!("expected a resolved copy icon");
+      };
+      let IconResolution::Found(original_path) = original else {
+        panic!("expected a resolved original icon");
+      };
+      assert!(copy_path.ends_with("999_bpc.png"));
+      assert!(original_path.ends_with("999.png"));
+    }
+
+    #[test]
+    fn it_renders_the_single_consumer_feeds_line() {
+      let mut data = PlannerData::default();
+      data.names.insert(42, "Hulk".to_owned());
+      let job = MergedBuildJob {
+        consumers: vec![42],
+        is_root: false,
+        needed_qty: 10,
+        node: BuildNode::new(7, 1, false, Vec::new()),
+        runs: 1,
+        type_id: 7,
+      };
+
+      assert_eq!(merged_feeds_line(&data, &job), "feeds \u{2192} Hulk");
+    }
+
+    #[test]
+    fn it_renders_the_multi_consumer_feeds_line_as_a_job_count() {
+      let data = PlannerData::default();
+      let job = MergedBuildJob {
+        consumers: vec![42, 43],
+        is_root: false,
+        needed_qty: 10,
+        node: BuildNode::new(7, 1, false, Vec::new()),
+        runs: 1,
+        type_id: 7,
+      };
+
+      assert_eq!(merged_feeds_line(&data, &job), "feeds \u{2192} 2 jobs");
+    }
+
+    #[test]
+    fn it_renders_the_root_feeds_line_as_the_final_product() {
+      let data = PlannerData::default();
+      let job = MergedBuildJob {
+        consumers: Vec::new(),
+        is_root: true,
+        needed_qty: 1,
+        node: BuildNode::new(7, 1, false, Vec::new()),
+        runs: 1,
+        type_id: 7,
+      };
+
+      assert_eq!(merged_feeds_line(&data, &job), "final product");
+    }
+
+    #[test]
+    fn it_labels_a_missing_blueprint_for_acquisition() {
+      let none = blueprint_status_pill(None);
+      let _ = Tree::new(none.as_widget());
+
+      let owned = blueprint_status_pill(Some(&OwnedSummary {
+        in_scope: false,
+        is_original: true,
+        material_efficiency: 10,
+        time_efficiency: 20,
+      }));
+      let _ = Tree::new(owned.as_widget());
     }
   }
 }
@@ -3883,6 +4134,99 @@ mod tests {
         path: vec![RETRIEVER],
       });
       let _ = Tree::new(super::super::view(&nested, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_needed_blueprints_section_across_owned_and_missing_states() {
+      // No owned blueprints — every needed blueprint shows the amber BUY / INVENT pill, all rows tinted.
+      let mut missing = planner();
+      missing.update(Message::BreakDownAll);
+      let _ = Tree::new(super::super::view(&missing, Scope::All).as_widget());
+
+      // Mark the in-house RETRIEVER blueprint as owned in-scope; its row reuses the owned BPO/ME badge.
+      let mut owned = planner();
+      owned.update(Message::BreakDownAll);
+      owned.data.owned.insert(
+        RETRIEVER,
+        OwnedSummary {
+          in_scope: true,
+          is_original: false,
+          material_efficiency: 8,
+          time_efficiency: 16,
+        },
+      );
+      owned.data.owned.insert(
+        HULK,
+        OwnedSummary {
+          in_scope: false,
+          is_original: true,
+          material_efficiency: 0,
+          time_efficiency: 0,
+        },
+      );
+      let _ = Tree::new(super::super::view(&owned, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_merged_build_order_with_a_multi_consumer_subline() {
+      // Root SHIP consumes two buildable sub-assemblies (LEFT, RIGHT), each of which consumes the same
+      // buildable PLATE — so the merged build order collapses PLATE into one row fed by two jobs.
+      const SHIP: i64 = 90_000;
+      const LEFT: i64 = 90_001;
+      const RIGHT: i64 = 90_002;
+      const PLATE: i64 = 90_003;
+      const ORE: i64 = 90_004;
+
+      let mut data = PlannerData::default();
+      data.recipes.insert(
+        SHIP,
+        recipe(
+          SHIP + 1,
+          1,
+          false,
+          vec![Material::new(LEFT, 1), Material::new(RIGHT, 1)],
+        ),
+      );
+      data
+        .recipes
+        .insert(LEFT, recipe(LEFT + 1, 1, false, vec![Material::new(PLATE, 3)]));
+      data
+        .recipes
+        .insert(RIGHT, recipe(RIGHT + 1, 1, false, vec![Material::new(PLATE, 4)]));
+      data
+        .recipes
+        .insert(PLATE, recipe(PLATE + 1, 1, false, vec![Material::new(ORE, 5)]));
+      for (id, name) in [
+        (SHIP, "Ship"),
+        (LEFT, "Left"),
+        (RIGHT, "Right"),
+        (PLATE, "Plate"),
+        (ORE, "Ore"),
+      ] {
+        data.names.insert(id, name.to_owned());
+        data.prices.insert(id, 1.0);
+      }
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Test".to_owned(),
+        is_reaction: false,
+        name: "Ship".to_owned(),
+        type_id: SHIP,
+        volume: 1.0,
+      });
+
+      let mut planner = Planner::new();
+      planner.apply_data(data);
+      planner.update(Message::ProductPicked(SHIP));
+      planner.update(Message::RunsChanged(1));
+      planner.update(Message::BreakDownAll);
+
+      // PLATE merges to a single job consumed by both LEFT and RIGHT.
+      let merged = planner.plan().unwrap().merged_build_order();
+      let plate = merged.iter().find(|job| job.type_id == PLATE).unwrap();
+      assert_eq!(plate.consumers.len(), 2);
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
     }
   }
 

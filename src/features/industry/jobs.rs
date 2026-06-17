@@ -155,17 +155,21 @@ pub(super) fn progress_bar<'a>(pct: f32, fill: iced::Color, height: f32, glow: b
 }
 
 pub(super) fn sec_pill<'a>(security: Option<f64>) -> Element<'a, Message> {
-  let (label, fill) = match security {
-    Some(sec) if sec > 0.45 => (format!("{sec:.1}"), color::status::ONLINE),
-    Some(sec) if sec > 0.0 => (format!("{sec:.1}"), color::status::WARNING),
-    Some(sec) => (format!("{sec:.1}"), color::status::DANGER),
-    None => ("\u{2014}".to_owned(), color::text::tertiary()),
-  };
+  let (label, fill) = sec_pill_parts(security);
   text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(fill))
     .into()
+}
+
+fn sec_pill_parts(security: Option<f64>) -> (String, iced::Color) {
+  match security {
+    Some(sec) if sec > 0.45 => (format!("{sec:.1}"), color::status::ONLINE),
+    Some(sec) if sec > 0.0 => (format!("{sec:.1}"), color::status::WARNING),
+    Some(sec) => (format!("{sec:.1}"), color::status::DANGER),
+    None => ("\u{2014}".to_owned(), color::text::tertiary()),
+  }
 }
 
 fn blueprint_tile<'a>(blueprint_icon: &IconResolution, box_size: f32) -> Element<'a, Message> {
@@ -410,11 +414,7 @@ fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message>
   let pct = job.progress(now);
   let remaining = job.remaining_seconds(now);
 
-  let bar = if ready {
-    color::status::ONLINE
-  } else {
-    activity_color(job.activity)
-  };
+  let bar = bar_color(ready, job.activity);
 
   let identity = Row::with_children(vec![
     blueprint_tile(&job.blueprint_icon, TILE_BOX_COMFORTABLE),
@@ -426,19 +426,11 @@ fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message>
 
   let progress = Column::with_children(vec![
     Row::with_children(vec![
-      text(if ready {
-        "COMPLETE".to_owned()
-      } else {
-        format!("{}%", pct.floor() as i64)
-      })
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(if ready {
-        color::status::ONLINE
-      } else {
-        color::text::secondary()
-      }))
-      .into(),
+      text(progress_label(ready, pct))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(progress_color(ready)))
+        .into(),
       Space::new().width(Length::Fill).into(),
       text(eta_label(job, now))
         .font(typography::mono::REGULAR)
@@ -483,47 +475,43 @@ fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message>
     .into()
 }
 
+fn bar_color(ready: bool, activity: Activity) -> iced::Color {
+  if ready {
+    color::status::ONLINE
+  } else {
+    activity_color(activity)
+  }
+}
+
+fn progress_color(ready: bool) -> iced::Color {
+  if ready {
+    color::status::ONLINE
+  } else {
+    color::text::secondary()
+  }
+}
+
+fn progress_label(ready: bool, pct: f32) -> String {
+  if ready {
+    "COMPLETE".to_owned()
+  } else {
+    format!("{}%", pct.floor() as i64)
+  }
+}
+
 fn countdown_column<'a>(job: &'a IndustryJob, now: DateTime<Utc>, ready: bool, remaining: i64) -> Element<'a, Message> {
   let _ = now;
-  let countdown: Element<'a, Message> = if ready {
-    Row::with_children(vec![
-      Icon::check()
-        .color(color::status::ONLINE)
-        .size(13.0)
-        .render::<Message>(),
-      text("Ready")
-        .font(typography::mono::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(color::status::ONLINE))
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center)
-    .into()
+  let countdown = if ready {
+    ready_countdown()
   } else {
-    let countdown_color = if remaining < COUNTDOWN_WARNING_SECS {
-      color::status::WARNING
-    } else {
-      color::text::PRIMARY
-    };
     text(fmt_duration(remaining))
       .font(typography::mono::MEDIUM)
       .size(typography::size::LG)
-      .style(typography::colored(countdown_color))
+      .style(typography::colored(countdown_color(remaining)))
       .into()
   };
 
-  let (value_text, value_color) = match job.value {
-    Some(value) if value > 0.0 => (format!("{} out", fmt_isk(value)), color::accent::PLASMA),
-    _ => (
-      match job.activity {
-        Activity::Invention => "invention".to_owned(),
-        Activity::Copy => "copy".to_owned(),
-        _ => "\u{2014}".to_owned(),
-      },
-      color::text::tertiary(),
-    ),
-  };
+  let (value_text, value_color) = countdown_value_parts(job);
 
   Column::with_children(vec![
     countdown,
@@ -539,6 +527,46 @@ fn countdown_column<'a>(job: &'a IndustryJob, now: DateTime<Utc>, ready: bool, r
   .into()
 }
 
+fn countdown_color(remaining: i64) -> iced::Color {
+  if remaining < COUNTDOWN_WARNING_SECS {
+    color::status::WARNING
+  } else {
+    color::text::PRIMARY
+  }
+}
+
+fn countdown_value_parts(job: &IndustryJob) -> (String, iced::Color) {
+  match job.value {
+    Some(value) if value > 0.0 => (format!("{} out", fmt_isk(value)), color::accent::PLASMA),
+    _ => (idle_value_label(job.activity).to_owned(), color::text::tertiary()),
+  }
+}
+
+fn idle_value_label(activity: Activity) -> &'static str {
+  match activity {
+    Activity::Copy => "copy",
+    Activity::Invention => "invention",
+    _ => "\u{2014}",
+  }
+}
+
+fn ready_countdown<'a>() -> Element<'a, Message> {
+  Row::with_children(vec![
+    Icon::check()
+      .color(color::status::ONLINE)
+      .size(13.0)
+      .render::<Message>(),
+    text("Ready")
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::status::ONLINE))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
 fn eta_label(job: &IndustryJob, now: DateTime<Utc>) -> String {
   match job.end() {
     Some(end) if job.is_ready(now) => format!("done {}", fmt_clock(end)),
@@ -548,21 +576,17 @@ fn eta_label(job: &IndustryJob, now: DateTime<Utc>) -> String {
 }
 
 fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
-  let name_size = typography::size::LG;
-
   let mut first_line: Vec<Element<'a, Message>> = vec![
     text(job.product_name.clone())
       .font(typography::body::MEDIUM)
-      .size(name_size)
+      .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
     activity_chip(job.activity, true),
   ];
-  if job.activity == Activity::Invention
-    && let Some(prob) = job.probability
-  {
+  if let Some(label) = success_label(job) {
     first_line.push(
-      text(format!("{}% success", (prob * 100.0).round() as i64))
+      text(label)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary()))
@@ -570,14 +594,8 @@ fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
     );
   }
 
-  let runs_word = match job.activity {
-    Activity::Copy => "copies",
-    Activity::Invention => "tries",
-    _ => "runs",
-  };
-
   let mut second_line: Vec<Element<'a, Message>> = vec![
-    text(format!("\u{00D7}{} {runs_word}", job.runs))
+    text(format!("\u{00D7}{} {}", job.runs, runs_word(job.activity)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::PRIMARY))
@@ -614,6 +632,21 @@ fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
   .spacing(spacing::UNIT)
   .width(Length::Fill)
   .into()
+}
+
+fn runs_word(activity: Activity) -> &'static str {
+  match activity {
+    Activity::Copy => "copies",
+    Activity::Invention => "tries",
+    _ => "runs",
+  }
+}
+
+fn success_label(job: &IndustryJob) -> Option<String> {
+  match (job.activity, job.probability) {
+    (Activity::Invention, Some(prob)) => Some(format!("{}% success", (prob * 100.0).round() as i64)),
+    _ => None,
+  }
 }
 
 fn dot<'a>() -> Element<'a, Message> {
@@ -726,4 +759,209 @@ fn group_rows(jobs: &[IndustryJob], filtered: &[usize], group_by: GroupBy, now: 
     rows.extend(members.into_iter().map(JobRowItem::Job));
   }
   rows
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{super::Owner, *};
+
+  fn job(activity: Activity, value: Option<f64>, probability: Option<f64>) -> IndustryJob {
+    IndustryJob {
+      activity,
+      blueprint_icon: IconResolution::Missing,
+      cost: 0.0,
+      end_date: String::new(),
+      facility: "Jita IV - 4".to_owned(),
+      installer: String::new(),
+      job_id: 1,
+      owner: Owner::Character(1),
+      owner_name: "Pilot".to_owned(),
+      probability,
+      product_name: "Widget".to_owned(),
+      runs: 1,
+      security: None,
+      start_date: String::new(),
+      system_name: None,
+      value,
+    }
+  }
+
+  mod bar_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_online_when_ready() {
+      assert_eq!(bar_color(true, Activity::Reactions), color::status::ONLINE);
+    }
+
+    #[test]
+    fn it_is_the_activity_color_when_not_ready() {
+      assert_eq!(
+        bar_color(false, Activity::Reactions),
+        activity_color(Activity::Reactions)
+      );
+    }
+  }
+
+  mod countdown_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_warns_under_the_threshold() {
+      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS - 1), color::status::WARNING);
+    }
+
+    #[test]
+    fn it_is_primary_at_or_above_the_threshold() {
+      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS), color::text::PRIMARY);
+    }
+  }
+
+  mod countdown_value_parts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_shows_isk_out_for_a_positive_value() {
+      let (label, fill) = countdown_value_parts(&job(Activity::Manufacturing, Some(1_000.0), None));
+
+      assert_eq!(label, format!("{} out", fmt_isk(1_000.0)));
+      assert_eq!(fill, color::accent::PLASMA);
+    }
+
+    #[test]
+    fn it_falls_back_to_the_idle_label_for_zero_or_missing_value() {
+      let (label, fill) = countdown_value_parts(&job(Activity::Invention, Some(0.0), None));
+
+      assert_eq!(label, "invention");
+      assert_eq!(fill, color::text::tertiary());
+    }
+
+    #[test]
+    fn it_falls_back_to_the_idle_label_when_value_is_none() {
+      let (label, _) = countdown_value_parts(&job(Activity::Manufacturing, None, None));
+
+      assert_eq!(label, "\u{2014}");
+    }
+  }
+
+  mod idle_value_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_labels_copy_and_invention_and_dashes_others() {
+      assert_eq!(idle_value_label(Activity::Copy), "copy");
+      assert_eq!(idle_value_label(Activity::Invention), "invention");
+      assert_eq!(idle_value_label(Activity::Manufacturing), "\u{2014}");
+    }
+  }
+
+  mod progress_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_online_when_ready_else_secondary() {
+      assert_eq!(progress_color(true), color::status::ONLINE);
+      assert_eq!(progress_color(false), color::text::secondary());
+    }
+  }
+
+  mod progress_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_says_complete_when_ready() {
+      assert_eq!(progress_label(true, 42.0), "COMPLETE");
+    }
+
+    #[test]
+    fn it_floors_the_percentage_when_not_ready() {
+      assert_eq!(progress_label(false, 42.9), "42%");
+    }
+  }
+
+  mod runs_word {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_picks_the_word_per_activity() {
+      assert_eq!(runs_word(Activity::Copy), "copies");
+      assert_eq!(runs_word(Activity::Invention), "tries");
+      assert_eq!(runs_word(Activity::Manufacturing), "runs");
+    }
+  }
+
+  mod sec_pill_parts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_online_in_high_sec() {
+      let (label, fill) = sec_pill_parts(Some(0.5));
+
+      assert_eq!(label, "0.5");
+      assert_eq!(fill, color::status::ONLINE);
+    }
+
+    #[test]
+    fn it_is_warning_in_low_sec() {
+      let (label, fill) = sec_pill_parts(Some(0.4));
+
+      assert_eq!(label, "0.4");
+      assert_eq!(fill, color::status::WARNING);
+    }
+
+    #[test]
+    fn it_is_danger_in_null_sec() {
+      let (label, fill) = sec_pill_parts(Some(0.0));
+
+      assert_eq!(label, "0.0");
+      assert_eq!(fill, color::status::DANGER);
+    }
+
+    #[test]
+    fn it_dashes_an_unknown_security() {
+      let (label, fill) = sec_pill_parts(None);
+
+      assert_eq!(label, "\u{2014}");
+      assert_eq!(fill, color::text::tertiary());
+    }
+  }
+
+  mod success_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_rounded_probability_for_invention() {
+      let label = success_label(&job(Activity::Invention, None, Some(0.426)));
+
+      assert_eq!(label, Some("43% success".to_owned()));
+    }
+
+    #[test]
+    fn it_is_none_for_invention_without_probability() {
+      assert_eq!(success_label(&job(Activity::Invention, None, None)), None);
+    }
+
+    #[test]
+    fn it_is_none_for_non_invention_activities() {
+      assert_eq!(success_label(&job(Activity::Manufacturing, None, Some(0.5))), None);
+    }
+  }
 }

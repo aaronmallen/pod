@@ -10,13 +10,13 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct Blueprint {
   pub item_id: i64,
-  pub type_id: i32,
-  pub location_id: i64,
   pub location_flag: String,
-  pub quantity: i32,
+  pub location_id: i64,
   pub material_efficiency: i32,
-  pub time_efficiency: i32,
+  pub quantity: i32,
   pub runs: i32,
+  pub time_efficiency: i32,
+  pub type_id: i32,
 }
 
 #[cfg(test)]

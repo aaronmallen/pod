@@ -264,12 +264,12 @@ mod tests {
   }
 
   struct Harness {
-    _images_dir: tempfile::TempDir,
     db: store::Database,
     esi: esi::Client,
+    grant: Grant,
     image: eve_image::Client,
     image_store: images::Store,
-    grant: Grant,
+    _images_dir: tempfile::TempDir,
   }
 
   impl Harness {

@@ -7,10 +7,10 @@ pub struct Model {
   pub character_id: i64,
   #[getset(get_copy = "pub")]
   pub is_read: bool,
-  #[getset(get_copy = "pub")]
-  pub notification_id: i64,
   #[getset(get = "pub")]
   pub notif_type: String,
+  #[getset(get_copy = "pub")]
+  pub notification_id: i64,
   #[getset(get_copy = "pub")]
   pub sender_id: Option<i64>,
   #[getset(get = "pub")]

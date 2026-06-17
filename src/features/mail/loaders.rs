@@ -257,8 +257,8 @@ async fn count_snoozed_unread(db: &Database, character_id: i64, now: &str, unrea
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OutboxIndicator {
-  pub pending: i64,
   pub failed: Vec<FailedMutation>,
+  pub pending: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

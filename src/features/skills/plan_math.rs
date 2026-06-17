@@ -38,11 +38,11 @@ pub struct Plan {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlanEntry {
+  pub partial_sp_at_from: u64,
   pub primary: Attribute,
   pub rank: f64,
   pub secondary: Attribute,
   pub skill_id: i64,
-  pub partial_sp_at_from: u64,
   pub synced_trained_level: u8,
   pub to_level: u8,
 }
@@ -53,9 +53,9 @@ pub struct PlanItem {
   pub cumulative_sp: u64,
   pub eta_secs: f64,
   pub from_level: u8,
-  pub skipped: bool,
-  pub skill_id: i64,
   pub sec: f64,
+  pub skill_id: i64,
+  pub skipped: bool,
   pub sp: u64,
   pub to_level: u8,
 }

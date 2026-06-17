@@ -111,13 +111,13 @@ pub(super) async fn unsnooze(db: Database, character_id: i64, mail_id: i64) {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Calendar {
-  pub view_year: i32,
-  pub view_month0: u32,
-  pub sel_year: i32,
-  pub sel_month0: u32,
-  pub sel_day: u32,
   pub hour: u32,
   pub minute: u32,
+  pub sel_day: u32,
+  pub sel_month0: u32,
+  pub sel_year: i32,
+  pub view_month0: u32,
+  pub view_year: i32,
 }
 
 impl Calendar {
@@ -206,10 +206,10 @@ impl Calendar {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct DayCell {
-  pub year: i32,
-  pub month0: u32,
   pub day: u32,
   pub in_month: bool,
+  pub month0: u32,
+  pub year: i32,
 }
 
 pub(super) fn month_grid(year: i32, month0: u32) -> Vec<DayCell> {

@@ -396,14 +396,14 @@ fn all_assets_row<'a>(selected: bool) -> Element<'a, Message> {
 }
 
 struct RowSpec<'a> {
-  depth: usize,
-  tier: Tier,
   caret: Option<(GeoNodeKey, bool)>,
-  name: &'a str,
+  depth: usize,
   metric: Option<String>,
+  name: &'a str,
+  on_press: Message,
   sec: Option<f64>,
   selected: bool,
-  on_press: Message,
+  tier: Tier,
 }
 
 fn caret_slot<'a>(caret: Option<(GeoNodeKey, bool)>) -> Element<'a, Message> {

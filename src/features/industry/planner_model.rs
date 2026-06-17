@@ -284,8 +284,8 @@ pub struct RawTotal {
 /// the total drawn per `(site, type_id)` pool, used to net reserved stock through [`BuildPlan::raw_totals`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StockAllocation {
-  pub draws: Vec<StockDraw>,
   pub drawn_by_pool: HashMap<(i64, i64), i64>,
+  pub draws: Vec<StockDraw>,
 }
 
 impl StockAllocation {

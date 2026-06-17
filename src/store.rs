@@ -79,9 +79,9 @@ pub async fn open(path: &Path) -> Result<Database, Error> {
 /// auth/roster reads, the sync worker pool, and the single-connection housekeeping pool. See the
 /// individual `open*` functions for why each exists.
 pub struct Pools {
+  pub housekeeping: Database,
   pub interactive: Database,
   pub sync: Database,
-  pub housekeeping: Database,
 }
 
 /// Opens all three app pools over one database file. `open` runs migrations once; the sync and

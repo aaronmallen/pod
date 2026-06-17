@@ -76,8 +76,8 @@ pub struct ComputedRow {
   pub rank: u8,
   pub sec: f64,
   pub secondary: AttrKey,
-  pub skipped: bool,
   pub skill_name: String,
+  pub skipped: bool,
   pub sp: u64,
   pub to_level: u8,
 }
@@ -95,8 +95,8 @@ pub struct EditEntry {
 
 #[derive(Clone, Copy, Debug)]
 pub struct EditRemap {
-  base: Attributes,
   after_entry_id: Option<i64>,
+  base: Attributes,
   local_id: i64,
 }
 
@@ -124,8 +124,8 @@ pub struct Loaded {
   entries: Vec<EditEntry>,
   plan: Option<SkillPlan>,
   remap_availability: u32,
-  remap_reason: String,
   remap_points: Vec<EditRemap>,
+  remap_reason: String,
   ship_mastery: HashMap<i64, u8>,
   sort: Sort,
   synced_sp: HashMap<i64, u64>,
@@ -337,38 +337,38 @@ impl SortDirection {
 
 #[derive(Debug)]
 pub struct State {
-  character_id: i64,
-  name: String,
-  picker_open: bool,
-  sort: Sort,
-  note_open: Option<i64>,
-  dragging: Option<i64>,
-  drop_index: Option<usize>,
-  hovered_gap: Option<i64>,
-  io_panel: Option<IoPanel>,
-  pending_import: Option<import_export::Payload>,
-  saved: Snapshot,
-  dirty: bool,
-  next_remap_id: i64,
-  next_entry_id: i64,
-  picker: PickerState,
-  picker_pane: PaneDrag,
-  summary_pane: PaneDrag,
-  dragging_pane: Option<EditorPane>,
   attrs: Attributes,
   base_attrs: Attributes,
+  character_id: i64,
   character_total_sp: u64,
+  dirty: bool,
+  dragging: Option<i64>,
+  dragging_pane: Option<EditorPane>,
+  drop_index: Option<usize>,
   entries: Vec<EditEntry>,
+  hovered_gap: Option<i64>,
+  io_panel: Option<IoPanel>,
+  name: String,
+  next_entry_id: i64,
+  next_remap_id: i64,
+  note_open: Option<i64>,
+  pending_import: Option<import_export::Payload>,
+  picker: PickerState,
+  picker_open: bool,
+  picker_pane: PaneDrag,
   plan: Option<SkillPlan>,
   remap_availability: u32,
-  remap_reason: String,
   remap_points: Vec<EditRemap>,
+  remap_reason: String,
+  rows: Vec<ComputedRow>,
+  saved: Snapshot,
+  sort: Sort,
+  summary: summary::SummaryData,
+  summary_pane: PaneDrag,
   synced_levels: HashMap<i64, u8>,
   synced_sp: HashMap<i64, u64>,
-  rows: Vec<ComputedRow>,
-  summary: summary::SummaryData,
-  total_sp: u64,
   total_sec: f64,
+  total_sp: u64,
 }
 
 impl State {
@@ -691,15 +691,15 @@ pub(super) struct RemapControls<'a> {
 
 struct CharacterAttrs {
   attrs: Attributes,
-  base_attrs: Attributes,
   availability: u32,
+  base_attrs: Attributes,
   reason: String,
 }
 
 struct Computed {
   rows: Vec<ComputedRow>,
-  total_sp: u64,
   total_sec: f64,
+  total_sp: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -722,21 +722,21 @@ enum ImportMode {
 #[derive(Clone, Debug)]
 struct RemapSave {
   anchor_index: Option<usize>,
-  base_perception: i64,
-  base_memory: i64,
-  base_willpower: i64,
-  base_intelligence: i64,
   base_charisma: i64,
+  base_intelligence: i64,
+  base_memory: i64,
+  base_perception: i64,
+  base_willpower: i64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Snapshot {
-  name: String,
-  sort: Sort,
+  cert_proficiency: Vec<(i64, usize)>,
   entries: Vec<(i64, u8, Priority, String, bool)>,
+  name: String,
   remaps: Vec<(Option<i64>, i64, i64, i64, i64, i64)>,
   ship_mastery: Vec<(i64, u8)>,
-  cert_proficiency: Vec<(i64, usize)>,
+  sort: Sort,
 }
 
 pub fn load(db: &Database, character_id: i64, seed: Seed) -> Task<Message> {

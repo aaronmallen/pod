@@ -29,8 +29,8 @@ pub(super) const MINUTES_PER_DAY: i64 = 1440;
 
 #[derive(Clone, Copy)]
 pub(super) struct Packed<'a> {
-  pub event: &'a CalendarEvent,
   pub end_minute: i64,
+  pub event: &'a CalendarEvent,
   /// Zero-based column index within the overlap cluster.
   pub lane: usize,
   /// Total columns in the cluster; callers divide available width by this to size each lane.

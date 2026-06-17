@@ -392,13 +392,13 @@ mod tests {
   }
 
   struct Fixture {
-    _server: MockServer,
     db: store::Database,
     esi: esi::Client,
+    grant: Grant,
     image: eve_image::Client,
     image_store: images::Store,
     _images_dir: tempfile::TempDir,
-    grant: Grant,
+    _server: MockServer,
   }
 
   async fn fixture(server: MockServer, character_id: i64) -> Fixture {

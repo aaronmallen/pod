@@ -48,28 +48,28 @@ impl PickerTab {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PickerShip {
-  pub id: i64,
-  pub name: String,
   pub group_id: i64,
   pub group_name: String,
+  pub id: i64,
+  pub name: String,
   pub own_requirements: Vec<(i64, u8)>,
   pub tier_cert_skills: Vec<Vec<CertificateSkill>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PickerModule {
-  pub id: i64,
-  pub name: String,
   pub group_id: i64,
   pub group_name: String,
+  pub id: i64,
+  pub name: String,
   pub requirements: Vec<(i64, u8)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PickerCert {
+  pub grade: i64,
   pub id: i64,
   pub name: String,
-  pub grade: i64,
   pub skills: Vec<CertificateSkill>,
 }
 

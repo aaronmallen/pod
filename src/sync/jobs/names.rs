@@ -131,8 +131,8 @@ mod tests {
       let max_batch = Arc::new(AtomicUsize::new(0));
 
       struct CountingResponder {
-        request_count: Arc<AtomicUsize>,
         max_batch: Arc<AtomicUsize>,
+        request_count: Arc<AtomicUsize>,
       }
       impl Respond for CountingResponder {
         fn respond(&self, request: &Request) -> ResponseTemplate {

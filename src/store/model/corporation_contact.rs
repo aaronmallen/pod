@@ -4,13 +4,13 @@ use sqlx::FromRow;
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
 pub struct Model {
   #[getset(get_copy = "pub")]
-  pub corporation_id: i64,
-  #[getset(get_copy = "pub")]
   pub contact_id: i64,
   #[getset(get = "pub")]
   pub contact_name: String,
   #[getset(get = "pub")]
   pub contact_type: String,
+  #[getset(get_copy = "pub")]
+  pub corporation_id: i64,
   #[getset(get_copy = "pub")]
   pub is_blocked: bool,
   #[getset(get_copy = "pub")]

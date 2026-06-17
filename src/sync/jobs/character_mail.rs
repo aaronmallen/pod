@@ -361,13 +361,13 @@ mod tests {
   }
 
   struct Fixture {
-    _server: MockServer,
     db: store::Database,
     esi: esi::Client,
+    grant: Grant,
     image: eve_image::Client,
     image_store: images::Store,
     _images_dir: tempfile::TempDir,
-    grant: Grant,
+    _server: MockServer,
   }
 
   async fn fixture(server: MockServer, character_id: i64) -> Fixture {
@@ -783,9 +783,9 @@ mod tests {
     #[tokio::test]
     async fn it_reconciles_a_removed_label_and_membership_on_resync() {
       struct Sequenced {
+        calls: Arc<AtomicUsize>,
         first: serde_json::Value,
         rest: serde_json::Value,
-        calls: Arc<AtomicUsize>,
       }
       impl Respond for Sequenced {
         fn respond(&self, _: &Request) -> ResponseTemplate {

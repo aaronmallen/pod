@@ -157,6 +157,8 @@ pub struct Contract {
   #[serde(default)]
   pub collateral: Option<f64>,
   pub contract_id: i64,
+  #[serde(rename = "type", default)]
+  pub contract_type: Option<String>,
   #[serde(default)]
   pub date_accepted: Option<String>,
   #[serde(default)]
@@ -185,8 +187,6 @@ pub struct Contract {
   pub status: Option<String>,
   #[serde(default)]
   pub title: Option<String>,
-  #[serde(rename = "type", default)]
-  pub contract_type: Option<String>,
   #[serde(default)]
   pub volume: Option<f64>,
 }

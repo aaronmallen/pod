@@ -51,9 +51,9 @@ impl LocalizedString {
 
 #[derive(Deserialize)]
 struct SdeCategoryEntry {
-  name: LocalizedString,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  name: LocalizedString,
   #[serde(default = "default_true")]
   published: bool,
 }
@@ -62,44 +62,44 @@ struct SdeCategoryEntry {
 struct SdeGroupEntry {
   #[serde(rename = "categoryID")]
   category_id: i64,
-  name: LocalizedString,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  name: LocalizedString,
   #[serde(default = "default_true")]
   published: bool,
 }
 
 #[derive(Deserialize)]
 struct SdeMarketGroupEntry {
-  name: Option<LocalizedString>,
   description: Option<LocalizedString>,
   #[serde(rename = "hasTypes")]
   has_types: Option<bool>,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  name: Option<LocalizedString>,
   #[serde(rename = "parentGroupID")]
   parent_group_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
 struct SdeTypeEntry {
-  name: LocalizedString,
+  capacity: Option<f64>,
   description: Option<LocalizedString>,
   #[serde(rename = "groupID")]
   group_id: i64,
+  #[serde(rename = "iconID")]
+  icon_id: Option<i64>,
   #[serde(rename = "marketGroupID")]
   market_group_id: Option<i64>,
-  capacity: Option<f64>,
-  volume: Option<f64>,
+  name: LocalizedString,
   #[serde(rename = "packagedVolume")]
   packaged_volume: Option<f64>,
   #[serde(rename = "portionSize")]
   portion_size: Option<i32>,
-  radius: Option<f64>,
   #[serde(default = "default_true")]
   published: bool,
-  #[serde(rename = "iconID")]
-  icon_id: Option<i64>,
+  radius: Option<f64>,
+  volume: Option<f64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -117,17 +117,17 @@ struct SdeDogmaAttribute {
 
 #[derive(Deserialize)]
 struct SdeDogmaAttrEntry {
-  name: String,
-  #[serde(rename = "displayName")]
-  display_name: Option<LocalizedString>,
-  #[serde(default)]
-  description: Option<String>,
   #[serde(rename = "defaultValue")]
   default_value: Option<f64>,
+  #[serde(default)]
+  description: Option<String>,
+  #[serde(rename = "displayName")]
+  display_name: Option<LocalizedString>,
   #[serde(rename = "highIsGood", default)]
   high_is_good: bool,
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
+  name: String,
   #[serde(default)]
   published: bool,
   #[serde(default = "default_true")]
@@ -146,8 +146,8 @@ struct SdeDynamicEntry {
 
 #[derive(Deserialize)]
 struct SdeDynamicAttrBounds {
-  min: f64,
   max: f64,
+  min: f64,
 }
 
 #[derive(Deserialize)]
@@ -158,62 +158,62 @@ struct SdeDynamicMapping {
 
 #[derive(Deserialize)]
 struct SdeRaceEntry {
-  name: Option<LocalizedString>,
   #[serde(rename = "allianceID")]
   alliance_id: Option<i32>,
+  name: Option<LocalizedString>,
 }
 
 #[derive(Deserialize)]
 struct SdeBloodlineEntry {
-  name: Option<LocalizedString>,
-  #[serde(rename = "raceID", default)]
-  race_id: i32,
-  #[serde(rename = "corporationID", default)]
-  corporation_id: i32,
-  #[serde(rename = "shipTypeID", default)]
-  ship_type_id: i32,
   #[serde(default)]
   charisma: i32,
+  #[serde(rename = "corporationID", default)]
+  corporation_id: i32,
   #[serde(default)]
   intelligence: i32,
   #[serde(default)]
   memory: i32,
+  name: Option<LocalizedString>,
   #[serde(default)]
   perception: i32,
+  #[serde(rename = "raceID", default)]
+  race_id: i32,
+  #[serde(rename = "shipTypeID", default)]
+  ship_type_id: i32,
   #[serde(default)]
   willpower: i32,
 }
 
 #[derive(Deserialize)]
 struct SdeFactionEntry {
+  #[serde(rename = "isUnique")]
+  is_unique: Option<bool>,
   name: Option<LocalizedString>,
   #[serde(rename = "sizeFactor", default = "default_one_f64")]
   size_factor: f64,
   #[serde(rename = "solarSystemID")]
   solar_system_id: Option<i32>,
-  #[serde(rename = "isUnique")]
-  is_unique: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct CertSkillLevel {
   #[serde(default)]
-  basic: i32,
-  #[serde(default)]
-  improved: i32,
-  #[serde(default)]
   advanced: i32,
   #[serde(default)]
+  basic: i32,
+  #[serde(default)]
   elite: i32,
+  #[serde(default)]
+  improved: i32,
 }
 
 #[derive(Deserialize)]
 struct SdeCertEntry {
-  name: LocalizedString,
   #[serde(default)]
   description: Option<LocalizedString>,
   #[serde(default)]
   grade: Option<i32>,
+  name: LocalizedString,
   #[serde(rename = "skillTypes", default)]
   skill_types: HashMap<i32, CertSkillLevel>,
 }
@@ -371,19 +371,19 @@ struct SdeBlueprintActivity {
 
 #[derive(Deserialize)]
 struct SdeBlueprintQuantity {
+  quantity: i64,
   #[serde(rename = "typeID")]
   type_id: i64,
-  quantity: i64,
 }
 
 /// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
 /// materials table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BlueprintActivityRow {
-  blueprint_type_id: i64,
   activity_id: i64,
-  type_id: i64,
+  blueprint_type_id: i64,
   quantity: i64,
+  type_id: i64,
 }
 
 /// One `(blueprint_type_id, activity_id, time, max_production_limit)` row for `blueprint_activity_meta`.

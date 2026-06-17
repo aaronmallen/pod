@@ -257,8 +257,8 @@ enum OutboxPhase {
 
 #[derive(Clone, Debug)]
 struct OutboxRow {
-  phase: OutboxPhase,
   last_error: Option<String>,
+  phase: OutboxPhase,
 }
 
 fn phase_for_outcome(outcome: &Outcome) -> (Phase, Option<String>) {

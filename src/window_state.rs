@@ -36,14 +36,11 @@ pub struct WindowGeometry {
 
 #[derive(Deserialize)]
 struct FlatGeometry {
-  height: f32,
-  width: f32,
-  x: f32,
-  y: f32,
   #[serde(default)]
   abyssals_filter_pane_width: Option<f32>,
   #[serde(default)]
   assets_sidebar_width: Option<f32>,
+  height: f32,
   #[serde(default)]
   mail_folder_pane_width: Option<f32>,
   #[serde(default)]
@@ -64,6 +61,9 @@ struct FlatGeometry {
   skills_left_pane_width: Option<f32>,
   #[serde(default)]
   wallet_right_rail_width: Option<f32>,
+  width: f32,
+  x: f32,
+  y: f32,
 }
 
 impl FlatGeometry {

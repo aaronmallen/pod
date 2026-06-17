@@ -632,10 +632,18 @@ impl Planner {
   /// Returns the facility chosen for `type_id`, falling back to the cheapest available default when the
   /// stored system id is absent from the current data (e.g. after a reload).
   pub fn selected_facility(&self, type_id: i64, is_reaction: bool) -> Option<&PlannerFacility> {
-    match self.settings_for(type_id).facility_system {
-      // Prefer a facility in the chosen system that can run THIS activity (a system may host both a
-      // manufacturing and a reaction structure); only then fall back to any facility in the system, then
-      // to the activity's cheapest default — so a reaction never resolves to a manufacturing-only site.
+    let settings = self.settings_for(type_id);
+    // Resolve the EXACT picked structure first. A system can host both a manufacturing and a reaction
+    // structure (e.g. a manufacturing array and a reaction array in the same system); resolving by system
+    // alone returned whichever the facility list sorted first (manufacturing, by cost index), so a reaction's
+    // configured site — and any manual pick — silently displayed as the wrong facility. The structure id is
+    // the user's actual choice, so honor it before falling back to the system, then the activity default.
+    if let Some(structure) = settings.facility_structure
+      && let Some(facility) = self.data.facilities.iter().find(|f| f.id == structure)
+    {
+      return Some(facility);
+    }
+    match settings.facility_system {
       Some(system) => self
         .data
         .facilities
@@ -1559,12 +1567,19 @@ mod view {
       .align_y(Vertical::Center)
       .into();
 
-    if !planner.picker_open() && planner.search().is_empty() {
-      return bar;
-    }
+    // Keep the search input at a STABLE tree position (always child 0 of this Column): returning a bare
+    // `bar` when closed and a `Column[bar, results]` once the user types reparents the text input, which
+    // makes iced drop its focus after the first keystroke. Always render the Column; the results slot
+    // collapses to a zero-height Space (and the gap to 0) when the picker is closed.
+    let open = planner.picker_open() || !planner.search().is_empty();
+    let results: Element<'_, Message> = if open {
+      picker_results(planner)
+    } else {
+      Space::new().into()
+    };
 
-    Column::with_children(vec![bar, picker_results(planner)])
-      .spacing(spacing::SPACE_2)
+    Column::with_children(vec![bar, results])
+      .spacing(if open { spacing::SPACE_2 } else { 0.0 })
       .width(Length::Fill)
       .into()
   }
@@ -4999,6 +5014,29 @@ mod tests {
 
       assert_eq!(facility.name, "Cheap Citadel");
       assert_eq!(facility.solar_system_id, 30_002_187);
+    }
+
+    #[test]
+    fn it_resolves_the_exact_picked_structure_when_a_system_hosts_several() {
+      // A second facility in the same system as "Pricey Station", sorted after it. Picking the second by
+      // structure id must win over system-based resolution (which returns the system's first facility) — the
+      // bug that made reactions and manual picks silently display the wrong same-system facility.
+      let mut planner = planner();
+      planner
+        .data
+        .facilities
+        .push(facility(60_000_003, 30_000_142, "Reaction Array", 0.5));
+      planner.update(Message::FacilitySelected {
+        facility_structure: 60_000_003,
+        pin: None,
+        solar_system_id: 30_000_142,
+        type_id: HULK,
+      });
+
+      let facility = planner.selected_facility(HULK, false).unwrap();
+
+      assert_eq!(facility.id, 60_000_003);
+      assert_eq!(facility.name, "Reaction Array");
     }
 
     #[test]

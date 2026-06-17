@@ -622,11 +622,7 @@ async fn collect_extractions(db: &Database, locations: &mut LocationNames) -> Ve
       .unwrap_or_default();
     for row in rows {
       let location = locations.resolve(db, row.structure_id()).await;
-      let structure = location
-        .name
-        .clone()
-        .or_else(|| location.system_name.clone())
-        .unwrap_or_else(|| format!("Structure {}", row.structure_id()));
+      let structure = structure_label(&location, row.structure_id());
       let system_name = match row.solar_system_id() {
         Some(system_id) => system_meta(db, system_id).await.0,
         None => location.system_name.clone(),
@@ -645,6 +641,14 @@ async fn collect_extractions(db: &Database, locations: &mut LocationNames) -> Ve
     }
   }
   out
+}
+
+fn structure_label(location: &ResolvedLocation, structure_id: i64) -> String {
+  location
+    .name
+    .clone()
+    .or_else(|| location.system_name.clone())
+    .unwrap_or_else(|| format!("Structure {structure_id}"))
 }
 
 async fn character_job(
@@ -1003,6 +1007,96 @@ mod tests {
       start_date: start.to_owned(),
       system_name: Some("Jita".to_owned()),
       value: None,
+    }
+  }
+
+  fn extraction(arrival: Option<&str>, decay: Option<&str>) -> Extraction {
+    Extraction {
+      chunk_arrival_time: arrival.map(str::to_owned),
+      corporation_id: 98,
+      extraction_start_time: Some("2026-06-10T00:00:00Z".to_owned()),
+      moon_id: 40_000_001,
+      moon_name: Some("Moon I".to_owned()),
+      natural_decay_time: decay.map(str::to_owned),
+      security: Some(0.4),
+      structure: "Athanor".to_owned(),
+      system_name: Some("Tama".to_owned()),
+    }
+  }
+
+  mod state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_fractured_once_the_decay_time_has_passed() {
+      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-13T10:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Fractured);
+    }
+
+    #[test]
+    fn it_is_ready_when_the_chunk_has_arrived_but_decay_is_future() {
+      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-14T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Ready);
+    }
+
+    #[test]
+    fn it_is_imminent_when_arrival_is_under_a_day_out() {
+      let extraction = extraction(Some("2026-06-13T18:00:00Z"), Some("2026-06-15T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Imminent);
+    }
+
+    #[test]
+    fn it_is_extracting_when_arrival_is_more_than_a_day_out() {
+      let extraction = extraction(Some("2026-06-20T00:00:00Z"), Some("2026-06-22T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
+    }
+
+    #[test]
+    fn it_is_extracting_when_no_timestamps_are_known() {
+      let extraction = extraction(None, None);
+
+      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
+    }
+  }
+
+  mod structure_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_the_resolved_name() {
+      let location = ResolvedLocation {
+        name: Some("Athanor Alpha".to_owned()),
+        security: None,
+        system_name: Some("Tama".to_owned()),
+      };
+
+      assert_eq!(super::super::structure_label(&location, 1_000), "Athanor Alpha");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_system_name() {
+      let location = ResolvedLocation {
+        name: None,
+        security: None,
+        system_name: Some("Tama".to_owned()),
+      };
+
+      assert_eq!(super::super::structure_label(&location, 1_000), "Tama");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_synthetic_structure_label() {
+      let location = ResolvedLocation::default();
+
+      assert_eq!(super::super::structure_label(&location, 1_000), "Structure 1000");
     }
   }
 

@@ -240,27 +240,11 @@ fn timeline<'a>(
   accent: Color,
 ) -> Element<'a, Message> {
   let arrived = matches!(state, ExtractionState::Fractured | ExtractionState::Ready);
-  let arrival_value = match extraction.arrival() {
-    Some(arrival) if arrived => format!("{} {}", fmt_day(arrival), fmt_clock(arrival)),
-    Some(arrival) => fmt_duration((arrival - now).num_seconds().max(0)),
-    None => "\u{2014}".to_owned(),
-  };
+  let arrival_value = arrival_text(extraction, now, arrived);
   let arrival_color = if arrived { accent } else { color::text::PRIMARY };
 
   let fractured = matches!(state, ExtractionState::Fractured);
-  let (decay_value, decay_color) = match extraction.decay() {
-    _ if fractured => ("passed".to_owned(), color::status::DANGER),
-    Some(decay) => {
-      let remaining = (decay - now).num_seconds().max(0);
-      let fill = if remaining < SECONDS_PER_DAY {
-        color::status::WARNING
-      } else {
-        color::text::secondary()
-      };
-      (fmt_duration(remaining), fill)
-    }
-    None => ("\u{2014}".to_owned(), color::text::tertiary()),
-  };
+  let (decay_value, decay_color) = decay_split(extraction, now, fractured);
 
   let heads = Row::with_children(vec![
     countdown(
@@ -274,10 +258,7 @@ fn timeline<'a>(
   ])
   .width(Length::Fill);
 
-  let started = match extraction.start() {
-    Some(start) => format!("started {}", fmt_day(start)),
-    None => "started \u{2014}".to_owned(),
-  };
+  let started = started_text(extraction);
 
   Column::with_children(vec![
     heads.into(),
@@ -297,6 +278,37 @@ fn timeline<'a>(
   })
   .width(Length::Fill)
   .into()
+}
+
+fn arrival_text(extraction: &Extraction, now: DateTime<Utc>, arrived: bool) -> String {
+  match extraction.arrival() {
+    Some(arrival) if arrived => format!("{} {}", fmt_day(arrival), fmt_clock(arrival)),
+    Some(arrival) => fmt_duration((arrival - now).num_seconds().max(0)),
+    None => "\u{2014}".to_owned(),
+  }
+}
+
+fn decay_split(extraction: &Extraction, now: DateTime<Utc>, fractured: bool) -> (String, Color) {
+  match extraction.decay() {
+    _ if fractured => ("passed".to_owned(), color::status::DANGER),
+    Some(decay) => {
+      let remaining = (decay - now).num_seconds().max(0);
+      let fill = if remaining < SECONDS_PER_DAY {
+        color::status::WARNING
+      } else {
+        color::text::secondary()
+      };
+      (fmt_duration(remaining), fill)
+    }
+    None => ("\u{2014}".to_owned(), color::text::tertiary()),
+  }
+}
+
+fn started_text(extraction: &Extraction) -> String {
+  match extraction.start() {
+    Some(start) => format!("started {}", fmt_day(start)),
+    None => "started \u{2014}".to_owned(),
+  }
 }
 
 fn countdown<'a>(label: &str, value: &str, value_color: Color, align: Horizontal) -> Element<'a, Message> {
@@ -429,6 +441,144 @@ mod tests {
       }]);
 
       let _el: Element<'_, Message> = tab(&state, now());
+    }
+  }
+
+  mod arrival_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_an_arrived_chunk_as_a_day_and_clock() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T06:00:00Z",
+        "2026-06-18T00:00:00Z",
+      );
+
+      assert!(super::super::arrival_text(&extraction, now(), true).contains(':'));
+    }
+
+    #[test]
+    fn it_renders_a_pending_chunk_as_a_countdown() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+        "2026-06-22T00:00:00Z",
+      );
+
+      assert_ne!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
+    }
+
+    #[test]
+    fn it_renders_a_dash_when_no_arrival_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+        "2026-06-22T00:00:00Z",
+      );
+      extraction.chunk_arrival_time = None;
+
+      assert_eq!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
+    }
+  }
+
+  mod decay_split {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_marks_a_fractured_timer_as_passed() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-12T00:00:00Z",
+        "2026-06-13T00:00:00Z",
+      );
+
+      let (value, color) = super::super::decay_split(&extraction, now(), true);
+
+      assert_eq!(value, "passed");
+      assert_eq!(color, color::status::DANGER);
+    }
+
+    #[test]
+    fn it_warns_when_decay_is_under_a_day_out() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-16T18:00:00Z",
+      );
+
+      let (_, color) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(color, color::status::WARNING);
+    }
+
+    #[test]
+    fn it_stays_neutral_when_decay_is_more_than_a_day_out() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+
+      let (_, color) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(color, color::text::secondary());
+    }
+
+    #[test]
+    fn it_renders_a_dash_when_no_decay_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+      extraction.natural_decay_time = None;
+
+      let (value, _) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(value, "\u{2014}");
+    }
+  }
+
+  mod started_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_the_start_day() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+
+      assert!(super::super::started_text(&extraction).starts_with("started "));
+    }
+
+    #[test]
+    fn it_renders_a_dash_when_no_start_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+      extraction.extraction_start_time = None;
+
+      assert_eq!(super::super::started_text(&extraction), "started \u{2014}");
     }
   }
 

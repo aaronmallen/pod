@@ -4762,6 +4762,57 @@ mod tests {
 
       let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
     }
+
+    #[test]
+    fn it_renders_the_material_plan_grid_across_raw_and_buildable_rows() {
+      // Open the material plan on the HULK root: it emits the grid header plus a raw Tritanium row and a
+      // buildable Retriever row carrying the inline breakdown affordance.
+      let mut planner = planner();
+      planner.update(Message::MaterialPlanToggled);
+      assert!(planner.material_plan_open());
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_material_plan_with_a_nested_building_row() {
+      // Breaking down the buildable Retriever recurses the material plan into its own materials, so the row
+      // renders the BUILDING badge and the nested depth-tinted children.
+      let mut planner = planner();
+      planner.update(Message::MaterialPlanToggled);
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_material_plan_with_stock_affordances_and_a_used_chip() {
+      const SITE: i64 = 60_000_001;
+      const SITE_SYSTEM: i64 = 30_000_142;
+
+      // Pin the root to a site holding Tritanium stock: the material row first shows the "Use Stock" button,
+      // then the active "STOCK" chip and from-stock split once the line is opted in.
+      let mut planner = planner();
+      planner.update(Message::FacilitySelected {
+        facility_structure: SITE,
+        pin: None,
+        solar_system_id: SITE_SYSTEM,
+        type_id: HULK,
+      });
+      planner.set_on_hand(std::collections::HashMap::from([((SITE, TRITANIUM), 4)]));
+      planner.update(Message::MaterialPlanToggled);
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(planner.is_stock_selected(SITE, TRITANIUM));
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
   }
 
   mod facility_picker {

@@ -261,8 +261,7 @@ enum Message {
   SyncNowResolved(SyncNowOutcome),
   SyncPulse,
   TakeOver,
-  TakeOverReopened(Box<StoreReady>),
-  TakeOverResolved(TakeOverOutcome),
+  TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
   ToggleSyncPopover,
   UpdaterAction(updater_banner::Action),
   UpdaterDismissToast,
@@ -372,8 +371,7 @@ impl Message {
       Message::SyncNowResolved(_) => "SyncNowResolved",
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
-      Message::TakeOverReopened(_) => "TakeOverReopened",
-      Message::TakeOverResolved(_) => "TakeOverResolved",
+      Message::TakeOverResolved(..) => "TakeOverResolved",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
       _ => return None,
     })
@@ -864,13 +862,26 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   })
 }
 
-/// Reopens fresh pools against the working-copy file after a take-over pulled the newer canonical
-/// copy over it, then forwards the rebuilt [`StoreReady`] as [`Message::TakeOverReopened`]. Spawned
-/// off the iced runtime because reopening the pools is async I/O.
-fn reopen_after_take_over(ready: StoreReady) -> Task<Message> {
+/// Drives a take-over end to end on a blocking-safe async task: it first closes every working-copy
+/// pool the parked instance holds, then runs the lease claim (which on success overwrites the
+/// working-copy file via `publish_database`), then reopens fresh pools against the swapped file. The
+/// close-before-swap ordering is mandatory on Windows, whose mandatory file locking rejects an
+/// in-place overwrite of an open `.db` file with `PermissionDenied` (POSIX hosts tolerate it). The
+/// pools are always reopened — on a claim they read the freshly pulled canonical copy, and on a
+/// declined or failed claim they reopen the unchanged working copy — so the app is never left with
+/// closed pools regardless of outcome.
+fn run_take_over(ready: StoreReady, session: store::sync_session::SyncSession, force: bool) -> Task<Message> {
   Task::future(async move {
-    match reopen_after_take_over_inner(ready).await {
-      Ok(ready) => Message::TakeOverReopened(Box::new(ready)),
+    let lease = ready.lease.clone();
+    let settings = ready.settings.clone();
+    // Release every handle on the working-copy file before the swap: `Pool::close` closes the shared
+    // pool, so the http client's interactive-pool clone is released along with the named pool.
+    ready.db.0.close().await;
+    ready.sync_db.0.close().await;
+    ready.sync_housekeeping_db.0.close().await;
+    let outcome = claim_lease(&session, force);
+    match reopen_after_take_over_inner(&session, lease, settings).await {
+      Ok(ready) => Message::TakeOverResolved(outcome, Box::new(ready)),
       Err(error) => {
         tracing::error!(target: "pod::lifecycle", %error, "reopening the database after take-over failed");
         Message::InitFailed(error)
@@ -879,24 +890,49 @@ fn reopen_after_take_over(ready: StoreReady) -> Task<Message> {
   })
 }
 
-/// Builds a `StoreReady` whose pools are opened against the freshly pulled working copy, so no
-/// connection from the boot-time pools straddles the `publish_database` file swap that take-over
-/// performed. Single-instance builds carry no `sync_session` (no file swap occurs) and reuse the
-/// parked pools unchanged.
-async fn reopen_after_take_over_inner(ready: StoreReady) -> Result<StoreReady, String> {
-  let Some(session) = ready.sync_session.as_ref() else {
-    return Ok(ready);
+/// Runs the lease claim now that the pools are closed. The stale-aware `take_over` declines a
+/// still-live foreign holder (mapping to `Failed` so the resolver re-parks); the forceful path always
+/// claims on success. Either way no file remains open across the `publish_database` swap.
+fn claim_lease(session: &store::sync_session::SyncSession, force: bool) -> TakeOverOutcome {
+  let claimed = if force {
+    session.force_take_over(Utc::now())
+  } else {
+    session.take_over(Utc::now())
   };
+  match claimed {
+    Ok(store::lease::Outcome::Acquired) => TakeOverOutcome::Claimed,
+    Ok(store::lease::Outcome::HeldBy {
+      hostname, ..
+    }) => {
+      tracing::trace!(target: "pod::lifecycle", %hostname, "take-over declined; the share is still held");
+      TakeOverOutcome::Failed
+    }
+    Err(error) => {
+      tracing::warn!(target: "pod::lifecycle", %error, "claiming the storage lease during take-over failed");
+      TakeOverOutcome::Failed
+    }
+  }
+}
+
+/// Builds a `StoreReady` whose pools are opened against the working-copy file after the take-over
+/// swap, so no connection from the boot-time pools straddles the `publish_database` file swap. On a
+/// successful claim the file now holds the freshly pulled canonical copy; on a declined or failed
+/// claim the unchanged working copy is reopened so the app keeps functioning.
+async fn reopen_after_take_over_inner(
+  session: &store::sync_session::SyncSession,
+  lease: Option<HolderInfo>,
+  settings: config::Settings,
+) -> Result<StoreReady, String> {
   let pools = store::open_pools(session.working_copy()).await.map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
     db: pools.interactive,
     http,
-    lease: ready.lease,
-    settings: ready.settings,
+    lease,
+    settings,
     sync_db: pools.sync,
     sync_housekeeping_db: pools.housekeeping,
-    sync_session: ready.sync_session,
+    sync_session: Some(session.clone()),
   })
 }
 
@@ -2544,8 +2580,7 @@ fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::CancelTakeOver => handle_cancel_take_over(app),
     Message::ConfirmTakeOver => handle_confirm_take_over(app),
     Message::TakeOver => handle_take_over(app),
-    Message::TakeOverReopened(ready) => handle_take_over_reopened(app, *ready),
-    Message::TakeOverResolved(outcome) => handle_take_over_resolved(app, outcome),
+    Message::TakeOverResolved(outcome, ready) => handle_take_over_resolved(app, outcome, *ready),
     other => dispatch_window_lifecycle(app, other),
   }
 }
@@ -3193,36 +3228,30 @@ fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
 
 /// Polls for lease re-acquisition on each `REACQUIRE_INTERVAL` tick while this instance is parked.
 /// This automatic path stays stale-aware: a `HeldBy` response (foreign holder still fresh) maps to
-/// `TakeOverOutcome::Failed` — a silent no-op in the resolver — so only the explicit user-confirmed
-/// take-over ever overrides lease freshness.
+/// `TakeOverOutcome::Failed` — re-parked in the resolver — so only the explicit user-confirmed
+/// take-over ever overrides lease freshness. The take-over runs through [`run_take_over`], which
+/// closes the working-copy pools before the swap and reopens them after, so the runtime is dropped
+/// here to release its pool clones first.
 fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   if !parked(app) {
     return Task::none();
   }
+  start_take_over(app, false)
+}
+
+/// Common take-over launch: drops the parked runtime (releasing its working-copy pool clones), takes
+/// the `StoreReady` whose three pools are the only remaining handles on the file, and hands them to
+/// [`run_take_over`] so they are closed before the swap and reopened after. Short-circuits cleanly
+/// when no session or store is present, leaving the app untouched.
+fn start_take_over(app: &mut App, force: bool) -> Task<Message> {
   let Some(session) = app.sync_session.clone() else {
     return Task::none();
   };
-  let released_by = app.read_only.as_ref().map(|holder| holder.hostname.clone());
-  Task::future(async move {
-    let outcome = match session.take_over(Utc::now()) {
-      Ok(store::lease::Outcome::Acquired) => {
-        let hostname = released_by.as_deref().unwrap_or("an unknown host");
-        tracing::info!(target: "pod::lifecycle", %hostname, "auto-promoted to read-write after the share was released");
-        TakeOverOutcome::Claimed
-      }
-      Ok(store::lease::Outcome::HeldBy {
-        hostname, ..
-      }) => {
-        tracing::trace!(target: "pod::lifecycle", %hostname, "auto re-acquire declined; the share is still held");
-        TakeOverOutcome::Failed
-      }
-      Err(error) => {
-        tracing::warn!(target: "pod::lifecycle", %error, "auto re-acquiring the storage lease failed");
-        TakeOverOutcome::Failed
-      }
-    };
-    Message::TakeOverResolved(outcome)
-  })
+  let Some(ready) = app.store_ready.take() else {
+    return Task::none();
+  };
+  app.runtime = None;
+  run_take_over(ready, session, force)
 }
 
 fn handle_cancel_take_over(app: &mut App) -> Task<Message> {
@@ -3238,24 +3267,7 @@ fn handle_confirm_take_over(app: &mut App) -> Task<Message> {
   if app.read_only.is_none() {
     return Task::none();
   }
-  let Some(session) = app.sync_session.clone() else {
-    return Task::none();
-  };
-  let displaced = app.read_only.as_ref().map(|holder| holder.hostname.clone());
-  Task::future(async move {
-    let hostname = displaced.as_deref().unwrap_or("an unknown host");
-    let outcome = match session.force_take_over(Utc::now()) {
-      Ok(_) => {
-        tracing::info!(target: "pod::lifecycle", %hostname, "force-took over the storage lease");
-        TakeOverOutcome::Claimed
-      }
-      Err(error) => {
-        tracing::warn!(target: "pod::lifecycle", %hostname, %error, "force-taking over the storage lease failed");
-        TakeOverOutcome::Failed
-      }
-    };
-    Message::TakeOverResolved(outcome)
-  })
+  start_take_over(app, true)
 }
 
 /// Opens the data-loss confirmation gate rather than claiming immediately. The forceful claim is
@@ -3269,22 +3281,15 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-/// Installs the pools reopened against the freshly pulled file and rebuilds the runtime: the parked
-/// boot-time pools (held in `store_ready`/`runtime`) are dropped as this replaces them, so no live
-/// connection survives the `publish_database` swap. The real sync engine replaces the inert one and
-/// the lease is nulled so [`build_runtime_inner`] starts read-write.
-fn handle_take_over_reopened(app: &mut App, mut ready: StoreReady) -> Task<Message> {
-  ready.lease = None;
-  app.store_ready = Some(ready.clone());
-  build_runtime(ready)
-}
-
-/// Applies a resolved take-over. A successful claim has already pulled the newer canonical copy over
-/// the working-copy file (`take_over`/`force_take_over` -> `pull_if_newer` -> `publish_database`),
-/// so the boot-time pools — still connected to that file — now straddle the swap and would corrupt
-/// the database if reused. The claim therefore hands off to [`reopen_after_take_over`], which reopens
-/// fresh pools against the pulled file before the runtime is rebuilt in [`handle_take_over_reopened`].
-fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Message> {
+/// Applies a resolved take-over by installing the pools [`run_take_over`] reopened against the
+/// working-copy file (after closing the boot-time pools and performing the swap), then rebuilding the
+/// runtime. Both outcomes install fresh pools so the app is never left with closed handles:
+///
+/// * `Claimed` — the working copy now holds the freshly pulled canonical copy; the lease is nulled so
+///   [`build_runtime_inner`] starts read-write with the real sync engine.
+/// * `Failed` — no swap happened (declined or errored); the unchanged working copy is reopened and the
+///   app stays parked read-only with the inert engine, per ADR-0024.
+fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome, mut ready: StoreReady) -> Task<Message> {
   app.confirm_force_takeover = false;
   match outcome {
     TakeOverOutcome::Claimed => {
@@ -3293,14 +3298,16 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
         .sync_session
         .as_ref()
         .and_then(store::sync_session::SyncSession::last_write);
-      let Some(ready) = app.store_ready.clone() else {
-        return Task::none();
-      };
       app.engine_state = EngineState::Running;
-      reopen_after_take_over(ready)
+      ready.lease = None;
     }
-    TakeOverOutcome::Failed => Task::none(),
+    TakeOverOutcome::Failed => {
+      app.engine_state = read_only_engine_state(app.read_only.clone());
+      ready.lease = app.read_only.clone();
+    }
   }
+  app.store_ready = Some(ready.clone());
+  build_runtime(ready)
 }
 
 fn handle_toggle_sync_popover(app: &mut App) -> Task<Message> {
@@ -4361,6 +4368,25 @@ mod tests {
         .unwrap();
     }
 
+    /// Closes the working-copy pools, claims, and reopens in the exact order [`run_take_over`] does in
+    /// production (minus the iced `Task` wrapper). The close-before-swap ordering is what lets the
+    /// `publish_database` overwrite succeed on Windows, whose mandatory file locking would otherwise
+    /// reject the in-place replace of the still-open `.db` with `PermissionDenied`.
+    async fn close_then_take_over(
+      ready: StoreReady,
+      session: &store::sync_session::SyncSession,
+      force: bool,
+    ) -> (TakeOverOutcome, StoreReady) {
+      let lease = ready.lease.clone();
+      let settings = ready.settings.clone();
+      ready.db.0.close().await;
+      ready.sync_db.0.close().await;
+      ready.sync_housekeeping_db.0.close().await;
+      let outcome = claim_lease(session, force);
+      let reopened = reopen_after_take_over_inner(session, lease, settings).await.unwrap();
+      (outcome, reopened)
+    }
+
     #[tokio::test]
     async fn it_reads_the_pulled_contents_after_a_newer_canonical_is_taken_over() {
       let (dir, session) = temp_sync_session();
@@ -4374,9 +4400,11 @@ mod tests {
       write_generation(&marker, 4).unwrap();
       let ready = ready_for(&session).await;
 
-      assert_eq!(session.take_over(Utc::now()).unwrap(), store::lease::Outcome::Acquired);
-      let reopened = reopen_after_take_over_inner(ready).await.unwrap();
+      // Mirror production: the pools are closed *before* the swap so no OS handle straddles the
+      // `publish_database` overwrite, then reopened against the pulled file.
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
 
+      assert_eq!(outcome, TakeOverOutcome::Claimed);
       assert!(
         infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
           .await
@@ -4395,22 +4423,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_returns_the_parked_store_unchanged_without_a_sync_session() {
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let ready = StoreReady {
-        db: db.clone(),
-        http,
-        lease: None,
-        settings: config::Settings::default(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        sync_session: None,
-      };
+    async fn it_reopens_the_unchanged_working_copy_when_a_take_over_is_declined() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/local").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      // A still-fresh foreign holder makes the stale-aware claim decline, so no swap happens.
+      let share = dir.path().join("share");
+      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, Utc::now())
+        .unwrap();
+      let ready = ready_for(&session).await;
 
-      let reopened = reopen_after_take_over_inner(ready).await.unwrap();
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
 
-      assert!(reopened.sync_session.is_none());
+      assert_eq!(outcome, TakeOverOutcome::Failed);
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/local")
+          .await
+          .unwrap()
+          .is_some(),
+        "a declined take-over reopens the unchanged working copy so the app keeps functioning"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_none(),
+        "no swap happened, so the pulled canonical contents are not present"
+      );
+      assert_eq!(read_generation(&marker), 4, "the working-copy generation is untouched");
     }
   }
 
@@ -6468,8 +6515,22 @@ mod tests {
       );
     }
 
-    #[test]
-    fn a_claimed_take_over_drops_read_only() {
+    #[tokio::test]
+    async fn a_claimed_take_over_drops_read_only_and_installs_the_reopened_store() {
+      let db = store::open_test().await.expect("test db");
+      let reopened = StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: Some(HolderInfo {
+          hostname: "studio-mac".to_owned(),
+          last_active: Utc::now(),
+          machine_id: "machine-b".to_owned(),
+        }),
+        settings: config::Settings::default(),
+        sync_session: None,
+      };
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
@@ -6477,9 +6538,15 @@ mod tests {
         machine_id: "machine-b".to_owned(),
       });
 
-      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Claimed);
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Claimed, reopened);
 
       assert!(app.read_only.is_none(), "claiming the share makes the app writable");
+      assert!(app.store_ready.is_some(), "the reopened pools are installed");
+      assert_eq!(app.engine_state, EngineState::Running);
+      assert!(
+        app.store_ready.as_ref().unwrap().lease.is_none(),
+        "the claimed store opens read-write with a nulled lease"
+      );
     }
 
     #[test]
@@ -6489,8 +6556,18 @@ mod tests {
       assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
     }
 
-    #[test]
-    fn a_failed_take_over_keeps_the_app_read_only() {
+    #[tokio::test]
+    async fn a_failed_take_over_keeps_the_app_read_only_and_reopens_parked_pools() {
+      let db = store::open_test().await.expect("test db");
+      let reopened = StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      };
       let mut app = test_app();
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
@@ -6498,9 +6575,21 @@ mod tests {
         machine_id: "machine-b".to_owned(),
       });
 
-      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed);
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed, reopened);
 
       assert!(app.read_only.is_some(), "a failed take-over leaves the app read-only");
+      assert!(
+        app.store_ready.is_some(),
+        "a declined take-over still reopens pools so the app is never left with closed handles"
+      );
+      assert!(
+        matches!(app.engine_state, EngineState::ReadOnly { .. }),
+        "a declined take-over re-parks the engine read-only"
+      );
+      assert!(
+        app.store_ready.as_ref().unwrap().lease.is_some(),
+        "the reopened parked store carries the held-by lease"
+      );
     }
 
     #[test]
@@ -7224,8 +7313,21 @@ mod tests {
       assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
     }
 
-    #[test]
-    fn it_names_lifecycle_messages() {
+    async fn stub_store_ready() -> StoreReady {
+      let db = store::open_test().await.expect("test db");
+      StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_names_lifecycle_messages() {
       assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
       assert_eq!(Message::CloseSyncPopover.variant_name(), "CloseSyncPopover");
       assert_eq!(
@@ -7270,7 +7372,7 @@ mod tests {
       assert_eq!(Message::CancelTakeOver.variant_name(), "CancelTakeOver");
       assert_eq!(Message::ConfirmTakeOver.variant_name(), "ConfirmTakeOver");
       assert_eq!(
-        Message::TakeOverResolved(TakeOverOutcome::Failed).variant_name(),
+        Message::TakeOverResolved(TakeOverOutcome::Failed, Box::new(stub_store_ready().await)).variant_name(),
         "TakeOverResolved"
       );
       assert_eq!(Message::ToggleSyncPopover.variant_name(), "ToggleSyncPopover");
@@ -7467,6 +7569,16 @@ mod tests {
     #[tokio::test]
     async fn it_routes_each_lifecycle_message() {
       let mut app = featured_app();
+      let db = store::open_test().await.expect("test db");
+      let reopened = StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      };
 
       let messages = vec![
         Message::CancelTakeOver,
@@ -7492,7 +7604,7 @@ mod tests {
         Message::StorageMigrated,
         Message::SyncPulse,
         Message::TakeOver,
-        Message::TakeOverResolved(TakeOverOutcome::Failed),
+        Message::TakeOverResolved(TakeOverOutcome::Failed, Box::new(reopened)),
         Message::ToggleSyncPopover,
         Message::UpdaterAction(updater_banner::Action::Apply),
         Message::UpdaterDismissToast,

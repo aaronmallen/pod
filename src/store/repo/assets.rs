@@ -2177,17 +2177,17 @@ async fn insert_corporation_asset(
 pub async fn create(
   db: &Database,
   name: &str,
-  character_id: Option<i64>,
+  character_scope: Option<String>,
   location_id: Option<i64>,
   items: &[(i64, i64)],
 ) -> Result<StockpileWithItems, Error> {
   let mut tx = db.0.begin().await?;
   let stockpile = sqlx::query_as::<_, Stockpile>(
-    "INSERT INTO stockpiles (name, character_id, location_id) VALUES (?, ?, ?) \
-    RETURNING character_id, id, location_id, name",
+    "INSERT INTO stockpiles (name, character_scope, location_id) VALUES (?, ?, ?) \
+    RETURNING character_scope, id, location_id, name",
   )
   .bind(name)
-  .bind(character_id)
+  .bind(character_scope)
   .bind(location_id)
   .fetch_one(&mut *tx)
   .await?;
@@ -2203,17 +2203,17 @@ pub async fn update(
   db: &Database,
   id: i64,
   name: &str,
-  character_id: Option<i64>,
+  character_scope: Option<String>,
   location_id: Option<i64>,
   items: &[(i64, i64)],
 ) -> Result<StockpileWithItems, Error> {
   let mut tx = db.0.begin().await?;
   let stockpile = sqlx::query_as::<_, Stockpile>(
-    "UPDATE stockpiles SET name = ?, character_id = ?, location_id = ? WHERE id = ? \
-    RETURNING character_id, id, location_id, name",
+    "UPDATE stockpiles SET name = ?, character_scope = ?, location_id = ? WHERE id = ? \
+    RETURNING character_scope, id, location_id, name",
   )
   .bind(name)
-  .bind(character_id)
+  .bind(character_scope)
   .bind(location_id)
   .bind(id)
   .fetch_one(&mut *tx)
@@ -2239,10 +2239,11 @@ pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
 }
 
 pub async fn get(db: &Database, id: i64) -> Result<Option<Stockpile>, Error> {
-  let row = sqlx::query_as::<_, Stockpile>("SELECT character_id, id, location_id, name FROM stockpiles WHERE id = ?")
-    .bind(id)
-    .fetch_optional(&db.0)
-    .await?;
+  let row =
+    sqlx::query_as::<_, Stockpile>("SELECT character_scope, id, location_id, name FROM stockpiles WHERE id = ?")
+      .bind(id)
+      .fetch_optional(&db.0)
+      .await?;
   Ok(row)
 }
 
@@ -2259,7 +2260,7 @@ pub async fn with_items(db: &Database, id: i64) -> Result<Option<StockpileWithIt
 
 pub async fn list_with_items(db: &Database) -> Result<Vec<StockpileWithItems>, Error> {
   let stockpiles =
-    sqlx::query_as::<_, Stockpile>("SELECT character_id, id, location_id, name FROM stockpiles ORDER BY id")
+    sqlx::query_as::<_, Stockpile>("SELECT character_scope, id, location_id, name FROM stockpiles ORDER BY id")
       .fetch_all(&db.0)
       .await?;
   let mut result = Vec::with_capacity(stockpiles.len());
@@ -2283,11 +2284,15 @@ pub async fn items(db: &Database, stockpile_id: i64) -> Result<Vec<StockpileItem
   Ok(rows)
 }
 
-pub async fn fill_status(db: &Database, id: i64, scope: Option<i64>) -> Result<Option<StockpileFill>, Error> {
+pub async fn fill_status(db: &Database, id: i64, scope: &[i64]) -> Result<Option<StockpileFill>, Error> {
   let Some(stockpile) = get(db, id).await? else {
     return Ok(None);
   };
   let location_id = stockpile.location_id();
+  // An empty scope means "all characters". A non-empty scope is bound as a JSON array; json_array_length
+  // gates the IN-list so that char assets are restricted to the scoped character ids and corp assets to
+  // the corps those characters belong to.
+  let scope_json = serde_json::to_string(scope).unwrap_or_else(|_| "[]".to_string());
   // loc_set needs no explicit "what kind of id is this?" detection: EVE id-spaces are disjoint ranges
   // (regions 10M, constellations 20M, systems 30M, stations 60M+, structures 1e12+), so each expanding
   // join matches only when location_id is genuinely that tier. A region pile rolls up every station and
@@ -2316,7 +2321,8 @@ pub async fn fill_status(db: &Database, id: i64, scope: Option<i64>) -> Result<O
     char_tree(item_id, type_id, quantity, root_location_id) AS ( \
       SELECT item_id, type_id, quantity, location_id \
       FROM character_assets \
-      WHERE container_id IS NULL AND (? IS NULL OR character_id = ?) \
+      WHERE container_id IS NULL \
+        AND (json_array_length(?) = 0 OR character_id IN (SELECT value FROM json_each(?))) \
       UNION ALL \
       SELECT ca.item_id, ca.type_id, ca.quantity, ct.root_location_id \
       FROM character_assets ca \
@@ -2326,7 +2332,10 @@ pub async fn fill_status(db: &Database, id: i64, scope: Option<i64>) -> Result<O
       SELECT item_id, type_id, quantity, location_id \
       FROM corporation_assets \
       WHERE container_id IS NULL \
-        AND (? IS NULL OR corporation_id = (SELECT corporation_id FROM characters WHERE id = ?)) \
+        AND (json_array_length(?) = 0 \
+          OR corporation_id IN ( \
+            SELECT corporation_id FROM characters WHERE id IN (SELECT value FROM json_each(?)) \
+          )) \
       UNION ALL \
       SELECT ca.item_id, ca.type_id, ca.quantity, parent.root_location_id \
       FROM corporation_assets ca \
@@ -2353,10 +2362,10 @@ pub async fn fill_status(db: &Database, id: i64, scope: Option<i64>) -> Result<O
   .bind(location_id)
   .bind(location_id)
   .bind(location_id)
-  .bind(scope)
-  .bind(scope)
-  .bind(scope)
-  .bind(scope)
+  .bind(scope_json.clone())
+  .bind(scope_json.clone())
+  .bind(scope_json.clone())
+  .bind(scope_json)
   .bind(location_id)
   .bind(location_id)
   .bind(id)
@@ -6712,22 +6721,6 @@ mod stockpile_tests {
     .unwrap();
   }
 
-  mod cascade {
-    use super::*;
-
-    #[tokio::test]
-    async fn deleting_a_scoped_character_cascades_its_stockpiles() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1)]).await.unwrap();
-
-      character::delete(&db, 1001).await.unwrap();
-
-      assert!(get(&db, created.stockpile.id()).await.unwrap().is_none());
-      assert!(items(&db, created.stockpile.id()).await.unwrap().is_empty());
-    }
-  }
-
   mod create {
     use pretty_assertions::assert_eq;
 
@@ -6743,7 +6736,7 @@ mod stockpile_tests {
 
       assert!(created.stockpile.id() > 0);
       assert_eq!(created.stockpile.name(), "Supply Cache");
-      assert_eq!(created.stockpile.character_id(), None);
+      assert_eq!(created.stockpile.character_scope(), &None);
       assert_eq!(created.stockpile.location_id(), None);
       assert_eq!(created.items.len(), 2);
       assert_eq!(created.items[0].type_id(), 34);
@@ -6755,11 +6748,17 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
 
-      let created = create(&db, "Filtered", Some(1001), Some(60_003_760), &[(34, 100)])
-        .await
-        .unwrap();
+      let created = create(
+        &db,
+        "Filtered",
+        Some("corp:cobalt".to_string()),
+        Some(60_003_760),
+        &[(34, 100)],
+      )
+      .await
+      .unwrap();
 
-      assert_eq!(created.stockpile.character_id(), Some(1001));
+      assert_eq!(created.stockpile.character_scope(), &Some("corp:cobalt".to_string()));
       assert_eq!(created.stockpile.location_id(), Some(60_003_760));
     }
   }
@@ -7028,16 +7027,21 @@ mod stockpile_tests {
       seed_corp_asset(&db, 3, OWNER_CORP, 34, SYSTEM_STATION, 30).await;
       seed_corp_asset(&db, 4, 90_000_002, 34, SYSTEM_STATION, 70).await;
 
-      let scoped = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
+      let scoped = super::super::fill_status(&db, created.stockpile.id(), &[1001])
         .await
         .unwrap()
         .unwrap();
-      let unscoped = super::super::fill_status(&db, created.stockpile.id(), None)
+      let scoped_pair = super::super::fill_status(&db, created.stockpile.id(), &[1001, 1002])
+        .await
+        .unwrap()
+        .unwrap();
+      let unscoped = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
 
       assert_eq!(scoped.items[0].have_quantity, 130);
+      assert_eq!(scoped_pair.items[0].have_quantity, 180);
       assert_eq!(unscoped.items[0].have_quantity, 250);
     }
 
@@ -7051,7 +7055,7 @@ mod stockpile_tests {
         .unwrap();
       seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7063,13 +7067,11 @@ mod stockpile_tests {
     async fn a_fully_stocked_stockpile_is_full() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 100), (35, 200)])
-        .await
-        .unwrap();
+      let created = create(&db, "Cache", None, None, &[(34, 100), (35, 200)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, STATION_A, 100).await;
       seed_asset(&db, 2, 1001, 35, STATION_A, 250).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7086,7 +7088,7 @@ mod stockpile_tests {
       let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
       seed_corp_asset(&db, 1, OWNER_CORP, 34, SYSTEM_STATION, 9).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7102,7 +7104,7 @@ mod stockpile_tests {
       let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7120,7 +7122,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
       seed_asset(&db, 2, 1001, 34, OTHER_STATION, 8).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7140,7 +7142,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 3).await;
       seed_asset(&db, 2, 1001, 34, SYSTEM_STATION_2, 8).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7156,7 +7158,7 @@ mod stockpile_tests {
       let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 7).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7172,7 +7174,7 @@ mod stockpile_tests {
       let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, SYSTEM_STRUCTURE, 4).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7189,7 +7191,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 99, SYSTEM_STATION, 1).await;
       seed_contained_asset(&db, 2, 1001, 34, 1, 6).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7206,7 +7208,7 @@ mod stockpile_tests {
       let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, OTHER_STATION, 5).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7219,7 +7221,7 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       let created = create(&db, "Empty", None, None, &[]).await.unwrap();
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7234,13 +7236,11 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
       seed_character(&db, 1002).await;
-      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1000)])
-        .await
-        .unwrap();
+      let created = create(&db, "Char Scoped", None, None, &[(34, 1000)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1002, 34, STATION_A, 999).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[1001])
         .await
         .unwrap()
         .unwrap();
@@ -7252,21 +7252,21 @@ mod stockpile_tests {
     async fn it_is_none_for_a_missing_stockpile() {
       let db = store::open_test().await.unwrap();
 
-      assert!(super::super::fill_status(&db, 999_999, None).await.unwrap().is_none());
+      assert!(super::super::fill_status(&db, 999_999, &[]).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn it_reports_under_met_and_over_target_items() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 500), (36, 200)])
+      let created = create(&db, "Cache", None, None, &[(34, 1000), (35, 500), (36, 200)])
         .await
         .unwrap();
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1001, 35, STATION_A, 500).await;
       seed_asset(&db, 3, 1001, 36, STATION_A, 350).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7297,7 +7297,7 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       let created = create(&db, "Cache", None, None, &[(34, 100)]).await.unwrap();
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7310,11 +7310,11 @@ mod stockpile_tests {
     async fn it_sums_multiple_asset_rows_of_the_same_type() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000)]).await.unwrap();
+      let created = create(&db, "Cache", None, None, &[(34, 1000)]).await.unwrap();
       seed_asset(&db, 1, 1001, 34, STATION_A, 300).await;
       seed_asset(&db, 2, 1001, 34, STATION_B, 250).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7332,7 +7332,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1001, 34, STATION_B, 999).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7344,13 +7344,13 @@ mod stockpile_tests {
     async fn overall_pct_caps_each_item_at_its_target() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 1000)])
+      let created = create(&db, "Cache", None, None, &[(34, 1000), (35, 1000)])
         .await
         .unwrap();
       seed_asset(&db, 1, 1001, 34, STATION_A, 200).await;
       seed_asset(&db, 2, 1001, 35, STATION_A, 5000).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7368,7 +7368,7 @@ mod stockpile_tests {
       seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
       seed_asset(&db, 2, 1002, 34, STATION_B, 350).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), &[])
         .await
         .unwrap()
         .unwrap();
@@ -7543,11 +7543,19 @@ mod stockpile_tests {
       let db = store::open_test().await.unwrap();
       let created = create(&db, "Old", None, None, &[(34, 100)]).await.unwrap();
 
-      let updated = update(&db, created.stockpile.id(), "New", None, Some(60_003_760), &[(35, 200)])
-        .await
-        .unwrap();
+      let updated = update(
+        &db,
+        created.stockpile.id(),
+        "New",
+        Some("corp:cobalt".to_string()),
+        Some(60_003_760),
+        &[(35, 200)],
+      )
+      .await
+      .unwrap();
 
       assert_eq!(updated.stockpile.name(), "New");
+      assert_eq!(updated.stockpile.character_scope(), &Some("corp:cobalt".to_string()));
       assert_eq!(updated.stockpile.location_id(), Some(60_003_760));
       assert_eq!(updated.items.len(), 1);
       assert_eq!(updated.items[0].type_id(), 35);

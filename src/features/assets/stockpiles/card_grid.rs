@@ -184,7 +184,7 @@ mod tests {
 
   fn card(id: i64, full: bool) -> StockpileCard {
     StockpileCard {
-      character_id: None,
+      character_scope: None,
       fill_isk: 0.0,
       id,
       items: vec![super::super::StockpileItemLine {

@@ -68,7 +68,7 @@ pub(super) struct StockpileItemLine {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StockpileCard {
-  pub(super) character_id: Option<i64>,
+  pub(super) character_scope: Option<String>,
   pub(super) fill_isk: f64,
   pub(super) id: i64,
   pub(super) items: Vec<StockpileItemLine>,
@@ -200,7 +200,7 @@ impl ImportPanel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Editor {
-  character_id: Option<i64>,
+  character_scope: Option<String>,
   editing_id: Option<i64>,
   error: String,
   items: Vec<EditorItem>,
@@ -215,7 +215,7 @@ pub struct Editor {
 impl Editor {
   pub(super) fn blank() -> Self {
     Self {
-      character_id: None,
+      character_scope: None,
       editing_id: None,
       error: String::new(),
       items: vec![EditorItem::default()],
@@ -246,7 +246,7 @@ impl Editor {
         .collect()
     };
     Self {
-      character_id: card.character_id,
+      character_scope: card.character_scope.clone(),
       editing_id: Some(card.id),
       error: String::new(),
       items,
@@ -418,7 +418,7 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
   let mut cards = Vec::with_capacity(stockpiles.len());
   for entry in stockpiles {
     let id = entry.stockpile.id();
-    let fill = assets::fill_status(db, id, None).await.ok().flatten();
+    let fill = assets::fill_status(db, id, &[]).await.ok().flatten();
     let overall_pct = fill.as_ref().map(StockpileFill::overall_pct).unwrap_or(1.0);
 
     let mut items = Vec::with_capacity(entry.items.len());
@@ -452,7 +452,7 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
     let (target_isk, fill_isk) = economics(&items, &prices);
 
     cards.push(StockpileCard {
-      character_id: entry.stockpile.character_id(),
+      character_scope: entry.stockpile.character_scope().clone(),
       fill_isk,
       id,
       items,
@@ -473,10 +473,10 @@ pub(super) async fn save(db: &Database, editor: &Editor) {
   let items = editor.parsed_items();
   match editor.editing_id {
     Some(id) => {
-      let _ = assets::update(db, id, name, editor.character_id, location_id, &items).await;
+      let _ = assets::update(db, id, name, editor.character_scope.clone(), location_id, &items).await;
     }
     None => {
-      let _ = assets::create(db, name, editor.character_id, location_id, &items).await;
+      let _ = assets::create(db, name, editor.character_scope.clone(), location_id, &items).await;
     }
   }
 }
@@ -1720,7 +1720,7 @@ mod tests {
     #[test]
     fn it_seeds_the_location_chip_from_an_existing_card() {
       let card = StockpileCard {
-        character_id: None,
+        character_scope: None,
         fill_isk: 0.0,
         id: 1,
         items: vec![],
@@ -1789,7 +1789,7 @@ mod tests {
 
     fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
       StockpileCard {
-        character_id: None,
+        character_scope: None,
         fill_isk: 0.0,
         id: 1,
         items,
@@ -1845,7 +1845,7 @@ mod tests {
 
     fn card(items: Vec<StockpileItemLine>, fill_isk: f64, target_isk: f64) -> StockpileCard {
       StockpileCard {
-        character_id: None,
+        character_scope: None,
         fill_isk,
         id: 1,
         items,
@@ -1909,7 +1909,7 @@ mod tests {
 
     fn card_model() -> StockpileCard {
       StockpileCard {
-        character_id: None,
+        character_scope: None,
         fill_isk: 0.0,
         id: 1,
         items: vec![StockpileItemLine {
@@ -1998,7 +1998,7 @@ mod tests {
 
     fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
       StockpileCard {
-        character_id: None,
+        character_scope: None,
         fill_isk: 0.0,
         id: 1,
         items,

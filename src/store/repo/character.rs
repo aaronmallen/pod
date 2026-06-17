@@ -19,7 +19,7 @@ use crate::{
       character_contacts_view::CharacterContacts,
     },
     repo::infra::like_pattern,
-    search::{FilterToken, ParsedQuery},
+    search::{AVAILABLE_KEYS, FilterToken, ParsedQuery, parse_with_keys},
   },
 };
 
@@ -118,6 +118,18 @@ pub async fn get(db: &Database, id: i64) -> Result<Option<Character>, Error> {
   .fetch_optional(&db.0)
   .await?;
   Ok(row)
+}
+
+/// Returns matching character ids, or an empty `Vec` when `scope` is blank — callers treat empty as "all characters".
+pub async fn resolve_scope(db: &Database, scope: &str, now: &str) -> Result<Vec<i64>, Error> {
+  if scope.trim().is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let query = parse_with_keys(scope, AVAILABLE_KEYS);
+  let rows = search(db, &query, now).await?;
+
+  Ok(rows.into_iter().map(|row| row.character_id).collect())
 }
 
 pub async fn search(db: &Database, query: &ParsedQuery, now: &str) -> Result<Vec<CardRow>, Error> {
@@ -2358,11 +2370,11 @@ mod tests {
 
     const COBALT_EDGE: i64 = 98_000_001;
 
-    const COBALT_RECRUIT: i64 = 1003;
+    pub(super) const COBALT_RECRUIT: i64 = 1003;
 
-    const COBALT_SCOUT: i64 = 1001;
+    pub(super) const COBALT_SCOUT: i64 = 1001;
 
-    const NOW: &str = "2026-01-01T00:00:00Z";
+    pub(super) const NOW: &str = "2026-01-01T00:00:00Z";
 
     const RED_BARON: i64 = 1002;
 
@@ -2428,7 +2440,7 @@ mod tests {
       replace_skillqueue(db, character_id, &[entry]).await.unwrap();
     }
 
-    async fn seed_roster(db: &Database) {
+    pub(super) async fn seed_roster(db: &Database) {
       let cobalt = corp(COBALT_EDGE, "Cobalt Edge", "CBLT");
       let red = corp(RED_FEDERATION, "Red Federation", "REDF");
 
@@ -2550,6 +2562,34 @@ mod tests {
       seed_roster(&db).await;
 
       assert_eq!(matching(&db, "").await, vec![COBALT_RECRUIT, COBALT_SCOUT, RED_BARON]);
+    }
+  }
+
+  mod resolve_scope {
+    use pretty_assertions::assert_eq;
+
+    use super::{
+      super::resolve_scope,
+      search::{COBALT_RECRUIT, COBALT_SCOUT, NOW, seed_roster},
+    };
+    use crate::store;
+
+    #[tokio::test]
+    async fn it_returns_an_empty_set_for_a_blank_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+
+      assert!(resolve_scope(&db, "  ", NOW).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_query_to_the_matching_character_ids() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+
+      let ids = resolve_scope(&db, "corp:cobalt", NOW).await.unwrap();
+
+      assert_eq!(ids, vec![COBALT_RECRUIT, COBALT_SCOUT]);
     }
   }
 

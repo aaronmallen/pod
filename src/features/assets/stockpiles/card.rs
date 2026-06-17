@@ -263,7 +263,7 @@ mod tests {
 
   fn card_model(location_name: Option<&str>, location_id: Option<i64>) -> StockpileCard {
     StockpileCard {
-      character_id: None,
+      character_scope: None,
       fill_isk: 0.0,
       id: 1,
       items: vec![super::super::StockpileItemLine {
@@ -294,7 +294,7 @@ mod tests {
       })
       .collect();
     StockpileCard {
-      character_id: None,
+      character_scope: None,
       fill_isk: 0.0,
       id: 7,
       items,

@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 pub mod corp_eligibility;
+pub mod images;
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
 pub mod menu;

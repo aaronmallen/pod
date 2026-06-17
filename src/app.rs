@@ -28,7 +28,7 @@ use crate::{
     about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot,
     corporation_detail, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
-  services::updater,
+  services::{images, updater},
   store,
   sync::{self, JobKey, JobKind, Subject},
   ui::{
@@ -1526,66 +1526,16 @@ fn dispatch_image_fetches(app: &mut App, keys: Vec<(store::images::ImageKind, i6
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
-  let mut tasks = Vec::new();
-  for (kind, id) in keys {
-    if !app.pending_images.insert((kind, id)) {
-      continue;
-    }
-    let client = Arc::clone(&runtime.eve_image);
-    tasks.push(Task::perform(
-      async move { ensure_image(client, kind, id).await },
-      move |ready| Message::ImageReady {
-        id,
-        kind,
-        ready,
-      },
-    ));
-  }
-  Task::batch(tasks)
-}
-
-async fn ensure_image(client: Arc<eve_image::Client>, kind: store::images::ImageKind, id: i64) -> bool {
-  use store::images;
-
-  let store = images::default_store();
-  let path = store.image_path(kind, id);
-  if images::is_fresh(&path, images::STALE_AFTER) {
-    return true;
-  }
-
-  match client.fetch(&image_url(&client, kind, id)).await {
-    Ok(bytes) => write_refetched(&store, &path, &bytes, kind, id),
-    Err(error) => {
-      tracing::warn!(target: "pod::images", %error, ?kind, id, "refetching an evicted image failed");
-      false
-    }
-  }
-}
-
-fn image_url(client: &eve_image::Client, kind: store::images::ImageKind, id: i64) -> String {
-  use store::images::{self, ImageKind};
-
-  match kind {
-    ImageKind::AllianceLogo => client.alliance_logo_url(id, images::LOGO_SIZE),
-    ImageKind::CharacterPortrait => client.character_portrait_url(id, images::PORTRAIT_SIZE),
-    ImageKind::CorporationLogo => client.corporation_logo_url(id, images::LOGO_SIZE),
-  }
-}
-
-fn write_refetched(
-  store: &store::images::Store,
-  path: &std::path::Path,
-  bytes: &[u8],
-  kind: store::images::ImageKind,
-  id: i64,
-) -> bool {
-  match store.write(path, bytes) {
-    Ok(()) => true,
-    Err(error) => {
-      tracing::warn!(target: "pod::images", %error, ?kind, id, "writing a refetched image failed");
-      false
-    }
-  }
+  images::dispatch_fetches(
+    &mut app.pending_images,
+    &runtime.eve_image,
+    keys,
+    |(kind, id), ready| Message::ImageReady {
+      id,
+      kind,
+      ready,
+    },
+  )
 }
 
 fn handle_image_ready(app: &mut App, kind: store::images::ImageKind, id: i64, ready: bool) -> Task<Message> {
@@ -7465,21 +7415,6 @@ mod tests {
       let app = test_app();
 
       assert!(super::super::compare_seed_ids(&app).is_empty());
-    }
-  }
-
-  mod image_url {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_builds_a_url_for_every_image_kind() {
-      use store::images::ImageKind;
-      let runtime = test_runtime().await;
-      let client = runtime.eve_image.as_ref();
-
-      assert!(!super::super::image_url(client, ImageKind::AllianceLogo, 1).is_empty());
-      assert!(!super::super::image_url(client, ImageKind::CharacterPortrait, 1).is_empty());
-      assert!(!super::super::image_url(client, ImageKind::CorporationLogo, 1).is_empty());
     }
   }
 

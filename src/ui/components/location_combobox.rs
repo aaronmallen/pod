@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -64,6 +62,9 @@ impl LocationSearch {
     self.highlight
   }
 
+  // Keyboard-navigation surface for hosts that wire arrow-key handling onto the popover input; the
+  // stockpile editor drives selection by mouse, so these stay available but unused there.
+  #[allow(dead_code)]
   pub fn highlight_next(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;
@@ -76,6 +77,7 @@ impl LocationSearch {
     });
   }
 
+  #[allow(dead_code)]
   pub fn highlight_prev(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;
@@ -87,6 +89,7 @@ impl LocationSearch {
     });
   }
 
+  #[allow(dead_code)]
   pub fn highlighted(&self) -> Option<&LocationRef> {
     self.highlight.and_then(|index| self.results.get(index))
   }
@@ -216,6 +219,7 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
     self
   }
 
+  #[allow(dead_code)] // both trigger and popover default to Length::Fill; kept for host overrides
   pub fn width(mut self, width: Length) -> Self {
     self.width = width;
     self

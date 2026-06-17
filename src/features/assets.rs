@@ -17,15 +17,12 @@ use std::{
 use chrono::{DateTime, Utc};
 use iced::{Element, Task, widget::text_editor};
 
-// Wired into the stockpile editor by the editor task; surfaced now so the enriched search path is available.
-#[allow(unused_imports)]
-pub use self::stockpile_search::search_locations_enriched;
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
   stockpile_search::{
-    LocationRef, LocationTier, MultibuyResolution, resolve_multibuy, search_item_types, search_locations,
+    LocationRef, LocationTier, MultibuyResolution, resolve_multibuy, search_item_types, search_locations_enriched,
   },
-  stockpiles::{Editor, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, save_stockpile},
+  stockpiles::{Editor, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, resolve_scope_pilots, save_stockpile},
 };
 pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};
 use crate::{
@@ -242,18 +239,21 @@ pub enum Message {
   StockpileDeleted(i64),
   StockpileEditStarted(i64),
   StockpileEditorClosed,
-  StockpileEditorItemAdded,
-  StockpileEditorItemPicked(usize, i64, String),
+  StockpileEditorItemPicked(i64, String),
   StockpileEditorItemRemoved(usize),
-  StockpileEditorItemResults(usize, Vec<(i64, String)>),
-  StockpileEditorItemSearchChanged(usize, String),
+  StockpileEditorItemResults(Vec<(i64, String)>),
+  StockpileEditorItemSearchChanged(String),
   StockpileEditorItemTargetChanged(usize, String),
   StockpileEditorLocationCleared,
-  StockpileEditorLocationPicked(i64, String),
-  StockpileEditorLocationResults(Vec<(i64, String)>),
+  StockpileEditorLocationPicked(LocationRef),
+  StockpileEditorLocationResults(u64, Vec<LocationRef>),
   StockpileEditorLocationSearchChanged(String),
+  StockpileEditorLocationToggled,
   StockpileEditorNameChanged(String),
+  StockpileEditorPopoversClosed,
   StockpileEditorSaved,
+  StockpileEditorScopeChanged(String),
+  StockpileEditorScopeResolved(Vec<stockpiles::ScopePilot>),
   StockpileImportClosed,
   StockpileImportConfirmed,
   StockpileImportOpened,
@@ -287,6 +287,7 @@ impl Message {
         | Message::InventoryPageLoaded { .. }
         | Message::Loaded(_)
         | Message::SearchReloaded { .. }
+        | Message::StockpileEditorScopeResolved(_)
         | Message::StockpilesReloaded(_)
         | Message::SyncReloaded { .. }
     )
@@ -386,6 +387,9 @@ pub struct State {
   stockpiles: Vec<stockpiles::StockpileCard>,
   tab: Tab,
   totals: InventoryTotals,
+  /// Live main-window height, fed from `window::Event::Resized`. Used to size the editor modal at
+  /// ~50% of the window height. `None` until the first resize event arrives.
+  window_height: Option<f32>,
   values: values::ValueSummary,
 }
 
@@ -430,6 +434,7 @@ impl State {
       sort_dir: SortDirection::Descending,
       tab: Tab::default(),
       totals: InventoryTotals::default(),
+      window_height: None,
       values: values::ValueSummary::default(),
       nav: tracker::NavSeries::default(),
       stockpiles: Vec::new(),
@@ -468,6 +473,14 @@ impl State {
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.sidebar.set_host_width(host_width);
     self.abyssals_filter.set_host_width(host_width);
+  }
+
+  pub fn set_window_height(&mut self, height: f32) {
+    self.window_height = Some(height);
+  }
+
+  pub(super) fn window_height(&self) -> Option<f32> {
+    self.window_height
   }
 
   pub fn active(&self) -> Scope {
@@ -513,6 +526,7 @@ impl State {
       .filter_map(|pilot| pilot.portrait.stale_key())
       .chain(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()))
       .chain(self.abyssals.iter().filter_map(|card| card.portrait.stale_key()))
+      .chain(self.stockpile_editor.iter().flat_map(|editor| editor.stale_images()))
       .collect()
   }
 
@@ -631,6 +645,25 @@ impl State {
 
   pub fn take_stockpile_editor(&mut self) -> Option<stockpiles::Editor> {
     self.stockpile_editor.take()
+  }
+
+  /// The open editor's current character-scope query (an empty string previews every pilot), or
+  /// `None` when no editor is open, so the dispatcher can seed the live preview on open.
+  pub fn stockpile_editor_scope(&self) -> Option<String> {
+    self
+      .stockpile_editor
+      .as_ref()
+      .map(|editor| editor.scope_query().to_owned())
+  }
+
+  /// The current location-search generation, so the dispatcher can tag the async request and discard
+  /// stale responses.
+  pub fn stockpile_location_generation(&self) -> u64 {
+    self
+      .stockpile_editor
+      .as_ref()
+      .map(stockpiles::Editor::location_generation)
+      .unwrap_or_default()
   }
 
   pub(super) fn stockpile_import(&self) -> Option<&stockpiles::ImportPanel> {
@@ -1077,18 +1110,21 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StockpileDeleted(_)
     | Message::StockpileEditStarted(_)
     | Message::StockpileEditorClosed
-    | Message::StockpileEditorItemAdded
     | Message::StockpileEditorItemPicked(..)
     | Message::StockpileEditorItemRemoved(_)
     | Message::StockpileEditorItemResults(..)
     | Message::StockpileEditorItemSearchChanged(..)
     | Message::StockpileEditorItemTargetChanged(..)
     | Message::StockpileEditorLocationCleared
-    | Message::StockpileEditorLocationPicked(..)
-    | Message::StockpileEditorLocationResults(_)
+    | Message::StockpileEditorLocationPicked(_)
+    | Message::StockpileEditorLocationResults(..)
     | Message::StockpileEditorLocationSearchChanged(_)
+    | Message::StockpileEditorLocationToggled
     | Message::StockpileEditorNameChanged(_)
+    | Message::StockpileEditorPopoversClosed
     | Message::StockpileEditorSaved
+    | Message::StockpileEditorScopeChanged(_)
+    | Message::StockpileEditorScopeResolved(_)
     | Message::StockpileImportClosed
     | Message::StockpileImportConfirmed
     | Message::StockpileImportOpened
@@ -1486,16 +1522,21 @@ fn apply_stockpile_editor(state: &mut State, message: Message) -> Result<Task<Me
   match message {
     Message::StockpileNew => state.stockpile_editor = Some(stockpiles::Editor::blank()),
     Message::StockpileEditorNameChanged(name) => editor.set_name(name),
-    Message::StockpileEditorLocationSearchChanged(value) => editor.set_location_query(value),
-    Message::StockpileEditorLocationResults(results) => editor.set_location_suggestions(results),
-    Message::StockpileEditorLocationPicked(id, name) => editor.pick_location(id, name),
+    Message::StockpileEditorLocationToggled => editor.toggle_location(),
+    Message::StockpileEditorLocationSearchChanged(value) => {
+      editor.set_location_query(value);
+    }
+    Message::StockpileEditorLocationResults(generation, results) => editor.accept_location_results(generation, results),
+    Message::StockpileEditorLocationPicked(location) => editor.pick_location(location),
     Message::StockpileEditorLocationCleared => editor.clear_location(),
-    Message::StockpileEditorItemSearchChanged(index, value) => editor.set_item_query(index, value),
-    Message::StockpileEditorItemResults(index, results) => editor.set_item_suggestions(index, results),
-    Message::StockpileEditorItemPicked(index, id, name) => editor.pick_item(index, id, name),
+    Message::StockpileEditorScopeChanged(value) => editor.set_scope_query(value),
+    Message::StockpileEditorScopeResolved(pilots) => editor.set_scope_pilots(pilots),
+    Message::StockpileEditorItemSearchChanged(value) => editor.set_item_query(value),
+    Message::StockpileEditorItemResults(results) => editor.set_item_suggestions(results),
+    Message::StockpileEditorItemPicked(id, name) => editor.pick_item(id, name),
     Message::StockpileEditorItemTargetChanged(index, value) => editor.set_item_target(index, value),
-    Message::StockpileEditorItemAdded => editor.add_item(),
     Message::StockpileEditorItemRemoved(index) => editor.remove_item(index),
+    Message::StockpileEditorPopoversClosed => editor.close_popovers(),
     Message::StockpileEditorClosed => state.stockpile_editor = None,
     other => return Err(other),
   }
@@ -3124,6 +3165,7 @@ mod tests {
         location_name: None,
         name: name.to_owned(),
         overall_pct: 0.0,
+        scope_pilots: 0,
         target_isk: 0.0,
       }
     }
@@ -3164,7 +3206,7 @@ mod tests {
 
       assert!(state.stockpile_import.is_none());
       let editor = state.stockpile_editor.as_ref().expect("confirm seeds an editor");
-      assert!(editor.items().iter().any(|item| item.type_id == Some(34)));
+      assert!(editor.items().iter().any(|item| item.type_id == 34));
     }
 
     #[tokio::test]
@@ -3180,25 +3222,25 @@ mod tests {
       );
       assert_eq!(state.stockpile_editor.as_ref().map(|e| e.name()), Some("Cap boosters"));
 
-      let _ = update(&mut state, Message::StockpileEditorItemAdded, &db);
+      // Picking a search result immediately appends a resolved row (no add-blank-row step).
       let _ = update(
         &mut state,
-        Message::StockpileEditorItemPicked(1, 34, "Tritanium".to_owned()),
+        Message::StockpileEditorItemPicked(34, "Tritanium".to_owned()),
         &db,
       );
       let _ = update(
         &mut state,
-        Message::StockpileEditorItemTargetChanged(1, "100".to_owned()),
+        Message::StockpileEditorItemTargetChanged(0, "100".to_owned()),
         &db,
       );
       let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.items().len(), 2);
-      assert_eq!(editor.items()[1].type_id, Some(34));
-      assert_eq!(editor.items()[1].type_name.as_deref(), Some("Tritanium"));
-      assert_eq!(editor.items()[1].target, "100");
+      assert_eq!(editor.items().len(), 1);
+      assert_eq!(editor.items()[0].type_id, 34);
+      assert_eq!(editor.items()[0].type_name, "Tritanium");
+      assert_eq!(editor.items()[0].target, "100");
 
-      let _ = update(&mut state, Message::StockpileEditorItemRemoved(1), &db);
-      assert_eq!(state.stockpile_editor.as_ref().unwrap().items().len(), 1);
+      let _ = update(&mut state, Message::StockpileEditorItemRemoved(0), &db);
+      assert!(state.stockpile_editor.as_ref().unwrap().items().is_empty());
     }
 
     #[tokio::test]
@@ -3230,7 +3272,7 @@ mod tests {
       let _ = update(&mut state, Message::StockpileEditorNameChanged("x".to_owned()), &db);
       let _ = update(
         &mut state,
-        Message::StockpileEditorItemPicked(0, 1, "Something".to_owned()),
+        Message::StockpileEditorItemPicked(1, "Something".to_owned()),
         &db,
       );
       let _ = update(
@@ -3238,7 +3280,6 @@ mod tests {
         Message::StockpileEditorItemTargetChanged(0, "1".to_owned()),
         &db,
       );
-      let _ = update(&mut state, Message::StockpileEditorItemAdded, &db);
       let _ = update(&mut state, Message::StockpileEditorItemRemoved(0), &db);
       assert!(state.stockpile_editor.is_none());
     }

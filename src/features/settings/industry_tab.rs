@@ -9,6 +9,7 @@ use crate::{
   features::industry::{PinnedStructure, PlannerFacility},
   ui::{
     components::{
+      anchored_dropdown::AnchoredDropdown,
       facility_combobox::{FacilityCombobox, FacilityRef, FacilitySearch},
       rule,
     },
@@ -294,12 +295,14 @@ fn activity_section(picker: &Picker, activity: Activity) -> Element<'_, Message>
     })
     .trigger();
 
-  let mut children: Vec<Element<'_, Message>> = vec![head.into(), trigger];
-  if picker.open {
-    children.push(popover(picker, activity));
-  }
+  // The facility popover floats below the trigger (width-matched) via AnchoredDropdown so opening it
+  // never pushes the sibling activity sections down — it overlays the content instead.
+  let dropdown = AnchoredDropdown::new(trigger, picker.open.then(|| popover(picker, activity)))
+    .on_dismiss(Message::PickerToggled {
+      activity: id,
+    });
 
-  Column::with_children(children)
+  Column::with_children(vec![head.into(), dropdown.into()])
     .spacing(spacing::SPACE_3)
     .width(Length::Fill)
     .into()

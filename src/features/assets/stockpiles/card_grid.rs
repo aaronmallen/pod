@@ -199,6 +199,7 @@ mod tests {
       location_name: None,
       name: "Cache".to_owned(),
       overall_pct: if full { 1.0 } else { 0.4 },
+      scope_pilots: 0,
       target_isk: 0.0,
     }
   }

@@ -1,3 +1,4 @@
+pub mod anchored_dropdown;
 pub mod avatar;
 pub mod backdrop;
 pub mod badge;

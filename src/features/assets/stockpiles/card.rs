@@ -171,18 +171,67 @@ fn meta(
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center);
 
+  let mut rows: Vec<Element<'_, Message>> = vec![head.into(), location_line(model)];
+  if let Some(chip) = scope_chip(model) {
+    rows.push(chip);
+  }
+  rows.push(progress_bar(model.overall_pct as f32, bar_color, BAR_HEIGHT));
+
   container(
-    Column::with_children(vec![
-      head.into(),
-      location_line(model),
-      progress_bar(model.overall_pct as f32, bar_color, BAR_HEIGHT),
-    ])
-    .spacing(spacing::SPACE_2)
-    .width(Length::Fill),
+    Column::with_children(rows)
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill),
   )
   .width(Length::Fill)
   .padding(spacing::SPACE_3_5)
   .into()
+}
+
+fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
+  let query = model
+    .character_scope
+    .as_deref()
+    .map(str::trim)
+    .filter(|q| !q.is_empty())?;
+
+  let pilots = model.scope_pilots;
+  let pill = container(eyebrow(
+    &format!("\u{25d1} {pilots} pilot{}", if pilots == 1 { "" } else { "s" }),
+    Some(color::accent::PLASMA),
+  ))
+  .padding(Padding {
+    top: spacing::UNIT,
+    bottom: spacing::UNIT,
+    left: spacing::SPACE_2,
+    right: spacing::SPACE_2,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.28),
+      radius: 999.0.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  Some(
+    Row::with_children(vec![
+      pill.into(),
+      text(query.to_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(|_| text::Style {
+          color: Some(color::text::tertiary()),
+        })
+        .width(Length::Fill)
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .width(Length::Fill)
+    .into(),
+  )
 }
 
 fn multibuy_button<'a>(id: i64) -> Element<'a, Message> {
@@ -278,6 +327,7 @@ mod tests {
       location_name: location_name.map(str::to_owned),
       name: "Cache".to_owned(),
       overall_pct: 0.4,
+      scope_pilots: 0,
       target_isk: 0.0,
     }
   }
@@ -302,6 +352,7 @@ mod tests {
       location_name: None,
       name: "Big cache".to_owned(),
       overall_pct: 0.0,
+      scope_pilots: 0,
       target_isk: 0.0,
     }
   }

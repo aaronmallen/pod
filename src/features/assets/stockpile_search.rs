@@ -37,7 +37,6 @@ impl LocationTier {
   /// Infers the tier from an EVE entity id using the game's disjoint id ranges. Player structures
   /// occupy the 64-bit space at or above `1_000_000_000_000`; the NPC ranges below it are densely
   /// packed (regions `10M`, constellations `20M`, systems `30M`, stations `60M`).
-  #[allow(dead_code)] // consumed by the stockpile editor wired in the editor task
   pub fn from_id(id: i64) -> Option<Self> {
     match id {
       1_000_000_000_000.. => Some(Self::Structure),
@@ -160,63 +159,9 @@ pub async fn search_item_types(
   }
 }
 
-pub async fn search_locations(
-  db: Database,
-  esi: Arc<esi::Client>,
-  sso: Arc<eve_sso::Client>,
-  query: String,
-) -> Vec<(i64, String)> {
-  let Some(grant) = first_owned_grant(&db, &sso).await else {
-    return Vec::new();
-  };
-
-  let result = match esi
-    .universe()
-    .search_with_categories(&query, LOCATION_SEARCH_CATEGORIES, &grant)
-    .await
-  {
-    Ok(result) => result,
-    Err(error) => {
-      tracing::warn!(target: "pod::assets", %error, query = %query, "location search failed");
-      return Vec::new();
-    }
-  };
-
-  let mut named: Vec<(i64, String)> = Vec::new();
-
-  // Regions, constellations, systems, and stations are public and resolve by name in one /universe/names
-  // batch; only player structures need the per-id authenticated endpoint below.
-  let mut public_ids: Vec<i64> = result.region;
-  public_ids.extend(result.constellation);
-  public_ids.extend(result.solar_system);
-  public_ids.extend(result.station);
-  if !public_ids.is_empty() {
-    match esi.universe().names(&public_ids).await {
-      Ok(names) => named.extend(names.into_iter().map(|record| (record.id, record.name))),
-      Err(error) => {
-        tracing::warn!(target: "pod::assets", %error, "location name resolution failed")
-      }
-    }
-  }
-
-  for structure_id in result.structure {
-    match esi.universe().structure(structure_id, &grant).await {
-      Ok(structure) => named.push((structure_id, structure.name)),
-      Err(error) => {
-        tracing::warn!(target: "pod::assets", %error, structure_id, "structure name resolution failed")
-      }
-    }
-  }
-
-  named.truncate(MAX_LOCATION_RESULTS);
-  named
-}
-
-/// Enriched sibling of [`search_locations`]: returns [`LocationRef`]s carrying tier, a region/system
-/// context chain, and a security status (for system/station/structure tiers) instead of bare
-/// `(id, name)` tuples. Searches the same ESI categories, then backfills geography from the SDE via
-/// [`industry::system_geo`].
-#[allow(dead_code)] // wired into the stockpile editor by the editor task
+/// Returns [`LocationRef`]s carrying tier, a region/system context chain, and a security status (for
+/// system/station/structure tiers). Searches the location ESI categories, resolves names, then
+/// backfills geography from the SDE via [`industry::system_geo`].
 pub async fn search_locations_enriched(
   db: Database,
   esi: Arc<esi::Client>,
@@ -303,7 +248,6 @@ pub async fn search_locations_enriched(
 /// Backfills `location`'s security and context chain from the SDE geography for `solar_system_id`.
 /// The chain reads `region · system`, omitting blank segments; a system tier collapses to just its
 /// region (the system name is already the row title).
-#[allow(dead_code)] // reached only through search_locations_enriched, wired by the editor task
 async fn enrich_from_system(db: &Database, location: &mut LocationRef, solar_system_id: i64) {
   let (security, region, system) = industry::system_geo(db, solar_system_id)
     .await
@@ -506,7 +450,7 @@ mod tests {
     }
   }
 
-  mod search_locations {
+  mod search_locations_enriched_tiers {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -543,16 +487,27 @@ mod tests {
       let (db, esi, sso) = make_clients(&server.uri()).await;
       seed_owned_character(&db).await;
 
-      let results = search_locations(db, esi, sso, "Jita".to_owned()).await;
+      let results = search_locations_enriched(db, esi, sso, "Jita".to_owned()).await;
+
+      let resolved: Vec<(i64, String, Option<LocationTier>)> = results
+        .into_iter()
+        .map(|location| (location.id, location.name, location.tier))
+        .collect();
 
       assert_eq!(
-        results,
+        resolved,
         vec![
-          (10000002, "The Forge".to_owned()),
-          (20000020, "Kimotoro".to_owned()),
-          (30000142, "Jita".to_owned()),
-          (60003760, "Jita IV - Moon 4 - CNAP".to_owned()),
-          (1234567890, "Jita Trade Hub".to_owned()),
+          (10000002, "The Forge".to_owned(), Some(LocationTier::Region)),
+          (20000020, "Kimotoro".to_owned(), Some(LocationTier::Constellation)),
+          (30000142, "Jita".to_owned(), Some(LocationTier::System)),
+          (
+            60003760,
+            "Jita IV - Moon 4 - CNAP".to_owned(),
+            Some(LocationTier::Station)
+          ),
+          // This fixture id sits below the 1e12 player-structure range, so the tier is unresolved;
+          // real structures (id >= 1_000_000_000_000) resolve to LocationTier::Structure.
+          (1234567890, "Jita Trade Hub".to_owned(), None),
         ]
       );
     }

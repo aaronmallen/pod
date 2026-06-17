@@ -1262,6 +1262,16 @@ fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
   }
 }
 
+/// Feeds the live main-window height to the assets state so the stockpile editor modal can size at
+/// ~50% of the window height.
+fn propagate_host_height(app: &mut App, id: window::Id, height: f32) {
+  if let Some(Window::Main) = app.windows.kind(id)
+    && let Some(state) = app.assets.as_mut()
+  {
+    state.set_window_height(height);
+  }
+}
+
 fn record_pane_ratio(app: &mut App, key: &str, ratio: f32) {
   app.ui_state.panes.insert(key.to_owned(), ratio);
   app.coalescer.request(app.ui_state.clone(), Instant::now());
@@ -2653,12 +2663,28 @@ fn dispatch_assets_with_runtime(state: &mut assets::State, runtime: &Runtime, ms
     assets::Message::StockpileEditorLocationSearchChanged(ref value) => {
       let query = value.clone();
       let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      Task::batch([update, stockpile_location_search(runtime, query)])
+      let generation = state.stockpile_location_generation();
+      Task::batch([update, stockpile_location_search(runtime, query, generation)])
     }
-    assets::Message::StockpileEditorItemSearchChanged(index, ref value) => {
+    assets::Message::StockpileEditorScopeChanged(ref value) => {
       let query = value.clone();
       let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      Task::batch([update, stockpile_item_search(runtime, index, query)])
+      Task::batch([update, stockpile_scope_resolve(runtime, query)])
+    }
+    // Seed the live pilot preview as soon as an editor opens, before the user edits the scope.
+    assets::Message::StockpileNew
+    | assets::Message::StockpileEditStarted(_)
+    | assets::Message::StockpileImportConfirmed => {
+      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
+      match state.stockpile_editor_scope() {
+        Some(query) => Task::batch([update, stockpile_scope_resolve(runtime, query)]),
+        None => update,
+      }
+    }
+    assets::Message::StockpileEditorItemSearchChanged(ref value) => {
+      let query = value.clone();
+      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
+      Task::batch([update, stockpile_item_search(runtime, query)])
     }
     assets::Message::StockpileImportResolveRequested => match state.stockpile_import_text() {
       Some(text) => stockpile_import_resolve(runtime, text),
@@ -2697,7 +2723,7 @@ fn stockpile_import_resolve(runtime: &Runtime, text: String) -> Task<Message> {
   )
 }
 
-fn stockpile_item_search(runtime: &Runtime, index: usize, query: String) -> Task<Message> {
+fn stockpile_item_search(runtime: &Runtime, query: String) -> Task<Message> {
   if query.trim().chars().count() < assets::STOCKPILE_SEARCH_MIN_CHARS {
     return Task::none();
   }
@@ -2706,11 +2732,11 @@ fn stockpile_item_search(runtime: &Runtime, index: usize, query: String) -> Task
   let sso = Arc::clone(&runtime.sso);
   Task::perform(
     async move { assets::search_item_types(db, esi, sso, query).await },
-    move |results| Message::Assets(assets::Message::StockpileEditorItemResults(index, results)),
+    move |results| Message::Assets(assets::Message::StockpileEditorItemResults(results)),
   )
 }
 
-fn stockpile_location_search(runtime: &Runtime, query: String) -> Task<Message> {
+fn stockpile_location_search(runtime: &Runtime, query: String, generation: u64) -> Task<Message> {
   if query.trim().chars().count() < assets::STOCKPILE_SEARCH_MIN_CHARS {
     return Task::none();
   }
@@ -2718,9 +2744,16 @@ fn stockpile_location_search(runtime: &Runtime, query: String) -> Task<Message> 
   let esi = Arc::clone(&runtime.esi);
   let sso = Arc::clone(&runtime.sso);
   Task::perform(
-    async move { assets::search_locations(db, esi, sso, query).await },
-    |results| Message::Assets(assets::Message::StockpileEditorLocationResults(results)),
+    async move { assets::search_locations_enriched(db, esi, sso, query).await },
+    move |results| Message::Assets(assets::Message::StockpileEditorLocationResults(generation, results)),
   )
+}
+
+fn stockpile_scope_resolve(runtime: &Runtime, query: String) -> Task<Message> {
+  let db = runtime.db.clone();
+  Task::perform(async move { assets::resolve_scope_pilots(db, query).await }, |pilots| {
+    Message::Assets(assets::Message::StockpileEditorScopeResolved(pilots))
+  })
 }
 
 fn handle_mail_unread_counted(app: &mut App, unread: i64) -> Task<Message> {
@@ -4050,6 +4083,7 @@ fn handle_window(app: &mut App, id: window::Id, event: window::Event) -> Task<Me
       let base = window_key(app, id).and_then(|key| app.ui_state.windows.get(key).copied());
       record_window_geometry(app, id, geometry_after_resize(base, size));
       propagate_host_width(app, id, size.width);
+      propagate_host_height(app, id, size.height);
       Task::none()
     }
     window::Event::Moved(position) => {
@@ -5877,7 +5911,7 @@ mod tests {
       );
       let _item = handle_assets(
         &mut app,
-        assets::Message::StockpileEditorItemSearchChanged(0, "Trit".to_owned()),
+        assets::Message::StockpileEditorItemSearchChanged("Trit".to_owned()),
       );
       let _resolve = handle_assets(&mut app, assets::Message::StockpileImportResolveRequested);
       let _save = handle_assets(&mut app, assets::Message::StockpileEditorSaved);

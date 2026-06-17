@@ -11,6 +11,7 @@ use sqlx::{Connection, SqliteConnection};
 use crate::store::share_meta::{read_generation, write_generation};
 
 const BACKUP_RETENTION: usize = 3;
+
 const WAL_SIDECARS: [&str; 2] = ["-wal", "-shm"];
 
 #[derive(Debug, thiserror::Error)]
@@ -19,36 +20,6 @@ pub enum Error {
   Io(#[from] io::Error),
   #[error("database error: {0}")]
   Sqlx(#[from] sqlx::Error),
-}
-
-pub async fn checkpoint_into(source: &Path, destination: &Path) -> Result<(), Error> {
-  if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent)?;
-  }
-
-  // Stage the database alongside its -wal/-shm sidecars, fold the WAL in, then publish only the
-  // self-contained .db — the destination never gains a -wal/-shm trail and the source is untouched.
-  let staged = destination.with_extension("checkpoint-tmp");
-  fs::copy(source, &staged)?;
-  for suffix in WAL_SIDECARS {
-    let sidecar = with_suffix(source, suffix);
-    if sidecar.exists() {
-      fs::copy(&sidecar, with_suffix(&staged, suffix))?;
-    }
-  }
-
-  let result = checkpoint(&staged).await;
-  for suffix in WAL_SIDECARS {
-    let _ = fs::remove_file(with_suffix(&staged, suffix));
-  }
-  if let Err(error) = result {
-    let _ = fs::remove_file(&staged);
-    return Err(error);
-  }
-
-  fs::rename(&staged, destination)?;
-
-  Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +69,36 @@ impl SyncCopy {
 
     Ok(true)
   }
+}
+
+pub async fn checkpoint_into(source: &Path, destination: &Path) -> Result<(), Error> {
+  if let Some(parent) = destination.parent() {
+    fs::create_dir_all(parent)?;
+  }
+
+  // Stage the database alongside its -wal/-shm sidecars, fold the WAL in, then publish only the
+  // self-contained .db — the destination never gains a -wal/-shm trail and the source is untouched.
+  let staged = destination.with_extension("checkpoint-tmp");
+  fs::copy(source, &staged)?;
+  for suffix in WAL_SIDECARS {
+    let sidecar = with_suffix(source, suffix);
+    if sidecar.exists() {
+      fs::copy(&sidecar, with_suffix(&staged, suffix))?;
+    }
+  }
+
+  let result = checkpoint(&staged).await;
+  for suffix in WAL_SIDECARS {
+    let _ = fs::remove_file(with_suffix(&staged, suffix));
+  }
+  if let Err(error) = result {
+    let _ = fs::remove_file(&staged);
+    return Err(error);
+  }
+
+  fs::rename(&staged, destination)?;
+
+  Ok(())
 }
 
 /// Deletes the oldest `.backup` siblings of `database`, keeping the newest `keep` by name. The

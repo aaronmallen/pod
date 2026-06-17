@@ -17,97 +17,9 @@ use crate::{
 #[allow(dead_code)]
 pub(super) const DOWNTIME_HOUR: u32 = 11;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Preset {
-  LaterToday,
-  NextWeek,
-  ThisWeekend,
-  Tomorrow,
-}
+const MENU_WIDTH: f32 = 240.0;
 
-impl Preset {
-  pub(super) fn label(self) -> &'static str {
-    match self {
-      Preset::LaterToday => "Later today",
-      Preset::Tomorrow => "Tomorrow",
-      Preset::ThisWeekend => "This weekend",
-      Preset::NextWeek => "Next week",
-    }
-  }
-
-  pub(super) fn hint(self) -> &'static str {
-    match self {
-      Preset::LaterToday => "18:00 EVE",
-      Preset::Tomorrow => "09:00 EVE",
-      Preset::ThisWeekend => "Sat 09:00",
-      Preset::NextWeek => "Mon 09:00",
-    }
-  }
-
-  pub(super) fn all() -> [Preset; 4] {
-    [
-      Preset::LaterToday,
-      Preset::Tomorrow,
-      Preset::ThisWeekend,
-      Preset::NextWeek,
-    ]
-  }
-
-  pub(super) fn resolve(self, now: DateTime<Utc>) -> DateTime<Utc> {
-    match self {
-      Preset::LaterToday => {
-        let today_18 = at_time(now, 18, 0);
-        if now < today_18 {
-          today_18
-        } else {
-          at_time(now + Duration::days(1), 18, 0)
-        }
-      }
-      Preset::Tomorrow => at_time(now + Duration::days(1), 9, 0),
-      Preset::ThisWeekend => {
-        let sat_today = at_time(now, 9, 0);
-        if now.weekday() == Weekday::Sat && now < sat_today {
-          sat_today
-        } else {
-          at_time(next_weekday(now, Weekday::Sat), 9, 0)
-        }
-      }
-      Preset::NextWeek => at_time(next_weekday(now, Weekday::Mon), 9, 0),
-    }
-  }
-}
-
-fn at_time(from: DateTime<Utc>, hour: u32, minute: u32) -> DateTime<Utc> {
-  let date = from.date_naive();
-  Utc
-    .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, 0)
-    .single()
-    .unwrap_or(from)
-}
-
-fn next_weekday(now: DateTime<Utc>, target: Weekday) -> DateTime<Utc> {
-  let mut d = now + Duration::days(1);
-  while d.weekday() != target {
-    d += Duration::days(1);
-  }
-  d
-}
-
-pub(super) fn canonical_until(until: &str) -> String {
-  match DateTime::parse_from_rfc3339(until) {
-    Ok(parsed) => parsed.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-    Err(_) => until.to_owned(),
-  }
-}
-
-pub(super) async fn snooze_until(db: Database, character_id: i64, mail_id: i64, until: String) {
-  let until = canonical_until(&until);
-  let _ = mail::upsert_snoozed_mail(&db, character_id, mail_id, &until).await;
-}
-
-pub(super) async fn unsnooze(db: Database, character_id: i64, mail_id: i64) {
-  let _ = mail::delete_snoozed_mail(&db, character_id, mail_id).await;
-}
+const CALENDAR_WIDTH: f32 = 304.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Calendar {
@@ -205,11 +117,103 @@ impl Calendar {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Preset {
+  LaterToday,
+  NextWeek,
+  ThisWeekend,
+  Tomorrow,
+}
+
+impl Preset {
+  pub(super) fn label(self) -> &'static str {
+    match self {
+      Preset::LaterToday => "Later today",
+      Preset::Tomorrow => "Tomorrow",
+      Preset::ThisWeekend => "This weekend",
+      Preset::NextWeek => "Next week",
+    }
+  }
+
+  pub(super) fn hint(self) -> &'static str {
+    match self {
+      Preset::LaterToday => "18:00 EVE",
+      Preset::Tomorrow => "09:00 EVE",
+      Preset::ThisWeekend => "Sat 09:00",
+      Preset::NextWeek => "Mon 09:00",
+    }
+  }
+
+  pub(super) fn all() -> [Preset; 4] {
+    [
+      Preset::LaterToday,
+      Preset::Tomorrow,
+      Preset::ThisWeekend,
+      Preset::NextWeek,
+    ]
+  }
+
+  pub(super) fn resolve(self, now: DateTime<Utc>) -> DateTime<Utc> {
+    match self {
+      Preset::LaterToday => {
+        let today_18 = at_time(now, 18, 0);
+        if now < today_18 {
+          today_18
+        } else {
+          at_time(now + Duration::days(1), 18, 0)
+        }
+      }
+      Preset::Tomorrow => at_time(now + Duration::days(1), 9, 0),
+      Preset::ThisWeekend => {
+        let sat_today = at_time(now, 9, 0);
+        if now.weekday() == Weekday::Sat && now < sat_today {
+          sat_today
+        } else {
+          at_time(next_weekday(now, Weekday::Sat), 9, 0)
+        }
+      }
+      Preset::NextWeek => at_time(next_weekday(now, Weekday::Mon), 9, 0),
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct DayCell {
   pub day: u32,
   pub in_month: bool,
   pub month0: u32,
   pub year: i32,
+}
+
+fn at_time(from: DateTime<Utc>, hour: u32, minute: u32) -> DateTime<Utc> {
+  let date = from.date_naive();
+  Utc
+    .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, 0)
+    .single()
+    .unwrap_or(from)
+}
+
+fn next_weekday(now: DateTime<Utc>, target: Weekday) -> DateTime<Utc> {
+  let mut d = now + Duration::days(1);
+  while d.weekday() != target {
+    d += Duration::days(1);
+  }
+  d
+}
+
+pub(super) fn canonical_until(until: &str) -> String {
+  match DateTime::parse_from_rfc3339(until) {
+    Ok(parsed) => parsed.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    Err(_) => until.to_owned(),
+  }
+}
+
+pub(super) async fn snooze_until(db: Database, character_id: i64, mail_id: i64, until: String) {
+  let until = canonical_until(&until);
+  let _ = mail::upsert_snoozed_mail(&db, character_id, mail_id, &until).await;
+}
+
+pub(super) async fn unsnooze(db: Database, character_id: i64, mail_id: i64) {
+  let _ = mail::delete_snoozed_mail(&db, character_id, mail_id).await;
 }
 
 pub(super) fn month_grid(year: i32, month0: u32) -> Vec<DayCell> {
@@ -292,9 +296,6 @@ pub(super) fn month_name(month0: u32) -> &'static str {
   ];
   MONTHS[(month0 % 12) as usize]
 }
-
-const MENU_WIDTH: f32 = 240.0;
-const CALENDAR_WIDTH: f32 = 304.0;
 
 pub(super) fn presets_menu<'a>(is_snoozed: bool, selected: Option<i64>) -> Element<'a, Message> {
   let mut column = Column::new()

@@ -20,6 +20,12 @@ pub mod storage_migration;
 pub mod sync_copy;
 pub mod sync_session;
 
+const HOUSEKEEPING_MAX_CONNECTIONS: u32 = 1;
+
+const INTERACTIVE_MAX_CONNECTIONS: u32 = 4;
+
+const SYNC_MAX_CONNECTIONS: u32 = 4;
+
 #[derive(Clone, Debug)]
 pub struct Database(pub SqlitePool);
 
@@ -45,6 +51,15 @@ pub enum Error {
   Sqlx(#[from] sqlx::Error),
 }
 
+/// The trio of pools the app runs against a single database file: the interactive pool that serves
+/// auth/roster reads, the sync worker pool, and the single-connection housekeeping pool. See the
+/// individual `open*` functions for why each exists.
+pub struct Pools {
+  pub housekeeping: Database,
+  pub interactive: Database,
+  pub sync: Database,
+}
+
 impl Error {
   pub fn is_foreign_key_violation(&self) -> bool {
     match self {
@@ -64,24 +79,11 @@ pub(crate) fn is_foreign_key_constraint(error: &sqlx::Error) -> bool {
     .is_some_and(|code| code == SQLITE_FOREIGN_KEY_CODE)
 }
 
-const HOUSEKEEPING_MAX_CONNECTIONS: u32 = 1;
-const INTERACTIVE_MAX_CONNECTIONS: u32 = 4;
-const SYNC_MAX_CONNECTIONS: u32 = 4;
-
 pub async fn open(path: &Path) -> Result<Database, Error> {
   let pool = connect_pool(path, INTERACTIVE_MAX_CONNECTIONS).await?;
   sqlx::migrate!().run(&pool).await?;
 
   Ok(Database(pool))
-}
-
-/// The trio of pools the app runs against a single database file: the interactive pool that serves
-/// auth/roster reads, the sync worker pool, and the single-connection housekeeping pool. See the
-/// individual `open*` functions for why each exists.
-pub struct Pools {
-  pub housekeeping: Database,
-  pub interactive: Database,
-  pub sync: Database,
 }
 
 /// Opens all three app pools over one database file. `open` runs migrations once; the sync and

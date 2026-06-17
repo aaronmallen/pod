@@ -13,6 +13,12 @@ use iced::{Subscription, futures::Stream};
 
 pub const SCHEME: &str = "eveauth-pod";
 
+static FOCUS_SENDER: Mutex<Option<FocusSender>> = Mutex::new(None);
+
+static PENDING: Mutex<Option<String>> = Mutex::new(None);
+
+static SENDER: Mutex<Option<Sender>> = Mutex::new(None);
+
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Eq, PartialEq)]
 enum Claim {
@@ -21,11 +27,8 @@ enum Claim {
 }
 
 type FocusSender = iced::futures::channel::mpsc::Sender<()>;
-type Sender = iced::futures::channel::mpsc::Sender<String>;
 
-static FOCUS_SENDER: Mutex<Option<FocusSender>> = Mutex::new(None);
-static PENDING: Mutex<Option<String>> = Mutex::new(None);
-static SENDER: Mutex<Option<Sender>> = Mutex::new(None);
+type Sender = iced::futures::channel::mpsc::Sender<String>;
 
 pub fn subscription() -> Subscription<String> {
   Subscription::run(stream)

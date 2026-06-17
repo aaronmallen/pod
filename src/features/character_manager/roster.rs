@@ -21,41 +21,87 @@ use crate::{
 };
 
 const COLUMNS: usize = 3;
+
 const GHOST_CARD_WIDTH: f32 = 320.0;
+
 const GHOST_CARD_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
+
 const GHOST_GRAB_FRACTION: f32 = 0.3;
+
 const DROP_BORDER_ALPHA: f32 = 0.45;
+
 const DROP_BORDER_WIDTH: f32 = 1.0;
+
 const DROP_HIGHLIGHT_ALPHA: f32 = 0.08;
+
 const EMPTY_CELL_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
 
 static SQUADS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/squads.svg");
+
 static CHEVRON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/chevron.svg");
+
 static DROP_ICON: &[u8] = include_bytes!("../../../assets/images/icons/drop.svg");
+
 static SEARCH_ICON: &[u8] = include_bytes!("../../../assets/images/icons/search.svg");
 
 const NO_MATCH_ICON: f32 = 28.0;
 
 const SQUAD_STRIPE_WIDTH: f32 = 4.0;
+
 const SQUAD_ICON_TILE: f32 = 40.0;
+
 const SQUAD_ICON_GLYPH: f32 = 22.0;
+
 const SQUAD_ICON_RADIUS: f32 = 9.0;
+
 const SQUAD_CHEVRON_CELL: f32 = 44.0;
+
 const SQUAD_CHEVRON_GLYPH: f32 = 14.0;
+
 const SQUAD_NAME_SIZE: f32 = 19.0;
+
 const SQUAD_ICON_BG_ALPHA: f32 = 0.14;
+
 const SQUAD_ICON_BORDER_ALPHA: f32 = 0.4;
+
 const SQUAD_BAR_PAD_Y: f32 = 16.0;
+
 const BAR_STAT_PAD_X: f32 = 18.0;
+
 const BAR_STAT_VALUE_SIZE: f32 = 15.0;
+
 const EMPTY_DROP_PAD_Y: f32 = 28.0;
+
 const EMPTY_DROP_ICON: f32 = 22.0;
+
 const EMPTY_DROP_GAP: f32 = 6.0;
+
 const BAR_STAT_RULE_HEIGHT: f32 = 34.0;
+
 const SQUAD_KEBAB_CELL: f32 = 48.0;
+
 const SQUAD_KEBAB_DOT: f32 = 3.0;
+
 const SQUAD_KEBAB_DOT_GAP: f32 = 4.0;
+
 const SQUAD_KEBAB_RULE_HEIGHT: f32 = 34.0;
+
+#[derive(Clone, Copy)]
+struct DragContext {
+  detail_enabled: bool,
+  dragging: Option<i64>,
+  hovered: Option<DropTarget>,
+  squad: Option<i64>,
+  squad_insert: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SquadStats {
+  combined_isk: f64,
+  combined_sp: i64,
+  idle: usize,
+  training: usize,
+}
 
 pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
   if let Some(error) = load_error(state) {
@@ -147,15 +193,6 @@ fn ghost_layer(model: &CardModel, cursor: Point) -> Element<'_, Message> {
       ..Padding::ZERO
     })
     .into()
-}
-
-#[derive(Clone, Copy)]
-struct DragContext {
-  detail_enabled: bool,
-  dragging: Option<i64>,
-  hovered: Option<DropTarget>,
-  squad: Option<i64>,
-  squad_insert: Option<usize>,
 }
 
 fn squad_section<'a>(
@@ -350,14 +387,6 @@ fn squad_name_block<'a>(group: &'a SquadGroup) -> Element<'a, Message> {
   }
 
   Column::with_children(children).spacing(spacing::UNIT).into()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SquadStats {
-  combined_isk: f64,
-  combined_sp: i64,
-  idle: usize,
-  training: usize,
 }
 
 fn aggregate_stats(cards: &[CardModel]) -> SquadStats {

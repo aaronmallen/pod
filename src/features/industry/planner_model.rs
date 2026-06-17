@@ -241,6 +241,20 @@ impl BuildPlan {
   }
 }
 
+/// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
+/// [`expand_to_raw`] can be exercised without any database or UI.
+pub trait BuildableLookup<C> {
+  /// The buildable input materials of `type_id` (raw, non-producible materials are omitted), in the order
+  /// they should be inserted as children.
+  fn buildable_inputs(&self, type_id: i64) -> Vec<i64>;
+
+  /// A fresh, un-expanded build config for `type_id` (its own ME/TE/facility defaults, no children).
+  fn fresh_child(&self, type_id: i64) -> C;
+
+  /// Mutable access to a child node's own child map, so the expansion can descend.
+  fn children_of<'a>(&self, child: &'a mut C) -> &'a mut BTreeMap<i64, C>;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Material {
   pub base_qty: i64,
@@ -406,20 +420,6 @@ pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {
   let per_run = output_per_run.max(1);
   let demand = needed_qty.max(0);
   ((demand + per_run - 1) / per_run).max(1)
-}
-
-/// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
-/// [`expand_to_raw`] can be exercised without any database or UI.
-pub trait BuildableLookup<C> {
-  /// The buildable input materials of `type_id` (raw, non-producible materials are omitted), in the order
-  /// they should be inserted as children.
-  fn buildable_inputs(&self, type_id: i64) -> Vec<i64>;
-
-  /// A fresh, un-expanded build config for `type_id` (its own ME/TE/facility defaults, no children).
-  fn fresh_child(&self, type_id: i64) -> C;
-
-  /// Mutable access to a child node's own child map, so the expansion can descend.
-  fn children_of<'a>(&self, child: &'a mut C) -> &'a mut BTreeMap<i64, C>;
 }
 
 /// Recursively breaks down every buildable input of `type_id` across the whole subtree rooted at

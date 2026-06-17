@@ -29,10 +29,6 @@ pub(super) mod time_by_pair_section;
 
 const GROUP_PALETTE_ALPHA: [f32; 5] = [1.0, 0.75, 0.55, 0.40, 0.28];
 
-pub(super) fn group_palette() -> [Color; 5] {
-  GROUP_PALETTE_ALPHA.map(|alpha| color::with_alpha(color::accent::PLASMA, alpha))
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ImplantEffect {
   pub bonus: Attributes,
@@ -85,6 +81,10 @@ impl Default for SummaryData {
       total_sp: 0,
     }
   }
+}
+
+pub(super) fn group_palette() -> [Color; 5] {
+  GROUP_PALETTE_ALPHA.map(|alpha| color::with_alpha(color::accent::PLASMA, alpha))
 }
 
 fn clamp_secs(sec: f64) -> u64 {

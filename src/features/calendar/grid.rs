@@ -9,6 +9,21 @@ use crate::config::CalendarWeekStart;
 
 const ACCENT_WIDTH: f32 = 3.0;
 
+pub(super) const MIN_BLOCK_MINUTES: i64 = 30;
+
+pub(super) const MINUTES_PER_DAY: i64 = 1440;
+
+#[derive(Clone, Copy)]
+pub(super) struct Packed<'a> {
+  pub end_minute: i64,
+  pub event: &'a CalendarEvent,
+  /// Zero-based column index within the overlap cluster.
+  pub lane: usize,
+  /// Total columns in the cluster; callers divide available width by this to size each lane.
+  pub lanes: usize,
+  pub start_minute: i64,
+}
+
 /// The solid, full-saturation color bar drawn down the left edge of an event block (the design's
 /// `border-left: 3px solid`). Rendered as a sibling strip rather than a border because iced borders
 /// are uniform on all sides; callers place it as the first child of the block with zero left padding
@@ -22,20 +37,6 @@ pub(super) fn accent_strip<'a>(tint: Color) -> Element<'a, Message> {
       ..container::Style::default()
     })
     .into()
-}
-
-pub(super) const MIN_BLOCK_MINUTES: i64 = 30;
-pub(super) const MINUTES_PER_DAY: i64 = 1440;
-
-#[derive(Clone, Copy)]
-pub(super) struct Packed<'a> {
-  pub end_minute: i64,
-  pub event: &'a CalendarEvent,
-  /// Zero-based column index within the overlap cluster.
-  pub lane: usize,
-  /// Total columns in the cluster; callers divide available width by this to size each lane.
-  pub lanes: usize,
-  pub start_minute: i64,
 }
 
 pub(super) fn color_for<'a>(state: &'a State, event: &'a CalendarEvent) -> Color {

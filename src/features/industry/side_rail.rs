@@ -18,7 +18,15 @@ use crate::ui::{
 };
 
 const SLOT_GAP: f32 = 3.0;
+
 const SLOT_HEIGHT: f32 = 6.0;
+
+#[derive(Clone, Copy, Default)]
+struct SlotUsage {
+  manufacturing: i64,
+  reactions: i64,
+  science: i64,
+}
 
 pub(super) fn rail<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let jobs = state.visible_jobs();
@@ -312,13 +320,6 @@ fn slot_usage(state: &State) -> HashMap<Owner, SlotUsage> {
     }
   }
   usage
-}
-
-#[derive(Clone, Copy, Default)]
-struct SlotUsage {
-  manufacturing: i64,
-  reactions: i64,
-  science: i64,
 }
 
 #[cfg(test)]

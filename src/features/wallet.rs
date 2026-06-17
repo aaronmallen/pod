@@ -28,10 +28,15 @@ use crate::{
 };
 
 const DEFAULT_DIVISION: i64 = 1;
+
 const HEADER_SIDE_PADDING: f32 = 28.0;
+
 pub const PAGE_SIZE: usize = 50;
+
 const RECENT_ACTIVITY_LIMIT: usize = 8;
+
 const RIGHT_RAIL_DEFAULT_WIDTH: f32 = 280.0;
+
 const RIGHT_RAIL_PANE_KEY: &str = "wallet.right_rail";
 
 /// Fraction of the ledger a scroll must reach before the next cursor page is
@@ -39,96 +44,35 @@ const RIGHT_RAIL_PANE_KEY: &str = "wallet.right_rail";
 /// gates how early the next DB page starts streaming in behind the scroll.
 const SCROLL_LOAD_THRESHOLD: f32 = 0.8;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Scope {
-  #[default]
-  All,
-  Character(i64),
-  Corporation(i64),
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CategoryFlow {
+  pub income: f64,
+  pub ref_type: String,
+  pub spend: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Tab {
-  Contracts,
-  Journal,
-  #[default]
-  Market,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SignFilter {
-  #[default]
-  All,
-  In,
-  Out,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Timeframe {
-  HalfYear,
-  Month,
-  #[default]
-  Quarter,
-  Week,
-  Year,
-}
-
-impl Timeframe {
-  pub fn all() -> [Timeframe; 5] {
-    [
-      Timeframe::Week,
-      Timeframe::Month,
-      Timeframe::Quarter,
-      Timeframe::HalfYear,
-      Timeframe::Year,
-    ]
+impl CategoryFlow {
+  pub fn label(&self) -> String {
+    humanize_ref_type(&self.ref_type)
   }
 
-  pub fn days(self) -> usize {
-    match self {
-      Timeframe::HalfYear => 180,
-      Timeframe::Month => 30,
-      Timeframe::Quarter => 90,
-      Timeframe::Week => 7,
-      Timeframe::Year => 365,
-    }
+  pub fn total(&self) -> f64 {
+    self.income + self.spend
   }
+}
 
-  pub fn label(self) -> &'static str {
-    match self {
-      Timeframe::HalfYear => "6M",
-      Timeframe::Month => "1M",
-      Timeframe::Quarter => "3M",
-      Timeframe::Week => "1W",
-      Timeframe::Year => "1Y",
-    }
-  }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Composition {
+  pub asset_value: Option<f64>,
+  pub escrow: Option<f64>,
+  pub liquid: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct NetWorthPoint {
-  pub date: String,
-  pub liquid: f64,
+pub struct CompositionSlice {
+  pub id: i64,
+  pub name: String,
   pub net_worth: f64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct RosterPilot {
-  pub corp: String,
-  pub granted_scopes: Option<String>,
-  pub id: i64,
-  pub liquid: Option<f64>,
-  pub name: String,
-  pub portrait: images::ImageState,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct RosterCorp {
-  pub id: i64,
-  pub liquid: Option<f64>,
-  pub logo: images::ImageState,
-  pub name: String,
-  pub ticker: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -147,36 +91,11 @@ impl CorpDivision {
   }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MorePage {
-  contracts: Vec<ContractEntry>,
-  journal: Vec<JournalEntry>,
-  market: Vec<MarketEntry>,
-  scope: Scope,
-  tab: Tab,
-}
-
-impl MorePage {
-  fn contracts(contracts: Vec<ContractEntry>) -> Self {
-    Self {
-      contracts,
-      ..Self::default()
-    }
-  }
-
-  fn journal(journal: Vec<JournalEntry>) -> Self {
-    Self {
-      journal,
-      ..Self::default()
-    }
-  }
-
-  fn market(market: Vec<MarketEntry>) -> Self {
-    Self {
-      market,
-      ..Self::default()
-    }
-  }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct JournalFlow {
+  pub income: f64,
+  pub net: f64,
+  pub spend: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -237,16 +156,85 @@ impl Message {
   }
 }
 
-/// Cached filter/derived view data. The `*_indices` fields index into `journal`/`market`/`contracts`, so any mutation
-/// of those vecs must be followed by `recompute_derived()` or the indices go stale (out-of-bounds panic or wrong rows).
-#[derive(Debug, Default)]
-struct Derived {
-  category_flows: Vec<CategoryFlow>,
-  contract_indices: Vec<usize>,
-  journal_flow: JournalFlow,
-  journal_indices: Vec<usize>,
-  market_indices: Vec<usize>,
-  recent_activity_indices: Vec<usize>,
+#[derive(Clone, Debug, Default)]
+pub struct MorePage {
+  contracts: Vec<ContractEntry>,
+  journal: Vec<JournalEntry>,
+  market: Vec<MarketEntry>,
+  scope: Scope,
+  tab: Tab,
+}
+
+impl MorePage {
+  fn contracts(contracts: Vec<ContractEntry>) -> Self {
+    Self {
+      contracts,
+      ..Self::default()
+    }
+  }
+
+  fn journal(journal: Vec<JournalEntry>) -> Self {
+    Self {
+      journal,
+      ..Self::default()
+    }
+  }
+
+  fn market(market: Vec<MarketEntry>) -> Self {
+    Self {
+      market,
+      ..Self::default()
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NetWorthPoint {
+  pub date: String,
+  pub liquid: f64,
+  pub net_worth: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PeriodTotals {
+  pub income: f64,
+  pub net: f64,
+  pub spend: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RosterCorp {
+  pub id: i64,
+  pub liquid: Option<f64>,
+  pub logo: images::ImageState,
+  pub name: String,
+  pub ticker: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RosterPilot {
+  pub corp: String,
+  pub granted_scopes: Option<String>,
+  pub id: i64,
+  pub liquid: Option<f64>,
+  pub name: String,
+  pub portrait: images::ImageState,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Scope {
+  #[default]
+  All,
+  Character(i64),
+  Corporation(i64),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SignFilter {
+  #[default]
+  All,
+  In,
+  Out,
 }
 
 #[derive(Debug)]
@@ -499,49 +487,72 @@ impl State {
   }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct CategoryFlow {
-  pub income: f64,
-  pub ref_type: String,
-  pub spend: f64,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Tab {
+  Contracts,
+  Journal,
+  #[default]
+  Market,
 }
 
-impl CategoryFlow {
-  pub fn label(&self) -> String {
-    humanize_ref_type(&self.ref_type)
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Timeframe {
+  HalfYear,
+  Month,
+  #[default]
+  Quarter,
+  Week,
+  Year,
+}
+
+impl Timeframe {
+  pub fn all() -> [Timeframe; 5] {
+    [
+      Timeframe::Week,
+      Timeframe::Month,
+      Timeframe::Quarter,
+      Timeframe::HalfYear,
+      Timeframe::Year,
+    ]
   }
 
-  pub fn total(&self) -> f64 {
-    self.income + self.spend
+  pub fn days(self) -> usize {
+    match self {
+      Timeframe::HalfYear => 180,
+      Timeframe::Month => 30,
+      Timeframe::Quarter => 90,
+      Timeframe::Week => 7,
+      Timeframe::Year => 365,
+    }
+  }
+
+  pub fn label(self) -> &'static str {
+    match self {
+      Timeframe::HalfYear => "6M",
+      Timeframe::Month => "1M",
+      Timeframe::Quarter => "3M",
+      Timeframe::Week => "1W",
+      Timeframe::Year => "1Y",
+    }
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Composition {
-  pub asset_value: Option<f64>,
-  pub escrow: Option<f64>,
-  pub liquid: Option<f64>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContractLoad {
+  Character(i64),
+  Corporation(i64),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct CompositionSlice {
-  pub id: i64,
-  pub name: String,
-  pub net_worth: f64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct JournalFlow {
-  pub income: f64,
-  pub net: f64,
-  pub spend: f64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PeriodTotals {
-  pub income: f64,
-  pub net: f64,
-  pub spend: f64,
+/// Cached filter/derived view data. The `*_indices` fields index into `journal`/`market`/`contracts`, so any mutation
+/// of those vecs must be followed by `recompute_derived()` or the indices go stale (out-of-bounds panic or wrong rows).
+#[derive(Debug, Default)]
+struct Derived {
+  category_flows: Vec<CategoryFlow>,
+  contract_indices: Vec<usize>,
+  journal_flow: JournalFlow,
+  journal_indices: Vec<usize>,
+  market_indices: Vec<usize>,
+  recent_activity_indices: Vec<usize>,
 }
 
 pub fn load(db: &Database) -> Task<Message> {
@@ -1194,12 +1205,6 @@ pub fn filtered_market(state: &State) -> Vec<&MarketEntry> {
     .iter()
     .map(|&index| &state.market[index])
     .collect()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ContractLoad {
-  Character(i64),
-  Corporation(i64),
 }
 
 /// Resolves which detail loader a clicked contract row needs.

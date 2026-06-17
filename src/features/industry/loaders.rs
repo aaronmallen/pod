@@ -20,18 +20,25 @@ const JOB_TILE_ICON_SIZE: Size = Size::S64;
 
 /// Manufacturing activity id in the seeded `blueprint_activity_products` reference; resolves a blueprint's product.
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+
 /// Reaction activity id in the seeded reference (the SDE seed maps "reaction" to 11, not the ESI job id 9); a
 /// blueprint whose only product is a reaction renders "n/a" for ME/TE.
 const REACTION_ACTIVITY_ID: i64 = 11;
+
 const SECONDS_PER_DAY: i64 = 86_400;
 
 // EVE skill type ids. Each slot bucket sums one base + one advanced skill (see `slot_caps`):
 // manufacturing = Mass Production + Advanced, reactions = Mass Reactions + Advanced, science = Laboratory Operation + Advanced.
 const ADVANCED_LABORATORY_OPERATION: i64 = 24_624;
+
 const ADVANCED_MASS_PRODUCTION: i64 = 24_625;
+
 const ADVANCED_MASS_REACTIONS: i64 = 45_749;
+
 const LABORATORY_OPERATION: i64 = 3_406;
+
 const MASS_PRODUCTION: i64 = 3_387;
+
 const MASS_REACTIONS: i64 = 45_748;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -95,35 +102,35 @@ impl Activity {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Owner {
-  Character(i64),
-  Corporation(i64),
+/// A single owned blueprint (BPO or BPC) resolved for the Blueprints tab.
+#[derive(Clone, Debug)]
+pub struct Blueprint {
+  /// Blueprint group name (e.g. "Frigate Blueprint"), used for the row subtitle.
+  pub group_name: String,
+  /// Stable in-game item id, used as the list/window key.
+  pub item_id: i64,
+  /// Station / structure / system display name.
+  pub location: String,
+  pub material_efficiency: i64,
+  pub name: String,
+  pub owner: Owner,
+  /// Manufacturing product name (the "makes {Product}" half of the subtitle).
+  pub product_name: Option<String>,
+  /// True when the blueprint manufactures via a reaction; ME/TE render "n/a".
+  pub reaction: bool,
+  /// `-1` ⇒ BPO (infinite runs); otherwise remaining runs on a BPC.
+  pub runs: i64,
+  pub system_name: Option<String>,
+  pub time_efficiency: i64,
+  pub type_icon: IconResolution,
+  pub type_id: i64,
 }
 
-impl Owner {
-  pub fn id(self) -> i64 {
-    match self {
-      Owner::Character(id) | Owner::Corporation(id) => id,
-    }
+impl Blueprint {
+  /// A BPO has unlimited runs (`runs == -1`); anything else is a finite-run BPC.
+  pub fn is_original(&self) -> bool {
+    self.runs < 0
   }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SlotBucket {
-  #[default]
-  Manufacturing,
-  Reactions,
-  Science,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Loaded {
-  pub blueprints: Vec<Blueprint>,
-  pub extractions: Vec<Extraction>,
-  pub jobs: Vec<IndustryJob>,
-  pub roster: Vec<RosterOwner>,
-  pub scope: Scope,
 }
 
 /// A single corporation moon-mining extraction resolved for the Extractions tab.
@@ -248,42 +255,92 @@ impl IndustryJob {
   }
 }
 
-/// A single owned blueprint (BPO or BPC) resolved for the Blueprints tab.
-#[derive(Clone, Debug)]
-pub struct Blueprint {
-  /// Blueprint group name (e.g. "Frigate Blueprint"), used for the row subtitle.
-  pub group_name: String,
-  /// Stable in-game item id, used as the list/window key.
-  pub item_id: i64,
-  /// Station / structure / system display name.
-  pub location: String,
-  pub material_efficiency: i64,
-  pub name: String,
-  pub owner: Owner,
-  /// Manufacturing product name (the "makes {Product}" half of the subtitle).
-  pub product_name: Option<String>,
-  /// True when the blueprint manufactures via a reaction; ME/TE render "n/a".
-  pub reaction: bool,
-  /// `-1` ⇒ BPO (infinite runs); otherwise remaining runs on a BPC.
-  pub runs: i64,
-  pub system_name: Option<String>,
-  pub time_efficiency: i64,
-  pub type_icon: IconResolution,
-  pub type_id: i64,
+#[derive(Clone, Debug, Default)]
+pub struct Loaded {
+  pub blueprints: Vec<Blueprint>,
+  pub extractions: Vec<Extraction>,
+  pub jobs: Vec<IndustryJob>,
+  pub roster: Vec<RosterOwner>,
+  pub scope: Scope,
 }
 
-impl Blueprint {
-  /// A BPO has unlimited runs (`runs == -1`); anything else is a finite-run BPC.
-  pub fn is_original(&self) -> bool {
-    self.runs < 0
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Owner {
+  Character(i64),
+  Corporation(i64),
+}
+
+impl Owner {
+  pub fn id(self) -> i64 {
+    match self {
+      Owner::Character(id) | Owner::Corporation(id) => id,
+    }
   }
 }
 
-/// Manufacturing product + reaction flag for a blueprint type, sourced from the SDE reference tables.
-#[derive(Clone, Default)]
-struct BlueprintReference {
-  product_type_id: Option<i64>,
-  reaction: bool,
+#[derive(Clone, Debug)]
+pub struct RosterOwner {
+  pub corp: String,
+  /// The character's corporation id; `None` for corporation roster entries.
+  pub corporation_id: Option<i64>,
+  pub granted_scopes: Option<String>,
+  pub id: i64,
+  pub is_corporation: bool,
+  pub logo: Option<images::ImageState>,
+  pub name: String,
+  pub portrait: Option<images::ImageState>,
+  pub slots: SlotCaps,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SlotBucket {
+  #[default]
+  Manufacturing,
+  Reactions,
+  Science,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SlotCaps {
+  pub manufacturing: i64,
+  pub reactions: i64,
+  pub science: i64,
+}
+
+struct BlueprintInput {
+  item_id: i64,
+  location_id: i64,
+  material_efficiency: i64,
+  owner: Owner,
+  runs: i64,
+  time_efficiency: i64,
+  type_id: i64,
+}
+
+impl BlueprintInput {
+  fn character(row: &CharacterBlueprint) -> Self {
+    BlueprintInput {
+      item_id: row.item_id(),
+      location_id: row.location_id(),
+      material_efficiency: row.material_efficiency(),
+      owner: Owner::Character(row.character_id()),
+      runs: row.runs(),
+      time_efficiency: row.time_efficiency(),
+      type_id: row.type_id(),
+    }
+  }
+
+  fn corporation(row: &CorporationBlueprint) -> Self {
+    BlueprintInput {
+      item_id: row.item_id(),
+      location_id: row.location_id(),
+      material_efficiency: row.material_efficiency(),
+      owner: Owner::Corporation(row.corporation_id()),
+      runs: row.runs(),
+      time_efficiency: row.time_efficiency(),
+      type_id: row.type_id(),
+    }
+  }
 }
 
 /// Per-load cache of SDE blueprint-product lookups (`blueprint_activity_products`) keyed by blueprint type id.
@@ -312,153 +369,11 @@ impl BlueprintProducts {
   }
 }
 
-/// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
-///
-/// A blueprint that has only a reaction product is flagged so the Blueprints tab hides ME/TE for the row.
-async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> BlueprintReference {
-  let manufacturing = blueprints::blueprint_product(db, blueprint_type_id, MANUFACTURING_ACTIVITY_ID)
-    .await
-    .ok()
-    .flatten();
-
-  if let Some(product_type_id) = manufacturing {
-    return BlueprintReference {
-      product_type_id: Some(product_type_id),
-      reaction: false,
-    };
-  }
-
-  let reaction = blueprints::blueprint_product(db, blueprint_type_id, REACTION_ACTIVITY_ID)
-    .await
-    .ok()
-    .flatten();
-
-  BlueprintReference {
-    product_type_id: reaction,
-    reaction: reaction.is_some(),
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct RosterOwner {
-  pub corp: String,
-  /// The character's corporation id; `None` for corporation roster entries.
-  pub corporation_id: Option<i64>,
-  pub granted_scopes: Option<String>,
-  pub id: i64,
-  pub is_corporation: bool,
-  pub logo: Option<images::ImageState>,
-  pub name: String,
-  pub portrait: Option<images::ImageState>,
-  pub slots: SlotCaps,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SlotCaps {
-  pub manufacturing: i64,
-  pub reactions: i64,
-  pub science: i64,
-}
-
-struct LocationNames {
-  cache: HashMap<i64, ResolvedLocation>,
-}
-
+/// Manufacturing product + reaction flag for a blueprint type, sourced from the SDE reference tables.
 #[derive(Clone, Default)]
-struct ResolvedLocation {
-  name: Option<String>,
-  security: Option<f64>,
-  system_name: Option<String>,
-}
-
-impl LocationNames {
-  fn new() -> Self {
-    LocationNames {
-      cache: HashMap::new(),
-    }
-  }
-
-  async fn resolve(&mut self, db: &Database, location_id: i64) -> ResolvedLocation {
-    if let Some(hit) = self.cache.get(&location_id) {
-      return hit.clone();
-    }
-    let resolved = resolve_location(db, location_id).await;
-    self.cache.insert(location_id, resolved.clone());
-    resolved
-  }
-
-  fn seed(&mut self, location_id: i64, resolved: ResolvedLocation) {
-    self.cache.entry(location_id).or_insert(resolved);
-  }
-}
-
-struct TypeNames {
-  cache: HashMap<i64, Option<String>>,
-}
-
-impl TypeNames {
-  fn new() -> Self {
-    TypeNames {
-      cache: HashMap::new(),
-    }
-  }
-
-  async fn resolve(&mut self, db: &Database, type_id: i64) -> Option<String> {
-    if let Some(name) = self.cache.get(&type_id) {
-      return name.clone();
-    }
-    let name = sde::get_item_type(db, type_id)
-      .await
-      .ok()
-      .flatten()
-      .map(|item| item.name().to_owned());
-    self.cache.insert(type_id, name.clone());
-    name
-  }
-
-  fn seed(&mut self, type_id: i64, name: Option<String>) {
-    self.cache.entry(type_id).or_insert(name);
-  }
-}
-
-/// Per-load cache resolving a type id to its item-group name (e.g. "Frigate Blueprint").
-struct GroupNames {
-  cache: HashMap<i64, Option<String>>,
-}
-
-impl GroupNames {
-  fn new() -> Self {
-    GroupNames {
-      cache: HashMap::new(),
-    }
-  }
-
-  async fn resolve(&mut self, db: &Database, type_id: i64) -> Option<String> {
-    if let Some(name) = self.cache.get(&type_id) {
-      return name.clone();
-    }
-    let name = resolve_group_name(db, type_id).await;
-    self.cache.insert(type_id, name.clone());
-    name
-  }
-
-  fn seed(&mut self, type_id: i64, name: Option<String>) {
-    self.cache.entry(type_id).or_insert(name);
-  }
-}
-
-fn distinct(ids: impl Iterator<Item = i64>) -> Vec<i64> {
-  let mut seen = HashSet::new();
-  ids.filter(|id| seen.insert(*id)).collect()
-}
-
-async fn resolve_group_name(db: &Database, type_id: i64) -> Option<String> {
-  let item = sde::get_item_type(db, type_id).await.ok().flatten()?;
-  sde::get_item_group(db, item.group_id())
-    .await
-    .ok()
-    .flatten()
-    .map(|group| group.name().to_owned())
+struct BlueprintReference {
+  product_type_id: Option<i64>,
+  reaction: bool,
 }
 
 /// The SDE / name lookup caches shared while resolving a batch of blueprints.
@@ -594,6 +509,150 @@ impl BlueprintResolvers {
   }
 }
 
+/// Per-load cache resolving a type id to its item-group name (e.g. "Frigate Blueprint").
+struct GroupNames {
+  cache: HashMap<i64, Option<String>>,
+}
+
+impl GroupNames {
+  fn new() -> Self {
+    GroupNames {
+      cache: HashMap::new(),
+    }
+  }
+
+  async fn resolve(&mut self, db: &Database, type_id: i64) -> Option<String> {
+    if let Some(name) = self.cache.get(&type_id) {
+      return name.clone();
+    }
+    let name = resolve_group_name(db, type_id).await;
+    self.cache.insert(type_id, name.clone());
+    name
+  }
+
+  fn seed(&mut self, type_id: i64, name: Option<String>) {
+    self.cache.entry(type_id).or_insert(name);
+  }
+}
+
+struct JobInput {
+  activity_id: i64,
+  blueprint_type_id: i64,
+  cost: f64,
+  end_date: String,
+  facility_id: i64,
+  installer: String,
+  job_id: i64,
+  owner: Owner,
+  owner_name: String,
+  probability: Option<f64>,
+  product_type_id: Option<i64>,
+  runs: i64,
+  start_date: String,
+}
+
+struct LocationNames {
+  cache: HashMap<i64, ResolvedLocation>,
+}
+
+impl LocationNames {
+  fn new() -> Self {
+    LocationNames {
+      cache: HashMap::new(),
+    }
+  }
+
+  async fn resolve(&mut self, db: &Database, location_id: i64) -> ResolvedLocation {
+    if let Some(hit) = self.cache.get(&location_id) {
+      return hit.clone();
+    }
+    let resolved = resolve_location(db, location_id).await;
+    self.cache.insert(location_id, resolved.clone());
+    resolved
+  }
+
+  fn seed(&mut self, location_id: i64, resolved: ResolvedLocation) {
+    self.cache.entry(location_id).or_insert(resolved);
+  }
+}
+
+#[derive(Clone, Default)]
+struct ResolvedLocation {
+  name: Option<String>,
+  security: Option<f64>,
+  system_name: Option<String>,
+}
+
+struct TypeNames {
+  cache: HashMap<i64, Option<String>>,
+}
+
+impl TypeNames {
+  fn new() -> Self {
+    TypeNames {
+      cache: HashMap::new(),
+    }
+  }
+
+  async fn resolve(&mut self, db: &Database, type_id: i64) -> Option<String> {
+    if let Some(name) = self.cache.get(&type_id) {
+      return name.clone();
+    }
+    let name = sde::get_item_type(db, type_id)
+      .await
+      .ok()
+      .flatten()
+      .map(|item| item.name().to_owned());
+    self.cache.insert(type_id, name.clone());
+    name
+  }
+
+  fn seed(&mut self, type_id: i64, name: Option<String>) {
+    self.cache.entry(type_id).or_insert(name);
+  }
+}
+
+/// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
+///
+/// A blueprint that has only a reaction product is flagged so the Blueprints tab hides ME/TE for the row.
+async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> BlueprintReference {
+  let manufacturing = blueprints::blueprint_product(db, blueprint_type_id, MANUFACTURING_ACTIVITY_ID)
+    .await
+    .ok()
+    .flatten();
+
+  if let Some(product_type_id) = manufacturing {
+    return BlueprintReference {
+      product_type_id: Some(product_type_id),
+      reaction: false,
+    };
+  }
+
+  let reaction = blueprints::blueprint_product(db, blueprint_type_id, REACTION_ACTIVITY_ID)
+    .await
+    .ok()
+    .flatten();
+
+  BlueprintReference {
+    product_type_id: reaction,
+    reaction: reaction.is_some(),
+  }
+}
+
+fn distinct(ids: impl Iterator<Item = i64>) -> Vec<i64> {
+  let mut seen = HashSet::new();
+  ids.filter(|id| seen.insert(*id)).collect()
+}
+
+async fn resolve_group_name(db: &Database, type_id: i64) -> Option<String> {
+  let item = sde::get_item_type(db, type_id).await.ok().flatten()?;
+  sde::get_item_group(db, item.group_id())
+    .await
+    .ok()
+    .flatten()
+    .map(|group| group.name().to_owned())
+}
+
 async fn collect_blueprints(db: &Database, scope: Scope) -> Vec<Blueprint> {
   let mut inputs = Vec::new();
   match scope {
@@ -620,42 +679,6 @@ async fn collect_blueprints(db: &Database, scope: Scope) -> Vec<Blueprint> {
     out.push(build_blueprint(db, &mut resolvers, input).await);
   }
   out
-}
-
-struct BlueprintInput {
-  item_id: i64,
-  location_id: i64,
-  material_efficiency: i64,
-  owner: Owner,
-  runs: i64,
-  time_efficiency: i64,
-  type_id: i64,
-}
-
-impl BlueprintInput {
-  fn character(row: &CharacterBlueprint) -> Self {
-    BlueprintInput {
-      item_id: row.item_id(),
-      location_id: row.location_id(),
-      material_efficiency: row.material_efficiency(),
-      owner: Owner::Character(row.character_id()),
-      runs: row.runs(),
-      time_efficiency: row.time_efficiency(),
-      type_id: row.type_id(),
-    }
-  }
-
-  fn corporation(row: &CorporationBlueprint) -> Self {
-    BlueprintInput {
-      item_id: row.item_id(),
-      location_id: row.location_id(),
-      material_efficiency: row.material_efficiency(),
-      owner: Owner::Corporation(row.corporation_id()),
-      runs: row.runs(),
-      time_efficiency: row.time_efficiency(),
-      type_id: row.type_id(),
-    }
-  }
 }
 
 async fn build_blueprint(db: &Database, resolvers: &mut BlueprintResolvers, input: BlueprintInput) -> Blueprint {
@@ -853,22 +876,6 @@ async fn corporation_job(
     },
   )
   .await
-}
-
-struct JobInput {
-  activity_id: i64,
-  blueprint_type_id: i64,
-  cost: f64,
-  end_date: String,
-  facility_id: i64,
-  installer: String,
-  job_id: i64,
-  owner: Owner,
-  owner_name: String,
-  probability: Option<f64>,
-  product_type_id: Option<i64>,
-  runs: i64,
-  start_date: String,
 }
 
 async fn build_job(

@@ -8,15 +8,20 @@ use std::{
 use crate::{clients::eve_image::Size, config};
 
 pub const LOGO_SIZE: Size = Size::S256;
+
 pub const PORTRAIT_SIZE: Size = Size::S512;
+
 pub const STALE_AFTER: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
 static DEFAULT_STORE: OnceLock<Store> = OnceLock::new();
+
 static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-/// Initializes the process-wide image cache root from the loaded settings. Called once at boot; subsequent calls are ignored.
-pub fn init_root(root: PathBuf) {
-  let _ = IMAGE_ROOT.set(root);
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum IconResolution {
+  Found(PathBuf),
+  #[default]
+  Missing,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,13 +39,6 @@ impl IconVariant {
       None => Self::Icon,
     }
   }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum IconResolution {
-  Found(PathBuf),
-  #[default]
-  Missing,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -165,6 +163,11 @@ impl Store {
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, path)
   }
+}
+
+/// Initializes the process-wide image cache root from the loaded settings. Called once at boot; subsequent calls are ignored.
+pub fn init_root(root: PathBuf) {
+  let _ = IMAGE_ROOT.set(root);
 }
 
 pub fn default_store() -> Store {

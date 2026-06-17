@@ -23,12 +23,56 @@ use crate::{
 };
 
 const COUNTDOWN_WARNING_SECS: i64 = 3_600;
+
 /// Estimated visual-row height (px) feeding the [`VirtualList`] windowing math. Job rows are two-line
 /// with generous padding; group headers are shorter, but overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 74.0;
+
 const ROW_SIDE_PADDING: f32 = 24.0;
+
 const TILE_BOX_COMFORTABLE: f32 = 40.0;
+
 const VALUE_WIDTH: f32 = 132.0;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct Counts {
+  pub active: usize,
+  pub ready: usize,
+  pub total: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct GroupHeader {
+  pub count: usize,
+  pub label: String,
+  pub ready: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum JobRowItem {
+  Header(GroupHeader),
+  /// Index into `State::jobs()` — the full, unfiltered jobs slice, not the visible or filtered subset.
+  Job(usize),
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct JobView {
+  pub counts: Counts,
+  pub rows: Vec<JobRowItem>,
+}
+
+impl JobView {
+  pub fn build(jobs: &[IndustryJob], visible: &[usize], filter: Filter, group_by: GroupBy, now: DateTime<Utc>) -> Self {
+    let counts = counts_of(jobs, visible, now);
+    let filtered = filter_and_sort(jobs, visible, filter, now);
+    let rows = group_rows(jobs, &filtered, group_by, now);
+
+    JobView {
+      counts,
+      rows,
+    }
+  }
+}
 
 pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let view = state.job_view();
@@ -655,46 +699,6 @@ fn dot<'a>() -> Element<'a, Message> {
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::tertiary()))
     .into()
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct Counts {
-  pub active: usize,
-  pub ready: usize,
-  pub total: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct GroupHeader {
-  pub count: usize,
-  pub label: String,
-  pub ready: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum JobRowItem {
-  Header(GroupHeader),
-  /// Index into `State::jobs()` — the full, unfiltered jobs slice, not the visible or filtered subset.
-  Job(usize),
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct JobView {
-  pub counts: Counts,
-  pub rows: Vec<JobRowItem>,
-}
-
-impl JobView {
-  pub fn build(jobs: &[IndustryJob], visible: &[usize], filter: Filter, group_by: GroupBy, now: DateTime<Utc>) -> Self {
-    let counts = counts_of(jobs, visible, now);
-    let filtered = filter_and_sort(jobs, visible, filter, now);
-    let rows = group_rows(jobs, &filtered, group_by, now);
-
-    JobView {
-      counts,
-      rows,
-    }
-  }
 }
 
 fn counts_of(jobs: &[IndustryJob], visible: &[usize], now: DateTime<Utc>) -> Counts {

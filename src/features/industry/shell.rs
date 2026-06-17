@@ -19,9 +19,39 @@ use crate::ui::{
 };
 
 const HEADER_SIDE_PADDING: f32 = 28.0;
+
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
+
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
+
 const TAB_STRIP_HEIGHT: f32 = 48.0;
+
+struct Stats {
+  active: usize,
+  fees: f64,
+  output_value: f64,
+  ready: usize,
+  slots_max: i64,
+  slots_used: i64,
+}
+
+impl Stats {
+  fn derive(state: &State, now: DateTime<Utc>) -> Self {
+    let jobs = state.visible_jobs();
+    let ready = jobs.iter().filter(|job| job.is_ready(now)).count();
+    let fees = jobs.iter().map(|job| job.cost).sum();
+    let output_value = jobs.iter().filter_map(|job| job.value).sum();
+    let (slots_used, slots_max) = slot_totals(state, &jobs, now);
+    Stats {
+      active: jobs.len(),
+      fees,
+      output_value,
+      ready,
+      slots_max,
+      slots_used,
+    }
+  }
+}
 
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let body = Column::with_children(vec![header(state, now), tab_strip(state), content(state, now)])
@@ -317,33 +347,6 @@ fn tab_body<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     Tab::Extractions => extractions::tab(state, now),
     Tab::Jobs => jobs::tab(state, now),
     Tab::Planner => planner::view(state.planner(), state.active()).map(Message::Planner),
-  }
-}
-
-struct Stats {
-  active: usize,
-  fees: f64,
-  output_value: f64,
-  ready: usize,
-  slots_max: i64,
-  slots_used: i64,
-}
-
-impl Stats {
-  fn derive(state: &State, now: DateTime<Utc>) -> Self {
-    let jobs = state.visible_jobs();
-    let ready = jobs.iter().filter(|job| job.is_ready(now)).count();
-    let fees = jobs.iter().map(|job| job.cost).sum();
-    let output_value = jobs.iter().filter_map(|job| job.value).sum();
-    let (slots_used, slots_max) = slot_totals(state, &jobs, now);
-    Stats {
-      active: jobs.len(),
-      fees,
-      output_value,
-      ready,
-      slots_max,
-      slots_used,
-    }
   }
 }
 

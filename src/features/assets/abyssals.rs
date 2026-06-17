@@ -138,6 +138,11 @@ impl Filters {
   }
 }
 
+struct BaseModule {
+  dogma: HashMap<i64, f64>,
+  name: String,
+}
+
 /// Load the initial abyssals payload: the first cursor page of (unfiltered) cards
 /// plus the source-type filter facets.
 pub(super) async fn load_cards(db: &Database, scope: Scope, roster: &[RosterPilot]) -> AbyssalsData {
@@ -282,11 +287,6 @@ async fn owned_character_ids(db: &Database, roster: &[RosterPilot]) -> Vec<i64> 
     .into_iter()
     .map(|c| c.id())
     .collect()
-}
-
-struct BaseModule {
-  dogma: HashMap<i64, f64>,
-  name: String,
 }
 
 async fn build_card(

@@ -42,25 +42,23 @@ use crate::{
 };
 
 pub const FOLDER_PANE_KEY: &str = "mail.folder";
+
 pub const MESSAGE_LIST_PANE_KEY: &str = "mail.message_list";
+
 const FOLDER_PANE_DEFAULT_WIDTH: f32 = 240.0;
+
 const MESSAGE_LIST_PANE_DEFAULT_WIDTH: f32 = 380.0;
+
 const FOLDER_PANE_MIN_WIDTH: f32 = 80.0;
+
 const MESSAGE_LIST_PANE_MIN_WIDTH: f32 = resizable_pane::MIN_PANE_WIDTH;
+
 pub const EMPTY_MAIL_SELECTION: i64 = 0;
 
 pub const RECIPIENT_SEARCH_MIN_CHARS: usize = 3;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Scope {
-  Character(i64),
-}
-
-impl Default for Scope {
-  fn default() -> Self {
-    Scope::Character(EMPTY_MAIL_SELECTION)
-  }
-}
+/// Load more once the viewport scrolls within this fraction of the bottom.
+const LIST_SCROLL_THRESHOLD: f32 = 0.85;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Folder {
@@ -68,17 +66,6 @@ pub enum Folder {
   Standard(StandardFolder),
   #[default]
   Unified,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StandardFolder {
-  Archive,
-  Drafts,
-  Inbox,
-  Sent,
-  Snoozed,
-  Starred,
-  Trash,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -97,14 +84,6 @@ pub struct Loaded {
   scope: Scope,
   unified: Vec<UnifiedMail>,
   unified_unread: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadingRender {
-  is_starred: bool,
-  labels: Vec<MessageLabel>,
-  mail: MailRender,
-  sender_portrait: images::ImageState,
 }
 
 #[derive(Clone, Debug)]
@@ -232,10 +211,34 @@ impl Message {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct LabelPicker {
-  anchor: Option<Point>,
-  mail_id: i64,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadingRender {
+  is_starred: bool,
+  labels: Vec<MessageLabel>,
+  mail: MailRender,
+  sender_portrait: images::ImageState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scope {
+  Character(i64),
+}
+
+impl Default for Scope {
+  fn default() -> Self {
+    Scope::Character(EMPTY_MAIL_SELECTION)
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StandardFolder {
+  Archive,
+  Drafts,
+  Inbox,
+  Sent,
+  Snoozed,
+  Starred,
+  Trash,
 }
 
 #[derive(Debug)]
@@ -275,14 +278,6 @@ pub struct State {
   snooze_menu: SnoozeMenu,
   unified: Vec<UnifiedMail>,
   unified_unread: i64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum SnoozeMenu {
-  Calendar,
-  #[default]
-  Closed,
-  Presets,
 }
 
 impl State {
@@ -560,6 +555,20 @@ impl Default for State {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LabelPicker {
+  anchor: Option<Point>,
+  mail_id: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SnoozeMenu {
+  Calendar,
+  #[default]
+  Closed,
+  Presets,
+}
+
 fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32) -> PaneDrag {
   PaneDrag::from_store_with_min(ui, key, default, min, host_width)
 }
@@ -598,9 +607,6 @@ fn reload_for(db: &Database, scope: Scope, folder: Folder) -> Task<Message> {
     Message::Loaded(Box::new(loaded))
   })
 }
-
-/// Load more once the viewport scrolls within this fraction of the bottom.
-const LIST_SCROLL_THRESHOLD: f32 = 0.85;
 
 /// Build a keyset cursor at a loaded row's position.
 fn cursor_of(row: &MessageRow) -> mail::MailCursor {

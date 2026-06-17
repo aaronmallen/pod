@@ -43,34 +43,24 @@ use crate::{
 };
 
 const INVENTORY_PAGE_SIZE: i64 = 200;
+
 const INVENTORY_SCROLL_THRESHOLD: f32 = 0.85;
+
 const SEARCH_DEBOUNCE_MS: u64 = 200;
+
 const HEADER_SIDE_PADDING: f32 = 28.0;
 
 const SIDEBAR_PANE_KEY: &str = "assets.sidebar";
+
 const SIDEBAR_DEFAULT_WIDTH: f32 = 280.0;
+
 const ABYSSALS_FILTER_PANE_KEY: &str = "assets.abyssals_filter";
+
 const ABYSSALS_FILTER_DEFAULT_WIDTH: f32 = 240.0;
+
 const ABYSSAL_SCROLL_THRESHOLD: f32 = 0.85;
+
 const MUTAMARKET_MODULE_URL: &str = "https://mutamarket.com/modules";
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Scope {
-  #[default]
-  All,
-  Character(i64),
-  Corporation(i64),
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Tab {
-  Abyssals,
-  #[default]
-  Inventory,
-  Stockpiles,
-  Tracker,
-  Values,
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Category {
@@ -137,29 +127,6 @@ impl Category {
       .find(|category| category.key() == key)
       .unwrap_or(Category::All)
   }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SliderEndpoint {
-  Max,
-  Min,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RosterPilot {
-  pub corp: String,
-  pub granted_scopes: Option<String>,
-  pub id: i64,
-  pub name: String,
-  pub portrait: images::ImageState,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RosterCorp {
-  pub id: i64,
-  pub logo: images::ImageState,
-  pub name: String,
-  pub ticker: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -327,18 +294,35 @@ pub enum Pane {
   Sidebar,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct StockpileContextMenu {
-  pub anchor: iced::Point,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RosterCorp {
   pub id: i64,
+  pub logo: images::ImageState,
   pub name: String,
+  pub ticker: String,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct SavedFilterContextMenu {
-  pub anchor: iced::Point,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RosterPilot {
+  pub corp: String,
+  pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,
+  pub portrait: images::ImageState,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Scope {
+  #[default]
+  All,
+  Character(i64),
+  Corporation(i64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SliderEndpoint {
+  Max,
+  Min,
 }
 
 #[derive(Debug)]
@@ -804,6 +788,68 @@ impl State {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Tab {
+  Abyssals,
+  #[default]
+  Inventory,
+  Stockpiles,
+  Tracker,
+  Values,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SavedFilterContextMenu {
+  pub anchor: iced::Point,
+  pub id: i64,
+  pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct StockpileContextMenu {
+  pub anchor: iced::Point,
+  pub id: i64,
+  pub name: String,
+}
+
+#[derive(Clone, Debug)]
+struct InventoryView {
+  filter: String,
+  limit: i64,
+  location_ids: Vec<i64>,
+  sort: SortColumn,
+  sort_dir: SortDirection,
+}
+
+impl Default for InventoryView {
+  fn default() -> Self {
+    Self {
+      filter: String::new(),
+      limit: INVENTORY_PAGE_SIZE,
+      location_ids: Vec::new(),
+      sort: SortColumn::Value,
+      sort_dir: SortDirection::Descending,
+    }
+  }
+}
+
+impl InventoryView {
+  fn from_state(state: &State) -> Self {
+    Self {
+      filter: effective_filter(state.category, &state.search),
+      limit: INVENTORY_PAGE_SIZE,
+      location_ids: location_ids_for_selection(&state.geo_tree, state.geo_selected),
+      sort: state.sort,
+      sort_dir: state.sort_dir,
+    }
+  }
+
+  fn with_limit(mut self, limit: i64) -> Self {
+    self.limit = limit;
+    self
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Owner {
   Character(i64),
@@ -961,44 +1007,6 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   let present: HashSet<i64> = state.inventory.iter().map(|row| row.item_id).collect();
   state.expanded_containers.retain(|id| present.contains(id));
   state.inventory_children.retain(|id, _| present.contains(id));
-}
-
-#[derive(Clone, Debug)]
-struct InventoryView {
-  filter: String,
-  limit: i64,
-  location_ids: Vec<i64>,
-  sort: SortColumn,
-  sort_dir: SortDirection,
-}
-
-impl Default for InventoryView {
-  fn default() -> Self {
-    Self {
-      filter: String::new(),
-      limit: INVENTORY_PAGE_SIZE,
-      location_ids: Vec::new(),
-      sort: SortColumn::Value,
-      sort_dir: SortDirection::Descending,
-    }
-  }
-}
-
-impl InventoryView {
-  fn from_state(state: &State) -> Self {
-    Self {
-      filter: effective_filter(state.category, &state.search),
-      limit: INVENTORY_PAGE_SIZE,
-      location_ids: location_ids_for_selection(&state.geo_tree, state.geo_selected),
-      sort: state.sort,
-      sort_dir: state.sort_dir,
-    }
-  }
-
-  fn with_limit(mut self, limit: i64) -> Self {
-    self.limit = limit;
-    self
-  }
 }
 
 fn effective_filter(category: Category, search: &str) -> String {

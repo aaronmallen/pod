@@ -14,7 +14,10 @@ use crate::{
 };
 
 const TOOLBAR_SIDE_PADDING: f32 = 24.0;
+
 const BODY_MAX_WIDTH: f32 = 720.0;
+
+const SENDER_AVATAR_SIZE: f32 = 44.0;
 
 pub(super) fn pane(render: Option<&ReadingRender>, is_snoozed: bool) -> Element<'_, Message> {
   let body: Element<'_, Message> = match render {
@@ -363,8 +366,6 @@ fn recipients_label(mail: &MailRender) -> String {
     mail.recipients_display.clone()
   }
 }
-
-const SENDER_AVATAR_SIZE: f32 = 44.0;
 
 fn sender_avatar(sender_id: i64, name: &str, portrait: Option<std::path::PathBuf>) -> Element<'_, Message> {
   Avatar::new(

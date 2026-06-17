@@ -8,6 +8,75 @@ use crate::store::{
   repo::{character, infra, mail, org},
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FailedMutation {
+  pub id: i64,
+  pub kind: String,
+  pub last_error: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FolderLabel {
+  pub color: Option<String>,
+  pub label_id: i64,
+  pub name: String,
+  pub unread: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FolderPaneData {
+  pub labels: Vec<FolderLabel>,
+  pub standard_counts: StandardFolderCounts,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageLabel {
+  pub color: Option<String>,
+  pub name: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OutboxIndicator {
+  pub failed: Vec<FailedMutation>,
+  pub pending: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RosterPilot {
+  pub corp: String,
+  pub granted_scopes: Option<String>,
+  pub id: i64,
+  pub name: String,
+  pub portrait: images::ImageState,
+  pub unread: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StandardFolderCounts {
+  pub archive: i64,
+  pub drafts: i64,
+  pub inbox: i64,
+  pub sent: i64,
+  pub snoozed: i64,
+  pub starred: i64,
+  pub trash: i64,
+}
+
+impl StandardFolderCounts {
+  pub fn unread_for(&self, folder: super::StandardFolder) -> i64 {
+    use super::StandardFolder;
+    match folder {
+      StandardFolder::Archive => self.archive,
+      StandardFolder::Drafts => self.drafts,
+      StandardFolder::Inbox => self.inbox,
+      StandardFolder::Sent => self.sent,
+      StandardFolder::Snoozed => self.snoozed,
+      StandardFolder::Starred => self.starred,
+      StandardFolder::Trash => self.trash,
+    }
+  }
+}
+
 pub(super) fn resolve_sender_portrait(sender_id: i64) -> images::ImageState {
   images::resolve(
     &images::default_store(),
@@ -28,16 +97,6 @@ pub(super) fn strip_html_snippet(html: &str) -> String {
     }
   }
   out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RosterPilot {
-  pub corp: String,
-  pub granted_scopes: Option<String>,
-  pub id: i64,
-  pub name: String,
-  pub portrait: images::ImageState,
-  pub unread: i64,
 }
 
 pub(super) async fn load_roster(db: &Database) -> Vec<RosterPilot> {
@@ -97,20 +156,6 @@ pub(super) async fn load_unified_unread(db: &Database) -> i64 {
   mail::visible_unified_unread_count(db, &now).await.unwrap_or(0)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FolderLabel {
-  pub color: Option<String>,
-  pub label_id: i64,
-  pub name: String,
-  pub unread: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageLabel {
-  pub color: Option<String>,
-  pub name: String,
-}
-
 pub(super) async fn resolve_message_labels(db: &Database, character_id: i64, label_ids: &[i64]) -> Vec<MessageLabel> {
   if label_ids.is_empty() {
     return Vec::new();
@@ -129,38 +174,6 @@ pub(super) async fn resolve_message_labels(db: &Database, character_id: i64, lab
         })
     })
     .collect()
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct StandardFolderCounts {
-  pub archive: i64,
-  pub drafts: i64,
-  pub inbox: i64,
-  pub sent: i64,
-  pub snoozed: i64,
-  pub starred: i64,
-  pub trash: i64,
-}
-
-impl StandardFolderCounts {
-  pub fn unread_for(&self, folder: super::StandardFolder) -> i64 {
-    use super::StandardFolder;
-    match folder {
-      StandardFolder::Archive => self.archive,
-      StandardFolder::Drafts => self.drafts,
-      StandardFolder::Inbox => self.inbox,
-      StandardFolder::Sent => self.sent,
-      StandardFolder::Snoozed => self.snoozed,
-      StandardFolder::Starred => self.starred,
-      StandardFolder::Trash => self.trash,
-    }
-  }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct FolderPaneData {
-  pub labels: Vec<FolderLabel>,
-  pub standard_counts: StandardFolderCounts,
 }
 
 pub(super) async fn load_folder_pane(db: &Database, character_id: i64) -> FolderPaneData {
@@ -253,19 +266,6 @@ async fn count_snoozed_unread(db: &Database, character_id: i64, now: &str, unrea
     .iter()
     .filter(|s| s.snooze_until().as_str() > now && *unread.get(&s.mail_id()).unwrap_or(&false))
     .count() as i64
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct OutboxIndicator {
-  pub failed: Vec<FailedMutation>,
-  pub pending: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FailedMutation {
-  pub id: i64,
-  pub kind: String,
-  pub last_error: String,
 }
 
 pub(super) async fn load_outbox_indicator(db: &Database) -> OutboxIndicator {

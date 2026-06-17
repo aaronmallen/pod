@@ -19,24 +19,27 @@ use crate::{
 };
 
 pub const NAME_MAX_CHARS: usize = 40;
+
 const DEFAULT_COLOR: &str = "#ffff01";
+
 const MENU_WIDTH: f32 = 234.0;
+
 const MODAL_BODY_PAD: f32 = 20.0;
+
 const MODAL_SIDE_PAD: f32 = 18.0;
+
 const MODAL_WIDTH: f32 = 440.0;
+
 const PICKER_MAX_HEIGHT: f32 = 240.0;
+
 const SWATCH_RADIUS: f32 = 3.0;
+
 const SWATCH_SIZE: f32 = 11.0;
 
 /// EVE system label ids (Inbox/Sent/Corp/Alliance). These are synthesized into
 /// `character_mail_labels` during sync to satisfy the membership FK, but must
 /// never be shown as user labels in the folder pane or as row/reading chips.
 pub(crate) const SYSTEM_LABEL_IDS: [i64; 4] = [1, 2, 4, 8];
-
-/// Whether `id` is an EVE system label that should be hidden from the label UI.
-pub(crate) fn is_system_label(id: i64) -> bool {
-  SYSTEM_LABEL_IDS.contains(&id)
-}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LabelDraft {
@@ -77,6 +80,11 @@ struct SetPayload {
   labels: Vec<i64>,
   mail_id: i64,
   previous: Vec<i64>,
+}
+
+/// Whether `id` is an EVE system label that should be hidden from the label UI.
+pub(crate) fn is_system_label(id: i64) -> bool {
+  SYSTEM_LABEL_IDS.contains(&id)
 }
 
 /// Returns a negative, millisecond-epoch-derived id used as an optimistic sentinel for a label

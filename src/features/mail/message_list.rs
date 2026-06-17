@@ -28,6 +28,66 @@ use crate::{
   },
 };
 
+/// Rows fetched per page when the inbox/label listing is keyset-paginated.
+///
+/// Large enough to overfill a tall viewport on the first load, small enough that
+/// the per-row body/label/overlay enrichment in [`key_to_row`] stays cheap.
+pub(super) const MESSAGE_PAGE_SIZE: i64 = 60;
+
+const SNIPPET_MAX_CHARS: usize = 120;
+
+/// Nominal height of one message row, in pixels.
+///
+/// Mail rows are content-driven (a two-line subject, optional label chips), and the
+/// interleaved day-bucket headers are shorter, so this is only an estimate for the
+/// [`VirtualList`] offset math; overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 88.0;
+
+const PINNED_LABEL: &str = "Pinned";
+
+const AVATAR_SIZE: f32 = 36.0;
+
+const INDICATOR_ICON_SIZE: f32 = 14.0;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DayBucket {
+  Earlier,
+  Today,
+  Yesterday,
+}
+
+impl DayBucket {
+  fn label(self) -> &'static str {
+    match self {
+      DayBucket::Today => "Today",
+      DayBucket::Yesterday => "Yesterday",
+      DayBucket::Earlier => "Earlier this week",
+    }
+  }
+
+  fn rank(self) -> u8 {
+    match self {
+      DayBucket::Today => 0,
+      DayBucket::Yesterday => 1,
+      DayBucket::Earlier => 2,
+    }
+  }
+}
+
+// Hand-written so the chronological order (Today < Yesterday < Earlier) survives the alphabetical
+// variant declaration a derived `Ord` would otherwise key off.
+impl Ord for DayBucket {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.rank().cmp(&other.rank())
+  }
+}
+
+impl PartialOrd for DayBucket {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageRow {
   pub bucket: DayBucket,
@@ -71,43 +131,26 @@ impl SenderKind {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DayBucket {
-  Earlier,
-  Today,
-  Yesterday,
+/// The first screen of a folder: the (small, unbounded) pinned head plus the
+/// first keyset page of the non-pinned tail.
+///
+/// Inbox and label folders are keyset-paginated — their backing queries are
+/// unbounded and a large mailbox is the worst offender — so only `MESSAGE_PAGE_SIZE`
+/// tail rows are materialized up front; the rest load on scroll. The other folders
+/// (sent/drafts/overlay-backed/unified) are inherently bounded and load in one
+/// shot with an empty pinned head and no further pages.
+pub(super) struct FirstPage {
+  pub has_more: bool,
+  pub pinned: Vec<MessageRow>,
+  pub tail: Vec<MessageRow>,
 }
 
-impl DayBucket {
-  fn label(self) -> &'static str {
-    match self {
-      DayBucket::Today => "Today",
-      DayBucket::Yesterday => "Yesterday",
-      DayBucket::Earlier => "Earlier this week",
-    }
-  }
-
-  fn rank(self) -> u8 {
-    match self {
-      DayBucket::Today => 0,
-      DayBucket::Yesterday => 1,
-      DayBucket::Earlier => 2,
-    }
-  }
-}
-
-// Hand-written so the chronological order (Today < Yesterday < Earlier) survives the alphabetical
-// variant declaration a derived `Ord` would otherwise key off.
-impl Ord for DayBucket {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.rank().cmp(&other.rank())
-  }
-}
-
-impl PartialOrd for DayBucket {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
+/// One entry in the flattened, windowed message list. Section headers share the
+/// flat index space with the rows beneath them so the [`VirtualList`] windows over
+/// `[Header, Row, Row, Header, Row, …]` uniformly.
+enum ListItem<'a> {
+  Header(&'a str),
+  Row(&'a MessageRow),
 }
 
 struct MailKey {
@@ -121,26 +164,6 @@ struct MailKey {
   sender_kind: SenderKind,
   subject: String,
   timestamp: String,
-}
-
-/// Rows fetched per page when the inbox/label listing is keyset-paginated.
-///
-/// Large enough to overfill a tall viewport on the first load, small enough that
-/// the per-row body/label/overlay enrichment in [`key_to_row`] stays cheap.
-pub(super) const MESSAGE_PAGE_SIZE: i64 = 60;
-
-/// The first screen of a folder: the (small, unbounded) pinned head plus the
-/// first keyset page of the non-pinned tail.
-///
-/// Inbox and label folders are keyset-paginated — their backing queries are
-/// unbounded and a large mailbox is the worst offender — so only `MESSAGE_PAGE_SIZE`
-/// tail rows are materialized up front; the rest load on scroll. The other folders
-/// (sent/drafts/overlay-backed/unified) are inherently bounded and load in one
-/// shot with an empty pinned head and no further pages.
-pub(super) struct FirstPage {
-  pub has_more: bool,
-  pub pinned: Vec<MessageRow>,
-  pub tail: Vec<MessageRow>,
 }
 
 pub(super) async fn load_first_page(db: &Database, scope: Scope, folder: Folder) -> FirstPage {
@@ -317,8 +340,6 @@ fn header_to_key(h: CharacterMail) -> MailKey {
   }
 }
 
-const SNIPPET_MAX_CHARS: usize = 120;
-
 fn snippet_preview(body: &str) -> String {
   if body.chars().count() <= SNIPPET_MAX_CHARS {
     return body.to_owned();
@@ -487,23 +508,6 @@ fn time_label(timestamp: &str) -> String {
     }
     Err(_) => timestamp.to_owned(),
   }
-}
-
-/// Nominal height of one message row, in pixels.
-///
-/// Mail rows are content-driven (a two-line subject, optional label chips), and the
-/// interleaved day-bucket headers are shorter, so this is only an estimate for the
-/// [`VirtualList`] offset math; overscan absorbs the variance.
-const ESTIMATED_ROW_HEIGHT: f32 = 88.0;
-
-const PINNED_LABEL: &str = "Pinned";
-
-/// One entry in the flattened, windowed message list. Section headers share the
-/// flat index space with the rows beneath them so the [`VirtualList`] windows over
-/// `[Header, Row, Row, Header, Row, …]` uniformly.
-enum ListItem<'a> {
-  Header(&'a str),
-  Row(&'a MessageRow),
 }
 
 pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
@@ -755,8 +759,6 @@ fn message_row(row: &MessageRow, selected: bool) -> Element<'_, Message> {
     .into()
 }
 
-const AVATAR_SIZE: f32 = 36.0;
-
 fn unread_avatar(row: &MessageRow) -> Element<'_, Message> {
   let avatar = Avatar::new(
     row.sender_id,
@@ -794,8 +796,6 @@ fn glyph(symbol: &str) -> Element<'_, Message> {
     })
     .into()
 }
-
-const INDICATOR_ICON_SIZE: f32 = 14.0;
 
 fn sender_kind_icon<'a>(kind: SenderKind) -> Option<Element<'a, Message>> {
   let icon = match kind {

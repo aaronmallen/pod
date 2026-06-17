@@ -24,56 +24,11 @@ use crate::{
   },
 };
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Kind {
-  Forward,
-  #[default]
-  New,
-  Reply,
-  ReplyAll,
-}
+const DOCKED_WIDTH: f32 = 540.0;
 
-impl Kind {
-  pub(super) fn header(self) -> &'static str {
-    match self {
-      Kind::New => "New message",
-      Kind::Reply => "Reply",
-      Kind::ReplyAll => "Reply all",
-      Kind::Forward => "Forward",
-    }
-  }
-}
+const EXPANDED_WIDTH: f32 = 760.0;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Recipient {
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub id: Option<i64>,
-  pub name: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub recipient_type: Option<String>,
-}
-
-impl Recipient {
-  pub(super) fn character(name: impl Into<String>, id: i64) -> Self {
-    Recipient {
-      id: Some(id),
-      name: name.into(),
-      recipient_type: Some("character".to_owned()),
-    }
-  }
-
-  pub(super) fn from_entity(entity: EntityRef) -> Self {
-    Recipient::character(entity.name, entity.id)
-  }
-
-  pub(super) fn typed(name: impl Into<String>) -> Self {
-    Recipient {
-      id: None,
-      name: name.into(),
-      recipient_type: None,
-    }
-  }
-}
+const FROM_PORTRAIT_SIZE: f32 = 22.0;
 
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -185,16 +140,55 @@ impl Draft {
   }
 }
 
-fn prefixed(subject: &str, prefix: &str) -> String {
-  if subject.starts_with(prefix) {
-    subject.to_owned()
-  } else {
-    format!("{prefix}{subject}")
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Kind {
+  Forward,
+  #[default]
+  New,
+  Reply,
+  ReplyAll,
+}
+
+impl Kind {
+  pub(super) fn header(self) -> &'static str {
+    match self {
+      Kind::New => "New message",
+      Kind::Reply => "Reply",
+      Kind::ReplyAll => "Reply all",
+      Kind::Forward => "Forward",
+    }
   }
 }
 
-fn strip_quote(html: &str) -> String {
-  super::loaders::strip_html_snippet(html)
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Recipient {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub id: Option<i64>,
+  pub name: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub recipient_type: Option<String>,
+}
+
+impl Recipient {
+  pub(super) fn character(name: impl Into<String>, id: i64) -> Self {
+    Recipient {
+      id: Some(id),
+      name: name.into(),
+      recipient_type: Some("character".to_owned()),
+    }
+  }
+
+  pub(super) fn from_entity(entity: EntityRef) -> Self {
+    Recipient::character(entity.name, entity.id)
+  }
+
+  pub(super) fn typed(name: impl Into<String>) -> Self {
+    Recipient {
+      id: None,
+      name: name.into(),
+      recipient_type: None,
+    }
+  }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -218,6 +212,18 @@ impl SendPayload {
   }
 }
 
+fn prefixed(subject: &str, prefix: &str) -> String {
+  if subject.starts_with(prefix) {
+    subject.to_owned()
+  } else {
+    format!("{prefix}{subject}")
+  }
+}
+
+fn strip_quote(html: &str) -> String {
+  super::loaders::strip_html_snippet(html)
+}
+
 pub(super) async fn enqueue_send(db: Database, draft: Draft) -> Result<(), String> {
   let payload = SendPayload::from_draft(&draft);
   let json = serde_json::to_string(&payload).map_err(|e| format!("could not build the send: {e}"))?;
@@ -233,9 +239,6 @@ pub(super) async fn enqueue_send(db: Database, draft: Draft) -> Result<(), Strin
   .map(|_| ())
   .map_err(|e| format!("could not queue the send: {e}"))
 }
-
-const DOCKED_WIDTH: f32 = 540.0;
-const EXPANDED_WIDTH: f32 = 760.0;
 
 pub(super) fn panel<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
   let body: Element<'a, Message> = if draft.minimized {
@@ -547,8 +550,6 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
     Column::with_children(vec![rule::horizontal(), footer_bar.into()]).into()
   }
 }
-
-const FROM_PORTRAIT_SIZE: f32 = 22.0;
 
 fn from_portrait<'a>(portrait: TriggerPortrait) -> Element<'a, Message> {
   Avatar::new(

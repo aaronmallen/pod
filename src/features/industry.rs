@@ -148,6 +148,7 @@ pub enum Message {
   RailPaneDragEnd,
   RailPaneDragStart,
   ReauthRequested(i64),
+  RequiredScopesChanged(Vec<&'static str>),
   ScopeSelected(Scope),
   TabSelected(Tab),
   Tick,
@@ -221,7 +222,7 @@ impl State {
     self.rail_pane.set_host_width(host_width);
   }
 
-  pub fn set_required_scopes(&mut self, scopes: Vec<&'static str>) {
+  pub(super) fn set_required_scopes(&mut self, scopes: Vec<&'static str>) {
     self.required_scopes = scopes;
   }
 
@@ -780,6 +781,10 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       Task::none()
     }
     Message::ReauthRequested(_) => Task::none(),
+    Message::RequiredScopesChanged(scopes) => {
+      state.set_required_scopes(scopes);
+      Task::none()
+    }
     Message::ScopeSelected(scope) => {
       state.active = scope;
       state.picker_open = false;

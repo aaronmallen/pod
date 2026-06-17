@@ -2749,22 +2749,26 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   ];
 
   let route = app.route;
-  if let Some(state) = app.calendar.as_mut() {
-    state.set_features(flags);
+  if let Some(state) = app.calendar.as_ref() {
+    tasks.push(Task::done(Message::Calendar(calendar::Message::FeaturesChanged(flags))));
     if route == Route::Calendar {
       tasks.push(calendar::reload(&db, state.active(), flags).map(Message::Calendar));
     }
   }
 
-  if let Some(state) = app.industry.as_mut() {
-    state.set_required_scopes(industry_required_scopes());
+  if let Some(state) = app.industry.as_ref() {
+    tasks.push(Task::done(Message::Industry(industry::Message::RequiredScopesChanged(
+      industry_required_scopes(),
+    ))));
     if route == Route::Industry {
       tasks.push(industry::reload(&db, state.active(), &industry_required_scopes()).map(Message::Industry));
     }
   }
 
-  if let Some(detail) = app.character_detail.as_mut() {
-    detail.sync_features(&enabled);
+  if app.character_detail.is_some() {
+    tasks.push(Task::done(Message::CharacterDetail(
+      character_detail::Message::FeaturesChanged(enabled.clone()),
+    )));
   }
 
   // A feature disabled while its screen is open leaves the route stranded with its rail icon gone;
@@ -3334,8 +3338,13 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
   let enrolled = match event {
     Some(auth::Event::CorporationAdded(added)) => Some(sync::Subject::Corporation(added.corporation_id)),
     Some(auth::Event::SignedIn(signed)) => {
-      if let Some(state) = app.character_manager.as_mut() {
-        character_manager::insert_signed_in_card(state, signed.character_id, signed.character_name);
+      if app.character_manager.is_some() {
+        tasks.push(Task::done(Message::CharacterManager(
+          character_manager::Message::SignedIn {
+            character_id: signed.character_id,
+            name: signed.character_name,
+          },
+        )));
       }
       Some(sync::Subject::Character(signed.character_id))
     }
@@ -5997,11 +6006,16 @@ mod tests {
           false,
         )),
       );
+      let enabled = enabled_features(&app);
+      let _ = update(
+        &mut app,
+        Message::CharacterDetail(character_detail::Message::FeaturesChanged(enabled)),
+      );
 
       let detail = app.character_detail.as_ref().expect("the detail screen stays open");
       assert!(
         !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
-        "disabling Standings drops its detail tab live, not only on next navigation"
+        "the dispatched feature change drops the Standings detail tab live"
       );
     }
 

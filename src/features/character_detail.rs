@@ -200,6 +200,7 @@ pub enum Message {
   },
   ContactsSearchChanged(String),
   ContactsSearchCleared,
+  FeaturesChanged(Vec<Feature>),
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
   KilllogScrolled {
@@ -429,7 +430,7 @@ impl State {
     keys
   }
 
-  pub fn sync_features(&mut self, features: &[Feature]) {
+  pub(super) fn sync_features(&mut self, features: &[Feature]) {
     self.enabled_tabs = tabs::enabled_tabs(features);
     if !self.enabled_tabs.contains(&self.active_tab) {
       self.active_tab = tabs::resolve_first_tab(&self.enabled_tabs);
@@ -555,6 +556,10 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       state.contacts_query.clear();
       restart_contacts(state, db)
+    }
+    Message::FeaturesChanged(features) => {
+      state.sync_features(&features);
+      Task::none()
     }
     Message::ContactAddOpened
     | Message::ContactDeleteCancelled

@@ -74,6 +74,7 @@ pub enum Message {
   DetailAttendeesLoaded(Box<Option<AttendeeTally>>),
   DetailClosed,
   EventOpened(i64, i64),
+  FeaturesChanged(FeatureFlags),
   Loaded(Box<Loaded>),
   PickerToggled,
   ReauthRequested(i64),
@@ -117,10 +118,6 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
-  }
-
-  pub fn set_features(&mut self, features: FeatureFlags) {
-    self.features = features;
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -214,6 +211,10 @@ impl State {
       // to characters not yet loaded (e.g. during initial sync) are not silently hidden.
       .unwrap_or(true)
   }
+
+  fn set_features(&mut self, features: FeatureFlags) {
+    self.features = features;
+  }
 }
 
 #[derive(Debug)]
@@ -294,6 +295,10 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         state.events = events;
         state.roster = roster;
       }
+      Task::none()
+    }
+    Message::FeaturesChanged(features) => {
+      state.set_features(features);
       Task::none()
     }
     Message::PickerToggled => {

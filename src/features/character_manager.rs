@@ -293,6 +293,10 @@ pub enum Message {
     generation: u64,
     result: Result<Vec<CardModel>, String>,
   },
+  SignedIn {
+    character_id: i64,
+    name: String,
+  },
   SquadColorHexChanged(String),
   SquadColorHexSubmitted,
   SquadColorPickerToggled,
@@ -401,7 +405,7 @@ pub fn load(db: &Database, enabled_features: Vec<Feature>) -> Task<Message> {
 }
 
 /// Shows a placeholder card built from just the character id and JWT name, with no `characters` row required yet.
-pub fn insert_signed_in_card(state: &mut State, character_id: i64, name: String) {
+fn insert_signed_in_card(state: &mut State, character_id: i64, name: String) {
   let card = synthesize_pending_card(character_id, name, &images::default_store());
   state.pending.insert(character_id, card.clone());
   if !roster_contains(state, character_id) {
@@ -1007,6 +1011,13 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
         remove_corporation(db.clone(), corporation_id),
         Message::CorporationRemoved,
       )
+    }
+    Message::SignedIn {
+      character_id,
+      name,
+    } => {
+      insert_signed_in_card(state, character_id, name);
+      Task::none()
     }
     _ => Task::none(),
   }

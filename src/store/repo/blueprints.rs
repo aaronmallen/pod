@@ -9,6 +9,22 @@ use crate::store::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
+pub struct ActivityMaterial {
+  pub activity_id: i64,
+  pub blueprint_type_id: i64,
+  pub material_type_id: i64,
+  pub quantity: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
+pub struct ActivityMeta {
+  pub activity_id: i64,
+  pub blueprint_type_id: i64,
+  pub max_production_limit: i64,
+  pub time: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
 pub struct ActivityProduct {
   pub activity_id: i64,
   pub blueprint_type_id: i64,
@@ -38,6 +54,24 @@ pub async fn activity_meta(
   .fetch_optional(&db.0)
   .await?;
   Ok(row)
+}
+
+pub async fn activity_meta_for_activities(db: &Database, activity_ids: &[i64]) -> Result<Vec<ActivityMeta>, Error> {
+  if activity_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT blueprint_type_id, activity_id, time, max_production_limit FROM blueprint_activity_meta WHERE \
+    activity_id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for activity_id in activity_ids {
+    separated.push_bind(*activity_id);
+  }
+  separated.push_unseparated(") ");
+  builder.push("ORDER BY blueprint_type_id, activity_id");
+  let rows = builder.build_query_as::<ActivityMeta>().fetch_all(&db.0).await?;
+  Ok(rows)
 }
 
 pub async fn blueprint_product(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Result<Option<i64>, Error> {
@@ -85,6 +119,24 @@ pub async fn list_for_corporation(db: &Database, corporation_id: i64) -> Result<
   Ok(rows)
 }
 
+pub async fn materials_for_activities(db: &Database, activity_ids: &[i64]) -> Result<Vec<ActivityMaterial>, Error> {
+  if activity_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT blueprint_type_id, activity_id, material_type_id, quantity FROM blueprint_activity_materials WHERE \
+    activity_id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for activity_id in activity_ids {
+    separated.push_bind(*activity_id);
+  }
+  separated.push_unseparated(") ");
+  builder.push("ORDER BY blueprint_type_id, activity_id, material_type_id");
+  let rows = builder.build_query_as::<ActivityMaterial>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
 pub async fn materials_for_activity(
   db: &Database,
   blueprint_type_id: i64,
@@ -127,6 +179,33 @@ pub async fn products_for_activities(db: &Database, activity_ids: &[i64]) -> Res
   }
   separated.push_unseparated(") ");
   builder.push("ORDER BY product_type_id, activity_id");
+  let rows = builder.build_query_as::<ActivityProduct>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+pub async fn products_for_blueprints(
+  db: &Database,
+  blueprint_type_ids: &[i64],
+  activity_ids: &[i64],
+) -> Result<Vec<ActivityProduct>, Error> {
+  if blueprint_type_ids.is_empty() || activity_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT product_type_id, blueprint_type_id, activity_id, quantity FROM blueprint_activity_products WHERE \
+    blueprint_type_id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for blueprint_type_id in blueprint_type_ids {
+    separated.push_bind(*blueprint_type_id);
+  }
+  separated.push_unseparated(") AND activity_id IN (");
+  let mut separated = builder.separated(", ");
+  for activity_id in activity_ids {
+    separated.push_bind(*activity_id);
+  }
+  separated.push_unseparated(") ");
+  builder.push("ORDER BY blueprint_type_id, activity_id, product_type_id");
   let rows = builder.build_query_as::<ActivityProduct>().fetch_all(&db.0).await?;
   Ok(rows)
 }
@@ -740,6 +819,148 @@ mod tests {
       insert_product(&db, 939, 1, 938, 1).await;
 
       assert!(super::products_for_activities(&db, &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod materials_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_rows_for_every_requested_activity_grouped_by_blueprint() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 35, 200).await;
+      insert_material(&db, 939, 1, 34, 100).await;
+      insert_material(&db, 1_001, 11, 16_634, 5).await;
+      insert_material(&db, 1_002, 7, 99, 1).await;
+
+      let rows = super::materials_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![
+          ActivityMaterial {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            material_type_id: 34,
+            quantity: 100,
+          },
+          ActivityMaterial {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            material_type_id: 35,
+            quantity: 200,
+          },
+          ActivityMaterial {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            material_type_id: 16_634,
+            quantity: 5,
+          },
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 34, 100).await;
+
+      assert!(super::materials_for_activities(&db, &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod activity_meta_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
+      sqlx::query(
+        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
+        VALUES (?, ?, ?, ?)",
+      )
+      .bind(blueprint_type_id)
+      .bind(activity_id)
+      .bind(time)
+      .bind(max)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_meta_for_the_requested_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+      insert_meta(&db, 1_001, 11, 90, 1).await;
+      insert_meta(&db, 1_002, 7, 10, 1).await;
+
+      let rows = super::activity_meta_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![
+          ActivityMeta {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            max_production_limit: 300,
+            time: 600,
+          },
+          ActivityMeta {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            max_production_limit: 1,
+            time: 90,
+          },
+        ]
+      );
+    }
+  }
+
+  mod products_for_blueprints {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_filters_to_the_requested_blueprints_and_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+      insert_product(&db, 1_001, 11, 16_634, 200).await;
+      insert_product(&db, 1_002, 1, 50, 1).await;
+      insert_product(&db, 939, 7, 77, 1).await;
+
+      let products = super::products_for_blueprints(&db, &[939, 1_001], &[1, 11])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        products,
+        vec![
+          ActivityProduct {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            product_type_id: 938,
+            quantity: 1,
+          },
+          ActivityProduct {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            product_type_id: 16_634,
+            quantity: 200,
+          },
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_blueprints_are_given() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      assert!(super::products_for_blueprints(&db, &[], &[1]).await.unwrap().is_empty());
     }
   }
 

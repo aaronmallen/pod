@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use chrono::Utc;
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
@@ -14,6 +14,18 @@ use crate::store::{
 
 const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_name, high_is_good, icon_id, name, \
   published, stackable, unit_id";
+
+/// An `item_types` row joined to group and category names in one scan; LEFT JOIN ensures types with no group
+/// still appear with blank group/category strings rather than being silently excluded.
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub struct CatalogType {
+  pub category_name: String,
+  pub group_name: String,
+  pub id: i64,
+  pub name: String,
+  pub packaged_volume: Option<f64>,
+  pub volume: Option<f64>,
+}
 
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(
@@ -248,6 +260,34 @@ pub async fn all_type_volumes(db: &Database) -> Result<Vec<(i64, Option<f64>, Op
   let rows = sqlx::query_as::<_, (i64, Option<f64>, Option<f64>)>("SELECT id, packaged_volume, volume FROM item_types")
     .fetch_all(&db.0)
     .await?;
+  Ok(rows)
+}
+
+pub async fn group_names_for(db: &Database, group_ids: &[i64]) -> Result<Vec<(i64, String)>, Error> {
+  if group_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("SELECT id, name FROM item_groups WHERE id IN (");
+  let mut separated = builder.separated(", ");
+  for id in group_ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<(i64, String)>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+pub async fn type_details_for(db: &Database, type_ids: &[i64]) -> Result<Vec<(i64, String, i64)>, Error> {
+  if type_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("SELECT id, name, group_id FROM item_types WHERE id IN (");
+  let mut separated = builder.separated(", ");
+  for id in type_ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<(i64, String, i64)>().fetch_all(&db.0).await?;
   Ok(rows)
 }
 
@@ -621,6 +661,58 @@ pub async fn get_station(db: &Database, id: i64) -> Result<Option<Station>, Erro
   Ok(row)
 }
 
+pub async fn solar_systems_for(db: &Database, ids: &[i64]) -> Result<Vec<SolarSystem>, Error> {
+  if ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT constellation_id, id, name, position_x, position_y, position_z, \
+    security_class, security_status, star_id FROM solar_systems WHERE id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for id in ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<SolarSystem>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+pub async fn stations_for(db: &Database, ids: &[i64]) -> Result<Vec<Station>, Error> {
+  if ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT id, max_dockable_ship_volume, name, office_rental_cost, owner, \
+    position_x, position_y, position_z, race_id, reprocessing_efficiency, \
+    reprocessing_stations_take, services, system_id, type_id FROM stations WHERE id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for id in ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<Station>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+pub async fn structures_for(db: &Database, ids: &[i64]) -> Result<Vec<Structure>, Error> {
+  if ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT id, name, owner_id, position_x, position_y, position_z, \
+    solar_system_id, type_id FROM structures WHERE id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for id in ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  let rows = builder.build_query_as::<Structure>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
 pub async fn get_structure(db: &Database, id: i64) -> Result<Option<Structure>, Error> {
   let row = sqlx::query_as::<_, Structure>(
     "SELECT id, name, owner_id, position_x, position_y, position_z, \
@@ -800,6 +892,20 @@ pub async fn pin_structure(
   .execute(&db.0)
   .await?;
   Ok(())
+}
+
+/// Returns every item type with denormalized group and category names; LEFT JOIN (not INNER) keeps types whose
+/// group_id points to a missing group, emitting blank strings rather than dropping the row.
+pub async fn catalog_types(db: &Database) -> Result<Vec<CatalogType>, Error> {
+  let rows = sqlx::query_as::<_, CatalogType>(
+    "SELECT t.id, t.name, COALESCE(g.name, '') AS group_name, COALESCE(c.name, '') AS category_name, \
+    t.packaged_volume, t.volume FROM item_types t \
+    LEFT JOIN item_groups g ON g.id = t.group_id \
+    LEFT JOIN item_categories c ON c.id = g.category_id",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 pub async fn product_categories(db: &Database) -> Result<Vec<(i64, String, String)>, Error> {
@@ -1514,6 +1620,100 @@ mod items_tests {
     }
   }
 
+  mod catalog_types {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_each_type_with_group_category_and_volumes() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      let mut item_type = make_item_type(587, 25, "Rifter");
+      item_type.packaged_volume = Some(2_500.0);
+      item_type.volume = Some(27_289.0);
+      upsert_item_type(&db, &item_type).await.unwrap();
+
+      let rows = catalog_types(&db).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![CatalogType {
+          category_name: "Ship".to_owned(),
+          group_name: "Frigate".to_owned(),
+          id: 587,
+          name: "Rifter".to_owned(),
+          packaged_volume: Some(2_500.0),
+          volume: Some(27_289.0),
+        }]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_unpackaged_volume_when_packaged_is_absent() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      let mut item_type = make_item_type(587, 25, "Rifter");
+      item_type.packaged_volume = None;
+      item_type.volume = Some(5.0);
+      upsert_item_type(&db, &item_type).await.unwrap();
+
+      let rows = catalog_types(&db).await.unwrap();
+
+      assert_eq!(rows[0].packaged_volume, None);
+      assert_eq!(rows[0].volume, Some(5.0));
+    }
+  }
+
+  mod group_names_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_group_names() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_group(&db, &make_group(26, 6, "Cruiser")).await.unwrap();
+      upsert_item_group(&db, &make_group(27, 6, "Battleship")).await.unwrap();
+
+      let mut rows = group_names_for(&db, &[25, 27]).await.unwrap();
+      rows.sort();
+
+      assert_eq!(rows, vec![(25, "Frigate".to_owned()), (27, "Battleship".to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(group_names_for(&db, &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod type_details_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_id_name_and_group_for_the_requested_types() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(588, 25, "Reaper")).await.unwrap();
+
+      let mut rows = type_details_for(&db, &[587]).await.unwrap();
+      rows.sort();
+
+      assert_eq!(rows, vec![(587, "Rifter".to_owned(), 25)]);
+    }
+  }
+
   mod get_item_category {
     use pretty_assertions::assert_eq;
 
@@ -2042,6 +2242,121 @@ mod universe_tests {
       let result = get_station(&db, 9999).await.unwrap();
 
       assert_eq!(result, None);
+    }
+  }
+
+  mod solar_systems_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_systems() {
+      let db = store::open_test().await.unwrap();
+      upsert_region(&db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(&db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000002, 20000001))
+        .await
+        .unwrap();
+
+      let mut ids = solar_systems_for(&db, &[30000001])
+        .await
+        .unwrap()
+        .iter()
+        .map(SolarSystem::id)
+        .collect::<Vec<_>>();
+      ids.sort_unstable();
+
+      assert_eq!(ids, [30000001]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(solar_systems_for(&db, &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod stations_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_stations() {
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 54).await;
+      let region = make_region(10000001);
+      let constellation = make_constellation(20000001, 10000001);
+      let system = make_solar_system(30000001, 20000001);
+      insert_station_with_geography(
+        &db,
+        &make_station(60000001, 30000001, 54),
+        &system,
+        &constellation,
+        &region,
+      )
+      .await
+      .unwrap();
+      upsert_station(&db, &make_station(60000002, 30000001, 54))
+        .await
+        .unwrap();
+
+      let mut ids = stations_for(&db, &[60000001])
+        .await
+        .unwrap()
+        .iter()
+        .map(Station::id)
+        .collect::<Vec<_>>();
+      ids.sort_unstable();
+
+      assert_eq!(ids, [60000001]);
+    }
+  }
+
+  mod structures_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_structures() {
+      let db = store::open_test().await.unwrap();
+      upsert_region(&db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(&db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+      let structure = Structure {
+        id: 1_030_000_000_001,
+        name: "Test Citadel".to_owned(),
+        owner_id: 98_000_001,
+        position_x: None,
+        position_y: None,
+        position_z: None,
+        solar_system_id: 30000001,
+        type_id: None,
+      };
+      upsert_structure(&db, &structure).await.unwrap();
+
+      let rows = structures_for(&db, &[1_030_000_000_001]).await.unwrap();
+
+      assert_eq!(rows, vec![structure]);
     }
   }
 

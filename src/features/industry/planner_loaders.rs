@@ -303,9 +303,22 @@ fn rank_best_owned(mut owned: Vec<OwnedBlueprint>) -> Option<OwnedBlueprint> {
 
 pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
   let recipes = recipes(db).await;
-  let names = type_names(db, &recipes).await;
-  let volumes = type_volumes(db, &recipes).await;
-  let catalog = catalog(db, &recipes, &names, &volumes).await;
+  let referenced = referenced_type_ids(&recipes);
+  let types = sde::catalog_types(db).await.unwrap_or_default();
+
+  let mut names: HashMap<i64, String> = HashMap::new();
+  let mut volumes: HashMap<i64, f64> = HashMap::new();
+  let mut categories: HashMap<i64, (String, String)> = HashMap::new();
+  for row in types {
+    if !referenced.contains(&row.id) {
+      continue;
+    }
+    names.insert(row.id, row.name);
+    volumes.insert(row.id, row.packaged_volume.or(row.volume).unwrap_or(0.0));
+    categories.insert(row.id, (row.group_name, row.category_name));
+  }
+
+  let catalog = catalog(&recipes, &names, &volumes, &categories);
   let owned = owned_index(db, &recipes, scope).await;
   let facilities = planner_facilities(db).await;
   let prices = prices(db).await;
@@ -321,13 +334,12 @@ pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
   }
 }
 
-async fn catalog(
-  db: &Database,
+fn catalog(
   recipes: &HashMap<i64, Recipe>,
   names: &HashMap<i64, String>,
   volumes: &HashMap<i64, f64>,
+  categories: &HashMap<i64, (String, String)>,
 ) -> Vec<CatalogEntry> {
-  let categories = product_categories(db, recipes).await;
   let mut catalog: Vec<CatalogEntry> = recipes
     .iter()
     .map(|(&type_id, recipe)| {
@@ -438,35 +450,25 @@ async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
   out
 }
 
-async fn product_categories(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, (String, String)> {
-  let mut out: HashMap<i64, (String, String)> = HashMap::new();
-  let rows = sde::product_categories(db).await.unwrap_or_default();
-  for (type_id, group_name, category_name) in rows {
-    if recipes.contains_key(&type_id) {
-      out.insert(type_id, (group_name, category_name));
-    }
-  }
-  out
-}
-
 /// Builds the product→Recipe map; rows are fetched ORDER BY activity_id so manufacturing (1) arrives before
 /// reaction (11) — the early-continue guard then silently drops any reaction row for a product that already has
 /// a manufacturing recipe, making manufacturing the canonical path wherever both exist.
 async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
-  let products = blueprints::products_for_activities(db, &[MANUFACTURING_ACTIVITY_ID, REACTION_ACTIVITY_ID])
+  let activities = [MANUFACTURING_ACTIVITY_ID, REACTION_ACTIVITY_ID];
+  let products = blueprints::products_for_activities(db, &activities)
     .await
     .unwrap_or_default();
+  let materials_by_activity = materials_by_activity(db, &activities).await;
+  let time_by_activity = time_by_activity(db, &activities).await;
 
   let mut recipes: HashMap<i64, Recipe> = HashMap::new();
   for product in products {
     if product.activity_id == REACTION_ACTIVITY_ID && recipes.contains_key(&product.product_type_id) {
       continue;
     }
-    let materials = materials_for(db, product.blueprint_type_id, product.activity_id).await;
-    let time_per_run = build_time(db, product.blueprint_type_id, product.activity_id)
-      .await
-      .map(|(time, _)| time)
-      .unwrap_or(0);
+    let key = (product.blueprint_type_id, product.activity_id);
+    let materials = materials_by_activity.get(&key).cloned().unwrap_or_default();
+    let time_per_run = time_by_activity.get(&key).copied().unwrap_or(0);
     recipes.insert(
       product.product_type_id,
       Recipe {
@@ -482,19 +484,28 @@ async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
   recipes
 }
 
-async fn type_names(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, String> {
-  let rows = sde::all_type_names(db).await.unwrap_or_default();
-  let referenced = referenced_type_ids(recipes);
-  rows.into_iter().filter(|(id, _)| referenced.contains(id)).collect()
+/// Bulk-loads every material row for `activity_ids` and groups them by `(blueprint_type_id, activity_id)`, preserving
+/// the repo's type-id ordering so a recipe's materials stay sorted.
+async fn materials_by_activity(db: &Database, activity_ids: &[i64]) -> HashMap<(i64, i64), Vec<Material>> {
+  let rows = blueprints::materials_for_activities(db, activity_ids)
+    .await
+    .unwrap_or_default();
+  let mut out: HashMap<(i64, i64), Vec<Material>> = HashMap::new();
+  for row in rows {
+    out
+      .entry((row.blueprint_type_id, row.activity_id))
+      .or_default()
+      .push(Material::new(row.material_type_id, row.quantity));
+  }
+  out
 }
 
-async fn type_volumes(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, f64> {
-  let rows = sde::all_type_volumes(db).await.unwrap_or_default();
-  let referenced = referenced_type_ids(recipes);
-  rows
+async fn time_by_activity(db: &Database, activity_ids: &[i64]) -> HashMap<(i64, i64), i64> {
+  blueprints::activity_meta_for_activities(db, activity_ids)
+    .await
+    .unwrap_or_default()
     .into_iter()
-    .filter(|(id, _, _)| referenced.contains(id))
-    .map(|(id, packaged, volume)| (id, packaged.or(volume).unwrap_or(0.0)))
+    .map(|meta| ((meta.blueprint_type_id, meta.activity_id), meta.time))
     .collect()
 }
 

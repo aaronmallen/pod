@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
@@ -7,7 +7,7 @@ use crate::store::{
   Database, images,
   model::{
     CharacterBlueprint, CharacterIndustryJob, CorporationBlueprint, CorporationIndustryJob,
-    OwnerType as CredentialOwner,
+    OwnerType as CredentialOwner, Station, Structure,
   },
   repo::{assets, blueprints, character, finance, industry, org, sde},
 };
@@ -299,6 +299,10 @@ impl BlueprintProducts {
     self.cache.insert(blueprint_type_id, reference.clone());
     reference
   }
+
+  fn seed(&mut self, blueprint_type_id: i64, reference: BlueprintReference) {
+    self.cache.entry(blueprint_type_id).or_insert(reference);
+  }
 }
 
 /// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
@@ -375,6 +379,10 @@ impl LocationNames {
     self.cache.insert(location_id, resolved.clone());
     resolved
   }
+
+  fn seed(&mut self, location_id: i64, resolved: ResolvedLocation) {
+    self.cache.entry(location_id).or_insert(resolved);
+  }
 }
 
 struct TypeNames {
@@ -400,6 +408,10 @@ impl TypeNames {
     self.cache.insert(type_id, name.clone());
     name
   }
+
+  fn seed(&mut self, type_id: i64, name: Option<String>) {
+    self.cache.entry(type_id).or_insert(name);
+  }
 }
 
 /// Per-load cache resolving a type id to its item-group name (e.g. "Frigate Blueprint").
@@ -422,6 +434,15 @@ impl GroupNames {
     self.cache.insert(type_id, name.clone());
     name
   }
+
+  fn seed(&mut self, type_id: i64, name: Option<String>) {
+    self.cache.entry(type_id).or_insert(name);
+  }
+}
+
+fn distinct(ids: impl Iterator<Item = i64>) -> Vec<i64> {
+  let mut seen = HashSet::new();
+  ids.filter(|id| seen.insert(*id)).collect()
 }
 
 async fn resolve_group_name(db: &Database, type_id: i64) -> Option<String> {
@@ -450,31 +471,146 @@ impl BlueprintResolvers {
       type_names: TypeNames::new(),
     }
   }
+
+  /// Warms every resolver cache with one bulk SELECT per distinct id set, so the per-row `build_blueprint`
+  /// pass hits the caches instead of issuing a handful of single-row round-trips for each blueprint.
+  async fn prefetch(&mut self, db: &Database, inputs: &[BlueprintInput]) {
+    let type_ids = distinct(inputs.iter().map(|input| input.type_id));
+    let location_ids = distinct(inputs.iter().map(|input| input.location_id));
+
+    let details = sde::type_details_for(db, &type_ids).await.unwrap_or_default();
+    for (id, name, _group_id) in &details {
+      self.type_names.seed(*id, Some(name.clone()));
+    }
+    let group_ids = distinct(details.iter().map(|(_, _, group_id)| *group_id));
+    let mut group_name_by_id: HashMap<i64, String> = HashMap::new();
+    for (id, name) in sde::group_names_for(db, &group_ids).await.unwrap_or_default() {
+      group_name_by_id.insert(id, name);
+    }
+    for (id, _name, group_id) in &details {
+      self.group_names.seed(*id, group_name_by_id.get(group_id).cloned());
+    }
+
+    self.prefetch_products(db, &type_ids).await;
+    self.prefetch_locations(db, &location_ids).await;
+  }
+
+  /// Warms the location cache for the ids that are directly a station / structure / solar system. Ids that need
+  /// the container walk are left to `resolve` to handle on demand (those are rare, so they stay per-id).
+  async fn prefetch_locations(&mut self, db: &Database, location_ids: &[i64]) {
+    let stations = sde::stations_for(db, location_ids).await.unwrap_or_default();
+    let structures = sde::structures_for(db, location_ids).await.unwrap_or_default();
+    let direct_systems = sde::solar_systems_for(db, location_ids).await.unwrap_or_default();
+
+    let mut system_ids: Vec<i64> = stations.iter().map(Station::system_id).collect();
+    system_ids.extend(structures.iter().map(Structure::solar_system_id));
+    let system_ids = distinct(system_ids.into_iter());
+    let mut systems: HashMap<i64, (Option<String>, Option<f64>)> = HashMap::new();
+    for system in sde::solar_systems_for(db, &system_ids).await.unwrap_or_default() {
+      systems.insert(
+        system.id(),
+        (Some(system.name().to_owned()), Some(system.security_status())),
+      );
+    }
+
+    for station in stations {
+      let (system_name, security) = systems.get(&station.system_id()).cloned().unwrap_or_default();
+      self.locations.seed(
+        station.id(),
+        ResolvedLocation {
+          name: Some(station.name().to_owned()),
+          security,
+          system_name,
+        },
+      );
+    }
+    for structure in structures {
+      let (system_name, security) = systems.get(&structure.solar_system_id()).cloned().unwrap_or_default();
+      self.locations.seed(
+        structure.id(),
+        ResolvedLocation {
+          name: Some(structure.name().to_owned()),
+          security,
+          system_name,
+        },
+      );
+    }
+    for system in direct_systems {
+      let name = system.name().to_owned();
+      self.locations.seed(
+        system.id(),
+        ResolvedLocation {
+          name: Some(name.clone()),
+          security: Some(system.security_status()),
+          system_name: Some(name),
+        },
+      );
+    }
+  }
+
+  async fn prefetch_products(&mut self, db: &Database, blueprint_type_ids: &[i64]) {
+    let products = blueprints::products_for_blueprints(
+      db,
+      blueprint_type_ids,
+      &[MANUFACTURING_ACTIVITY_ID, REACTION_ACTIVITY_ID],
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut references: HashMap<i64, BlueprintReference> = HashMap::new();
+    let mut product_ids = Vec::new();
+    for product in products {
+      product_ids.push(product.product_type_id);
+      let reaction = product.activity_id == REACTION_ACTIVITY_ID;
+      let candidate = BlueprintReference {
+        product_type_id: Some(product.product_type_id),
+        reaction,
+      };
+      // Manufacturing wins over a reaction product for the same blueprint, mirroring `blueprint_reference`.
+      match references.get(&product.blueprint_type_id) {
+        Some(current) if !current.reaction => {}
+        _ => {
+          references.insert(product.blueprint_type_id, candidate);
+        }
+      }
+    }
+
+    for &blueprint_type_id in blueprint_type_ids {
+      let reference = references.get(&blueprint_type_id).cloned().unwrap_or_default();
+      self.products.seed(blueprint_type_id, reference);
+    }
+
+    let product_ids = distinct(product_ids.into_iter());
+    for (id, name, _group_id) in sde::type_details_for(db, &product_ids).await.unwrap_or_default() {
+      self.type_names.seed(id, Some(name));
+    }
+  }
 }
 
 async fn collect_blueprints(db: &Database, scope: Scope) -> Vec<Blueprint> {
-  let mut resolvers = BlueprintResolvers::new();
-  let mut out = Vec::new();
+  let mut inputs = Vec::new();
   match scope {
     Scope::All => {
       let all = blueprints::list_all(db).await.unwrap_or_default();
-      for row in all.character_blueprints {
-        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::character(&row)).await);
-      }
-      for row in all.corporation_blueprints {
-        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::corporation(&row)).await);
-      }
+      inputs.extend(all.character_blueprints.iter().map(BlueprintInput::character));
+      inputs.extend(all.corporation_blueprints.iter().map(BlueprintInput::corporation));
     }
     Scope::Char(id) => {
-      for row in blueprints::list_for_character(db, id).await.unwrap_or_default() {
-        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::character(&row)).await);
-      }
+      let rows = blueprints::list_for_character(db, id).await.unwrap_or_default();
+      inputs.extend(rows.iter().map(BlueprintInput::character));
     }
     Scope::Corp(id) => {
-      for row in blueprints::list_for_corporation(db, id).await.unwrap_or_default() {
-        out.push(build_blueprint(db, &mut resolvers, BlueprintInput::corporation(&row)).await);
-      }
+      let rows = blueprints::list_for_corporation(db, id).await.unwrap_or_default();
+      inputs.extend(rows.iter().map(BlueprintInput::corporation));
     }
+  }
+
+  let mut resolvers = BlueprintResolvers::new();
+  resolvers.prefetch(db, &inputs).await;
+
+  let mut out = Vec::with_capacity(inputs.len());
+  for input in inputs {
+    out.push(build_blueprint(db, &mut resolvers, input).await);
   }
   out
 }

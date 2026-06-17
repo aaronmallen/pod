@@ -510,37 +510,45 @@ fn more_page(scope: Scope, tab: Tab, mut page: MorePage) -> Message {
   Message::MoreLoaded(Box::new(page))
 }
 
+fn handle_close_contract_detail(state: &mut State) -> Task<Message> {
+  state.selected_contract = None;
+  Task::none()
+}
+
+fn handle_contract_detail_loaded(state: &mut State, detail: Option<contract_detail::ContractDetail>) -> Task<Message> {
+  state.selected_contract = detail;
+  Task::none()
+}
+
+fn handle_contract_selected(state: &State, db: &Database, contract_id: i64) -> Task<Message> {
+  match contract_loader_target(state, contract_id) {
+    Some(ContractLoad::Character(character_id)) => {
+      let db = db.clone();
+      Task::perform(
+        async move { contract_detail::load_for_character(&db, character_id, contract_id).await },
+        |detail| Message::ContractDetailLoaded(Box::new(detail)),
+      )
+    }
+    Some(ContractLoad::Corporation(corporation_id)) => {
+      let db = db.clone();
+      Task::perform(
+        async move { contract_detail::load_for_corporation(&db, corporation_id, contract_id).await },
+        |detail| Message::ContractDetailLoaded(Box::new(detail)),
+      )
+    }
+    None => Task::none(),
+  }
+}
+
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ChartHovered(fraction) => {
       state.chart_hover = fraction;
       Task::none()
     }
-    Message::CloseContractDetail => {
-      state.selected_contract = None;
-      Task::none()
-    }
-    Message::ContractDetailLoaded(detail) => {
-      state.selected_contract = *detail;
-      Task::none()
-    }
-    Message::ContractSelected(contract_id) => match contract_loader_target(state, contract_id) {
-      Some(ContractLoad::Character(character_id)) => {
-        let db = db.clone();
-        Task::perform(
-          async move { contract_detail::load_for_character(&db, character_id, contract_id).await },
-          |detail| Message::ContractDetailLoaded(Box::new(detail)),
-        )
-      }
-      Some(ContractLoad::Corporation(corporation_id)) => {
-        let db = db.clone();
-        Task::perform(
-          async move { contract_detail::load_for_corporation(&db, corporation_id, contract_id).await },
-          |detail| Message::ContractDetailLoaded(Box::new(detail)),
-        )
-      }
-      None => Task::none(),
-    },
+    Message::CloseContractDetail => handle_close_contract_detail(state),
+    Message::ContractDetailLoaded(detail) => handle_contract_detail_loaded(state, *detail),
+    Message::ContractSelected(contract_id) => handle_contract_selected(state, db, contract_id),
     Message::DivisionSelected(division) => {
       if !matches!(state.active, Scope::Corporation(_)) || division == state.active_division {
         return Task::none();
@@ -1516,6 +1524,60 @@ mod tests {
 
         assert!(state.loading_more, "starting a {tab:?} page marks the state loading");
       }
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_page_load_from_the_last_entry_cursor_for_each_tab() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let mut journal = ready_state(Tab::Journal).await;
+      journal.journal = vec![journal_entry(1, Some(1.0), "player_trading", "trade")];
+      let _journal_task = super::load_more(&mut journal, &db);
+      assert!(journal.loading_more);
+
+      let mut market = ready_state(Tab::Market).await;
+      market.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+      let _market_task = super::load_more(&mut market, &db);
+      assert!(market.loading_more);
+
+      let mut contracts = ready_state(Tab::Contracts).await;
+      contracts.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
+      let _contracts_task = super::load_more(&mut contracts, &db);
+      assert!(contracts.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_corp_contracts_page_load() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Contracts).await;
+      state.active = Scope::Corporation(98_000_001);
+
+      let _task = super::load_more(&mut state, &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_corp_contracts_page_load_from_the_last_entry_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Contracts).await;
+      state.active = Scope::Corporation(98_000_001);
+      state.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
+
+      let _task = super::load_more(&mut state, &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_for_a_corporation_scope_on_a_non_contract_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Market).await;
+      state.active = Scope::Corporation(98_000_001);
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(!state.loading_more);
     }
   }
 

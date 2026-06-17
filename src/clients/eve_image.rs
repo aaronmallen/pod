@@ -57,6 +57,8 @@ impl Client {
   }
 }
 
+// Rule-4 exception: variants stay ordered by ascending pixel size rather than alphabetically because each
+// discriminant is the literal EVE image-server `size=` value (used via `size as u16`).
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Size {

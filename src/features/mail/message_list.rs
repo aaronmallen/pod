@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use chrono::{DateTime, Duration, Timelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -69,11 +71,11 @@ impl SenderKind {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DayBucket {
+  Earlier,
   Today,
   Yesterday,
-  Earlier,
 }
 
 impl DayBucket {
@@ -83,6 +85,28 @@ impl DayBucket {
       DayBucket::Yesterday => "Yesterday",
       DayBucket::Earlier => "Earlier this week",
     }
+  }
+
+  fn rank(self) -> u8 {
+    match self {
+      DayBucket::Today => 0,
+      DayBucket::Yesterday => 1,
+      DayBucket::Earlier => 2,
+    }
+  }
+}
+
+// Hand-written so the chronological order (Today < Yesterday < Earlier) survives the alphabetical
+// variant declaration a derived `Ord` would otherwise key off.
+impl Ord for DayBucket {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.rank().cmp(&other.rank())
+  }
+}
+
+impl PartialOrd for DayBucket {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 
@@ -957,6 +981,17 @@ mod tests {
     assert_eq!(day_bucket("2026-06-14T23:00:00Z", now), DayBucket::Yesterday);
     assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::Earlier);
     assert_eq!(day_bucket("not-a-date", now), DayBucket::Earlier);
+  }
+
+  #[test]
+  fn it_orders_day_buckets_chronologically_with_today_first() {
+    assert!(DayBucket::Today < DayBucket::Yesterday);
+    assert!(DayBucket::Yesterday < DayBucket::Earlier);
+
+    let mut buckets = [DayBucket::Earlier, DayBucket::Today, DayBucket::Yesterday];
+    buckets.sort();
+
+    assert_eq!(buckets, [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier]);
   }
 
   #[test]

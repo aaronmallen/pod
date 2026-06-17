@@ -13,6 +13,8 @@ const ATTR_TABLE: [(u8, &str, &str); 5] = [
   (164, "Cha", "Charisma"),
 ];
 
+// Rule-4 exception: variants stay in EVE attribute order rather than alphabetically because each discriminant
+// indexes `ATTR_TABLE` and the `attrs` array (used via `self as usize`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(usize)]
 pub enum AttrKey {

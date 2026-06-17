@@ -42,9 +42,9 @@ const ESTIMATED_ROW_HEIGHT: f32 = 46.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ContactFilter {
-  Alliance,
   #[default]
   All,
+  Alliance,
   Character,
   Corp,
 }
@@ -732,6 +732,19 @@ mod tests {
       ] {
         let _el: Element<'_, Message> = super::super::header(&state, filter, "", false);
       }
+    }
+
+    #[test]
+    fn it_keeps_the_filter_segments_in_render_order() {
+      assert_eq!(
+        ContactFilter::SEGMENTS,
+        [
+          (ContactFilter::All, "All"),
+          (ContactFilter::Character, "Characters"),
+          (ContactFilter::Corp, "Corps"),
+          (ContactFilter::Alliance, "Alliances"),
+        ]
+      );
     }
 
     #[test]

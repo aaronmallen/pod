@@ -98,12 +98,12 @@ pub enum ClickKind {
   /// No modifier: select only this row (or toggle off if it is the lone selection).
   #[default]
   Plain,
-  /// Ctrl/Cmd: toggle this row, keeping the rest of the selection.
-  Toggle,
   /// Shift: select a contiguous range from the anchor, replacing the selection.
   Range,
   /// Shift + Ctrl/Cmd: merge the contiguous range from the anchor into the selection.
   RangeMerge,
+  /// Ctrl/Cmd: toggle this row, keeping the rest of the selection.
+  Toggle,
 }
 
 impl ClickKind {

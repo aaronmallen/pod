@@ -58,9 +58,9 @@ impl From<&crate::config::IndustryConfig> for FacilityDefaults {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Filter {
+  Active,
   #[default]
   All,
-  Active,
   Ready,
 }
 
@@ -108,16 +108,16 @@ impl Tab {
 pub enum BlueprintKind {
   #[default]
   All,
-  Originals,
   Copies,
+  Originals,
 }
 
 /// The Name / ME / Runs sort toggle on the Blueprints tab.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BlueprintSort {
+  MaterialEfficiency,
   #[default]
   Name,
-  MaterialEfficiency,
   Runs,
 }
 
@@ -992,6 +992,19 @@ mod tests {
       time_efficiency: te,
       type_icon: crate::store::images::IconResolution::Missing,
       type_id: 681,
+    }
+  }
+
+  mod enum_defaults {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_preserves_the_segmented_control_defaults_after_alphabetizing() {
+      assert_eq!(Filter::default(), Filter::All);
+      assert_eq!(BlueprintKind::default(), BlueprintKind::All);
+      assert_eq!(BlueprintSort::default(), BlueprintSort::Name);
     }
   }
 

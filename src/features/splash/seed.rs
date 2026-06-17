@@ -378,7 +378,7 @@ struct SdeBlueprintQuantity {
 
 /// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
 /// materials table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct BlueprintActivityRow {
   blueprint_type_id: i64,
   activity_id: i64,
@@ -388,7 +388,7 @@ struct BlueprintActivityRow {
 
 /// One `(blueprint_type_id, activity_id, time, max_production_limit)` row for `blueprint_activity_meta`.
 /// `time` is base seconds per run; `max_production_limit` is the per-job run cap (0 when the SDE omits it).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct BlueprintActivityMetaRow {
   activity_id: i64,
   blueprint_type_id: i64,

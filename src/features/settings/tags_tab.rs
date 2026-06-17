@@ -25,10 +25,10 @@ const DELETE_SIZE: f32 = 26.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SortMode {
+  Color,
   #[default]
   Manual,
   Name,
-  Color,
 }
 
 impl SortMode {
@@ -110,15 +110,19 @@ fn color_sort_key(tag: &Tag) -> (bool, String, String) {
 #[derive(Clone, Debug)]
 pub enum Message {
   AddTag,
+  ClearColor(i64),
+  ClosePicker,
   ColorHexChanged(String),
   ColorHexSubmitted,
   CursorMoved(Point),
   DropDragged,
-  EditDraftChanged(String),
   #[allow(dead_code)]
   EditCancelled,
   EditCommitted,
+  EditDraftChanged(String),
   FilterChanged(String),
+  HoverTagSlot(usize),
+  LeaveTagSlot(usize),
   Loaded(Result<Vec<Tag>, String>),
   NewTagChanged(String),
   PickUpTag(i64),
@@ -126,15 +130,11 @@ pub enum Message {
     hex: String,
     tag_id: i64,
   },
-  ClearColor(i64),
-  ClosePicker,
   RemoveTag(i64),
   Saved(Result<(), String>),
   SortSelected(SortMode),
   StartEditing(i64),
   ToggleColorPicker(i64),
-  HoverTagSlot(usize),
-  LeaveTagSlot(usize),
 }
 
 pub fn load(db: &Database) -> iced::Task<Message> {
@@ -1003,6 +1003,11 @@ mod tests {
   async fn reload(state: &mut State) {
     let db = state.db.clone().unwrap();
     state.tags = infra::tag_all(&db).await.unwrap();
+  }
+
+  #[test]
+  fn it_keeps_sort_modes_in_render_order() {
+    assert_eq!(SortMode::ALL, [SortMode::Manual, SortMode::Name, SortMode::Color]);
   }
 
   #[tokio::test]

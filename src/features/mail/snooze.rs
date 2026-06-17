@@ -20,9 +20,9 @@ pub(super) const DOWNTIME_HOUR: u32 = 11;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Preset {
   LaterToday,
-  Tomorrow,
-  ThisWeekend,
   NextWeek,
+  ThisWeekend,
+  Tomorrow,
 }
 
 impl Preset {
@@ -832,6 +832,19 @@ mod tests {
       for preset in Preset::all() {
         assert!(preset.resolve(n) > n, "{} must resolve to the future", preset.label());
       }
+    }
+
+    #[test]
+    fn it_lists_presets_in_chronological_render_order() {
+      assert_eq!(
+        Preset::all(),
+        [
+          Preset::LaterToday,
+          Preset::Tomorrow,
+          Preset::ThisWeekend,
+          Preset::NextWeek
+        ]
+      );
     }
   }
 

@@ -161,8 +161,14 @@ pub async fn list_for_corporation(db: &Database, corporation_id: i64) -> Result<
   Ok(rows)
 }
 
-/// Wholesale replaces all cost index rows in a single transaction; systems absent from `indices` are dropped.
+/// Wholesale replaces all cost index rows in a single transaction; systems absent from `indices` are dropped. An empty
+/// `indices` is treated as a transient ESI degradation (a 200 with a `[]` body) rather than a real "no system has a
+/// cost index" state — which never occurs on Tranquility — so it is a no-op that leaves the existing rows intact.
 pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) -> Result<(), Error> {
+  if indices.is_empty() {
+    return Ok(());
+  }
+
   let mut tx = db.0.begin().await?;
   sqlx::query("DELETE FROM industry_cost_indices")
     .execute(&mut *tx)
@@ -918,6 +924,28 @@ mod tests {
       assert_eq!(
         super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
         Some(cost_index(30_002_187, 0.09, 0.03))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_existing_rows_intact_when_the_new_set_is_empty() {
+      let db = store::open_test().await.unwrap();
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      super::replace_cost_indices(&db, &[]).await.unwrap();
+
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
+        Some(cost_index(30_000_142, 0.05, 0.01))
+      );
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.06, 0.02))
       );
     }
   }

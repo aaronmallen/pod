@@ -153,6 +153,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_preserves_existing_indices_when_the_response_is_an_empty_set() {
+      let server = MockServer::start().await;
+      mount_systems(&server, serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      industry::replace_cost_indices(
+        &db,
+        &[IndustryCostIndex {
+          manufacturing: Some(0.07),
+          solar_system_id: 30_000_142,
+          ..IndustryCostIndex::default()
+        }],
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(industry::cost_index_for(&db, 30_000_142, 1).await.unwrap(), Some(0.07));
+    }
+
+    #[tokio::test]
     async fn it_errors_and_persists_nothing_when_the_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))

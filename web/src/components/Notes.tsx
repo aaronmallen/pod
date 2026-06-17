@@ -1,6 +1,7 @@
 import { T } from '../tokens';
 import { NOTES, NOTICES } from '../generated/notes';
 import type { NoteTone, Release } from '../types';
+import { renderInline } from '../utils/renderInline';
 import { Icon, type IconName } from './Icon';
 import { SectionHead } from './SectionHead';
 
@@ -98,7 +99,7 @@ export function Notes({ accent, release }: Props) {
                   <span style={{
                     fontFamily: '"Space Grotesk", sans-serif',
                     fontSize: 15, lineHeight: 1.55, color: T.ink, textWrap: 'pretty',
-                  } as React.CSSProperties}>{a.text}</span>
+                  } as React.CSSProperties}>{renderInline(a.text, accent)}</span>
                 </div>
               );
             })}
@@ -134,7 +135,7 @@ export function Notes({ accent, release }: Props) {
                 <span style={{
                   fontFamily: '"Space Grotesk", sans-serif',
                   fontSize: 15, lineHeight: 1.5, color: T.ink, textWrap: 'pretty',
-                } as React.CSSProperties}>{n.text}</span>
+                } as React.CSSProperties}>{renderInline(n.text, accent)}</span>
               </li>
             );
           })}

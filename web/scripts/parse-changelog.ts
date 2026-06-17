@@ -57,13 +57,13 @@ function parseChangelog(content: string): { version: string; notices: Alert[]; n
   // Leading blockquotes (`> ...`) before any `###` section are GitHub-style alert callouts —
   // typed banners rendered above the itemized notes. A `> [!TYPE]` marker opens a group whose
   // following `>` lines are its body; a blank or non-`>` line closes it and allows another group.
-  // An untyped blockquote falls back to WARNING. Bold `**markers**` are stripped.
+  // An untyped blockquote falls back to WARNING. Inline markdown is preserved for the renderer.
   const notices: Alert[] = [];
   let pending: { type: string; bodyParts: string[] } | null = null;
   const flush = () => {
     if (!pending) return;
     const meta = ALERT_MAP[pending.type] ?? ALERT_MAP.WARNING;
-    const text = pending.bodyParts.filter(Boolean).join(' ').replace(/\*\*/g, '').trim();
+    const text = pending.bodyParts.filter(Boolean).join(' ').trim();
     notices.push({ type: pending.type, tone: meta.tone, icon: meta.icon, text });
     pending = null;
   };

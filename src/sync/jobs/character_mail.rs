@@ -12,8 +12,9 @@ use crate::{
     images,
     model::{
       CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership, CharacterMailRecipient,
+      OwnerType,
     },
-    repo::{character, mail},
+    repo::{character, infra, mail},
   },
   sync::{job::JobCtx, jobs::names::resolve_names, outcome::Outcome, subject::Subject},
 };
@@ -21,6 +22,8 @@ use crate::{
 const RECIPIENT_TYPE_MAILING_LIST: &str = "mailing_list";
 const CATEGORY_CHARACTER: &str = "character";
 const CATEGORY_CORPORATION: &str = "corporation";
+
+const OUTBOX_KIND_SET_READ: &str = "mail.set_read";
 
 const SYSTEM_ID_CEILING: i64 = 10_000_000;
 
@@ -47,6 +50,8 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let resolved = resolve_names(ctx, &resolver_ids).await?;
 
   ensure_sender_portraits(ctx, &headers, &resolved).await;
+
+  let pending_read = pending_read_mail_ids(ctx, character_id).await?;
 
   let mut synced = 0usize;
   let mut persisted = HashSet::new();
@@ -84,7 +89,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
       important: false,
       from_corp,
       from_system,
-      is_read: header.is_read.unwrap_or(false),
+      is_read: header.is_read.unwrap_or(false) || pending_read.contains(&header.mail_id),
       mail_id: header.mail_id,
       subject: header.subject.clone(),
       timestamp,
@@ -102,6 +107,24 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   mail::replace_membership_for_character(ctx.db, character_id, &memberships).await?;
 
   Ok(Outcome::from_rows(synced))
+}
+
+/// Mail ids with an unflushed mark-read outbox write, used to defend the optimistic read flag.
+///
+/// ESI still reports these as unread until the outbox write reaches the server, so a sync that
+/// landed first would otherwise clobber the local read state back to unread.
+async fn pending_read_mail_ids(ctx: &JobCtx<'_>, character_id: i64) -> Result<HashSet<i64>, Error> {
+  let payloads =
+    infra::outbox_pending_payloads(ctx.db, OwnerType::Character, character_id, OUTBOX_KIND_SET_READ).await?;
+  let mut ids = HashSet::new();
+  for payload in payloads {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload)
+      && let Some(mail_id) = value.get("mail_id").and_then(serde_json::Value::as_i64)
+    {
+      ids.insert(mail_id);
+    }
+  }
+  Ok(ids)
 }
 
 fn build_labels(
@@ -621,6 +644,52 @@ mod tests {
         "<p>original</p>"
       );
       assert!(mail::headers(&fx.db, 42).await.unwrap()[0].is_read());
+    }
+
+    #[tokio::test]
+    async fn it_keeps_a_just_read_mail_read_when_the_outbox_write_is_still_pending() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/42/mail/",
+        serde_json::json!([
+          { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+            "recipients": [{ "recipient_id": 1001, "recipient_type": "character" }] },
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/mail/7/",
+        serde_json::json!({ "body": "<p>hi</p>" }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
+      )
+      .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      infra::append(
+        &fx.db,
+        OwnerType::Character,
+        42,
+        OUTBOX_KIND_SET_READ,
+        "{\"character_id\":42,\"mail_id\":7,\"read\":true}",
+        Some("set_read:7"),
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert!(
+        mail::headers(&fx.db, 42).await.unwrap()[0].is_read(),
+        "a pending mark-read outbox row protects the optimistic read flag against an is_read:false sync"
+      );
     }
 
     #[tokio::test]

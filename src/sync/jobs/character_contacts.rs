@@ -1,15 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
   clients::{Error, esi::models::universe::NameRecord},
   store::{
-    model::{CharacterContact, CharacterContactLabel, Faction},
-    repo::{character, sde},
+    model::{CharacterContact, CharacterContactLabel, Faction, OwnerType},
+    repo::{character, infra, sde},
   },
   sync::{job::JobCtx, jobs::names::resolve_names, outcome::Outcome, subject::Subject},
 };
 
 const CONTACT_TYPE_FACTION: &str = "faction";
+
+const OUTBOX_KINDS_CONTACT: [&str; 3] = ["contact.add", "contact.edit", "contact.remove"];
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let Subject::Character(character_id) = ctx.key.subject else {
@@ -65,9 +67,37 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     })
     .collect();
 
-  character::replace_contacts_for_character(ctx.db, character_id, &rows).await?;
+  let protected = pending_contact_ids(ctx, character_id).await?;
+
+  character::replace_contacts_for_character(ctx.db, character_id, &rows, &protected).await?;
   character::replace_labels_for_character(ctx.db, character_id, &labels).await?;
   Ok(Outcome::from_rows(rows.len()))
+}
+
+/// Contact ids with an unsent outbox mutation, so the full-replace sync does not clobber a local change in flight.
+///
+/// Each contact outbox payload nests the affected id under `target` (add/edit) and/or `previous` (a remove or
+/// re-point), so both keys are inspected; unparseable payloads are skipped rather than failing the sync.
+async fn pending_contact_ids(ctx: &JobCtx<'_>, character_id: i64) -> Result<HashSet<i64>, Error> {
+  let mut ids = HashSet::new();
+  for kind in OUTBOX_KINDS_CONTACT {
+    let payloads = infra::outbox_pending_payloads(ctx.db, OwnerType::Character, character_id, kind).await?;
+    for payload in payloads {
+      let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) else {
+        continue;
+      };
+      for key in ["target", "previous"] {
+        if let Some(contact_id) = value
+          .get(key)
+          .and_then(|entry| entry.get("contact_id"))
+          .and_then(serde_json::Value::as_i64)
+        {
+          ids.insert(contact_id);
+        }
+      }
+    }
+  }
+  Ok(ids)
 }
 
 fn resolved_name(resolved: &HashMap<i64, NameRecord>, id: i64) -> String {
@@ -215,6 +245,50 @@ mod tests {
         Outcome::Empty,
         "a character with no contacts reads as Empty, not green"
       );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_reinsert_a_contact_with_a_pending_remove() {
+      let server = MockServer::start().await;
+      mount_contacts(&server, 42).await;
+      mount_labels(&server, 42).await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 95_001, "name": "Trusted Pilot" },
+          { "category": "corporation", "id": 98_001, "name": "Hostile Corp" },
+        ]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      infra::append(
+        &db,
+        OwnerType::Character,
+        42,
+        "contact.remove",
+        "{\"character_id\":42,\"previous\":{\"contact_id\":95001}}",
+        None,
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let result = character::contacts(&db, 42).await.unwrap();
+      let ids = result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>();
+      assert!(
+        !ids.contains(&95_001),
+        "a contact with a pending remove is not resurrected by the full-replace sync"
+      );
+      assert!(ids.contains(&98_001), "unprotected server contacts are still synced");
     }
 
     #[tokio::test]

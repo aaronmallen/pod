@@ -182,7 +182,10 @@ pub enum Message {
   PaneSettled(&'static str, f32),
   PickerToggled,
   ReauthRequested(i64),
-  RenderLoaded(Box<Option<ReadingRender>>),
+  RenderLoaded {
+    mail_id: i64,
+    render: Box<Option<ReadingRender>>,
+  },
   Reply(i64),
   ReplyAll(i64),
   ScopeSelected(Scope),
@@ -730,7 +733,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::PickerToggled
     | Message::FolderSelected(_)
     | Message::SearchChanged(_)
-    | Message::RenderLoaded(_) => update_navigation(state, message, db),
+    | Message::RenderLoaded {
+      ..
+    } => update_navigation(state, message, db),
     Message::FolderPaneDragStart
     | Message::FolderPaneDragged(_)
     | Message::FolderPaneDragEnd
@@ -867,8 +872,15 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
         start_search(state, db)
       }
     }
-    Message::RenderLoaded(render) => {
-      state.render = *render;
+    Message::RenderLoaded {
+      mail_id,
+      render,
+    } => {
+      // A render that completes after the selection moved on (or was cleared) belongs to a mail we are no longer
+      // showing; dropping it stops a stale body from landing under the current selection.
+      if state.selected == Some(mail_id) {
+        state.render = *render;
+      }
       Task::none()
     }
     _ => Task::none(),
@@ -930,6 +942,18 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     state.messages_has_more = messages_has_more;
     state.messages_loading = false;
     state.list_scroll_offset = 0.0;
+    // Archiving or trashing the open mail drops it from the reloaded folder; clear the reading pane (mirroring
+    // FolderSelected) so it stops rendering a mail no longer in the list.
+    if let Some(selected) = state.selected
+      && !state
+        .messages
+        .iter()
+        .chain(&state.pinned)
+        .any(|row| row.mail_id == selected)
+    {
+      state.selected = None;
+      state.render = None;
+    }
     // A fresh folder load supersedes any in-flight search paging.
     state.all_messages.clear();
     state.search_cursor = None;
@@ -995,8 +1019,11 @@ fn handle_message_selected(state: &mut State, mail_id: i64, db: &Database) -> Ta
     state.render = None;
     return Task::none();
   };
-  let render = Task::perform(load_render(db.clone(), character_id, mail_id), |render| {
-    Message::RenderLoaded(Box::new(render))
+  let render = Task::perform(load_render(db.clone(), character_id, mail_id), move |render| {
+    Message::RenderLoaded {
+      mail_id,
+      render: Box::new(render),
+    }
   });
   match read_state::open_target(state, mail_id) {
     Some((character_id, mail_id)) => Task::batch([
@@ -1338,8 +1365,11 @@ fn reload_after_label_write(state: &State, db: &Database) -> Task<Message> {
   };
   let mail_id = render.mail.header.mail_id();
   let character_id = render.mail.header.character_id();
-  let render = Task::perform(load_render(db.clone(), character_id, mail_id), |render| {
-    Message::RenderLoaded(Box::new(render))
+  let render = Task::perform(load_render(db.clone(), character_id, mail_id), move |render| {
+    Message::RenderLoaded {
+      mail_id,
+      render: Box::new(render),
+    }
   });
   Task::batch([folder, render])
 }
@@ -1650,6 +1680,7 @@ mod tests {
     #[tokio::test]
     async fn it_stores_a_landed_reading_pane_render() {
       let mut state = State::new(42);
+      state.selected = Some(7);
       let db = crate::store::open_test().await.unwrap();
       let render = ReadingRender {
         is_starred: true,
@@ -1661,9 +1692,46 @@ mod tests {
         },
       };
 
-      let _ = update(&mut state, Message::RenderLoaded(Box::new(Some(render.clone()))), &db);
+      let _ = update(
+        &mut state,
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(Some(render.clone())),
+        },
+        &db,
+      );
 
       assert_eq!(state.render(), Some(&render));
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_render_for_a_mail_that_is_no_longer_selected() {
+      let mut state = State::new(42);
+      state.selected = Some(9);
+      let db = crate::store::open_test().await.unwrap();
+      let render = ReadingRender {
+        is_starred: false,
+        labels: Vec::new(),
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      };
+
+      let _ = update(
+        &mut state,
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(Some(render)),
+        },
+        &db,
+      );
+
+      assert!(
+        state.render().is_none(),
+        "a render for mail 7 must not land while mail 9 is selected"
+      );
     }
 
     #[tokio::test]
@@ -1754,6 +1822,64 @@ mod tests {
       );
 
       assert!(state.render().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_open_mail_when_a_reload_no_longer_lists_it() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.active = Scope::Character(42);
+      state.folder = Folder::Standard(StandardFolder::Inbox);
+      state.selected = Some(7);
+      state.render = Some(ReadingRender {
+        is_starred: false,
+        labels: Vec::new(),
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      });
+      let loaded = Loaded {
+        folder: Folder::Standard(StandardFolder::Inbox),
+        messages: vec![list_row(8, 42, true)],
+        scope: Scope::Character(42),
+        ..Loaded::default()
+      };
+
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+
+      assert!(
+        state.selected().is_none(),
+        "archiving the open mail drops it from the reload and clears the selection"
+      );
+      assert!(
+        state.render().is_none(),
+        "the reading pane stops rendering the gone mail"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_open_mail_when_a_reload_still_lists_it() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.active = Scope::Character(42);
+      state.folder = Folder::Standard(StandardFolder::Inbox);
+      state.selected = Some(7);
+      let loaded = Loaded {
+        folder: Folder::Standard(StandardFolder::Inbox),
+        messages: vec![list_row(7, 42, true), list_row(8, 42, true)],
+        scope: Scope::Character(42),
+        ..Loaded::default()
+      };
+
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+
+      assert_eq!(
+        state.selected(),
+        Some(7),
+        "a reload that still lists the open mail keeps the selection"
+      );
     }
 
     fn list_row(mail_id: i64, character_id: i64, is_read: bool) -> message_list::MessageRow {
@@ -2075,7 +2201,10 @@ mod tests {
         Message::OutboxRetry(1),
         Message::OutboxDismiss(1),
         Message::SearchChanged("cta".to_owned()),
-        Message::RenderLoaded(Box::new(None)),
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(None),
+        },
         Message::PaneSettled(FOLDER_PANE_KEY, 240.0),
       ] {
         let _ = update(&mut state, message, &db);

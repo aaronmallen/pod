@@ -9,8 +9,8 @@ use crate::{
     },
   },
   store::{
-    model::{CharacterCalendarAttendee, CharacterCalendarEvent},
-    repo::{calendar, character},
+    model::{CharacterCalendarAttendee, CharacterCalendarEvent, OwnerType},
+    repo::{calendar, character, infra},
   },
   sync::{job::JobCtx, jobs::names::resolve_names, outcome::Outcome, subject::Subject},
 };
@@ -19,6 +19,8 @@ use crate::{
 /// reflect any hard API limit.
 const WINDOW_DAYS_BACK: i64 = 7;
 const WINDOW_DAYS_FORWARD: i64 = 90;
+
+const OUTBOX_KIND_RESPOND: &str = "calendar.respond";
 
 const RESPONSE_NOT_RESPONDED: &str = "not_responded";
 
@@ -261,10 +263,29 @@ async fn sync_event(
     calendar::attendees(ctx.db, character_id, event_id).await?
   };
 
-  let event = build_event(ctx, character_id, summary, detail.as_ref(), cached.as_ref(), now).await?;
+  let mut event = build_event(ctx, character_id, summary, detail.as_ref(), cached.as_ref(), now).await?;
+
+  // A pending calendar.respond outbox row is an RSVP the server has not acknowledged yet, so the summary still
+  // reports the old response; keep the optimistic local response rather than let the full-replace sync revert it.
+  if let Some(cached) = cached.as_ref()
+    && has_pending_response(ctx, character_id, event_id).await?
+  {
+    event.response = cached.response().clone();
+  }
 
   calendar::upsert_complete(ctx.db, &event, &attendees).await?;
   Ok(())
+}
+
+async fn has_pending_response(ctx: &JobCtx<'_>, character_id: i64, event_id: i64) -> Result<bool, Error> {
+  let payloads =
+    infra::outbox_pending_payloads(ctx.db, OwnerType::Character, character_id, OUTBOX_KIND_RESPOND).await?;
+  Ok(payloads.iter().any(|payload| {
+    serde_json::from_str::<serde_json::Value>(payload)
+      .ok()
+      .and_then(|value| value.get("event_id").and_then(serde_json::Value::as_i64))
+      .is_some_and(|id| id == event_id)
+  }))
 }
 
 fn within_window(summary: &CalendarEvent, now: DateTime<Utc>) -> bool {
@@ -455,6 +476,70 @@ mod tests {
       assert_eq!(
         attendees.iter().map(|a| a.attendee_id()).collect::<Vec<_>>(),
         [95_000_001, 95_000_002]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_an_optimistic_rsvp_when_the_respond_outbox_write_is_still_pending() {
+      let server = MockServer::start().await;
+      let date = upcoming(5);
+      mount_calendar_list(
+        &server,
+        serde_json::json!([
+          { "event_id": 1234, "event_date": date, "importance": 1, "title": "CTA",
+            "event_response": "not_responded" }
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/calendar/1234/",
+        serde_json::json!({ "event_id": 1234, "date": date, "duration": 60, "importance": 1,
+          "owner_id": 98_000_001_i64, "owner_name": "Test Corp", "owner_type": "corporation",
+          "response": "not_responded", "title": "CTA", "text": "<p>Form up.</p>" }),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/calendar/1234/attendees/",
+        serde_json::json!([]),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      let cached = CharacterCalendarEvent {
+        body: Some("<p>Form up.</p>".to_owned()),
+        character_id: 42,
+        duration_minutes: 60,
+        event_id: 1234,
+        fetched_at: "2026-06-12T00:00:00Z".to_owned(),
+        importance: 1,
+        owner_id: 98_000_001,
+        owner_name: "Test Corp".to_owned(),
+        owner_type: "corporation".to_owned(),
+        response: "accepted".to_owned(),
+        timestamp: date.clone(),
+        title: "CTA".to_owned(),
+      };
+      calendar::upsert_complete(&fx.db, &cached, &[]).await.unwrap();
+      infra::append(
+        &fx.db,
+        OwnerType::Character,
+        42,
+        OUTBOX_KIND_RESPOND,
+        "{\"character_id\":42,\"event_id\":1234,\"response\":\"accepted\",\"previous_response\":\"not_responded\"}",
+        Some("respond:1234"),
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(
+        calendar::event(&fx.db, 42, 1234).await.unwrap().unwrap().response(),
+        "accepted",
+        "a pending RSVP outbox row protects the optimistic response against a stale not_responded sync"
       );
     }
 

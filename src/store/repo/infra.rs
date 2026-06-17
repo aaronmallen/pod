@@ -274,6 +274,24 @@ pub async fn outbox_pending_count_by_kind(db: &Database, kind_prefix: &str) -> R
   Ok(count)
 }
 
+pub async fn outbox_pending_payloads(
+  db: &Database,
+  subject_type: OwnerType,
+  subject_id: i64,
+  kind: &str,
+) -> Result<Vec<String>, Error> {
+  let rows = sqlx::query_scalar::<_, String>(
+    "SELECT payload FROM outbox \
+    WHERE subject_type = ? AND subject_id = ? AND kind = ? AND status IN ('pending', 'inflight')",
+  )
+  .bind(subject_type)
+  .bind(subject_id)
+  .bind(kind)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
 pub fn escape_like(value: &str) -> String {
   value.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }

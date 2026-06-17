@@ -1066,15 +1066,28 @@ pub async fn replace_contacts_for_character(
   db: &Database,
   character_id: i64,
   contacts: &[CharacterContact],
+  protected: &HashSet<i64>,
 ) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  sqlx::query("DELETE FROM character_contacts WHERE character_id = ?")
-    .bind(character_id)
-    .execute(&mut *tx)
-    .await?;
+  // `protected` ids carry an unacknowledged add/edit/remove outbox write; leaving their optimistic local row
+  // untouched stops a full-replace sync inside the drain window from clobbering a just-made change.
+  let mut delete = QueryBuilder::<Sqlite>::new("DELETE FROM character_contacts WHERE character_id = ");
+  delete.push_bind(character_id);
+  if !protected.is_empty() {
+    delete.push(" AND contact_id NOT IN (");
+    let mut separated = delete.separated(", ");
+    for id in protected {
+      separated.push_bind(*id);
+    }
+    separated.push_unseparated(")");
+  }
+  delete.build().execute(&mut *tx).await?;
 
   for contact in contacts {
+    if protected.contains(&contact.contact_id()) {
+      continue;
+    }
     sqlx::query(
       "INSERT INTO character_contacts \
         (character_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
@@ -4045,6 +4058,7 @@ mod contact_tests {
           contact(42, 95_001, "character", "Trusted Pilot", "[1,2]"),
           contact(42, 98_001, "corporation", "Allied Corp", "[]"),
         ],
+        &HashSet::new(),
       )
       .await
       .unwrap();
@@ -4056,6 +4070,60 @@ mod contact_tests {
       );
       assert_eq!(result.contacts[0].contact_name(), "Trusted Pilot");
       assert_eq!(result.contacts[0].label_ids(), "[1,2]");
+    }
+
+    #[tokio::test]
+    async fn it_preserves_a_protected_contact_across_a_replace() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_contact(&db, 42, 95_010, "character", 9.0, true, "[]", "Just Added").await;
+
+      let protected = HashSet::from([95_010]);
+      super::replace_contacts_for_character(
+        &db,
+        42,
+        &[contact(42, 98_001, "corporation", "Server Corp", "[]")],
+        &protected,
+      )
+      .await
+      .unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      let ids = result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>();
+      assert!(
+        ids.contains(&95_010),
+        "the protected optimistic contact survives the full replace"
+      );
+      assert!(ids.contains(&98_001), "non-protected server rows are still inserted");
+
+      let preserved = result.contacts.iter().find(|c| c.contact_id() == 95_010).unwrap();
+      assert_eq!(
+        preserved.contact_name(),
+        "Just Added",
+        "the optimistic row is left untouched, not overwritten by server data"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_resurrect_a_protected_contact_absent_from_the_server_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let protected = HashSet::from([95_020]);
+      super::replace_contacts_for_character(
+        &db,
+        42,
+        &[contact(42, 95_020, "character", "Stale Server Name", "[]")],
+        &protected,
+      )
+      .await
+      .unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert!(
+        result.contacts.is_empty(),
+        "a contact with a pending remove (locally deleted) is not reinserted from the server set"
+      );
     }
 
     #[tokio::test]
@@ -4095,7 +4163,9 @@ mod contact_tests {
       seed_contact(&db, 42, 91_000, "character", 1.0, false, "[]", "Pilot").await;
       seed_label(&db, 42, 1, "Friendlies").await;
 
-      super::replace_contacts_for_character(&db, 42, &[]).await.unwrap();
+      super::replace_contacts_for_character(&db, 42, &[], &HashSet::new())
+        .await
+        .unwrap();
       super::replace_labels_for_character(&db, 42, &[]).await.unwrap();
 
       let result = super::contacts(&db, 42).await.unwrap();

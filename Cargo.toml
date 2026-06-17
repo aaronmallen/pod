@@ -8,7 +8,7 @@ license = "MIT"
 name = "pod"
 publish = false
 repository = "https://www.github.com/aaronmallen/pod"
-version = "0.5.6"
+version = "0.6.0"
 
 [package.metadata.packager]
 category = "Utility"
@@ -23,10 +23,6 @@ identifier = "dev.aaronmallen.pod"
 product-name = "Pod"
 resources = ["assets"]
 
-# Force-bundle the GL/EGL/Vulkan *loaders* into the AppImage so wgpu can initialize a backend on
-# Wayland (linuxdeploy excludes these by default). Loaders only — the host supplies the matching
-# driver/ICD (Mesa llvmpipe/lavapipe as the software floor); bundling host drivers is the AppImage
-# footgun ADR-0022 forbids.
 [package.metadata.packager.appimage]
 libs = [
   "libEGL.so.1",

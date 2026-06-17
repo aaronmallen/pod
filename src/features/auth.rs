@@ -416,6 +416,153 @@ mod tests {
     let _failed = view(&failed);
   }
 
+  mod add_corporation {
+    use base64::Engine as _;
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::store;
+
+    const CHARACTER_ID: i64 = 42;
+    const CORPORATION_ID: i64 = 2000;
+
+    fn jwt(sub: &str) -> String {
+      let encode = |raw: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+      format!(
+        "{}.{}.sig",
+        encode(r#"{"alg":"RS256","typ":"JWT"}"#),
+        encode(&format!(r#"{{"sub":"{sub}","name":"Test Pilot","scp":[]}}"#)),
+      )
+    }
+
+    async fn clients_for(server: &MockServer) -> (eve_sso::Client, esi::Client) {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let sso =
+        eve_sso::Client::new(Arc::clone(&http), "test-client").with_token_url(format!("{}/token", server.uri()));
+      let esi = esi::Client::with_base_url(http, server.uri());
+      (sso, esi)
+    }
+
+    async fn mount_token(server: &MockServer) {
+      let body = format!(
+        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
+        jwt(&format!("CHARACTER:EVE:{CHARACTER_ID}"))
+      );
+      Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(server)
+        .await;
+    }
+
+    async fn mount_public_info(server: &MockServer) {
+      let body = format!(
+        r#"{{"birthday":"2020-01-01T00:00:00Z","bloodline_id":1,"corporation_id":{CORPORATION_ID},"gender":"male","name":"Test Pilot","race_id":1}}"#
+      );
+      Mock::given(method("GET"))
+        .and(path(format!("/characters/{CHARACTER_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(server)
+        .await;
+    }
+
+    async fn mount_roles(server: &MockServer, roles: &str) {
+      let body = format!(r#"[{{"character_id":{CHARACTER_ID},"roles":{roles}}}]"#);
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION_ID}/roles/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(server)
+        .await;
+    }
+
+    async fn mount_corporation_info(server: &MockServer, ceo_id: i64) {
+      let body = format!(
+        r#"{{"ceo_id":{ceo_id},"creator_id":{ceo_id},"member_count":1,"name":"Test Corp","tax_rate":0.0,"ticker":"TEST"}}"#
+      );
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORPORATION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(server)
+        .await;
+    }
+
+    fn callback_for(pending: &eve_sso::PendingAuth) -> session::Callback {
+      session::Callback {
+        code: "code".to_owned(),
+        state: pending.state.clone(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_persists_the_corporation_for_an_eligible_director() {
+      let server = MockServer::start().await;
+      mount_token(&server).await;
+      mount_public_info(&server).await;
+      mount_roles(&server, r#"["Director"]"#).await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &session::redirect_uri());
+      let callback = callback_for(&pending);
+
+      let added = add_corporation(&sso, &esi, &db, &pending, &callback).await.unwrap();
+
+      assert_eq!(added.corporation_id, CORPORATION_ID);
+      assert_eq!(added.authorizing_character_id, CHARACTER_ID);
+      assert!(
+        crate::store::repo::infra::get(&db, CORPORATION_ID, crate::store::model::OwnerType::Corporation)
+          .await
+          .unwrap()
+          .is_some(),
+        "an eligible add must persist the corporation credential"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_short_circuits_without_persisting_when_the_character_is_ineligible() {
+      let server = MockServer::start().await;
+      mount_token(&server).await;
+      mount_public_info(&server).await;
+      mount_roles(&server, r#"["Accountant"]"#).await;
+      mount_corporation_info(&server, 999).await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &session::redirect_uri());
+      let callback = callback_for(&pending);
+
+      let result = add_corporation(&sso, &esi, &db, &pending, &callback).await;
+
+      assert!(result.is_err());
+      assert!(
+        crate::store::repo::infra::get(&db, CORPORATION_ID, crate::store::model::OwnerType::Corporation)
+          .await
+          .unwrap()
+          .is_none(),
+        "an ineligible character must not persist any corporation credential"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_short_circuits_on_a_mismatched_state_before_reaching_esi() {
+      let server = MockServer::start().await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &session::redirect_uri());
+      let callback = session::Callback {
+        code: "code".to_owned(),
+        state: "tampered".to_owned(),
+      };
+
+      let result = add_corporation(&sso, &esi, &db, &pending, &callback).await;
+
+      assert!(result.is_err());
+    }
+  }
+
   mod scopes_for {
     use std::collections::BTreeSet;
 

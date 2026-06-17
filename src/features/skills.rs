@@ -61,6 +61,7 @@ const SECONDS_PER_DAY: i64 = 86_400;
 #[derive(Clone, Debug)]
 pub struct Loaded {
   attributes: Option<attributes::AttrTabModel>,
+  character_id: i64,
   computed: queue::ComputedQueue,
   queue: Vec<CharacterSkillqueue>,
   roster: Vec<PickerPilot>,
@@ -196,10 +197,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Loaded(loaded) => {
       let Loaded {
         attributes,
+        character_id,
         computed,
         queue,
         roster,
       } = *loaded;
+      // Drop a summary for a character the user has since switched away from, so a slow load for a
+      // previous pilot can't clobber the active pilot's queue.
+      if character_id != state.active {
+        return Task::none();
+      }
       state.attributes = attributes;
       state.computed = computed;
       state.queue = queue;
@@ -344,6 +351,7 @@ async fn load_summary(db: Database, character_id: i64, owned: Vec<i64>) -> Loade
 
   Loaded {
     attributes,
+    character_id,
     computed,
     queue,
     roster,
@@ -929,6 +937,7 @@ mod tests {
         &mut state,
         Message::Loaded(Box::new(Loaded {
           attributes: None,
+          character_id: 42,
           computed: queue::ComputedQueue::default(),
           queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
           roster: vec![pilot(42, "Test Pilot")],
@@ -938,6 +947,31 @@ mod tests {
 
       assert_eq!(state.roster.len(), 1);
       assert_eq!(state.queue.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_summary_for_a_character_the_user_switched_away_from() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      // A slow load for pilot 7 lands after the user has already switched to pilot 42.
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Loaded {
+          attributes: None,
+          character_id: 7,
+          computed: queue::ComputedQueue::default(),
+          queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
+          roster: vec![pilot(7, "Stale Pilot")],
+        })),
+        &db,
+      );
+
+      assert!(
+        state.queue.is_empty(),
+        "the wrong character's queue must not replace the active pilot's"
+      );
+      assert!(state.roster.is_empty());
     }
   }
 

@@ -34,7 +34,10 @@ use crate::{
     },
     repo::{assets, character, infra, org},
   },
-  ui::components::resizable_pane::{self, PaneDrag},
+  ui::{
+    components::resizable_pane::{self, PaneDrag},
+    load_epoch::LoadEpoch,
+  },
   window_state::UiState,
 };
 
@@ -199,7 +202,10 @@ pub enum Message {
     relative: f32,
   },
   AbyssalMutaMarketOpened(i64),
-  AbyssalPageLoaded(Vec<abyssals::AbyssalCard>),
+  AbyssalPageLoaded {
+    cards: Vec<abyssals::AbyssalCard>,
+    epoch: u64,
+  },
   AbyssalPickerToggled,
   AbyssalSliderEditCommitted(i64, SliderEndpoint),
   AbyssalSliderEditInput(String),
@@ -220,7 +226,10 @@ pub enum Message {
   GeoNodeSelected(GeoSelection),
   GeoNodeToggled(GeoNodeKey),
   InventoryHelpToggled,
-  InventoryPageLoaded(Vec<InventoryRow>),
+  InventoryPageLoaded {
+    epoch: u64,
+    rows: Vec<InventoryRow>,
+  },
   /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
   /// the pixel offset stored to window the virtual list.
   InventoryScrolled {
@@ -328,6 +337,7 @@ pub struct State {
   inventory_has_more: bool,
   inventory_help_open: bool,
   inventory_loading: bool,
+  inventory_page_epoch: LoadEpoch,
   inventory_scroll_offset: f32,
   picker_open: bool,
   roster: Vec<RosterPilot>,
@@ -364,6 +374,7 @@ pub struct State {
   abyssal_stat_templates: Vec<StatTemplate>,
   abyssal_has_more: bool,
   abyssal_loading: bool,
+  abyssal_page_epoch: LoadEpoch,
   abyssal_scroll_offset: f32,
   abyssal_total: i64,
 }
@@ -388,6 +399,7 @@ impl State {
       inventory_has_more: false,
       inventory_help_open: false,
       inventory_loading: false,
+      inventory_page_epoch: LoadEpoch::default(),
       inventory_scroll_offset: 0.0,
       picker_open: false,
       roster: Vec::new(),
@@ -427,6 +439,7 @@ impl State {
       abyssal_stat_templates: Vec::new(),
       abyssal_has_more: false,
       abyssal_loading: false,
+      abyssal_page_epoch: LoadEpoch::default(),
       abyssal_scroll_offset: 0.0,
       abyssal_total: 0,
     }
@@ -842,6 +855,8 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   } = loaded;
   state.corporations = corporations;
   state.saved_filters = saved_filters;
+  state.inventory_page_epoch.next();
+  state.abyssal_page_epoch.next();
   state.inventory_has_more = inventory.len() as i64 == INVENTORY_PAGE_SIZE;
   state.inventory = inventory;
   state.inventory_loading = false;
@@ -885,6 +900,8 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   } = loaded;
   state.corporations = corporations;
   state.saved_filters = saved_filters;
+  state.inventory_page_epoch.next();
+  state.abyssal_page_epoch.next();
   // Compare fresh page length against the limit that was requested (old inventory len or minimum
   // page size), not the constant — sync reloads may fetch more than one page worth.
   state.inventory_has_more = inventory.len() as i64 == (state.inventory.len() as i64).max(INVENTORY_PAGE_SIZE);
@@ -979,7 +996,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
     Message::ContainerChildrenLoaded(..)
     | Message::ContainerToggled(_)
-    | Message::InventoryPageLoaded(_)
+    | Message::InventoryPageLoaded {
+      ..
+    }
     | Message::InventoryScrolled {
       ..
     } => update_pagination(state, message, db),
@@ -1036,7 +1055,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       ..
     }
     | Message::AbyssalMutaMarketOpened(_)
-    | Message::AbyssalPageLoaded(_)
+    | Message::AbyssalPageLoaded {
+      ..
+    }
     | Message::AbyssalPickerToggled
     | Message::AbyssalSliderEditCommitted(..)
     | Message::AbyssalSliderEditInput(_)
@@ -1330,6 +1351,7 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       };
       state.inventory_loading = true;
       let view = InventoryView::from_state(state);
+      let epoch = state.inventory_page_epoch.current();
       let (db, scope, roster, corporations) = (
         db.clone(),
         state.active,
@@ -1338,10 +1360,19 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
       );
       Task::perform(
         async move { load_inventory_page(&db, scope, &roster, &corporations, &view, cursor).await },
-        Message::InventoryPageLoaded,
+        move |rows| Message::InventoryPageLoaded {
+          epoch,
+          rows,
+        },
       )
     }
-    Message::InventoryPageLoaded(rows) => {
+    Message::InventoryPageLoaded {
+      epoch,
+      rows,
+    } => {
+      if !state.inventory_page_epoch.matches(epoch) {
+        return Task::none();
+      }
       state.inventory_loading = false;
       state.inventory_has_more = rows.len() as i64 == INVENTORY_PAGE_SIZE;
       state.inventory.extend(rows);
@@ -1600,7 +1631,13 @@ fn update_abyssal(state: &mut State, message: Message, db: &Database) -> Task<Me
       state.abyssal_loading = true;
       load_abyssal_page(state, db, cursor)
     }
-    Message::AbyssalPageLoaded(cards) => {
+    Message::AbyssalPageLoaded {
+      cards,
+      epoch,
+    } => {
+      if !state.abyssal_page_epoch.matches(epoch) {
+        return Task::none();
+      }
       state.abyssal_loading = false;
       state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
       state.abyssals.extend(cards);
@@ -1617,6 +1654,7 @@ fn update_abyssal(state: &mut State, message: Message, db: &Database) -> Task<Me
         cards,
         total,
       } = reload;
+      state.abyssal_page_epoch.next();
       state.abyssal_has_more = cards.len() as i64 == abyssals::PAGE_SIZE;
       state.abyssal_loading = false;
       state.abyssal_scroll_offset = 0.0;
@@ -1734,6 +1772,7 @@ fn reload_abyssal_cards(state: &State, db: &Database) -> Task<Message> {
 
 /// Fetch the next cursor-delimited page of abyssal cards under the active filters.
 fn load_abyssal_page(state: &State, db: &Database, cursor: abyssals::AbyssalCursor) -> Task<Message> {
+  let epoch = state.abyssal_page_epoch.current();
   let (db, scope, roster, filters) = (
     db.clone(),
     state.active,
@@ -1742,7 +1781,10 @@ fn load_abyssal_page(state: &State, db: &Database, cursor: abyssals::AbyssalCurs
   );
   Task::perform(
     async move { abyssals::load_filtered_page(&db, scope, &roster, &filters, Some(cursor)).await },
-    Message::AbyssalPageLoaded,
+    move |cards| Message::AbyssalPageLoaded {
+      cards,
+      epoch,
+    },
   )
 }
 
@@ -2549,11 +2591,54 @@ mod tests {
       state.set_abyssal_pagination_for_test(true, true);
 
       // A short page (fewer than PAGE_SIZE) means the set is exhausted.
-      let _ = update(&mut state, Message::AbyssalPageLoaded(abyssal_cards(10)), &db);
+      let epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(10),
+          epoch,
+        },
+        &db,
+      );
 
       assert_eq!(state.abyssals().len(), 70, "the page is appended to the loaded set");
       assert!(!state.abyssal_has_more(), "a short page leaves no more to load");
       assert!(!state.abyssal_loading());
+    }
+
+    #[tokio::test]
+    async fn a_stale_abyssal_page_is_dropped_after_the_set_is_reloaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+
+      // The user scrolled (capturing the epoch) then changed the filter, which reloads the set and
+      // bumps the epoch.
+      let stale_epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(10),
+          total: 10,
+        }),
+        &db,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(5),
+          epoch: stale_epoch,
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.abyssals().len(),
+        10,
+        "a page from the superseded filter must not append foreign cards"
+      );
     }
 
     #[tokio::test]
@@ -2608,7 +2693,15 @@ mod tests {
       );
       state.set_abyssal_pagination_for_test(true, true);
 
-      let _ = update(&mut state, Message::AbyssalPageLoaded(abyssal_cards(10)), &db);
+      let epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(10),
+          epoch,
+        },
+        &db,
+      );
 
       assert_eq!(
         state.abyssal_total(),
@@ -3087,7 +3180,15 @@ mod tests {
       state.inventory_has_more = true;
       state.inventory_loading = true;
 
-      let _ = update(&mut state, Message::InventoryPageLoaded(vec![inv_row(101, false)]), &db);
+      let epoch = state.inventory_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::InventoryPageLoaded {
+          epoch,
+          rows: vec![inv_row(101, false)],
+        },
+        &db,
+      );
 
       assert_eq!(
         state.inventory.iter().map(|r| r.item_id).collect::<Vec<_>>(),
@@ -3098,6 +3199,36 @@ mod tests {
         "a page shorter than the page size is the last page"
       );
       assert!(!state.inventory_loading);
+    }
+
+    #[tokio::test]
+    async fn it_drops_an_inventory_page_captured_before_the_list_was_replaced() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.inventory = vec![inv_row(100, false)];
+      state.inventory_has_more = true;
+      state.inventory_loading = true;
+
+      // The user scrolled (capturing the current epoch) and then filtered/switched scope, which
+      // replaces the list and bumps the epoch.
+      let stale_epoch = state.inventory_page_epoch.current();
+      state.inventory_page_epoch.next();
+      state.inventory = vec![inv_row(200, false)];
+
+      let _ = update(
+        &mut state,
+        Message::InventoryPageLoaded {
+          epoch: stale_epoch,
+          rows: vec![inv_row(101, false)],
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.inventory.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [200],
+        "a page from the superseded query must not append foreign rows"
+      );
     }
 
     #[tokio::test]

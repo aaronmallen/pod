@@ -27,7 +27,10 @@ pub use self::{
 use crate::{
   clients::{esi, eve_sso},
   store::{Database, images},
-  ui::components::resizable_pane::{self, PaneDrag},
+  ui::{
+    components::resizable_pane::{self, PaneDrag},
+    load_epoch::LoadEpoch,
+  },
 };
 
 /// Sentinel character id meaning "no pilot selected" — opens the combined `Scope::All` view.
@@ -121,19 +124,26 @@ pub enum BlueprintSort {
 #[derive(Clone, Debug)]
 pub enum Message {
   BlueprintKindSelected(BlueprintKind),
-  BlueprintScrolled { absolute: f32 },
+  BlueprintScrolled {
+    absolute: f32,
+  },
   BlueprintSearchChanged(String),
   BlueprintSortSelected(BlueprintSort),
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
-  JobsScrolled { absolute: f32 },
+  JobsScrolled {
+    absolute: f32,
+  },
   Loaded(Box<Loaded>),
   PaneSettled(&'static str, f32),
   PickerToggled,
   PlanBuild(i64),
   Planner(planner::Message),
   PlannerLoaded(Box<planner_loaders::PlannerData>),
-  PlannerOnHandLoaded(HashMap<(i64, i64), i64>),
+  PlannerOnHandLoaded {
+    epoch: u64,
+    on_hand: HashMap<(i64, i64), i64>,
+  },
   RailPaneDrag(f32),
   RailPaneDragEnd,
   RailPaneDragStart,
@@ -157,6 +167,7 @@ pub struct State {
   job_view: jobs::JobView,
   jobs: Vec<IndustryJob>,
   jobs_scroll_offset: f32,
+  on_hand_epoch: LoadEpoch,
   picker_open: bool,
   planner: Planner,
   rail_pane: PaneDrag,
@@ -186,6 +197,7 @@ impl State {
       job_view: jobs::JobView::default(),
       jobs: Vec::new(),
       jobs_scroll_offset: 0.0,
+      on_hand_epoch: LoadEpoch::default(),
       picker_open: false,
       planner,
       rail_pane: PaneDrag::with_min_width(
@@ -520,7 +532,8 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
       if before == after {
         Task::none()
       } else {
-        load_on_hand(db, after)
+        let epoch = state.on_hand_epoch.next();
+        load_on_hand(db, after, epoch)
       }
     }
   }
@@ -528,7 +541,7 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
 
 /// Refreshes the planner's on-hand stock map for its current build sites, so "Use Stock" reflects what each
 /// consuming facility actually holds. A no-op (empty map) when no facility has been picked yet.
-fn load_on_hand(db: &Database, sites: Vec<i64>) -> Task<Message> {
+fn load_on_hand(db: &Database, sites: Vec<i64>, epoch: u64) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
@@ -536,7 +549,10 @@ fn load_on_hand(db: &Database, sites: Vec<i64>) -> Task<Message> {
         .await
         .unwrap_or_default()
     },
-    Message::PlannerOnHandLoaded,
+    move |on_hand| Message::PlannerOnHandLoaded {
+      epoch,
+      on_hand,
+    },
   )
 }
 
@@ -737,9 +753,16 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     Message::Planner(planner_message) => handle_planner(state, db, planner_message),
     Message::PlannerLoaded(data) => {
       state.planner.apply_data(*data);
-      load_on_hand(db, state.planner.build_sites())
+      let epoch = state.on_hand_epoch.next();
+      load_on_hand(db, state.planner.build_sites(), epoch)
     }
-    Message::PlannerOnHandLoaded(on_hand) => {
+    Message::PlannerOnHandLoaded {
+      epoch,
+      on_hand,
+    } => {
+      if !state.on_hand_epoch.matches(epoch) {
+        return Task::none();
+      }
       state.planner.set_on_hand(on_hand);
       Task::none()
     }
@@ -1257,6 +1280,16 @@ mod tests {
       );
       let _ = update(&mut state, Message::TabSelected(Tab::Planner), &db, n);
       let _ = update(&mut state, Message::PlannerLoaded(Box::default()), &db, n);
+      let on_hand_epoch = state.on_hand_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::PlannerOnHandLoaded {
+          epoch: on_hand_epoch,
+          on_hand: HashMap::new(),
+        },
+        &db,
+        n,
+      );
       let _ = update(&mut state, Message::PlanBuild(681), &db, n);
       let _ = update(&mut state, Message::Planner(planner::Message::BreakDownAll), &db, n);
       let _ = update(&mut state, Message::Planner(planner::Message::RunsChanged(5)), &db, n);
@@ -1322,6 +1355,55 @@ mod tests {
         scope: Scope::Char(424_242),
       };
       let _ = update(&mut state, Message::Loaded(Box::new(stale)), &db, n);
+    }
+
+    #[tokio::test]
+    async fn it_drops_on_hand_for_a_build_site_the_planner_switched_away_from() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+      let n = now();
+
+      let site_a = 60_003_760;
+      let site_b = 60_008_494;
+      let type_id = 34;
+
+      // On-hand for the prior site finished loading, capturing the epoch at that point.
+      let stale_epoch = state.on_hand_epoch.current();
+
+      // The user switched the facility, which reissues the load and bumps the epoch; that fresh
+      // result lands first.
+      let fresh_epoch = state.on_hand_epoch.next();
+      let _ = update(
+        &mut state,
+        Message::PlannerOnHandLoaded {
+          epoch: fresh_epoch,
+          on_hand: HashMap::from([((site_b, type_id), 5)]),
+        },
+        &db,
+        n,
+      );
+
+      // The slow load for the previous site arrives afterwards and must be dropped.
+      let _ = update(
+        &mut state,
+        Message::PlannerOnHandLoaded {
+          epoch: stale_epoch,
+          on_hand: HashMap::from([((site_a, type_id), 99)]),
+        },
+        &db,
+        n,
+      );
+
+      assert_eq!(
+        state.planner.on_hand_at(site_b, type_id),
+        5,
+        "the current site's on-hand stock is preserved"
+      );
+      assert_eq!(
+        state.planner.on_hand_at(site_a, type_id),
+        0,
+        "on-hand for the abandoned site must not overwrite the current map"
+      );
     }
   }
 

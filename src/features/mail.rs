@@ -31,9 +31,12 @@ use crate::{
     },
     repo::mail,
   },
-  ui::components::{
-    entity_search::EntityRef,
-    resizable_pane::{self, PaneDrag},
+  ui::{
+    components::{
+      entity_search::EntityRef,
+      resizable_pane::{self, PaneDrag},
+    },
+    load_epoch::LoadEpoch,
   },
   window_state::{self, UiState},
 };
@@ -168,7 +171,10 @@ pub enum Message {
   Loaded(Box<Loaded>),
   MarkedRead,
   /// One more keyset page of the non-pinned tail finished loading.
-  MessagesPageLoaded(Vec<MessageRow>),
+  MessagesPageLoaded {
+    epoch: u64,
+    rows: Vec<MessageRow>,
+  },
   OutboxDismiss(i64),
   OutboxRefreshed(Box<OutboxIndicator>),
   OutboxRetry(i64),
@@ -234,6 +240,7 @@ pub struct State {
   messages_cursor: Option<mail::MailCursor>,
   messages_has_more: bool,
   messages_loading: bool,
+  messages_page_epoch: LoadEpoch,
   outbox_indicator: OutboxIndicator,
   overlays: HashMap<i64, MailOverlayState>,
   pending_label_delete: Option<i64>,
@@ -289,6 +296,7 @@ impl State {
       messages_cursor: None,
       messages_has_more: false,
       messages_loading: false,
+      messages_page_epoch: LoadEpoch::default(),
       outbox_indicator: OutboxIndicator::default(),
       overlays: HashMap::new(),
       pending_label_delete: None,
@@ -615,7 +623,15 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
         load_more_search(state, db)
       }
     }
-    Message::MessagesPageLoaded(rows) => {
+    Message::MessagesPageLoaded {
+      epoch,
+      rows,
+    } => {
+      // Drop a page captured against a folder/scope the user has since left, so it can't append
+      // foreign rows to the current list.
+      if !state.messages_page_epoch.matches(epoch) {
+        return Task::none();
+      }
       state.messages_loading = false;
       state.messages_has_more = rows.len() as i64 == message_list::MESSAGE_PAGE_SIZE;
       if let Some(last) = rows.last() {
@@ -653,10 +669,14 @@ fn load_more_messages(state: &mut State, db: &Database) -> Task<Message> {
     return Task::none();
   };
   state.messages_loading = true;
+  let epoch = state.messages_page_epoch.current();
   let (db, scope, folder) = (db.clone(), state.active, state.folder);
   Task::perform(
     async move { message_list::load_messages_page(&db, scope, folder, cursor).await },
-    Message::MessagesPageLoaded,
+    move |rows| Message::MessagesPageLoaded {
+      epoch,
+      rows,
+    },
   )
 }
 
@@ -721,7 +741,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::ListScrolled {
       ..
     }
-    | Message::MessagesPageLoaded(_)
+    | Message::MessagesPageLoaded {
+      ..
+    }
     | Message::SearchPageLoaded {
       ..
     } => update_pagination(state, message, db),
@@ -803,6 +825,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ScopeSelected(scope) => {
+      state.messages_page_epoch.next();
       state.active = scope;
       state.folder = Folder::Unified;
       state.selected = None;
@@ -822,6 +845,7 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
       Task::none()
     }
     Message::FolderSelected(folder) => {
+      state.messages_page_epoch.next();
       state.folder = folder;
       state.selected = None;
       state.render = None;
@@ -895,6 +919,8 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     state.message_list_pane.set_ratio_from_store(message_list_pane_width);
   }
   if scope == state.active && folder == state.folder {
+    // A fresh folder load supersedes any in-flight scroll page captured against the prior list.
+    state.messages_page_epoch.next();
     state.folder_data = folder_data;
     state.headers = headers;
     state.overlays = overlays;
@@ -2419,9 +2445,13 @@ mod tests {
         state.messages = vec![list_row(7, 42, true)];
         state.messages_loading = true;
 
+        let epoch = state.messages_page_epoch.current();
         let _ = update(
           &mut state,
-          Message::MessagesPageLoaded(vec![list_row(8, 42, true)]),
+          Message::MessagesPageLoaded {
+            epoch,
+            rows: vec![list_row(8, 42, true)],
+          },
           &db,
         );
 
@@ -2438,6 +2468,37 @@ mod tests {
         assert!(
           state.messages_cursor.is_some(),
           "the cursor advances to the last loaded row"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_messages_page_captured_before_a_folder_switch() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_loading = true;
+
+        // The user scrolled (capturing the epoch) and then switched folders, which bumps the epoch.
+        let stale_epoch = state.messages_page_epoch.current();
+        let _ = update(
+          &mut state,
+          Message::FolderSelected(Folder::Standard(StandardFolder::Sent)),
+          &db,
+        );
+
+        let _ = update(
+          &mut state,
+          Message::MessagesPageLoaded {
+            epoch: stale_epoch,
+            rows: vec![list_row(8, 42, true)],
+          },
+          &db,
+        );
+
+        assert_eq!(
+          state.messages().iter().map(|r| r.mail_id).collect::<Vec<_>>(),
+          [7],
+          "a page from the previous folder must not append foreign rows"
         );
       }
 

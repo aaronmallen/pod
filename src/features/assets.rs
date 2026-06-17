@@ -17,9 +17,14 @@ use std::{
 use chrono::{DateTime, Utc};
 use iced::{Element, Task, widget::text_editor};
 
+// Wired into the stockpile editor by the editor task; surfaced now so the enriched search path is available.
+#[allow(unused_imports)]
+pub use self::stockpile_search::search_locations_enriched;
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
-  stockpile_search::{MultibuyResolution, resolve_multibuy, search_item_types, search_locations},
+  stockpile_search::{
+    LocationRef, LocationTier, MultibuyResolution, resolve_multibuy, search_item_types, search_locations,
+  },
   stockpiles::{Editor, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, save_stockpile},
 };
 pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};

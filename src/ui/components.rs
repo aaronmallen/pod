@@ -20,6 +20,7 @@ pub mod header;
 pub mod icon;
 pub mod icon_tile;
 pub mod line_chart;
+pub mod location_combobox;
 pub mod meter;
 pub mod modal_overlay;
 pub mod panel_header;

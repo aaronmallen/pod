@@ -29,6 +29,7 @@ use crate::{
 const DEFAULT_DIVISION: i64 = 1;
 const HEADER_SIDE_PADDING: f32 = 28.0;
 pub const PAGE_SIZE: usize = 50;
+const RECENT_ACTIVITY_LIMIT: usize = 8;
 const RIGHT_RAIL_DEFAULT_WIDTH: f32 = 280.0;
 const RIGHT_RAIL_PANE_KEY: &str = "wallet.right_rail";
 
@@ -223,6 +224,18 @@ pub enum Message {
   TimeframeSelected(Timeframe),
 }
 
+/// Cached filter/derived view data. The `*_indices` fields index into `journal`/`market`/`contracts`, so any mutation
+/// of those vecs must be followed by `recompute_derived()` or the indices go stale (out-of-bounds panic or wrong rows).
+#[derive(Debug, Default)]
+struct Derived {
+  category_flows: Vec<CategoryFlow>,
+  contract_indices: Vec<usize>,
+  journal_flow: JournalFlow,
+  journal_indices: Vec<usize>,
+  market_indices: Vec<usize>,
+  recent_activity_indices: Vec<usize>,
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,
@@ -232,6 +245,7 @@ pub struct State {
   contracts: Vec<ContractEntry>,
   corp_divisions: Vec<CorpDivision>,
   corporations: Vec<RosterCorp>,
+  derived: Derived,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
   journal_total: i64,
@@ -263,6 +277,7 @@ impl State {
       contracts: Vec::new(),
       corp_divisions: Vec::new(),
       corporations: Vec::new(),
+      derived: Derived::default(),
       financials: Vec::new(),
       journal: Vec::new(),
       journal_total: 0,
@@ -321,12 +336,29 @@ impl State {
     self.active_division
   }
 
+  pub(super) fn category_flows(&self) -> &[CategoryFlow] {
+    &self.derived.category_flows
+  }
+
   pub fn corp_divisions(&self) -> &[CorpDivision] {
     &self.corp_divisions
   }
 
   pub fn has_contracts(&self) -> bool {
     !self.contracts.is_empty()
+  }
+
+  pub(super) fn journal_flow(&self) -> JournalFlow {
+    self.derived.journal_flow
+  }
+
+  pub(super) fn recent_activity(&self) -> Vec<&JournalEntry> {
+    self
+      .derived
+      .recent_activity_indices
+      .iter()
+      .map(|&index| &self.journal[index])
+      .collect()
   }
 
   pub(super) fn selected_contract(&self) -> Option<&contract_detail::ContractDetail> {
@@ -376,6 +408,51 @@ impl State {
 
   fn owned_corp_liquid(&self) -> Option<f64> {
     sum_option(self.corporations.iter().map(|corp| corp.liquid))
+  }
+
+  fn recompute_derived(&mut self) {
+    let query = self.search.to_lowercase();
+
+    let journal_indices: Vec<usize> = self
+      .journal
+      .iter()
+      .enumerate()
+      .filter(|(_, entry)| journal_matches(entry, self.sign_filter, &query))
+      .map(|(index, _)| index)
+      .collect();
+
+    let market_indices: Vec<usize> = self
+      .market
+      .iter()
+      .enumerate()
+      .filter(|(_, entry)| market_matches(entry, self.sign_filter, self.side_filter, &query))
+      .map(|(index, _)| index)
+      .collect();
+
+    let contract_indices: Vec<usize> = self
+      .contracts
+      .iter()
+      .enumerate()
+      .filter(|(_, entry)| contract_matches(entry, self.side_filter, &query))
+      .map(|(index, _)| index)
+      .collect();
+
+    let matched: Vec<&JournalEntry> = journal_indices.iter().map(|&index| &self.journal[index]).collect();
+    let journal_flow = journal_flow(&matched);
+    let category_flows = category_flows(&matched);
+
+    let mut recent_activity_indices = journal_indices.clone();
+    recent_activity_indices.sort_by(|&a, &b| self.journal[b].date.cmp(&self.journal[a].date));
+    recent_activity_indices.truncate(RECENT_ACTIVITY_LIMIT);
+
+    self.derived = Derived {
+      category_flows,
+      contract_indices,
+      journal_flow,
+      journal_indices,
+      market_indices,
+      recent_activity_indices,
+    };
   }
 
   fn scope_ids(&self) -> Vec<i64> {
@@ -591,6 +668,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.roster = roster;
       state.loading_more = false;
       state.tab_exhausted = false;
+      state.recompute_derived();
       Task::none()
     }
     Message::MoreLoaded(page) => {
@@ -610,6 +688,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.market.extend(market);
       state.contracts.extend(contracts);
       state.tab_exhausted = appended == 0;
+      state.recompute_derived();
       Task::none()
     }
     Message::PaneSettled(..) => Task::none(),
@@ -644,16 +723,19 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::SearchChanged(query) => {
       state.search = query;
       state.tab_scroll_offset = 0.0;
+      state.recompute_derived();
       Task::none()
     }
     Message::SideFilterChanged(side) => {
       state.side_filter = side;
       state.tab_scroll_offset = 0.0;
+      state.recompute_derived();
       Task::none()
     }
     Message::SignFilterChanged(filter) => {
       state.sign_filter = filter;
       state.tab_scroll_offset = 0.0;
+      state.recompute_derived();
       Task::none()
     }
     Message::TabScrolled {
@@ -1063,20 +1145,20 @@ fn sum_option(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
 }
 
 pub fn filtered_journal(state: &State) -> Vec<&JournalEntry> {
-  let query = state.search.to_lowercase();
   state
-    .journal
+    .derived
+    .journal_indices
     .iter()
-    .filter(|entry| journal_matches(entry, state.sign_filter, &query))
+    .map(|&index| &state.journal[index])
     .collect()
 }
 
 pub fn filtered_market(state: &State) -> Vec<&MarketEntry> {
-  let query = state.search.to_lowercase();
   state
-    .market
+    .derived
+    .market_indices
     .iter()
-    .filter(|entry| market_matches(entry, state.sign_filter, state.side_filter, &query))
+    .map(|&index| &state.market[index])
     .collect()
 }
 
@@ -1103,11 +1185,11 @@ fn contract_loader_target(state: &State, contract_id: i64) -> Option<ContractLoa
 }
 
 pub fn filtered_contracts(state: &State) -> Vec<&ContractEntry> {
-  let query = state.search.to_lowercase();
   state
-    .contracts
+    .derived
+    .contract_indices
     .iter()
-    .filter(|entry| contract_matches(entry, state.side_filter, &query))
+    .map(|&index| &state.contracts[index])
     .collect()
 }
 
@@ -2520,14 +2602,17 @@ mod tests {
       ];
 
       state.side_filter = Side::Buy;
+      state.recompute_derived();
       assert_eq!(super::filtered_contracts(&state).len(), 1);
       assert!(super::filtered_contracts(&state)[0].is_buy);
 
       state.side_filter = Side::Sell;
+      state.recompute_derived();
       assert_eq!(super::filtered_contracts(&state).len(), 1);
       assert!(!super::filtered_contracts(&state)[0].is_buy);
 
       state.side_filter = Side::All;
+      state.recompute_derived();
       assert_eq!(super::filtered_contracts(&state).len(), 2);
     }
 

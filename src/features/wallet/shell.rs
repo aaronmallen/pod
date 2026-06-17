@@ -49,7 +49,6 @@ const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
 const TAB_STRIP_HEIGHT: f32 = 48.0;
 
 const JOURNAL_RIGHT_COL_WIDTH: f32 = 120.0;
-const RECENT_ACTIVITY_LIMIT: usize = 8;
 
 /// Nominal height of one ledger row, in pixels.
 ///
@@ -892,9 +891,8 @@ fn no_source_state<'a>(title: &str, detail: &str) -> Element<'a, Message> {
 }
 
 fn right_rail(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let entries = super::filtered_journal(state);
-  let flow = super::journal_flow(&entries);
-  let categories = super::category_flows(&entries);
+  let flow = state.journal_flow();
+  let categories = state.category_flows();
 
   let net = flow.net;
   let summary_section = Column::with_children(vec![
@@ -918,7 +916,7 @@ fn right_rail(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .width(Length::Fill);
 
   let mut sections: Vec<Element<'_, Message>> = vec![summary_section.into()];
-  sections.push(recent_activity(&entries, now));
+  sections.push(recent_activity(state, now));
   if !categories.is_empty() {
     sections.push(category_breakdown(categories));
   }
@@ -937,12 +935,10 @@ fn right_rail(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .into()
 }
 
-fn recent_activity<'a>(entries: &[&'a JournalEntry], now: DateTime<Utc>) -> Element<'a, Message> {
-  let mut recent: Vec<&JournalEntry> = entries.to_vec();
-  recent.sort_by(|a, b| b.date.cmp(&a.date));
-  recent.truncate(RECENT_ACTIVITY_LIMIT);
+fn recent_activity(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  let recent = state.recent_activity();
 
-  let mut children: Vec<Element<'a, Message>> = vec![section_label("Recent activity")];
+  let mut children: Vec<Element<'_, Message>> = vec![section_label("Recent activity")];
   if recent.is_empty() {
     children.push(
       text("No recent activity.")
@@ -1010,7 +1006,7 @@ fn section_label<'a>(label: &str) -> Element<'a, Message> {
   eyebrow_text(label, None).into()
 }
 
-fn category_breakdown<'a>(categories: Vec<super::CategoryFlow>) -> Element<'a, Message> {
+fn category_breakdown<'a>(categories: &[super::CategoryFlow]) -> Element<'a, Message> {
   let max_total = categories
     .iter()
     .map(super::CategoryFlow::total)
@@ -1018,11 +1014,7 @@ fn category_breakdown<'a>(categories: Vec<super::CategoryFlow>) -> Element<'a, M
     .max(1.0);
 
   let mut children: Vec<Element<'a, Message>> = vec![section_label("By category")];
-  children.extend(
-    categories
-      .into_iter()
-      .map(|category| category_bar(&category, max_total)),
-  );
+  children.extend(categories.iter().map(|category| category_bar(category, max_total)));
 
   Column::with_children(children)
     .spacing(spacing::SPACE_2_5)
@@ -1231,6 +1223,7 @@ mod tests {
         journal_entry(Some(1_000.0), "bounty_prizes"),
         journal_entry(Some(-400.0), "brokers_fee"),
       ];
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2);
@@ -1240,6 +1233,7 @@ mod tests {
     fn it_renders_a_row_for_an_amountless_entry_via_ref_type_direction() {
       let mut state = state_on_journal();
       state.journal = vec![journal_entry(None, "agent_mission_reward")];
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
     }
@@ -1255,6 +1249,7 @@ mod tests {
         })
         .collect();
       state.tab_scroll_offset = 30_000.0;
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
@@ -1305,6 +1300,7 @@ mod tests {
         contract(true, "outstanding", "courier"),
         contract(false, "finished", "item_exchange"),
       ];
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert!(state.has_contracts());
@@ -1315,6 +1311,7 @@ mod tests {
       let mut state = state_on_contracts();
       state.contracts = vec![contract(true, "outstanding", "courier")];
       state.side_filter = crate::features::wallet::Side::Sell;
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert!(crate::features::wallet::filtered_contracts(&state).is_empty());
@@ -1325,6 +1322,7 @@ mod tests {
       let mut state = state_on_contracts();
       state.active = Scope::Corporation(98_000_001);
       state.contracts = vec![contract(false, "finished", "item_exchange")];
+      state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert!(state.has_contracts());

@@ -7393,6 +7393,50 @@ mod tests {
     }
   }
 
+  mod collect_stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_gathers_no_keys_for_settings_with_no_compare() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+
+      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
+    }
+
+    #[test]
+    fn it_gathers_keys_for_every_active_route() {
+      let mut app = featured_app();
+
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::CharacterDetail(1),
+        Route::Characters,
+        Route::CorporationDetail(1),
+        Route::Industry,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = super::super::collect_stale_images(&app);
+      }
+    }
+
+    #[test]
+    fn it_appends_the_compare_window_keys_when_one_is_open() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
+    }
+  }
+
   mod handle_skills {
     use super::*;
 

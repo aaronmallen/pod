@@ -169,93 +169,87 @@ mod tests {
     state
   }
 
+  mod generalizes_to_any_pane_key {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const PANE_KEYS: [&str; 8] = [
+      "skills.left",
+      "mail.folder",
+      "mail.message_list",
+      "wallet.right_rail",
+      "plan.picker",
+      "plan.summary",
+      "assets.sidebar",
+      "assets.abyssals_filter",
+    ];
+
+    #[test]
+    fn it_round_trips_a_synthetic_never_seen_pane_key() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+
+      let mut state = UiState::default();
+      state.panes.insert("future.synthetic_pane".to_owned(), 137.0);
+
+      save_to(&path, &state);
+      let loaded = load_from(&path);
+
+      assert_eq!(loaded.panes.get("future.synthetic_pane"), Some(&137.0));
+    }
+
+    #[test]
+    fn it_round_trips_every_pane_key_through_save_then_load() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+
+      let mut state = UiState::default();
+      for (index, key) in PANE_KEYS.iter().enumerate() {
+        state.panes.insert((*key).to_owned(), 200.0 + index as f32);
+      }
+
+      save_to(&path, &state);
+      let loaded = load_from(&path);
+
+      assert_eq!(loaded, state);
+      for (index, key) in PANE_KEYS.iter().enumerate() {
+        assert_eq!(loaded.panes.get(*key), Some(&(200.0 + index as f32)));
+      }
+    }
+
+    #[test]
+    fn it_treats_a_not_yet_wired_mail_key_identically_to_an_in_src_key() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+
+      let mut state = UiState::default();
+      state.panes.insert("skills.left".to_owned(), 333.0);
+      state.panes.insert("mail.folder".to_owned(), 333.0);
+
+      save_to(&path, &state);
+      let loaded = load_from(&path);
+
+      assert_eq!(loaded.panes.get("mail.folder"), loaded.panes.get("skills.left"));
+      assert_eq!(loaded.panes.get("mail.folder"), Some(&333.0));
+    }
+  }
+
   mod load_from {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_returns_defaults_when_the_file_is_absent() {
-      let dir = tempfile::tempdir().unwrap();
-
-      let state = load_from(&dir.path().join("window.json"));
-
-      assert_eq!(state, UiState::default());
-    }
-
-    #[test]
-    fn it_returns_defaults_when_the_file_is_unparseable() {
+    fn it_loads_an_already_keyed_file_unchanged_without_re_migrating() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("window.json");
-      std::fs::write(&path, b"{ this is not valid json").unwrap();
+      let original = sample_state();
+      save_to(&path, &original);
 
       let state = load_from(&path);
 
-      assert_eq!(state, UiState::default());
-    }
-
-    #[test]
-    fn it_returns_defaults_for_foreign_content() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-      std::fs::write(&path, br#"{"unrelated":[1,2,3]}"#).unwrap();
-
-      let state = load_from(&path);
-
-      assert_eq!(state, UiState::default());
-    }
-
-    #[test]
-    fn it_migrates_a_flat_prototype_files_top_level_geometry_to_the_main_window() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-      std::fs::write(&path, br#"{"width":1200.0,"height":800.0,"x":100.0,"y":200.0}"#).unwrap();
-
-      let state = load_from(&path);
-
-      assert_eq!(
-        state.windows.get("main"),
-        Some(&WindowGeometry {
-          height: 800.0,
-          width: 1200.0,
-          x: 100.0,
-          y: 200.0,
-        })
-      );
-    }
-
-    #[test]
-    fn it_migrates_a_flat_files_plan_window_geometry_to_the_editor_window() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-      std::fs::write(
-        &path,
-        br#"{"width":1200.0,"height":800.0,"x":0.0,"y":0.0,"plan_window_width":900.0,"plan_window_height":600.0,"plan_window_x":50.0,"plan_window_y":60.0}"#,
-      )
-      .unwrap();
-
-      let state = load_from(&path);
-
-      assert_eq!(
-        state.windows.get("skill_plan_editor"),
-        Some(&WindowGeometry {
-          height: 600.0,
-          width: 900.0,
-          x: 50.0,
-          y: 60.0,
-        })
-      );
-    }
-
-    #[test]
-    fn it_omits_the_editor_window_when_the_flat_file_lacks_plan_geometry() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-      std::fs::write(&path, br#"{"width":1200.0,"height":800.0,"x":0.0,"y":0.0}"#).unwrap();
-
-      let state = load_from(&path);
-
-      assert_eq!(state.windows.get("skill_plan_editor"), None);
+      assert_eq!(state, original);
     }
 
     #[test]
@@ -291,6 +285,48 @@ mod tests {
     }
 
     #[test]
+    fn it_migrates_a_flat_files_plan_window_geometry_to_the_editor_window() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(
+        &path,
+        br#"{"width":1200.0,"height":800.0,"x":0.0,"y":0.0,"plan_window_width":900.0,"plan_window_height":600.0,"plan_window_x":50.0,"plan_window_y":60.0}"#,
+      )
+      .unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(
+        state.windows.get("skill_plan_editor"),
+        Some(&WindowGeometry {
+          height: 600.0,
+          width: 900.0,
+          x: 50.0,
+          y: 60.0,
+        })
+      );
+    }
+
+    #[test]
+    fn it_migrates_a_flat_prototype_files_top_level_geometry_to_the_main_window() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(&path, br#"{"width":1200.0,"height":800.0,"x":100.0,"y":200.0}"#).unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(
+        state.windows.get("main"),
+        Some(&WindowGeometry {
+          height: 800.0,
+          width: 1200.0,
+          x: 100.0,
+          y: 200.0,
+        })
+      );
+    }
+
+    #[test]
     fn it_omits_pane_keys_absent_from_the_flat_file() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("window.json");
@@ -307,15 +343,45 @@ mod tests {
     }
 
     #[test]
-    fn it_loads_an_already_keyed_file_unchanged_without_re_migrating() {
+    fn it_omits_the_editor_window_when_the_flat_file_lacks_plan_geometry() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("window.json");
-      let original = sample_state();
-      save_to(&path, &original);
+      std::fs::write(&path, br#"{"width":1200.0,"height":800.0,"x":0.0,"y":0.0}"#).unwrap();
 
       let state = load_from(&path);
 
-      assert_eq!(state, original);
+      assert_eq!(state.windows.get("skill_plan_editor"), None);
+    }
+
+    #[test]
+    fn it_returns_defaults_for_foreign_content() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(&path, br#"{"unrelated":[1,2,3]}"#).unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(state, UiState::default());
+    }
+
+    #[test]
+    fn it_returns_defaults_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
+
+      let state = load_from(&dir.path().join("window.json"));
+
+      assert_eq!(state, UiState::default());
+    }
+
+    #[test]
+    fn it_returns_defaults_when_the_file_is_unparseable() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(&path, b"{ this is not valid json").unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(state, UiState::default());
     }
   }
 
@@ -323,17 +389,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_roundtrips_through_the_file() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("nested").join("window.json");
-      let state = sample_state();
-
-      save_to(&path, &state);
-
-      assert_eq!(load_from(&path), state);
-    }
 
     #[test]
     fn it_preserves_arbitrary_window_and_pane_keys() {
@@ -360,71 +415,16 @@ mod tests {
       );
       assert_eq!(loaded.panes.get("plan.picker"), Some(&280.0));
     }
-  }
-
-  mod generalizes_to_any_pane_key {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const PANE_KEYS: [&str; 8] = [
-      "skills.left",
-      "mail.folder",
-      "mail.message_list",
-      "wallet.right_rail",
-      "plan.picker",
-      "plan.summary",
-      "assets.sidebar",
-      "assets.abyssals_filter",
-    ];
 
     #[test]
-    fn it_round_trips_every_pane_key_through_save_then_load() {
+    fn it_roundtrips_through_the_file() {
       let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-
-      let mut state = UiState::default();
-      for (index, key) in PANE_KEYS.iter().enumerate() {
-        state.panes.insert((*key).to_owned(), 200.0 + index as f32);
-      }
+      let path = dir.path().join("nested").join("window.json");
+      let state = sample_state();
 
       save_to(&path, &state);
-      let loaded = load_from(&path);
 
-      assert_eq!(loaded, state);
-      for (index, key) in PANE_KEYS.iter().enumerate() {
-        assert_eq!(loaded.panes.get(*key), Some(&(200.0 + index as f32)));
-      }
-    }
-
-    #[test]
-    fn it_round_trips_a_synthetic_never_seen_pane_key() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-
-      let mut state = UiState::default();
-      state.panes.insert("future.synthetic_pane".to_owned(), 137.0);
-
-      save_to(&path, &state);
-      let loaded = load_from(&path);
-
-      assert_eq!(loaded.panes.get("future.synthetic_pane"), Some(&137.0));
-    }
-
-    #[test]
-    fn it_treats_a_not_yet_wired_mail_key_identically_to_an_in_src_key() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("window.json");
-
-      let mut state = UiState::default();
-      state.panes.insert("skills.left".to_owned(), 333.0);
-      state.panes.insert("mail.folder".to_owned(), 333.0);
-
-      save_to(&path, &state);
-      let loaded = load_from(&path);
-
-      assert_eq!(loaded.panes.get("mail.folder"), loaded.panes.get("skills.left"));
-      assert_eq!(loaded.panes.get("mail.folder"), Some(&333.0));
+      assert_eq!(load_from(&path), state);
     }
   }
 }

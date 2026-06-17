@@ -220,145 +220,26 @@ mod tests {
     format!("pod-deeplink-test-{tag}-{}.sock", std::process::id())
   }
 
-  #[cfg(not(target_os = "windows"))]
-  mod resolve_socket_dir {
-    use pretty_assertions::assert_eq;
-
+  mod classify {
     use super::*;
 
     #[test]
-    fn it_prefers_the_runtime_dir_when_present() {
-      let resolved = resolve_socket_dir(
-        Some(PathBuf::from("/run/user/1000")),
-        PathBuf::from("/home/me/.local/share/pod"),
-      );
+    fn it_recognizes_an_eveauth_pod_url_as_a_callback() {
+      let url = format!("{}://callback?code=a&state=b", super::super::super::SCHEME);
 
-      assert_eq!(resolved, PathBuf::from("/run/user/1000"));
+      assert!(matches!(classify(&url), Some(Signal::Url(delivered)) if delivered == url));
     }
 
     #[test]
-    fn it_falls_back_to_the_data_dir_when_the_runtime_dir_is_unset() {
-      let resolved = resolve_socket_dir(None, PathBuf::from("/home/me/.local/share/pod"));
-
-      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
-    }
-  }
-
-  #[cfg(not(target_os = "windows"))]
-  mod stale_recovery {
-    use super::*;
-
-    #[test]
-    fn it_unlinks_a_dead_socket_file_and_becomes_primary() {
-      let (_dir, path) = unique_socket("stale");
-      std::fs::write(&path, b"orphaned").expect("leave a stale socket file behind");
-
-      let recovered = bind(&path);
-
-      assert!(
-        recovered.is_some(),
-        "a stale file left by a dead primary is unlinked and the next launch binds"
-      );
+    fn it_recognizes_the_focus_ping() {
+      assert!(matches!(classify(FOCUS_PING), Some(Signal::Focus)));
     }
 
     #[test]
-    fn a_second_bind_while_a_live_primary_holds_the_socket_is_refused() {
-      let (_dir, path) = unique_socket("live");
-      let _primary = bind(&path).expect("first bind becomes the primary");
-
-      let second = bind(&path);
-
-      assert!(
-        second.is_none(),
-        "a second bind while a live primary listens forwards instead of becoming a duplicate"
-      );
-    }
-  }
-
-  mod forward_and_listen {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[cfg(not(target_os = "windows"))]
-    fn bind_listener(tag: &str) -> (tempfile::TempDir, PathBuf, PrimaryLock) {
-      let (dir, path) = unique_socket(tag);
-      let lock = bind(&path).expect("first bind becomes the primary");
-      (dir, path, lock)
-    }
-
-    #[test]
-    #[cfg(not(target_os = "windows"))]
-    fn it_forwards_a_url_from_a_second_instance_to_the_primary_listener() {
-      let (_dir, path, lock) = bind_listener("roundtrip");
-      let (tx, rx) = std::sync::mpsc::channel();
-      let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
-          let _ = tx.send(url);
-        })
-      });
-      let url = format!("{}://callback?code=warm&state=fwd", super::super::super::SCHEME);
-
-      let forwarded = forward_to(&path, &url);
-      let delivered = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-
-      assert!(forwarded, "the second instance reaches the primary");
-      assert_eq!(delivered, url);
-    }
-
-    #[test]
-    #[cfg(not(target_os = "windows"))]
-    fn it_does_not_deliver_a_payload_that_lacks_the_scheme_prefix() {
-      let (_dir, path, lock) = bind_listener("reject");
-      let (tx, rx) = std::sync::mpsc::channel();
-      let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
-          let _ = tx.send(url);
-        })
-      });
-
-      let forwarded = forward_to(&path, "https://evil.example/callback?code=a&state=b");
-      let delivered = rx.recv_timeout(std::time::Duration::from_millis(500));
-
-      assert!(
-        forwarded,
-        "the write itself succeeds; rejection happens at the listener"
-      );
-      assert!(delivered.is_err(), "a non-eveauth-pod payload is never delivered");
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn it_forwards_a_url_from_a_second_instance_to_the_primary_listener() {
-      let name = unique_name("roundtrip");
-      let (tx, rx) = std::sync::mpsc::channel();
-      let lock = bind(&name).expect("first bind becomes the primary");
-      let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
-          let _ = tx.send(url);
-        })
-      });
-      let url = format!("{}://callback?code=warm&state=fwd", super::super::super::SCHEME);
-
-      let forwarded = forward_to(&name, &url);
-      let delivered = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-
-      assert!(forwarded, "the second instance reaches the primary");
-      assert_eq!(delivered, url);
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn a_second_bind_on_the_same_name_is_refused_as_addr_in_use() {
-      let name = unique_name("lock");
-      let _primary = bind(&name).expect("first bind becomes the primary");
-
-      let second = bind(&name);
-
-      assert!(
-        second.is_none(),
-        "a second bind on a held name fails (a primary already runs)"
-      );
+    fn it_rejects_a_payload_that_is_neither_a_callback_nor_the_focus_ping() {
+      assert!(classify("https://evil.example/callback").is_none());
+      assert!(classify("eveauth-pod-evil://callback").is_none());
+      assert!(classify("").is_none());
     }
   }
 
@@ -391,26 +272,145 @@ mod tests {
     }
   }
 
-  mod classify {
+  mod forward_and_listen {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[cfg(not(target_os = "windows"))]
+    fn bind_listener(tag: &str) -> (tempfile::TempDir, PathBuf, PrimaryLock) {
+      let (dir, path) = unique_socket(tag);
+      let lock = bind(&path).expect("first bind becomes the primary");
+      (dir, path, lock)
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn a_second_bind_on_the_same_name_is_refused_as_addr_in_use() {
+      let name = unique_name("lock");
+      let _primary = bind(&name).expect("first bind becomes the primary");
+
+      let second = bind(&name);
+
+      assert!(
+        second.is_none(),
+        "a second bind on a held name fails (a primary already runs)"
+      );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn it_does_not_deliver_a_payload_that_lacks_the_scheme_prefix() {
+      let (_dir, path, lock) = bind_listener("reject");
+      let (tx, rx) = std::sync::mpsc::channel();
+      let _ = thread::spawn(move || {
+        accept_loop(lock, move |url| {
+          let _ = tx.send(url);
+        })
+      });
+
+      let forwarded = forward_to(&path, "https://evil.example/callback?code=a&state=b");
+      let delivered = rx.recv_timeout(std::time::Duration::from_millis(500));
+
+      assert!(
+        forwarded,
+        "the write itself succeeds; rejection happens at the listener"
+      );
+      assert!(delivered.is_err(), "a non-eveauth-pod payload is never delivered");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn it_forwards_a_url_from_a_second_instance_to_the_primary_listener() {
+      let (_dir, path, lock) = bind_listener("roundtrip");
+      let (tx, rx) = std::sync::mpsc::channel();
+      let _ = thread::spawn(move || {
+        accept_loop(lock, move |url| {
+          let _ = tx.send(url);
+        })
+      });
+      let url = format!("{}://callback?code=warm&state=fwd", super::super::super::SCHEME);
+
+      let forwarded = forward_to(&path, &url);
+      let delivered = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+
+      assert!(forwarded, "the second instance reaches the primary");
+      assert_eq!(delivered, url);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn it_forwards_a_url_from_a_second_instance_to_the_primary_listener() {
+      let name = unique_name("roundtrip");
+      let (tx, rx) = std::sync::mpsc::channel();
+      let lock = bind(&name).expect("first bind becomes the primary");
+      let _ = thread::spawn(move || {
+        accept_loop(lock, move |url| {
+          let _ = tx.send(url);
+        })
+      });
+      let url = format!("{}://callback?code=warm&state=fwd", super::super::super::SCHEME);
+
+      let forwarded = forward_to(&name, &url);
+      let delivered = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+
+      assert!(forwarded, "the second instance reaches the primary");
+      assert_eq!(delivered, url);
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  mod resolve_socket_dir {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    fn it_recognizes_the_focus_ping() {
-      assert!(matches!(classify(FOCUS_PING), Some(Signal::Focus)));
+    fn it_falls_back_to_the_data_dir_when_the_runtime_dir_is_unset() {
+      let resolved = resolve_socket_dir(None, PathBuf::from("/home/me/.local/share/pod"));
+
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
     }
 
     #[test]
-    fn it_recognizes_an_eveauth_pod_url_as_a_callback() {
-      let url = format!("{}://callback?code=a&state=b", super::super::super::SCHEME);
+    fn it_prefers_the_runtime_dir_when_present() {
+      let resolved = resolve_socket_dir(
+        Some(PathBuf::from("/run/user/1000")),
+        PathBuf::from("/home/me/.local/share/pod"),
+      );
 
-      assert!(matches!(classify(&url), Some(Signal::Url(delivered)) if delivered == url));
+      assert_eq!(resolved, PathBuf::from("/run/user/1000"));
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  mod stale_recovery {
+    use super::*;
+
+    #[test]
+    fn a_second_bind_while_a_live_primary_holds_the_socket_is_refused() {
+      let (_dir, path) = unique_socket("live");
+      let _primary = bind(&path).expect("first bind becomes the primary");
+
+      let second = bind(&path);
+
+      assert!(
+        second.is_none(),
+        "a second bind while a live primary listens forwards instead of becoming a duplicate"
+      );
     }
 
     #[test]
-    fn it_rejects_a_payload_that_is_neither_a_callback_nor_the_focus_ping() {
-      assert!(classify("https://evil.example/callback").is_none());
-      assert!(classify("eveauth-pod-evil://callback").is_none());
-      assert!(classify("").is_none());
+    fn it_unlinks_a_dead_socket_file_and_becomes_primary() {
+      let (_dir, path) = unique_socket("stale");
+      std::fs::write(&path, b"orphaned").expect("leave a stale socket file behind");
+
+      let recovered = bind(&path);
+
+      assert!(
+        recovered.is_some(),
+        "a stale file left by a dead primary is unlinked and the next launch binds"
+      );
     }
   }
 

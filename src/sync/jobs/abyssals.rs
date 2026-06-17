@@ -168,7 +168,9 @@ mod tests {
   };
 
   const ABYSSAL_TYPE_ID: i64 = 47_408;
+
   const SOURCE_TYPE_ID: i64 = 5975;
+
   const MUTATOR_TYPE_ID: i64 = 47_297;
 
   async fn seed_character(db: &store::Database, id: i64) {
@@ -312,16 +314,23 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_is_not_ready_when_the_character_is_not_synced() {
+    async fn it_blocks_when_the_abyssal_catalog_is_not_seeded() {
       let server = MockServer::start().await;
       let harness = Harness::new(&server, 42).await;
-      let ctx = harness.ctx(999);
+      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
+        .await
+        .unwrap();
+      sqlx::query("DELETE FROM abyssal_module_stats")
+        .execute(&harness.db.0)
+        .await
+        .unwrap();
+      let ctx = harness.ctx(42);
 
-      let result = run_with_muta(&ctx, &muta(&server)).await;
+      let outcome = run_with_muta(&ctx, &muta(&server)).await.unwrap();
 
       assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+        matches!(outcome, Outcome::Blocked { .. }),
+        "an unseeded catalog must block rather than report a clean sync, got {outcome:?}"
       );
     }
 
@@ -340,23 +349,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_blocks_when_the_abyssal_catalog_is_not_seeded() {
+    async fn it_is_not_ready_when_the_character_is_not_synced() {
       let server = MockServer::start().await;
       let harness = Harness::new(&server, 42).await;
-      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
-        .await
-        .unwrap();
-      sqlx::query("DELETE FROM abyssal_module_stats")
-        .execute(&harness.db.0)
-        .await
-        .unwrap();
-      let ctx = harness.ctx(42);
+      let ctx = harness.ctx(999);
 
-      let outcome = run_with_muta(&ctx, &muta(&server)).await.unwrap();
+      let result = run_with_muta(&ctx, &muta(&server)).await;
 
       assert!(
-        matches!(outcome, Outcome::Blocked { .. }),
-        "an unseeded catalog must block rather than report a clean sync, got {outcome:?}"
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
     }
 
@@ -388,61 +390,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_upserts_rolled_dogma_caches_icons_and_prices_the_item() {
-      let server = MockServer::start().await;
-      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
-      mount_icon(&server, ABYSSAL_TYPE_ID).await;
-      mount_icon(&server, SOURCE_TYPE_ID).await;
-      mount_muta_price(&server, 100, Some(5_000_000.0)).await;
-      let harness = Harness::new(&server, 42).await;
-      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
-        .await
-        .unwrap();
-      let ctx = harness.ctx(42);
-
-      run_with_muta(&ctx, &muta(&server)).await.unwrap();
-
-      let rows = assets::for_character_abyssal(&harness.db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].item_id(), 100);
-      assert_eq!(rows[0].source_type_id(), SOURCE_TYPE_ID);
-      assert_eq!(rows[0].mutator_type_id(), MUTATOR_TYPE_ID);
-      assert!(rows[0].dogma_attributes().contains("\"attribute_id\":6"));
-      assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
-      assert!(harness.image_store.type_icon_path(ABYSSAL_TYPE_ID, ICON_SIZE).exists());
-      assert!(harness.image_store.type_icon_path(SOURCE_TYPE_ID, ICON_SIZE).exists());
-    }
-
-    #[tokio::test]
-    async fn it_still_upserts_the_item_when_an_icon_fetch_fails() {
-      let server = MockServer::start().await;
-      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
-      Mock::given(method("GET"))
-        .and(path(format!("/types/{ABYSSAL_TYPE_ID}/icon")))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path(format!("/types/{SOURCE_TYPE_ID}/icon")))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      mount_muta_price(&server, 100, Some(5_000_000.0)).await;
-      let harness = Harness::new(&server, 42).await;
-      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
-        .await
-        .unwrap();
-      let ctx = harness.ctx(42);
-
-      run_with_muta(&ctx, &muta(&server)).await.unwrap();
-
-      let rows = assets::for_character_abyssal(&harness.db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
-      assert!(!harness.image_store.type_icon_path(ABYSSAL_TYPE_ID, ICON_SIZE).exists());
-    }
 
     #[tokio::test]
     async fn it_prunes_records_no_longer_owned() {
@@ -513,6 +460,61 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].muta_price_isk(), None);
       assert!(rows[0].muta_price_synced().is_some(), "the None price is stamped");
+    }
+
+    #[tokio::test]
+    async fn it_still_upserts_the_item_when_an_icon_fetch_fails() {
+      let server = MockServer::start().await;
+      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/types/{ABYSSAL_TYPE_ID}/icon")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/types/{SOURCE_TYPE_ID}/icon")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      mount_muta_price(&server, 100, Some(5_000_000.0)).await;
+      let harness = Harness::new(&server, 42).await;
+      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
+        .await
+        .unwrap();
+      let ctx = harness.ctx(42);
+
+      run_with_muta(&ctx, &muta(&server)).await.unwrap();
+
+      let rows = assets::for_character_abyssal(&harness.db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
+      assert!(!harness.image_store.type_icon_path(ABYSSAL_TYPE_ID, ICON_SIZE).exists());
+    }
+
+    #[tokio::test]
+    async fn it_upserts_rolled_dogma_caches_icons_and_prices_the_item() {
+      let server = MockServer::start().await;
+      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
+      mount_icon(&server, ABYSSAL_TYPE_ID).await;
+      mount_icon(&server, SOURCE_TYPE_ID).await;
+      mount_muta_price(&server, 100, Some(5_000_000.0)).await;
+      let harness = Harness::new(&server, 42).await;
+      assets::upsert_character_asset(&harness.db, &asset(42, 100, ABYSSAL_TYPE_ID, true))
+        .await
+        .unwrap();
+      let ctx = harness.ctx(42);
+
+      run_with_muta(&ctx, &muta(&server)).await.unwrap();
+
+      let rows = assets::for_character_abyssal(&harness.db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 100);
+      assert_eq!(rows[0].source_type_id(), SOURCE_TYPE_ID);
+      assert_eq!(rows[0].mutator_type_id(), MUTATOR_TYPE_ID);
+      assert!(rows[0].dogma_attributes().contains("\"attribute_id\":6"));
+      assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
+      assert!(harness.image_store.type_icon_path(ABYSSAL_TYPE_ID, ICON_SIZE).exists());
+      assert!(harness.image_store.type_icon_path(SOURCE_TYPE_ID, ICON_SIZE).exists());
     }
   }
 }

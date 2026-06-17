@@ -310,169 +310,6 @@ mod tests {
     }
   }
 
-  mod run {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_persists_the_full_clone_picture_with_names_and_icons() {
-      let server = MockServer::start().await;
-      mount_clones(&server, 42).await;
-      mount_names(
-        &server,
-        serde_json::json!([
-          { "category": "station", "id": 60_003_760, "name": "Jita IV - Moon 4" },
-          { "category": "station", "id": 60_008_494, "name": "Amarr VIII" },
-        ]),
-      )
-      .await;
-      mount_item_type(&server, 9899, "Memory Augmentation").await;
-      mount_item_type(&server, 9941, "Ocular Filter").await;
-      mount_icon(&server, 9899).await;
-      mount_icon(&server, 9941).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      let result = character::clones(&db, 42).await.unwrap().unwrap();
-      assert_eq!(result.active.clone.home_location_id(), 60_003_760);
-      assert_eq!(
-        result.active.clone.home_location_name().as_deref(),
-        Some("Jita IV - Moon 4")
-      );
-      assert_eq!(
-        result.active.implants.iter().map(|i| i.type_id()).collect::<Vec<_>>(),
-        [9899]
-      );
-      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
-      assert!(std::path::Path::new(result.active.implants[0].icon().as_deref().unwrap()).ends_with("types/9899.png"));
-      assert_eq!(result.jump_clones.len(), 1);
-      assert_eq!(
-        result.jump_clones[0].clone.location_name().as_deref(),
-        Some("Amarr VIII")
-      );
-      assert_eq!(
-        result.jump_clones[0]
-          .implants
-          .iter()
-          .map(|i| i.type_id())
-          .collect::<Vec<_>>(),
-        [9941]
-      );
-      assert_eq!(
-        std::fs::read(image_store.type_icon_path(9899, ICON_SIZE)).unwrap(),
-        vec![1u8, 2, 3]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_clones_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/clones/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::clones(&db, 42).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_completes_and_resolves_the_implant_name_when_an_icon_fetch_fails() {
-      let server = MockServer::start().await;
-      mount_clones(&server, 42).await;
-      mount_names(
-        &server,
-        serde_json::json!([
-          { "category": "station", "id": 60_003_760, "name": "Jita IV - Moon 4" },
-          { "category": "station", "id": 60_008_494, "name": "Amarr VIII" },
-        ]),
-      )
-      .await;
-      mount_item_type(&server, 9899, "Memory Augmentation").await;
-      mount_item_type(&server, 9941, "Ocular Filter").await;
-      Mock::given(method("GET"))
-        .and(path("/types/9899/icon"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/types/9941/icon"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      let result = character::clones(&db, 42).await.unwrap().unwrap();
-      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
-      assert!(
-        result.active.implants[0].icon().is_none(),
-        "the failed icon degrades to None"
-      );
-      assert!(!image_store.type_icon_path(9899, ICON_SIZE).exists());
-    }
-
-    #[tokio::test]
-    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/clones/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "home_location": { "location_id": 60_003_760, "location_type": "station" },
-        })))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
-      );
-      assert!(character::clones(&db, 42).await.unwrap().is_none());
-    }
-  }
-
   mod resolve_structure_name {
     use super::*;
 
@@ -567,6 +404,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_fetches_a_visible_structure_name_from_esi() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "name": "A Player Structure", "owner_id": 1_000_035, "solar_system_id": 30_000_142,
+        })))
+        .mount(&server)
+        .await;
+      let h = harness(&server).await;
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+
+      let name = resolve_structure_name(&ctx(&h, &grant), &grant, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      assert_eq!(name.as_deref(), Some("A Player Structure"));
+    }
+
+    #[tokio::test]
+    async fn it_propagates_a_non_403_error() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let h = harness(&server).await;
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+
+      let result = resolve_structure_name(&ctx(&h, &grant), &grant, STRUCTURE_ID).await;
+
+      assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn it_returns_the_cached_name_without_fetching() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -606,26 +479,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_fetches_a_visible_structure_name_from_esi() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "name": "A Player Structure", "owner_id": 1_000_035, "solar_system_id": 30_000_142,
-        })))
-        .mount(&server)
-        .await;
-      let h = harness(&server).await;
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
-
-      let name = resolve_structure_name(&ctx(&h, &grant), &grant, STRUCTURE_ID)
-        .await
-        .unwrap();
-
-      assert_eq!(name.as_deref(), Some("A Player Structure"));
-    }
-
-    #[tokio::test]
     async fn it_treats_a_403_as_unresolved() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -642,21 +495,168 @@ mod tests {
 
       assert!(name.is_none());
     }
+  }
+
+  mod run {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
-    async fn it_propagates_a_non_403_error() {
+    async fn it_aborts_without_writing_when_the_clones_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .and(path("/characters/42/clones/"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
-      let h = harness(&server).await;
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
 
-      let result = resolve_structure_name(&ctx(&h, &grant), &grant, STRUCTURE_ID).await;
+      let result = run(&ctx).await;
 
       assert!(result.is_err());
+      assert!(character::clones(&db, 42).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_completes_and_resolves_the_implant_name_when_an_icon_fetch_fails() {
+      let server = MockServer::start().await;
+      mount_clones(&server, 42).await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "station", "id": 60_003_760, "name": "Jita IV - Moon 4" },
+          { "category": "station", "id": 60_008_494, "name": "Amarr VIII" },
+        ]),
+      )
+      .await;
+      mount_item_type(&server, 9899, "Memory Augmentation").await;
+      mount_item_type(&server, 9941, "Ocular Filter").await;
+      Mock::given(method("GET"))
+        .and(path("/types/9899/icon"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/types/9941/icon"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let result = character::clones(&db, 42).await.unwrap().unwrap();
+      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
+      assert!(
+        result.active.implants[0].icon().is_none(),
+        "the failed icon degrades to None"
+      );
+      assert!(!image_store.type_icon_path(9899, ICON_SIZE).exists());
+    }
+
+    #[tokio::test]
+    async fn it_persists_the_full_clone_picture_with_names_and_icons() {
+      let server = MockServer::start().await;
+      mount_clones(&server, 42).await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "station", "id": 60_003_760, "name": "Jita IV - Moon 4" },
+          { "category": "station", "id": 60_008_494, "name": "Amarr VIII" },
+        ]),
+      )
+      .await;
+      mount_item_type(&server, 9899, "Memory Augmentation").await;
+      mount_item_type(&server, 9941, "Ocular Filter").await;
+      mount_icon(&server, 9899).await;
+      mount_icon(&server, 9941).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let result = character::clones(&db, 42).await.unwrap().unwrap();
+      assert_eq!(result.active.clone.home_location_id(), 60_003_760);
+      assert_eq!(
+        result.active.clone.home_location_name().as_deref(),
+        Some("Jita IV - Moon 4")
+      );
+      assert_eq!(
+        result.active.implants.iter().map(|i| i.type_id()).collect::<Vec<_>>(),
+        [9899]
+      );
+      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
+      assert!(std::path::Path::new(result.active.implants[0].icon().as_deref().unwrap()).ends_with("types/9899.png"));
+      assert_eq!(result.jump_clones.len(), 1);
+      assert_eq!(
+        result.jump_clones[0].clone.location_name().as_deref(),
+        Some("Amarr VIII")
+      );
+      assert_eq!(
+        result.jump_clones[0]
+          .implants
+          .iter()
+          .map(|i| i.type_id())
+          .collect::<Vec<_>>(),
+        [9941]
+      );
+      assert_eq!(
+        std::fs::read(image_store.type_icon_path(9899, ICON_SIZE)).unwrap(),
+        vec![1u8, 2, 3]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/clones/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "home_location": { "location_id": 60_003_760, "location_type": "station" },
+        })))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+      assert!(character::clones(&db, 42).await.unwrap().is_none());
     }
   }
 }

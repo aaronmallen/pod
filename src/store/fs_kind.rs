@@ -109,19 +109,43 @@ fn probe_target(path: &Path) -> std::path::PathBuf {
 mod tests {
   use super::*;
 
+  #[cfg(target_os = "linux")]
+  mod classify_fstype_magic {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_classifies_the_cifs_magic_as_network() {
+      assert_eq!(classify_fstype_magic(0xFF53_4D42), FsKind::Network);
+    }
+
+    #[test]
+    fn it_classifies_the_ext4_magic_as_local() {
+      assert_eq!(classify_fstype_magic(0xEF53), FsKind::Local);
+    }
+
+    #[test]
+    fn it_classifies_the_nfs_magic_as_network() {
+      assert_eq!(classify_fstype_magic(0x6969), FsKind::Network);
+    }
+
+    #[test]
+    fn it_classifies_the_smb2_magic_as_network() {
+      assert_eq!(classify_fstype_magic(0xFE53_4D42), FsKind::Network);
+    }
+  }
+
   mod classify_fstype_name {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_classifies_smb_as_network() {
-      assert_eq!(classify_fstype_name("smbfs"), FsKind::Network);
-    }
-
-    #[test]
-    fn it_classifies_nfs_as_network() {
-      assert_eq!(classify_fstype_name("nfs"), FsKind::Network);
+    fn it_classifies_a_local_filesystem_as_local() {
+      assert_eq!(classify_fstype_name("apfs"), FsKind::Local);
+      assert_eq!(classify_fstype_name("ext4"), FsKind::Local);
+      assert_eq!(classify_fstype_name("hfs"), FsKind::Local);
     }
 
     #[test]
@@ -130,20 +154,23 @@ mod tests {
     }
 
     #[test]
-    fn it_classifies_webdav_as_network() {
-      assert_eq!(classify_fstype_name("webdav"), FsKind::Network);
-    }
-
-    #[test]
     fn it_classifies_cifs_as_network() {
       assert_eq!(classify_fstype_name("cifs"), FsKind::Network);
     }
 
     #[test]
-    fn it_classifies_a_local_filesystem_as_local() {
-      assert_eq!(classify_fstype_name("apfs"), FsKind::Local);
-      assert_eq!(classify_fstype_name("ext4"), FsKind::Local);
-      assert_eq!(classify_fstype_name("hfs"), FsKind::Local);
+    fn it_classifies_nfs_as_network() {
+      assert_eq!(classify_fstype_name("nfs"), FsKind::Network);
+    }
+
+    #[test]
+    fn it_classifies_smb_as_network() {
+      assert_eq!(classify_fstype_name("smbfs"), FsKind::Network);
+    }
+
+    #[test]
+    fn it_classifies_webdav_as_network() {
+      assert_eq!(classify_fstype_name("webdav"), FsKind::Network);
     }
 
     #[test]
@@ -157,42 +184,8 @@ mod tests {
     }
   }
 
-  #[cfg(target_os = "linux")]
-  mod classify_fstype_magic {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_classifies_the_cifs_magic_as_network() {
-      assert_eq!(classify_fstype_magic(0xFF53_4D42), FsKind::Network);
-    }
-
-    #[test]
-    fn it_classifies_the_smb2_magic_as_network() {
-      assert_eq!(classify_fstype_magic(0xFE53_4D42), FsKind::Network);
-    }
-
-    #[test]
-    fn it_classifies_the_nfs_magic_as_network() {
-      assert_eq!(classify_fstype_magic(0x6969), FsKind::Network);
-    }
-
-    #[test]
-    fn it_classifies_the_ext4_magic_as_local() {
-      assert_eq!(classify_fstype_magic(0xEF53), FsKind::Local);
-    }
-  }
-
   mod detect {
     use super::*;
-
-    #[test]
-    fn it_reports_a_temp_dir_as_local() {
-      let dir = tempfile::tempdir().unwrap();
-
-      assert_eq!(detect(dir.path()), FsKind::Local);
-    }
 
     #[test]
     fn it_reports_a_not_yet_created_path_as_local() {
@@ -200,6 +193,13 @@ mod tests {
       let nested = dir.path().join("does").join("not").join("exist");
 
       assert_eq!(detect(&nested), FsKind::Local);
+    }
+
+    #[test]
+    fn it_reports_a_temp_dir_as_local() {
+      let dir = tempfile::tempdir().unwrap();
+
+      assert_eq!(detect(dir.path()), FsKind::Local);
     }
   }
 }

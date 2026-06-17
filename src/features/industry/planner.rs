@@ -4116,19 +4116,17 @@ mod view {
     use crate::features::industry::planner_model::BuildNode;
 
     #[test]
-    fn it_renders_the_single_consumer_feeds_line() {
-      let mut data = PlannerData::default();
-      data.names.insert(42, "Hulk".to_owned());
-      let job = MergedBuildJob {
-        consumers: vec![42],
-        is_root: false,
-        needed_qty: 10,
-        node: BuildNode::new(7, 1, false, Vec::new()),
-        runs: 1,
-        type_id: 7,
-      };
+    fn it_labels_a_missing_blueprint_for_acquisition() {
+      let none = blueprint_status_pill(None);
+      let _ = Tree::new(none.as_widget());
 
-      assert_eq!(merged_feeds_line(&data, &job), "feeds \u{2192} Hulk");
+      let owned = blueprint_status_pill(Some(&OwnedSummary {
+        in_scope: false,
+        is_original: true,
+        material_efficiency: 10,
+        time_efficiency: 20,
+      }));
+      let _ = Tree::new(owned.as_widget());
     }
 
     #[test]
@@ -4162,17 +4160,19 @@ mod view {
     }
 
     #[test]
-    fn it_labels_a_missing_blueprint_for_acquisition() {
-      let none = blueprint_status_pill(None);
-      let _ = Tree::new(none.as_widget());
+    fn it_renders_the_single_consumer_feeds_line() {
+      let mut data = PlannerData::default();
+      data.names.insert(42, "Hulk".to_owned());
+      let job = MergedBuildJob {
+        consumers: vec![42],
+        is_root: false,
+        needed_qty: 10,
+        node: BuildNode::new(7, 1, false, Vec::new()),
+        runs: 1,
+        type_id: 7,
+      };
 
-      let owned = blueprint_status_pill(Some(&OwnedSummary {
-        in_scope: false,
-        is_original: true,
-        material_efficiency: 10,
-        time_efficiency: 20,
-      }));
-      let _ = Tree::new(owned.as_widget());
+      assert_eq!(merged_feeds_line(&data, &job), "feeds \u{2192} Hulk");
     }
   }
 }

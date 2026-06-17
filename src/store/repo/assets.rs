@@ -6099,6 +6099,38 @@ mod asset_tests {
 
       assert!(on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn it_resolves_the_on_hand_group_by_through_the_location_index() {
+      use sqlx::Row;
+
+      let db = store::open_test().await.unwrap();
+
+      let rows = sqlx::query(
+        "EXPLAIN QUERY PLAN SELECT location_id, type_id, SUM(quantity) FROM character_assets \
+        WHERE container_id IS NULL AND location_id IN (?) GROUP BY location_id, type_id",
+      )
+      .bind(SITE_A)
+      .fetch_all(&db.0)
+      .await
+      .unwrap();
+      let plan: Vec<String> = rows.iter().map(|row| row.get::<String, _>("detail")).collect();
+
+      assert!(
+        plan
+          .iter()
+          .any(|step| step.contains("idx_character_assets_location_id")),
+        "accumulate_on_hand searches via the location index, not a full scan: {plan:?}"
+      );
+      assert!(
+        !plan.iter().any(|step| step.contains("SCAN")),
+        "the location index avoids a full table scan: {plan:?}"
+      );
+      assert!(
+        !plan.iter().any(|step| step.contains("TEMP B-TREE FOR GROUP BY")),
+        "the composite index orders the GROUP BY, so no temporary b-tree is built: {plan:?}"
+      );
+    }
   }
 
   mod corp_scope_gating {

@@ -66,32 +66,6 @@ impl AttrValues {
   }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ComputedQueue {
-  pub items: Vec<ComputedQueueItem>,
-  pub sp_rate: f64,
-  pub total_secs: f64,
-  pub total_sp: i64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ComputedQueueItem {
-  pub cum_start_secs: f64,
-  pub duration_secs: f64,
-  pub from_level: u8,
-  pub group_name: String,
-  pub primary: Attr,
-  pub progress: f32,
-  pub queue_position: i64,
-  pub rank: u8,
-  pub secondary: Attr,
-  pub skill_name: String,
-  pub sp_needed: u64,
-  pub sp_now: u64,
-  pub sp_to: u64,
-  pub to_level: u8,
-}
-
 /// The keyboard modifier intent applied to a queue-row click.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ClickKind {
@@ -117,6 +91,32 @@ impl ClickKind {
       (false, false) => ClickKind::Plain,
     }
   }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ComputedQueue {
+  pub items: Vec<ComputedQueueItem>,
+  pub sp_rate: f64,
+  pub total_secs: f64,
+  pub total_sp: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComputedQueueItem {
+  pub cum_start_secs: f64,
+  pub duration_secs: f64,
+  pub from_level: u8,
+  pub group_name: String,
+  pub primary: Attr,
+  pub progress: f32,
+  pub queue_position: i64,
+  pub rank: u8,
+  pub secondary: Attr,
+  pub skill_name: String,
+  pub sp_needed: u64,
+  pub sp_now: u64,
+  pub sp_to: u64,
+  pub to_level: u8,
 }
 
 /// Ephemeral multi-selection over queue rows, keyed on the stable
@@ -194,25 +194,6 @@ impl QueueSelection {
   }
 }
 
-/// The contiguous run of queue positions between the anchor and `position`
-/// (inclusive), in queue order. Falls back to just `position` when there is no
-/// anchor or either endpoint is absent from the queue.
-fn range_positions(anchor: Option<i64>, position: i64, order: &[i64]) -> Vec<i64> {
-  let target = match order.iter().position(|p| *p == position) {
-    Some(idx) => idx,
-    None => return vec![position],
-  };
-  let start = anchor
-    .and_then(|a| order.iter().position(|p| *p == a))
-    .unwrap_or(target);
-  let (lo, hi) = if start <= target {
-    (start, target)
-  } else {
-    (target, start)
-  };
-  order[lo..=hi].to_vec()
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueueWarning {
   Idle,
@@ -243,6 +224,25 @@ struct QueueItemSp {
   sp_needed: u64,
   sp_now: u64,
   sp_to: u64,
+}
+
+/// The contiguous run of queue positions between the anchor and `position`
+/// (inclusive), in queue order. Falls back to just `position` when there is no
+/// anchor or either endpoint is absent from the queue.
+fn range_positions(anchor: Option<i64>, position: i64, order: &[i64]) -> Vec<i64> {
+  let target = match order.iter().position(|p| *p == position) {
+    Some(idx) => idx,
+    None => return vec![position],
+  };
+  let start = anchor
+    .and_then(|a| order.iter().position(|p| *p == a))
+    .unwrap_or(target);
+  let (lo, hi) = if start <= target {
+    (start, target)
+  } else {
+    (target, start)
+  };
+  order[lo..=hi].to_vec()
 }
 
 pub fn active_attr_pair(

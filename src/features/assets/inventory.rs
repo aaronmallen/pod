@@ -60,6 +60,12 @@ const FILTER_HELP_KEYS: [(&str, &str, &str); 9] = [
   ("type:", "", "singleton \u{b7} bpc \u{b7} bpo \u{b7} stack"),
 ];
 
+/// Nominal height of one inventory row, in pixels.
+///
+/// Rows are content-driven (one- or two-line name cells), so this is only an
+/// estimate for [`VirtualList`] offset math; overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 44.0;
+
 pub(super) fn filter_bar(state: &State) -> Element<'_, Message> {
   let search = container(
     Row::with_children(vec![
@@ -337,12 +343,6 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
   let (sort, dir) = state.inventory_sort();
   column_header(sort, dir)
 }
-
-/// Nominal height of one inventory row, in pixels.
-///
-/// Rows are content-driven (one- or two-line name cells), so this is only an
-/// estimate for [`VirtualList`] offset math; overscan absorbs the variance.
-const ESTIMATED_ROW_HEIGHT: f32 = 44.0;
 
 pub(super) fn body(state: &State) -> Element<'_, Message> {
   let rows = state.inventory();

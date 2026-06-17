@@ -53,37 +53,9 @@ const NO_MATCH_ICON: f32 = 28.0;
 
 static SEARCH_ICON: &[u8] = include_bytes!("../../assets/images/icons/search.svg");
 
-#[derive(Debug, Default)]
-pub struct State {
-  active_pane: Pane,
-  add_tag_modal: Option<AddTagModal>,
-  all_tags: Vec<Tag>,
-  collapsed_squads: HashSet<i64>,
-  context_menu: Option<ContextMenu>,
-  corp_context_menu: Option<CorpContextMenu>,
-  corp_filtered: Option<CorpFiltered>,
-  corp_remove_confirm: Option<CorpRemoveConfirm>,
-  corps: Vec<CorpCardModel>,
-  cursor: Option<iced::Point>,
-  dragging: Option<Drag>,
-  drop_target: Option<DropTarget>,
-  enabled_features: Vec<Feature>,
-  filtered: Option<Filtered>,
-  granted_scopes_by_id: HashMap<i64, Option<String>>,
-  groups: Vec<SquadGroup>,
-  load_error: Option<String>,
-  pending: HashMap<i64, CardModel>,
-  reauth_by_id: HashMap<i64, bool>,
-  remove_confirm: Option<RemoveConfirm>,
-  search_generation: u64,
-  search_help_open: bool,
-  search_query: String,
-  squad_creator: Option<SquadCreator>,
-  squad_drop_target: Option<usize>,
-  squad_menu: Option<SquadMenu>,
-  unassigned: Vec<CardModel>,
-  unassigned_squad_id: i64,
-}
+const SEARCH_DEBOUNCE_MS: u64 = 200;
+
+const SEARCH_INPUT_ID: &str = "roster-search-input";
 
 #[derive(Clone, Debug)]
 pub struct AddTagModal {
@@ -138,92 +110,6 @@ pub enum Filtered {
   Error(String),
   Loaded(Vec<CardModel>),
   Loading,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Pane {
-  #[default]
-  Characters,
-  Corporations,
-}
-
-#[derive(Clone, Debug)]
-pub struct RemoveConfirm {
-  pub character_id: i64,
-  pub name: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct SquadMenu {
-  pub anchor: iced::Point,
-  pub collapsed: bool,
-  pub is_empty: bool,
-  pub name: String,
-  pub squad_id: i64,
-}
-
-#[derive(Clone, Debug)]
-pub struct SquadCreator {
-  pub color: String,
-  pub color_popover_open: bool,
-  pub description: String,
-  pub editing: Option<i64>,
-  pub hex_draft: String,
-  pub hex_invalid: bool,
-  pub name: String,
-}
-
-impl SquadCreator {
-  fn editing(squad_id: i64, name: String, description: Option<String>, color: Option<String>) -> Self {
-    let color = color.unwrap_or_else(default_squad_hex);
-    Self {
-      color: color.clone(),
-      color_popover_open: false,
-      description: description.unwrap_or_default(),
-      editing: Some(squad_id),
-      hex_draft: color,
-      hex_invalid: false,
-      name,
-    }
-  }
-}
-
-fn default_squad_hex() -> String {
-  color_to_hex(DEFAULT_SQUAD_ACCENT)
-}
-
-fn color_to_hex(color: Color) -> String {
-  let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-  format!(
-    "#{:02X}{:02X}{:02X}",
-    channel(color.r),
-    channel(color.g),
-    channel(color.b)
-  )
-}
-
-impl Default for SquadCreator {
-  fn default() -> Self {
-    Self {
-      color: default_squad_hex(),
-      color_popover_open: false,
-      description: String::new(),
-      editing: None,
-      hex_draft: default_squad_hex(),
-      hex_invalid: false,
-      name: String::new(),
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct SquadGroup {
-  pub accent: Color,
-  pub cards: Vec<CardModel>,
-  pub color_hex: Option<String>,
-  pub description: Option<String>,
-  pub name: String,
-  pub squad_id: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +226,19 @@ pub struct OwnedPilot {
   pub name: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Pane {
+  #[default]
+  Characters,
+  Corporations,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoveConfirm {
+  pub character_id: i64,
+  pub name: String,
+}
+
 pub type Roster = (
   Vec<SquadGroup>,
   Vec<CardModel>,
@@ -349,6 +248,97 @@ pub type Roster = (
   Vec<Feature>,
   HashMap<i64, Option<String>>,
 );
+
+#[derive(Clone, Debug)]
+pub struct SquadCreator {
+  pub color: String,
+  pub color_popover_open: bool,
+  pub description: String,
+  pub editing: Option<i64>,
+  pub hex_draft: String,
+  pub hex_invalid: bool,
+  pub name: String,
+}
+
+impl SquadCreator {
+  fn editing(squad_id: i64, name: String, description: Option<String>, color: Option<String>) -> Self {
+    let color = color.unwrap_or_else(default_squad_hex);
+    Self {
+      color: color.clone(),
+      color_popover_open: false,
+      description: description.unwrap_or_default(),
+      editing: Some(squad_id),
+      hex_draft: color,
+      hex_invalid: false,
+      name,
+    }
+  }
+}
+
+impl Default for SquadCreator {
+  fn default() -> Self {
+    Self {
+      color: default_squad_hex(),
+      color_popover_open: false,
+      description: String::new(),
+      editing: None,
+      hex_draft: default_squad_hex(),
+      hex_invalid: false,
+      name: String::new(),
+    }
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct SquadGroup {
+  pub accent: Color,
+  pub cards: Vec<CardModel>,
+  pub color_hex: Option<String>,
+  pub description: Option<String>,
+  pub name: String,
+  pub squad_id: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SquadMenu {
+  pub anchor: iced::Point,
+  pub collapsed: bool,
+  pub is_empty: bool,
+  pub name: String,
+  pub squad_id: i64,
+}
+
+#[derive(Debug, Default)]
+pub struct State {
+  active_pane: Pane,
+  add_tag_modal: Option<AddTagModal>,
+  all_tags: Vec<Tag>,
+  collapsed_squads: HashSet<i64>,
+  context_menu: Option<ContextMenu>,
+  corp_context_menu: Option<CorpContextMenu>,
+  corp_filtered: Option<CorpFiltered>,
+  corp_remove_confirm: Option<CorpRemoveConfirm>,
+  corps: Vec<CorpCardModel>,
+  cursor: Option<iced::Point>,
+  dragging: Option<Drag>,
+  drop_target: Option<DropTarget>,
+  enabled_features: Vec<Feature>,
+  filtered: Option<Filtered>,
+  granted_scopes_by_id: HashMap<i64, Option<String>>,
+  groups: Vec<SquadGroup>,
+  load_error: Option<String>,
+  pending: HashMap<i64, CardModel>,
+  reauth_by_id: HashMap<i64, bool>,
+  remove_confirm: Option<RemoveConfirm>,
+  search_generation: u64,
+  search_help_open: bool,
+  search_query: String,
+  squad_creator: Option<SquadCreator>,
+  squad_drop_target: Option<usize>,
+  squad_menu: Option<SquadMenu>,
+  unassigned: Vec<CardModel>,
+  unassigned_squad_id: i64,
+}
 
 impl State {
   pub fn new() -> Self {
@@ -413,6 +403,78 @@ impl State {
 
     card_keys.chain(corp_keys).collect()
   }
+}
+
+struct CardInputs<'a> {
+  corp: Option<&'a Corporation>,
+  granted_scopes: Option<&'a str>,
+  persisted_reauth: bool,
+  position: i64,
+  required_scopes: &'a [&'a str],
+  squad_accent: Option<Color>,
+  state: Option<&'a CharacterState>,
+  store: &'a images::Store,
+  tags: Vec<TagChip>,
+}
+
+enum SquadWrite {
+  Assign {
+    character_id: i64,
+    position: i64,
+    squad_id: i64,
+  },
+  Create {
+    color: Option<String>,
+    description: Option<String>,
+    name: String,
+  },
+  Delete {
+    squad_id: i64,
+  },
+  Reorder {
+    ordered: Vec<i64>,
+  },
+  Ungroup {
+    squad_id: i64,
+  },
+  Update {
+    color: Option<String>,
+    description: Option<String>,
+    name: String,
+    squad_id: i64,
+  },
+}
+
+enum TagWrite {
+  Assign {
+    entity_id: i64,
+    entity_type: &'static str,
+    tag_id: i64,
+  },
+  CreateAndAssign {
+    entity_id: i64,
+    entity_type: &'static str,
+    name: String,
+  },
+  Unassign {
+    entity_id: i64,
+    entity_type: &'static str,
+    tag_id: i64,
+  },
+}
+
+fn default_squad_hex() -> String {
+  color_to_hex(DEFAULT_SQUAD_ACCENT)
+}
+
+fn color_to_hex(color: Color) -> String {
+  let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+  format!(
+    "#{:02X}{:02X}{:02X}",
+    channel(color.r),
+    channel(color.g),
+    channel(color.b)
+  )
 }
 
 pub fn load(db: &Database, enabled_features: Vec<Feature>) -> Task<Message> {
@@ -1655,18 +1717,6 @@ async fn load_roster_at(
   ))
 }
 
-struct CardInputs<'a> {
-  corp: Option<&'a Corporation>,
-  granted_scopes: Option<&'a str>,
-  persisted_reauth: bool,
-  position: i64,
-  required_scopes: &'a [&'a str],
-  squad_accent: Option<Color>,
-  state: Option<&'a CharacterState>,
-  store: &'a images::Store,
-  tags: Vec<TagChip>,
-}
-
 async fn build_card(
   db: &Database,
   now: DateTime<Utc>,
@@ -1941,8 +1991,6 @@ fn parse_hex(value: Option<&str>) -> Option<Color> {
   Some(Color::from_rgb8(r, g, b))
 }
 
-const SEARCH_DEBOUNCE_MS: u64 = 200;
-
 pub fn needs_reauthorization(granted: Option<&str>, required: &[&str]) -> bool {
   let granted: HashSet<&str> = granted.unwrap_or_default().split_whitespace().collect();
   required.iter().any(|scope| !granted.contains(scope))
@@ -1961,8 +2009,6 @@ async fn reauth_flags(db: &Database, owner_type: OwnerType) -> Result<HashMap<i6
       .collect(),
   )
 }
-
-const SEARCH_INPUT_ID: &str = "roster-search-input";
 
 fn append_query(state: &mut State, fragment: &str) {
   let fragment = fragment.trim();
@@ -2152,24 +2198,6 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
   }
 }
 
-enum TagWrite {
-  Assign {
-    entity_id: i64,
-    entity_type: &'static str,
-    tag_id: i64,
-  },
-  CreateAndAssign {
-    entity_id: i64,
-    entity_type: &'static str,
-    name: String,
-  },
-  Unassign {
-    entity_id: i64,
-    entity_type: &'static str,
-    tag_id: i64,
-  },
-}
-
 fn write_tag(db: Database, write: TagWrite) -> Task<Message> {
   Task::perform(async move { apply_tag_write(&db, write).await }, Message::TagsChanged)
 }
@@ -2198,34 +2226,6 @@ async fn apply_tag_write(db: &Database, write: TagWrite) -> Result<(), String> {
     } => infra::unassign(db, entity_type, entity_id, tag_id).await,
   }
   .map_err(|err| err.to_string())
-}
-
-enum SquadWrite {
-  Assign {
-    character_id: i64,
-    position: i64,
-    squad_id: i64,
-  },
-  Create {
-    color: Option<String>,
-    description: Option<String>,
-    name: String,
-  },
-  Delete {
-    squad_id: i64,
-  },
-  Reorder {
-    ordered: Vec<i64>,
-  },
-  Ungroup {
-    squad_id: i64,
-  },
-  Update {
-    color: Option<String>,
-    description: Option<String>,
-    name: String,
-    squad_id: i64,
-  },
 }
 
 fn write_squad(db: Database, write: SquadWrite) -> Task<Message> {

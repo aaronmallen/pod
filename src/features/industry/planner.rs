@@ -15,6 +15,10 @@ use crate::{
 
 pub const DETAIL_PANE_KEY: &str = "industry.planner.detail";
 
+/// Minimum characters before the always-visible facility field triggers a live ESI search; shorter
+/// queries fall back to filtering the local `accessible_facilities` list.
+pub const FACILITY_SEARCH_MIN_CHARS: usize = 3;
+
 const DEFAULT_ME: i64 = 10;
 const DEFAULT_TE: i64 = 20;
 const DETAIL_PANE_DEFAULT_WIDTH: f32 = 340.0;
@@ -51,10 +55,6 @@ impl Economics {
     self.profit > 0.0
   }
 }
-
-/// Minimum characters before the always-visible facility field triggers a live ESI search; shorter
-/// queries fall back to filtering the local `accessible_facilities` list.
-pub const FACILITY_SEARCH_MIN_CHARS: usize = 3;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
@@ -190,64 +190,6 @@ pub struct TypeSettings {
   pub facility_system: Option<i64>,
   pub me: i64,
   pub te: i64,
-}
-
-/// Fresh, default settings for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
-/// blueprint's ME/TE or the planner defaults, and the facility seeds from the configured default install
-/// structure for the type's own activity (manufacturing vs reaction). Used for any type the user has not yet
-/// configured — root product or sub-build alike.
-fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> TypeSettings {
-  let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
-  let owned = data.owned.get(&type_id);
-  let (me, te) = if is_reaction {
-    (0, 0)
-  } else {
-    (
-      owned.map(|bp| bp.material_efficiency).unwrap_or(DEFAULT_ME),
-      owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
-    )
-  };
-  let (facility_structure, facility_system) = default_facility_for(data, defaults, is_reaction);
-  TypeSettings {
-    facility_structure,
-    facility_system,
-    me,
-    te,
-  }
-}
-
-/// Resolves the configured default install structure for an activity to `(structure id, solar system id)`,
-/// when that facility is present in current data. Returns `(None, None)` — preserving the cheapest-index
-/// fallback — when no default is configured or the configured facility is gone (e.g. a pinned structure that
-/// is no longer accessible), so the structure id and system stay consistent.
-fn default_facility_for(
-  data: &PlannerData,
-  defaults: &FacilityDefaults,
-  is_reaction: bool,
-) -> (Option<i64>, Option<i64>) {
-  let Some(facility_id) = defaults.for_activity(is_reaction) else {
-    return (None, None);
-  };
-  data
-    .facilities
-    .iter()
-    .find(|facility| facility.id == facility_id)
-    .map(|facility| (Some(facility.id), Some(facility.solar_system_id)))
-    .unwrap_or((None, None))
-}
-
-/// The buildable inputs of `type_id` (materials that have their own recipe), in recipe order. A material
-/// without a recipe is raw and cannot be built.
-fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
-  let Some(recipe) = data.recipe(type_id) else {
-    return Vec::new();
-  };
-  recipe
-    .materials
-    .iter()
-    .map(|material| material.type_id)
-    .filter(|&mat| data.recipe(mat).is_some())
-    .collect()
 }
 
 /// The derived build plan, memoized once per plan-affecting change instead of recomputed every render.
@@ -1400,6 +1342,64 @@ pub struct SavedPlanData {
   pub id: i64,
   pub name: String,
   pub tree: PlanTree,
+}
+
+/// Fresh, default settings for `type_id`: reactions zero out ME/TE, manufacturing inherits an owned
+/// blueprint's ME/TE or the planner defaults, and the facility seeds from the configured default install
+/// structure for the type's own activity (manufacturing vs reaction). Used for any type the user has not yet
+/// configured — root product or sub-build alike.
+fn fresh_settings(data: &PlannerData, defaults: &FacilityDefaults, type_id: i64) -> TypeSettings {
+  let is_reaction = data.recipe(type_id).is_some_and(|recipe| recipe.is_reaction);
+  let owned = data.owned.get(&type_id);
+  let (me, te) = if is_reaction {
+    (0, 0)
+  } else {
+    (
+      owned.map(|bp| bp.material_efficiency).unwrap_or(DEFAULT_ME),
+      owned.map(|bp| bp.time_efficiency).unwrap_or(DEFAULT_TE),
+    )
+  };
+  let (facility_structure, facility_system) = default_facility_for(data, defaults, is_reaction);
+  TypeSettings {
+    facility_structure,
+    facility_system,
+    me,
+    te,
+  }
+}
+
+/// Resolves the configured default install structure for an activity to `(structure id, solar system id)`,
+/// when that facility is present in current data. Returns `(None, None)` — preserving the cheapest-index
+/// fallback — when no default is configured or the configured facility is gone (e.g. a pinned structure that
+/// is no longer accessible), so the structure id and system stay consistent.
+fn default_facility_for(
+  data: &PlannerData,
+  defaults: &FacilityDefaults,
+  is_reaction: bool,
+) -> (Option<i64>, Option<i64>) {
+  let Some(facility_id) = defaults.for_activity(is_reaction) else {
+    return (None, None);
+  };
+  data
+    .facilities
+    .iter()
+    .find(|facility| facility.id == facility_id)
+    .map(|facility| (Some(facility.id), Some(facility.solar_system_id)))
+    .unwrap_or((None, None))
+}
+
+/// The buildable inputs of `type_id` (materials that have their own recipe), in recipe order. A material
+/// without a recipe is raw and cannot be built.
+fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
+  let Some(recipe) = data.recipe(type_id) else {
+    return Vec::new();
+  };
+  recipe
+    .materials
+    .iter()
+    .map(|material| material.type_id)
+    .filter(|&mat| data.recipe(mat).is_some())
+    .collect()
 }
 
 /// Returns total build time in seconds. `te` is a 0–20 integer (EVE TE %, applied as

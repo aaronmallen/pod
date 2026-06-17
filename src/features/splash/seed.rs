@@ -23,9 +23,16 @@ use crate::{
 const SEED_FORMAT_REVISION: u32 = 6;
 
 const SKILL_CATEGORY_ID: i64 = 16;
+
 const SKILL_RANK_ATTR_ID: i32 = 275;
+
 const SKILL_PRIMARY_ATTR_ID: i32 = 180;
+
 const SKILL_SECONDARY_ATTR_ID: i32 = 181;
+
+/// Number of bind parameters SQLite allows in a single prepared statement. Both blueprint tables bind
+/// four columns per row, so a chunk caps at `SQLITE_MAX_BIND_PARAMS / 4` rows.
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
 #[derive(Clone, Debug)]
 pub enum Progress {
@@ -36,7 +43,37 @@ pub enum Progress {
   Step(String),
 }
 
-type Tx = iced::futures::channel::mpsc::Sender<Progress>;
+/// One `(blueprint_type_id, activity_id, time, max_production_limit)` row for `blueprint_activity_meta`.
+/// `time` is base seconds per run; `max_production_limit` is the per-job run cap (0 when the SDE omits it).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BlueprintActivityMetaRow {
+  activity_id: i64,
+  blueprint_type_id: i64,
+  max_production_limit: i64,
+  time: i64,
+}
+
+/// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
+/// materials table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BlueprintActivityRow {
+  activity_id: i64,
+  blueprint_type_id: i64,
+  quantity: i64,
+  type_id: i64,
+}
+
+#[derive(Deserialize)]
+struct CertSkillLevel {
+  #[serde(default)]
+  advanced: i32,
+  #[serde(default)]
+  basic: i32,
+  #[serde(default)]
+  elite: i32,
+  #[serde(default)]
+  improved: i32,
+}
 
 #[derive(Clone, Deserialize)]
 struct LocalizedString {
@@ -50,6 +87,74 @@ impl LocalizedString {
 }
 
 #[derive(Deserialize)]
+struct SdeAgentEntry {
+  #[serde(rename = "agentTypeID")]
+  agent_type_id: Option<i64>,
+  #[serde(rename = "divisionID")]
+  division_id: Option<i64>,
+  #[serde(rename = "isLocator", default)]
+  is_locator: bool,
+  level: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeAgentSkillEntry {
+  #[serde(rename = "typeID")]
+  type_id: i64,
+}
+
+#[derive(Deserialize)]
+struct SdeAgentTypeEntry {
+  name: String,
+}
+
+#[derive(Deserialize)]
+struct SdeBloodlineEntry {
+  #[serde(default)]
+  charisma: i32,
+  #[serde(rename = "corporationID", default)]
+  corporation_id: i32,
+  #[serde(default)]
+  intelligence: i32,
+  #[serde(default)]
+  memory: i32,
+  name: Option<LocalizedString>,
+  #[serde(default)]
+  perception: i32,
+  #[serde(rename = "raceID", default)]
+  race_id: i32,
+  #[serde(rename = "shipTypeID", default)]
+  ship_type_id: i32,
+  #[serde(default)]
+  willpower: i32,
+}
+
+#[derive(Default, Deserialize)]
+struct SdeBlueprintActivity {
+  #[serde(default)]
+  materials: Vec<SdeBlueprintQuantity>,
+  #[serde(default, rename = "maxProductionLimit")]
+  max_production_limit: Option<i64>,
+  #[serde(default)]
+  products: Vec<SdeBlueprintQuantity>,
+  #[serde(default)]
+  time: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeBlueprintEntry {
+  #[serde(default)]
+  activities: HashMap<String, SdeBlueprintActivity>,
+}
+
+#[derive(Deserialize)]
+struct SdeBlueprintQuantity {
+  quantity: i64,
+  #[serde(rename = "typeID")]
+  type_id: i64,
+}
+
+#[derive(Deserialize)]
 struct SdeCategoryEntry {
   #[serde(rename = "iconID")]
   icon_id: Option<i64>,
@@ -59,60 +164,22 @@ struct SdeCategoryEntry {
 }
 
 #[derive(Deserialize)]
-struct SdeGroupEntry {
-  #[serde(rename = "categoryID")]
-  category_id: i64,
-  #[serde(rename = "iconID")]
-  icon_id: Option<i64>,
+struct SdeCertEntry {
+  #[serde(default)]
+  description: Option<LocalizedString>,
+  #[serde(default)]
+  grade: Option<i32>,
   name: LocalizedString,
-  #[serde(default = "default_true")]
-  published: bool,
+  #[serde(rename = "skillTypes", default)]
+  skill_types: HashMap<i32, CertSkillLevel>,
 }
 
 #[derive(Deserialize)]
-struct SdeMarketGroupEntry {
-  description: Option<LocalizedString>,
-  #[serde(rename = "hasTypes")]
-  has_types: Option<bool>,
-  #[serde(rename = "iconID")]
-  icon_id: Option<i64>,
+struct SdeConstellationEntry {
   name: Option<LocalizedString>,
-  #[serde(rename = "parentGroupID")]
-  parent_group_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct SdeTypeEntry {
-  capacity: Option<f64>,
-  description: Option<LocalizedString>,
-  #[serde(rename = "groupID")]
-  group_id: i64,
-  #[serde(rename = "iconID")]
-  icon_id: Option<i64>,
-  #[serde(rename = "marketGroupID")]
-  market_group_id: Option<i64>,
-  name: LocalizedString,
-  #[serde(rename = "packagedVolume")]
-  packaged_volume: Option<f64>,
-  #[serde(rename = "portionSize")]
-  portion_size: Option<i32>,
-  #[serde(default = "default_true")]
-  published: bool,
-  radius: Option<f64>,
-  volume: Option<f64>,
-}
-
-#[derive(Default, Deserialize)]
-struct SdeTypeDogmaEntry {
-  #[serde(rename = "dogmaAttributes", default)]
-  dogma_attributes: Vec<SdeDogmaAttribute>,
-}
-
-#[derive(Deserialize)]
-struct SdeDogmaAttribute {
-  #[serde(rename = "attributeID")]
-  attribute_id: i32,
-  value: f64,
+  position: SdePosition,
+  #[serde(rename = "regionID")]
+  region_id: i64,
 }
 
 #[derive(Deserialize)]
@@ -137,11 +204,10 @@ struct SdeDogmaAttrEntry {
 }
 
 #[derive(Deserialize)]
-struct SdeDynamicEntry {
-  #[serde(rename = "attributeIDs", default)]
-  attribute_ids: HashMap<i32, SdeDynamicAttrBounds>,
-  #[serde(rename = "inputOutputMapping", default)]
-  input_output_mapping: Vec<SdeDynamicMapping>,
+struct SdeDogmaAttribute {
+  #[serde(rename = "attributeID")]
+  attribute_id: i32,
+  value: f64,
 }
 
 #[derive(Deserialize)]
@@ -151,37 +217,17 @@ struct SdeDynamicAttrBounds {
 }
 
 #[derive(Deserialize)]
+struct SdeDynamicEntry {
+  #[serde(rename = "attributeIDs", default)]
+  attribute_ids: HashMap<i32, SdeDynamicAttrBounds>,
+  #[serde(rename = "inputOutputMapping", default)]
+  input_output_mapping: Vec<SdeDynamicMapping>,
+}
+
+#[derive(Deserialize)]
 struct SdeDynamicMapping {
   #[serde(rename = "resultingType")]
   resulting_type: i32,
-}
-
-#[derive(Deserialize)]
-struct SdeRaceEntry {
-  #[serde(rename = "allianceID")]
-  alliance_id: Option<i32>,
-  name: Option<LocalizedString>,
-}
-
-#[derive(Deserialize)]
-struct SdeBloodlineEntry {
-  #[serde(default)]
-  charisma: i32,
-  #[serde(rename = "corporationID", default)]
-  corporation_id: i32,
-  #[serde(default)]
-  intelligence: i32,
-  #[serde(default)]
-  memory: i32,
-  name: Option<LocalizedString>,
-  #[serde(default)]
-  perception: i32,
-  #[serde(rename = "raceID", default)]
-  race_id: i32,
-  #[serde(rename = "shipTypeID", default)]
-  ship_type_id: i32,
-  #[serde(default)]
-  willpower: i32,
 }
 
 #[derive(Deserialize)]
@@ -196,31 +242,60 @@ struct SdeFactionEntry {
 }
 
 #[derive(Deserialize)]
-struct CertSkillLevel {
-  #[serde(default)]
-  advanced: i32,
-  #[serde(default)]
-  basic: i32,
-  #[serde(default)]
-  elite: i32,
-  #[serde(default)]
-  improved: i32,
-}
-
-#[derive(Deserialize)]
-struct SdeCertEntry {
-  #[serde(default)]
-  description: Option<LocalizedString>,
-  #[serde(default)]
-  grade: Option<i32>,
+struct SdeGroupEntry {
+  #[serde(rename = "categoryID")]
+  category_id: i64,
+  #[serde(rename = "iconID")]
+  icon_id: Option<i64>,
   name: LocalizedString,
-  #[serde(rename = "skillTypes", default)]
-  skill_types: HashMap<i32, CertSkillLevel>,
+  #[serde(default = "default_true")]
+  published: bool,
 }
 
 #[derive(Deserialize)]
-struct SdeAgentTypeEntry {
-  name: String,
+struct SdeMapMoonEntry {
+  #[serde(rename = "orbitID")]
+  orbit_id: i64,
+  #[serde(rename = "orbitIndex")]
+  orbit_index: i32,
+  position: Option<SdePosition>,
+  radius: Option<f64>,
+  #[serde(rename = "solarSystemID")]
+  solar_system_id: Option<i64>,
+  #[serde(rename = "typeID")]
+  type_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeMapPlanetEntry {
+  #[serde(rename = "celestialIndex")]
+  celestial_index: i32,
+  #[serde(rename = "solarSystemID")]
+  solar_system_id: i64,
+}
+
+#[derive(Deserialize)]
+struct SdeMarketGroupEntry {
+  description: Option<LocalizedString>,
+  #[serde(rename = "hasTypes")]
+  has_types: Option<bool>,
+  #[serde(rename = "iconID")]
+  icon_id: Option<i64>,
+  name: Option<LocalizedString>,
+  #[serde(rename = "parentGroupID")]
+  parent_group_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SdeNpcCharacterEntry {
+  agent: Option<SdeAgentEntry>,
+  #[serde(rename = "corporationID")]
+  corporation_id: Option<i64>,
+  #[serde(rename = "locationID")]
+  location_id: Option<i64>,
+  name: Option<LocalizedString>,
+  #[serde(default)]
+  skills: Vec<SdeAgentSkillEntry>,
 }
 
 #[derive(Deserialize)]
@@ -237,40 +312,6 @@ struct SdeNpcCorporationEntry {
   station_id: Option<i64>,
   #[serde(rename = "tickerName")]
   ticker_name: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SdeRegionEntry {
-  name: Option<LocalizedString>,
-}
-
-#[derive(Deserialize)]
-struct SdeConstellationEntry {
-  name: Option<LocalizedString>,
-  position: SdePosition,
-  #[serde(rename = "regionID")]
-  region_id: i64,
-}
-
-#[derive(Deserialize)]
-struct SdeSolarSystemEntry {
-  #[serde(rename = "constellationID")]
-  constellation_id: i64,
-  name: Option<LocalizedString>,
-  position: SdePosition,
-  #[serde(rename = "securityClass")]
-  security_class: Option<String>,
-  #[serde(rename = "securityStatus")]
-  security_status: f64,
-  #[serde(rename = "starID")]
-  star_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct SdePosition {
-  x: f64,
-  y: f64,
-  z: f64,
 }
 
 #[derive(Deserialize)]
@@ -295,106 +336,72 @@ struct SdeNpcStationEntry {
 }
 
 #[derive(Deserialize)]
+struct SdePosition {
+  x: f64,
+  y: f64,
+  z: f64,
+}
+
+#[derive(Deserialize)]
+struct SdeRaceEntry {
+  #[serde(rename = "allianceID")]
+  alliance_id: Option<i32>,
+  name: Option<LocalizedString>,
+}
+
+#[derive(Deserialize)]
+struct SdeRegionEntry {
+  name: Option<LocalizedString>,
+}
+
+#[derive(Deserialize)]
+struct SdeSolarSystemEntry {
+  #[serde(rename = "constellationID")]
+  constellation_id: i64,
+  name: Option<LocalizedString>,
+  position: SdePosition,
+  #[serde(rename = "securityClass")]
+  security_class: Option<String>,
+  #[serde(rename = "securityStatus")]
+  security_status: f64,
+  #[serde(rename = "starID")]
+  star_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
 struct SdeStationOperationEntry {
   #[serde(rename = "operationName")]
   operation_name: Option<LocalizedString>,
 }
 
-#[derive(Deserialize)]
-struct SdeMapPlanetEntry {
-  #[serde(rename = "celestialIndex")]
-  celestial_index: i32,
-  #[serde(rename = "solarSystemID")]
-  solar_system_id: i64,
-}
-
-#[derive(Deserialize)]
-struct SdeMapMoonEntry {
-  #[serde(rename = "orbitID")]
-  orbit_id: i64,
-  #[serde(rename = "orbitIndex")]
-  orbit_index: i32,
-  position: Option<SdePosition>,
-  radius: Option<f64>,
-  #[serde(rename = "solarSystemID")]
-  solar_system_id: Option<i64>,
-  #[serde(rename = "typeID")]
-  type_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct SdeNpcCharacterEntry {
-  agent: Option<SdeAgentEntry>,
-  #[serde(rename = "corporationID")]
-  corporation_id: Option<i64>,
-  #[serde(rename = "locationID")]
-  location_id: Option<i64>,
-  name: Option<LocalizedString>,
-  #[serde(default)]
-  skills: Vec<SdeAgentSkillEntry>,
-}
-
-#[derive(Deserialize)]
-struct SdeAgentEntry {
-  #[serde(rename = "agentTypeID")]
-  agent_type_id: Option<i64>,
-  #[serde(rename = "divisionID")]
-  division_id: Option<i64>,
-  #[serde(rename = "isLocator", default)]
-  is_locator: bool,
-  level: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct SdeAgentSkillEntry {
-  #[serde(rename = "typeID")]
-  type_id: i64,
-}
-
-#[derive(Deserialize)]
-struct SdeBlueprintEntry {
-  #[serde(default)]
-  activities: HashMap<String, SdeBlueprintActivity>,
-}
-
 #[derive(Default, Deserialize)]
-struct SdeBlueprintActivity {
-  #[serde(default)]
-  materials: Vec<SdeBlueprintQuantity>,
-  #[serde(default, rename = "maxProductionLimit")]
-  max_production_limit: Option<i64>,
-  #[serde(default)]
-  products: Vec<SdeBlueprintQuantity>,
-  #[serde(default)]
-  time: Option<i64>,
+struct SdeTypeDogmaEntry {
+  #[serde(rename = "dogmaAttributes", default)]
+  dogma_attributes: Vec<SdeDogmaAttribute>,
 }
 
 #[derive(Deserialize)]
-struct SdeBlueprintQuantity {
-  quantity: i64,
-  #[serde(rename = "typeID")]
-  type_id: i64,
+struct SdeTypeEntry {
+  capacity: Option<f64>,
+  description: Option<LocalizedString>,
+  #[serde(rename = "groupID")]
+  group_id: i64,
+  #[serde(rename = "iconID")]
+  icon_id: Option<i64>,
+  #[serde(rename = "marketGroupID")]
+  market_group_id: Option<i64>,
+  name: LocalizedString,
+  #[serde(rename = "packagedVolume")]
+  packaged_volume: Option<f64>,
+  #[serde(rename = "portionSize")]
+  portion_size: Option<i32>,
+  #[serde(default = "default_true")]
+  published: bool,
+  radius: Option<f64>,
+  volume: Option<f64>,
 }
 
-/// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
-/// materials table.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BlueprintActivityRow {
-  activity_id: i64,
-  blueprint_type_id: i64,
-  quantity: i64,
-  type_id: i64,
-}
-
-/// One `(blueprint_type_id, activity_id, time, max_production_limit)` row for `blueprint_activity_meta`.
-/// `time` is base seconds per run; `max_production_limit` is the per-job run cap (0 when the SDE omits it).
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BlueprintActivityMetaRow {
-  activity_id: i64,
-  blueprint_type_id: i64,
-  max_production_limit: i64,
-  time: i64,
-}
+type Tx = iced::futures::channel::mpsc::Sender<Progress>;
 
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
   let (tx, rx) = iced::futures::channel::mpsc::channel(64);
@@ -1131,10 +1138,6 @@ async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
     .await
     .map_err(|e| e.to_string())
 }
-
-/// Number of bind parameters SQLite allows in a single prepared statement. Both blueprint tables bind
-/// four columns per row, so a chunk caps at `SQLITE_MAX_BIND_PARAMS / 4` rows.
-const SQLITE_MAX_BIND_PARAMS: usize = 999;
 
 /// Maps an SDE blueprint activity name to its EVE activity id. Unknown activities are skipped so future
 /// SDE additions never abort a seed.

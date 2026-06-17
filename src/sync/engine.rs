@@ -39,68 +39,62 @@ use crate::{
 };
 
 const DONE_RETENTION: Duration = Duration::from_secs(60 * 60);
+
 const DRAIN_INTERVAL: Duration = Duration::from_secs(5);
+
 const EVENT_BUFFER: usize = 64;
+
 const GLOBAL_SUBJECT: Subject = Subject::Character(0);
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+
 const MAX_CONCURRENT_JOBS: usize = 4;
+
 const NOT_READY_RETRY: Duration = Duration::from_secs(3);
+
 const PENDING_RETRY: Duration = Duration::from_secs(120);
+
 const RESPAWN_BACKOFF_BASE: Duration = Duration::from_secs(1);
+
 const RESPAWN_BACKOFF_CAP: Duration = Duration::from_secs(30);
+
 const RESPAWN_BREAKER_THRESHOLD: u32 = 5;
+
 const RESPAWN_BREAKER_WINDOW: Duration = Duration::from_secs(60);
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-pub fn spawn(
-  db: Database,
-  housekeeping: Database,
-  esi: Arc<esi::Client>,
-  sso: Arc<eve_sso::Client>,
-  image: Arc<eve_image::Client>,
-  image_store: images::Store,
-  features: FeatureFlags,
-) -> (Handle, mpsc::Receiver<Event>) {
-  spawn_with_registry(db, housekeeping, esi, sso, image, image_store, features, || {
-    super::mail_handlers::registry()
-      .extend(super::calendar_handlers::registry())
-      .extend(super::contact_handlers::registry())
-  })
+#[derive(Default)]
+struct Breaker {
+  attempts: u32,
+  consecutive: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn spawn_with_registry<O>(
-  db: Database,
-  housekeeping: Database,
-  esi: Arc<esi::Client>,
-  sso: Arc<eve_sso::Client>,
-  image: Arc<eve_image::Client>,
-  image_store: images::Store,
-  features: FeatureFlags,
-  outbox: O,
-) -> (Handle, mpsc::Receiver<Event>)
-where
-  O: Fn() -> Registry + Send + Sync + 'static,
-{
-  let (command_tx, command_rx) = mpsc::unbounded_channel();
-  let (event_tx, event_rx) = mpsc::channel(EVENT_BUFFER);
-  let (restart_tx, restart_rx) = mpsc::unbounded_channel();
-  let supervisor = Supervisor {
-    command_rx,
-    db,
-    esi,
-    events: event_tx,
-    features,
-    housekeeping,
-    image,
-    image_store,
-    outbox,
-    restart_rx,
-    sso,
-  };
-  tokio::spawn(supervisor.supervise());
-  (Handle::new(command_tx, restart_tx), event_rx)
+impl Breaker {
+  fn record_restart(&mut self, lived: Duration) -> Option<RestartPlan> {
+    if lived >= RESPAWN_BREAKER_WINDOW {
+      self.consecutive = 0;
+    }
+    self.consecutive += 1;
+    if self.consecutive >= RESPAWN_BREAKER_THRESHOLD {
+      return None;
+    }
+    self.attempts += 1;
+    Some(RestartPlan {
+      attempt: self.attempts,
+      backoff: backoff_for(self.consecutive),
+    })
+  }
+
+  fn reset(&mut self) {
+    self.attempts = 0;
+    self.consecutive = 0;
+  }
+}
+
+enum Disposition {
+  Restart,
+  Stop { deliberate: bool },
 }
 
 struct Engine {
@@ -521,39 +515,6 @@ impl ExitReason {
   }
 }
 
-#[derive(Default)]
-struct Breaker {
-  attempts: u32,
-  consecutive: u32,
-}
-
-impl Breaker {
-  fn record_restart(&mut self, lived: Duration) -> Option<RestartPlan> {
-    if lived >= RESPAWN_BREAKER_WINDOW {
-      self.consecutive = 0;
-    }
-    self.consecutive += 1;
-    if self.consecutive >= RESPAWN_BREAKER_THRESHOLD {
-      return None;
-    }
-    self.attempts += 1;
-    Some(RestartPlan {
-      attempt: self.attempts,
-      backoff: backoff_for(self.consecutive),
-    })
-  }
-
-  fn reset(&mut self) {
-    self.attempts = 0;
-    self.consecutive = 0;
-  }
-}
-
-enum Disposition {
-  Restart,
-  Stop { deliberate: bool },
-}
-
 struct RestartPlan {
   attempt: u32,
   backoff: Duration,
@@ -614,6 +575,56 @@ where
     })
     .await;
   }
+}
+
+pub fn spawn(
+  db: Database,
+  housekeeping: Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  image: Arc<eve_image::Client>,
+  image_store: images::Store,
+  features: FeatureFlags,
+) -> (Handle, mpsc::Receiver<Event>) {
+  spawn_with_registry(db, housekeeping, esi, sso, image, image_store, features, || {
+    super::mail_handlers::registry()
+      .extend(super::calendar_handlers::registry())
+      .extend(super::contact_handlers::registry())
+  })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_with_registry<O>(
+  db: Database,
+  housekeeping: Database,
+  esi: Arc<esi::Client>,
+  sso: Arc<eve_sso::Client>,
+  image: Arc<eve_image::Client>,
+  image_store: images::Store,
+  features: FeatureFlags,
+  outbox: O,
+) -> (Handle, mpsc::Receiver<Event>)
+where
+  O: Fn() -> Registry + Send + Sync + 'static,
+{
+  let (command_tx, command_rx) = mpsc::unbounded_channel();
+  let (event_tx, event_rx) = mpsc::channel(EVENT_BUFFER);
+  let (restart_tx, restart_rx) = mpsc::unbounded_channel();
+  let supervisor = Supervisor {
+    command_rx,
+    db,
+    esi,
+    events: event_tx,
+    features,
+    housekeeping,
+    image,
+    image_store,
+    outbox,
+    restart_rx,
+    sso,
+  };
+  tokio::spawn(supervisor.supervise());
+  (Handle::new(command_tx, restart_tx), event_rx)
 }
 
 fn backoff_for(consecutive: u32) -> Duration {

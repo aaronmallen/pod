@@ -45,16 +45,66 @@ use crate::{
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "standings-search-input";
 
 const CONTACTS_PAGE_SIZE: i64 = 100;
+
 const HEADER_SIDE_PADDING: f32 = 28.0;
+
 const KILLLOG_PAGE_SIZE: i64 = 100;
+
 const KILLLOG_SHIP_ICON_SIZE: Size = Size::S64;
+
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
+
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
+
 const SCROLL_THRESHOLD: f32 = 0.85;
+
 const SEARCH_DEBOUNCE_MS: u64 = 200;
+
 const STANDINGS_PAGE_SIZE: i64 = 100;
+
 const STANDINGS_HELP_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + TAB_STRIP_OVERLAY_OFFSET;
+
 const TAB_STRIP_OVERLAY_OFFSET: f32 = 96.0;
+
+/// One keyset page of render-ready contact rows plus the per-character label lookup. The labels travel with the
+/// first page so the address-book notes can resolve label ids without a second query per page.
+#[derive(Clone, Debug)]
+pub struct ContactsPage {
+  cursor: Option<ContactCursor>,
+  has_more: bool,
+  labels: Vec<CharacterContactLabel>,
+  rows: Vec<ContactRow>,
+}
+
+impl ContactsPage {
+  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
+  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
+  #[cfg(test)]
+  pub(in crate::features::character_detail) fn for_test(
+    rows: Vec<ContactRow>,
+    labels: Vec<CharacterContactLabel>,
+    has_more: bool,
+  ) -> Self {
+    ContactsPage {
+      cursor: None,
+      has_more,
+      labels,
+      rows,
+    }
+  }
+
+  pub(super) fn has_more(&self) -> bool {
+    self.has_more
+  }
+
+  pub(super) fn labels(&self) -> &[CharacterContactLabel] {
+    &self.labels
+  }
+
+  pub(super) fn rows(&self) -> &[ContactRow] {
+    &self.rows
+  }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DetailDataType {
@@ -113,44 +163,11 @@ pub struct HeadStats {
   pub total_sp: Option<i64>,
 }
 
-/// One keyset page of render-ready contact rows plus the per-character label lookup. The labels travel with the
-/// first page so the address-book notes can resolve label ids without a second query per page.
 #[derive(Clone, Debug)]
-pub struct ContactsPage {
-  cursor: Option<ContactCursor>,
-  has_more: bool,
-  labels: Vec<CharacterContactLabel>,
-  rows: Vec<ContactRow>,
-}
-
-impl ContactsPage {
-  /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
-  /// layout rather than the keyset cursor (so the cursor is derived as `None`).
-  #[cfg(test)]
-  pub(in crate::features::character_detail) fn for_test(
-    rows: Vec<ContactRow>,
-    labels: Vec<CharacterContactLabel>,
-    has_more: bool,
-  ) -> Self {
-    ContactsPage {
-      cursor: None,
-      has_more,
-      labels,
-      rows,
-    }
-  }
-
-  pub(super) fn has_more(&self) -> bool {
-    self.has_more
-  }
-
-  pub(super) fn labels(&self) -> &[CharacterContactLabel] {
-    &self.labels
-  }
-
-  pub(super) fn rows(&self) -> &[ContactRow] {
-    &self.rows
-  }
+pub enum LoadState<T> {
+  Error(String),
+  Loaded(T),
+  Loading,
 }
 
 #[derive(Clone, Debug)]
@@ -162,13 +179,6 @@ pub struct Loaded {
   pub killlog: LoadState<Vec<KillLogEntry>>,
   pub notifications: LoadState<Vec<CharacterNotification>>,
   pub roster: Vec<PickerPilot>,
-}
-
-#[derive(Clone, Debug)]
-pub enum LoadState<T> {
-  Error(String),
-  Loaded(T),
-  Loading,
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +281,28 @@ pub enum Reloaded {
 }
 
 #[derive(Clone, Debug)]
+pub struct StandingsAgentsPage {
+  generation: u64,
+  next_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StandingsCatalog {
+  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
+  agent_cursor: Option<(String, i64)>,
+  rows: Vec<StandingsRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StandingsResult {
+  /// Snapshot of `State::standings_generation` at dispatch; results whose generation no longer matches are stale
+  /// (superseded by a newer debounced search) and discarded.
+  generation: u64,
+  result: Result<StandingsCatalog, String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct StandingsRow {
   pub accessible: Option<bool>,
   pub agent_type: Option<String>,
@@ -285,28 +317,6 @@ pub struct StandingsRow {
   pub raw: f64,
   pub region: Option<String>,
   pub system: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct StandingsAgentsPage {
-  generation: u64,
-  next_cursor: Option<(String, i64)>,
-  rows: Vec<StandingsRow>,
-}
-
-#[derive(Clone, Debug)]
-pub struct StandingsResult {
-  /// Snapshot of `State::standings_generation` at dispatch; results whose generation no longer matches are stale
-  /// (superseded by a newer debounced search) and discarded.
-  generation: u64,
-  result: Result<StandingsCatalog, String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct StandingsCatalog {
-  /// Keyset cursor for the next agent page, or `None` when the first agent page exhausted them.
-  agent_cursor: Option<(String, i64)>,
-  rows: Vec<StandingsRow>,
 }
 
 #[derive(Debug)]
@@ -532,6 +542,45 @@ impl State {
 
   pub(super) fn standings_query(&self) -> &str {
     &self.standings_query
+  }
+}
+
+/// JSON shape serialized into the outbox payload (nested under `target`/`previous` by the enqueue fns) and consumed by
+/// the sync contact handlers. The field set is a contract: `label_ids` is a flat `Vec<i64>` and `is_blocked` is absent
+/// (writes never block).
+#[derive(Clone, serde::Serialize)]
+struct ContactPayload {
+  contact_id: i64,
+  contact_name: String,
+  contact_type: String,
+  label_ids: Vec<i64>,
+  standing: f64,
+  watched: bool,
+}
+
+impl ContactPayload {
+  fn from_contact(contact: &CharacterContact) -> Self {
+    ContactPayload {
+      contact_id: contact.contact_id(),
+      contact_name: contact.contact_name().clone(),
+      contact_type: contact.contact_type().clone(),
+      label_ids: serde_json::from_str(contact.label_ids()).unwrap_or_default(),
+      standing: contact.standing(),
+      watched: contact.is_watched(),
+    }
+  }
+
+  fn into_contact(self, character_id: i64) -> Result<CharacterContact, String> {
+    Ok(CharacterContact {
+      character_id,
+      contact_id: self.contact_id,
+      contact_name: self.contact_name,
+      contact_type: self.contact_type,
+      is_blocked: false,
+      is_watched: self.watched,
+      label_ids: serde_json::to_string(&self.label_ids).map_err(|error| error.to_string())?,
+      standing: self.standing,
+    })
   }
 }
 
@@ -1046,45 +1095,6 @@ fn existing_contact(contacts: &LoadState<ContactsPage>, contact_id: i64) -> Opti
       .map(|row| &row.contact)
       .find(|contact| contact.contact_id() == contact_id),
     _ => None,
-  }
-}
-
-/// JSON shape serialized into the outbox payload (nested under `target`/`previous` by the enqueue fns) and consumed by
-/// the sync contact handlers. The field set is a contract: `label_ids` is a flat `Vec<i64>` and `is_blocked` is absent
-/// (writes never block).
-#[derive(Clone, serde::Serialize)]
-struct ContactPayload {
-  contact_id: i64,
-  contact_name: String,
-  contact_type: String,
-  label_ids: Vec<i64>,
-  standing: f64,
-  watched: bool,
-}
-
-impl ContactPayload {
-  fn from_contact(contact: &CharacterContact) -> Self {
-    ContactPayload {
-      contact_id: contact.contact_id(),
-      contact_name: contact.contact_name().clone(),
-      contact_type: contact.contact_type().clone(),
-      label_ids: serde_json::from_str(contact.label_ids()).unwrap_or_default(),
-      standing: contact.standing(),
-      watched: contact.is_watched(),
-    }
-  }
-
-  fn into_contact(self, character_id: i64) -> Result<CharacterContact, String> {
-    Ok(CharacterContact {
-      character_id,
-      contact_id: self.contact_id,
-      contact_name: self.contact_name,
-      contact_type: self.contact_type,
-      is_blocked: false,
-      is_watched: self.watched,
-      label_ids: serde_json::to_string(&self.label_ids).map_err(|error| error.to_string())?,
-      standing: self.standing,
-    })
   }
 }
 

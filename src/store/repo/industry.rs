@@ -8,10 +8,24 @@ use crate::store::{
   repo::org,
 };
 
+const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
+
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
+const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AllIndustryJobs {
   pub character_jobs: Vec<CharacterIndustryJob>,
   pub corporation_jobs: Vec<CorporationIndustryJob>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanTree {
+  pub product_type_id: i64,
+  pub root_facility_system: Option<i64>,
+  pub runs: i64,
+  pub types: Vec<PlanType>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,20 +38,6 @@ pub struct PlanType {
   pub type_id: i64,
   pub use_stock: bool,
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlanTree {
-  pub product_type_id: i64,
-  pub root_facility_system: Option<i64>,
-  pub runs: i64,
-  pub types: Vec<PlanType>,
-}
-
-const INDUSTRY_WRITE_BATCH_SIZE: usize = 500;
-
-const SQLITE_MAX_BIND_PARAMS: usize = 999;
-
-const STRUCTURE_FACILITY_ROLES: &[&str] = &["Director", "Station_Manager"];
 
 /// Returns all NPC stations, corp structures whose owning corp is authorized and whose `authorized_by` character holds
 /// Director or Station_Manager (the same roles that gate structure discovery), plus player-pinned structures (public or

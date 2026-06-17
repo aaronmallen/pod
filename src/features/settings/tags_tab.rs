@@ -17,11 +17,46 @@ use crate::{
 };
 
 const PANEL_SIDE_PADDING: f32 = 36.0;
+
 const BLURB_MAX_WIDTH: f32 = 620.0;
+
 const CREATE_WELL_MAX_WIDTH: f32 = 360.0;
+
 const DRAG_HANDLE_WIDTH: f32 = 18.0;
+
 const SWATCH_SIZE: f32 = 22.0;
+
 const DELETE_SIZE: f32 = 26.0;
+
+#[derive(Clone, Debug)]
+pub enum Message {
+  AddTag,
+  ClearColor(i64),
+  ClosePicker,
+  ColorHexChanged(String),
+  ColorHexSubmitted,
+  CursorMoved(Point),
+  DropDragged,
+  #[allow(dead_code)]
+  EditCancelled,
+  EditCommitted,
+  EditDraftChanged(String),
+  FilterChanged(String),
+  HoverTagSlot(usize),
+  LeaveTagSlot(usize),
+  Loaded(Result<Vec<Tag>, String>),
+  NewTagChanged(String),
+  PickUpTag(i64),
+  Recolor {
+    hex: String,
+    tag_id: i64,
+  },
+  RemoveTag(i64),
+  Saved(Result<(), String>),
+  SortSelected(SortMode),
+  StartEditing(i64),
+  ToggleColorPicker(i64),
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SortMode {
@@ -41,20 +76,6 @@ impl SortMode {
       SortMode::Color => "Color",
     }
   }
-}
-
-#[derive(Clone, Debug)]
-struct Picker {
-  anchor: Point,
-  hex_draft: String,
-  hex_invalid: bool,
-  tag_id: i64,
-}
-
-#[derive(Clone, Debug)]
-struct Editing {
-  draft: String,
-  tag_id: i64,
 }
 
 #[derive(Debug, Default)]
@@ -100,41 +121,25 @@ impl State {
   }
 }
 
+#[derive(Clone, Debug)]
+struct Editing {
+  draft: String,
+  tag_id: i64,
+}
+
+#[derive(Clone, Debug)]
+struct Picker {
+  anchor: Point,
+  hex_draft: String,
+  hex_invalid: bool,
+  tag_id: i64,
+}
+
 fn color_sort_key(tag: &Tag) -> (bool, String, String) {
   match tag.color() {
     Some(hex) => (false, hex.to_uppercase(), tag.name().to_lowercase()),
     None => (true, String::new(), tag.name().to_lowercase()),
   }
-}
-
-#[derive(Clone, Debug)]
-pub enum Message {
-  AddTag,
-  ClearColor(i64),
-  ClosePicker,
-  ColorHexChanged(String),
-  ColorHexSubmitted,
-  CursorMoved(Point),
-  DropDragged,
-  #[allow(dead_code)]
-  EditCancelled,
-  EditCommitted,
-  EditDraftChanged(String),
-  FilterChanged(String),
-  HoverTagSlot(usize),
-  LeaveTagSlot(usize),
-  Loaded(Result<Vec<Tag>, String>),
-  NewTagChanged(String),
-  PickUpTag(i64),
-  Recolor {
-    hex: String,
-    tag_id: i64,
-  },
-  RemoveTag(i64),
-  Saved(Result<(), String>),
-  SortSelected(SortMode),
-  StartEditing(i64),
-  ToggleColorPicker(i64),
 }
 
 pub fn load(db: &Database) -> iced::Task<Message> {

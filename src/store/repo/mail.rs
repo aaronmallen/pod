@@ -12,6 +12,42 @@ use crate::store::{
   },
 };
 
+/// The visible-header column list, aliased to `m` (the `character_mail` table).
+const VISIBLE_HEADER_COLUMNS: &str = "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, \
+  m.important, m.from_corp, m.from_system, m.mail_id, m.subject, m.timestamp FROM character_mail m ";
+
+/// A keyset cursor into the visible-mail listing, ordered `(timestamp DESC, mail_id DESC)`.
+///
+/// Pagination seeks strictly past the last row of the previous page rather than
+/// using `OFFSET`, so inserts/deletes between page loads cannot duplicate or skip
+/// rows. Build one from the last row of a loaded page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MailCursor {
+  pub mail_id: i64,
+  pub timestamp: String,
+}
+
+impl MailCursor {
+  /// Cursor at the `(timestamp, mail_id)` position of an already-loaded row.
+  ///
+  /// The next page seeks strictly past this position, so pass the last row of the
+  /// page just loaded.
+  pub fn new(timestamp: String, mail_id: i64) -> Self {
+    Self {
+      mail_id,
+      timestamp,
+    }
+  }
+
+  /// Cursor pointing just before `header`'s position in the listing.
+  pub fn after(header: &CharacterMail) -> Self {
+    Self {
+      mail_id: header.mail_id,
+      timestamp: header.timestamp.clone(),
+    }
+  }
+}
+
 pub async fn upsert_complete(
   db: &Database,
   header: &CharacterMail,
@@ -666,42 +702,6 @@ pub async fn visible_headers_for_label(
   .await?;
   Ok(rows)
 }
-
-/// A keyset cursor into the visible-mail listing, ordered `(timestamp DESC, mail_id DESC)`.
-///
-/// Pagination seeks strictly past the last row of the previous page rather than
-/// using `OFFSET`, so inserts/deletes between page loads cannot duplicate or skip
-/// rows. Build one from the last row of a loaded page.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MailCursor {
-  pub mail_id: i64,
-  pub timestamp: String,
-}
-
-impl MailCursor {
-  /// Cursor at the `(timestamp, mail_id)` position of an already-loaded row.
-  ///
-  /// The next page seeks strictly past this position, so pass the last row of the
-  /// page just loaded.
-  pub fn new(timestamp: String, mail_id: i64) -> Self {
-    Self {
-      mail_id,
-      timestamp,
-    }
-  }
-
-  /// Cursor pointing just before `header`'s position in the listing.
-  pub fn after(header: &CharacterMail) -> Self {
-    Self {
-      mail_id: header.mail_id,
-      timestamp: header.timestamp.clone(),
-    }
-  }
-}
-
-/// The visible-header column list, aliased to `m` (the `character_mail` table).
-const VISIBLE_HEADER_COLUMNS: &str = "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, \
-  m.important, m.from_corp, m.from_system, m.mail_id, m.subject, m.timestamp FROM character_mail m ";
 
 /// One bounded page of the inbox listing (visible, non-pinned), newest first.
 ///

@@ -15,6 +15,18 @@ use crate::ui::{
 
 const SIDE_PADDING: f32 = 16.0;
 const SELECT_RAIL: f32 = 2.0;
+const LABEL_DOT_RADIUS: f32 = 3.0;
+const LABEL_DOT_SIZE: f32 = 10.0;
+
+const STANDARD_FOLDER_ROWS: [(StandardFolder, &str); 7] = [
+  (StandardFolder::Inbox, "Inbox"),
+  (StandardFolder::Starred, "Starred"),
+  (StandardFolder::Snoozed, "Snoozed"),
+  (StandardFolder::Sent, "Sent"),
+  (StandardFolder::Drafts, "Drafts"),
+  (StandardFolder::Archive, "Archive"),
+  (StandardFolder::Trash, "Trash"),
+];
 
 pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
   let data = state.folder_data();
@@ -106,16 +118,6 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     .width(Length::Fill)
     .into()
 }
-
-const STANDARD_FOLDER_ROWS: [(StandardFolder, &str); 7] = [
-  (StandardFolder::Inbox, "Inbox"),
-  (StandardFolder::Starred, "Starred"),
-  (StandardFolder::Snoozed, "Snoozed"),
-  (StandardFolder::Sent, "Sent"),
-  (StandardFolder::Drafts, "Drafts"),
-  (StandardFolder::Archive, "Archive"),
-  (StandardFolder::Trash, "Trash"),
-];
 
 fn folders_section<'a>(counts: &StandardFolderCounts, selected: Folder) -> Element<'a, Message> {
   let mut column = Column::new().width(Length::Fill).spacing(1.0);
@@ -341,9 +343,6 @@ fn drag_hint<'a>() -> Element<'a, Message> {
   })
   .into()
 }
-
-const LABEL_DOT_RADIUS: f32 = 3.0;
-const LABEL_DOT_SIZE: f32 = 10.0;
 
 fn label_entry(label: &FolderLabel, over: bool) -> Element<'_, Message> {
   let fill = label

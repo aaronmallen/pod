@@ -19,43 +19,25 @@ use crate::{
 };
 
 const FIELD_GAP: f32 = 1.0;
+
 const ITEM_ICON_BOX: f32 = 22.0;
+
 const ITEM_ICON_SIZE: Size = Size::S64;
+
 const KIND_TINT: iced::Color = iced::Color {
   r: 0.482,
   g: 0.545,
   b: 0.851,
   a: 1.0,
 };
+
 const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
+
 const MODAL_MAX_WIDTH: f32 = 840.0;
+
 const PORTRAIT_BOX: f32 = 34.0;
+
 const ROUTE_RULE: f32 = 34.0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ContractKind {
-  Auction,
-  Courier,
-  ItemExchange,
-}
-
-impl ContractKind {
-  pub fn from_status(value: &str) -> Self {
-    match value {
-      "auction" => ContractKind::Auction,
-      "courier" => ContractKind::Courier,
-      _ => ContractKind::ItemExchange,
-    }
-  }
-
-  fn label(self) -> &'static str {
-    match self {
-      ContractKind::Auction => "Auction",
-      ContractKind::Courier => "Courier",
-      ContractKind::ItemExchange => "Item Exchange",
-    }
-  }
-}
 
 #[derive(Clone, Debug)]
 pub struct BidView {
@@ -99,6 +81,31 @@ impl ContractDetail {
   }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContractKind {
+  Auction,
+  Courier,
+  ItemExchange,
+}
+
+impl ContractKind {
+  pub fn from_status(value: &str) -> Self {
+    match value {
+      "auction" => ContractKind::Auction,
+      "courier" => ContractKind::Courier,
+      _ => ContractKind::ItemExchange,
+    }
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      ContractKind::Auction => "Auction",
+      ContractKind::Courier => "Courier",
+      ContractKind::ItemExchange => "Item Exchange",
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct ExpiryView {
   pub future: bool,
@@ -128,6 +135,46 @@ pub struct PartyView {
 pub struct RouteView {
   pub end: String,
   pub start: String,
+}
+
+#[derive(Clone, Debug)]
+struct BidBasis {
+  amount: f64,
+  bidder_id: i64,
+  when: String,
+}
+
+#[derive(Clone, Debug)]
+struct ContractBasis {
+  acceptor_id: Option<i64>,
+  acceptor_name: Option<String>,
+  availability: Option<String>,
+  collateral: Option<f64>,
+  contract_id: i64,
+  date_completed: Option<String>,
+  date_issued: String,
+  days_to_complete: Option<i64>,
+  end_location_id: Option<i64>,
+  for_corporation: bool,
+  issuer_corporation_id: Option<i64>,
+  issuer_id: i64,
+  issuer_name: Option<String>,
+  price: Option<f64>,
+  reward: Option<f64>,
+  start_location_id: Option<i64>,
+  status: String,
+  title: Option<String>,
+  r#type: String,
+  volume: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+struct ItemBasis {
+  included: bool,
+  quantity: i64,
+  singleton: bool,
+  type_id: i64,
+  value_isk: f64,
 }
 
 pub async fn load_for_character(db: &Database, character_id: i64, contract_id: i64) -> Option<ContractDetail> {
@@ -248,46 +295,6 @@ pub fn overlay<'a, M: Clone + 'a>(base: Element<'a, M>, detail: &'a ContractDeta
   .width(Length::Fill)
   .height(Length::Fill)
   .into()
-}
-
-#[derive(Clone, Debug)]
-struct BidBasis {
-  amount: f64,
-  bidder_id: i64,
-  when: String,
-}
-
-#[derive(Clone, Debug)]
-struct ContractBasis {
-  acceptor_id: Option<i64>,
-  acceptor_name: Option<String>,
-  availability: Option<String>,
-  collateral: Option<f64>,
-  contract_id: i64,
-  date_completed: Option<String>,
-  date_issued: String,
-  days_to_complete: Option<i64>,
-  end_location_id: Option<i64>,
-  for_corporation: bool,
-  issuer_corporation_id: Option<i64>,
-  issuer_id: i64,
-  issuer_name: Option<String>,
-  price: Option<f64>,
-  reward: Option<f64>,
-  start_location_id: Option<i64>,
-  status: String,
-  title: Option<String>,
-  r#type: String,
-  volume: Option<f64>,
-}
-
-#[derive(Clone, Debug)]
-struct ItemBasis {
-  included: bool,
-  quantity: i64,
-  singleton: bool,
-  type_id: i64,
-  value_isk: f64,
 }
 
 async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bids: Vec<BidView>) -> ContractDetail {

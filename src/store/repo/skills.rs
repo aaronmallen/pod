@@ -18,6 +18,21 @@ use crate::{
   },
 };
 
+const MODULE_CATEGORY_ID: i64 = 7;
+const SHIP_CATEGORY_ID: i64 = 6;
+const SKILL_CATEGORY_ID: i64 = 16;
+
+const PREREQ_ATTR_SLOTS: [(i32, i32); 6] = [
+  (182, 277),
+  (183, 278),
+  (184, 279),
+  (1285, 1286),
+  (1289, 1287),
+  (1290, 1288),
+];
+
+const SKILL_REQ_ATTR_SLOTS: [(i32, i32); 5] = [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)];
+
 pub async fn certificate_all(db: &Database) -> Result<Vec<Certificate>, Error> {
   let rows = sqlx::query_as::<_, Certificate>("SELECT description, grade, id, name FROM certificates ORDER BY id")
     .fetch_all(&db.0)
@@ -166,22 +181,6 @@ pub async fn upsert_skill_metadata(db: &Database, metadata: &SkillMetadata) -> R
   .await?;
   Ok(())
 }
-
-const SKILL_CATEGORY_ID: i64 = 16;
-
-const PREREQ_ATTR_SLOTS: [(i32, i32); 6] = [
-  (182, 277),
-  (183, 278),
-  (184, 279),
-  (1285, 1286),
-  (1289, 1287),
-  (1290, 1288),
-];
-
-const SHIP_CATEGORY_ID: i64 = 6;
-const MODULE_CATEGORY_ID: i64 = 7;
-
-const SKILL_REQ_ATTR_SLOTS: [(i32, i32); 5] = [(182, 277), (183, 278), (184, 279), (185, 280), (186, 281)];
 
 pub async fn skill_catalog(db: &Database) -> Result<SkillCatalog, Error> {
   let groups = sqlx::query_as::<_, (i64, String)>(

@@ -64,6 +64,30 @@ const SEARCH_SELECT: &str = "\
       (SELECT MIN(q.queue_position) FROM character_skillqueue q WHERE q.character_id = oc.id) \
   LEFT JOIN item_types it ON it.id = head.skill_id";
 
+/// The keyset cursor for the next contacts page: the active sort column's value of the last row plus its
+/// `contact_id` tiebreaker. `Name`/`Type` carry the text value; `Standing` carries the numeric value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContactCursor {
+  Number(f64, i64),
+  Text(String, i64),
+}
+
+/// The column a contacts page is keyset-ordered by. Mirrors the address-book sort header so the UI can push its
+/// active sort into SQL instead of holding the full set in memory and sorting client-side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactSortColumn {
+  Name,
+  Standing,
+  Type,
+}
+
+/// Sort direction for a contacts page; pairs with [`ContactSortColumn`] to drive the keyset comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactSortDir {
+  Asc,
+  Desc,
+}
+
 pub async fn all(db: &Database) -> Result<Vec<Character>, Error> {
   let rows = sqlx::query_as::<_, Character>(
     "SELECT alliance_id, birthday, bloodline_id, corporation_id, description, \
@@ -1198,30 +1222,6 @@ pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterConta
   .await?;
 
   Ok(CharacterContacts::resolved(&images::default_store(), contacts, labels))
-}
-
-/// The column a contacts page is keyset-ordered by. Mirrors the address-book sort header so the UI can push its
-/// active sort into SQL instead of holding the full set in memory and sorting client-side.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ContactSortColumn {
-  Name,
-  Standing,
-  Type,
-}
-
-/// Sort direction for a contacts page; pairs with [`ContactSortColumn`] to drive the keyset comparison.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ContactSortDir {
-  Asc,
-  Desc,
-}
-
-/// The keyset cursor for the next contacts page: the active sort column's value of the last row plus its
-/// `contact_id` tiebreaker. `Name`/`Type` carry the text value; `Standing` carries the numeric value.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ContactCursor {
-  Number(f64, i64),
-  Text(String, i64),
 }
 
 /// The keyset-paginated contact labels: small per-character lookup set, fetched once and shared across pages.

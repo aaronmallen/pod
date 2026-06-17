@@ -47,14 +47,23 @@ use crate::{
 };
 
 const ABOUT_WINDOW_HEIGHT: f32 = 240.0;
+
 const ABOUT_WINDOW_WIDTH: f32 = 360.0;
+
 const CHIP_OPEN_TINT_ALPHA: f32 = 0.06;
+
 const COMPARE_WINDOW_HEIGHT: f32 = 760.0;
+
 const COMPARE_WINDOW_WIDTH: f32 = 1100.0;
+
 const CONSOLE_DEFAULT_FILTER: &str = "warn,pod=info";
+
 const EDITOR_WINDOW_HEIGHT: f32 = 700.0;
+
 const EDITOR_WINDOW_WIDTH: f32 = 900.0;
+
 const EMPTY_SKILLS_SELECTION: i64 = 0;
+
 // Intentionally omits `pod=<level>`; the active level is prepended at runtime by `file_filter()`.
 const FILE_FILTER_CLAMP: &str = "warn,\
   hyper=warn,\
@@ -67,25 +76,31 @@ const FILE_FILTER_CLAMP: &str = "warn,\
   wgpu_hal=warn,\
   sqlx=warn,\
   sqlx::query=warn";
+
 const POPOVER_BOTTOM_OFFSET: f32 = spacing::layout::STATUS_BAR_HEIGHT + 1.0 + 4.0;
+
 const PERIODIC_PULL_INTERVAL: Duration = Duration::from_secs(60);
+
 const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
+
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
+
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
+
 const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
+
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
+
 const SCALE_MAX: u8 = 150;
+
 const SCALE_MIN: u8 = 85;
+
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   height: 0.0,
   width: 0.0,
   x: 0.0,
   y: 0.0,
 };
-
-type FileFilterReloadHandle =
-  OnceLock<tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>>;
-type Tx = iced::futures::channel::mpsc::Sender<Message>;
 
 static UPDATER_RECEIVER: std::sync::Mutex<Option<tokio::sync::watch::Receiver<updater::State>>> =
   std::sync::Mutex::new(None);
@@ -169,40 +184,14 @@ impl EngineState {
   }
 }
 
+type FileFilterReloadHandle =
+  OnceLock<tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HolderInfo {
   hostname: String,
   last_active: DateTime<Utc>,
   machine_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SyncNowOutcome {
-  Failed,
-  Reconciled { mark: Option<SystemTime>, pulled: bool },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum TakeOverOutcome {
-  Claimed,
-  Failed,
-}
-
-impl From<store::lease::Outcome> for Option<HolderInfo> {
-  fn from(outcome: store::lease::Outcome) -> Self {
-    match outcome {
-      store::lease::Outcome::Acquired => None,
-      store::lease::Outcome::HeldBy {
-        hostname,
-        last_seen,
-        machine_id,
-      } => Some(HolderInfo {
-        hostname,
-        last_active: last_seen,
-        machine_id,
-      }),
-    }
-  }
 }
 
 #[derive(Clone, Debug)]
@@ -387,6 +376,13 @@ impl Message {
   }
 }
 
+struct PreparedStore {
+  database_path: std::path::PathBuf,
+  lease: Option<HolderInfo>,
+  settings: config::Settings,
+  sync_session: Option<store::sync_session::SyncSession>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
   Assets,
@@ -493,6 +489,37 @@ struct StoreReady {
 impl std::fmt::Debug for StoreReady {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("StoreReady").finish_non_exhaustive()
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyncNowOutcome {
+  Failed,
+  Reconciled { mark: Option<SystemTime>, pulled: bool },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TakeOverOutcome {
+  Claimed,
+  Failed,
+}
+
+type Tx = iced::futures::channel::mpsc::Sender<Message>;
+
+impl From<store::lease::Outcome> for Option<HolderInfo> {
+  fn from(outcome: store::lease::Outcome) -> Self {
+    match outcome {
+      store::lease::Outcome::Acquired => None,
+      store::lease::Outcome::HeldBy {
+        hostname,
+        last_seen,
+        machine_id,
+      } => Some(HolderInfo {
+        hostname,
+        last_active: last_seen,
+        machine_id,
+      }),
+    }
   }
 }
 
@@ -814,13 +841,6 @@ async fn run_open_store(mut tx: Tx) {
     }
   };
   let _ = tx.send(message).await;
-}
-
-struct PreparedStore {
-  database_path: std::path::PathBuf,
-  lease: Option<HolderInfo>,
-  settings: config::Settings,
-  sync_session: Option<store::sync_session::SyncSession>,
 }
 
 fn store_err(error: impl std::fmt::Display) -> String {

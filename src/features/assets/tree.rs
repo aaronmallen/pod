@@ -24,13 +24,31 @@ use crate::{
 };
 
 const BASE_INDENT: f32 = spacing::SPACE_3;
+
 const INDENT_STEP: f32 = 12.0;
+
 const CARET_SLOT: f32 = 12.0;
+
 const CARET_ICON: f32 = 12.0;
+
 const TIER_SLOT: f32 = 16.0;
+
 const REGION_ICON: f32 = 13.0;
+
 const TIER_ICON: f32 = 15.0;
+
 const RAIL_WIDTH: f32 = 2.0;
+
+struct RowSpec<'a> {
+  caret: Option<(GeoNodeKey, bool)>,
+  depth: usize,
+  metric: Option<String>,
+  name: &'a str,
+  on_press: Message,
+  sec: Option<f64>,
+  selected: bool,
+  tier: Tier,
+}
 
 #[derive(Clone, Copy)]
 enum Tier {
@@ -393,17 +411,6 @@ fn all_assets_row<'a>(selected: bool) -> Element<'a, Message> {
     selected,
     on_press: Message::GeoNodeSelected(GeoSelection::All),
   })
-}
-
-struct RowSpec<'a> {
-  caret: Option<(GeoNodeKey, bool)>,
-  depth: usize,
-  metric: Option<String>,
-  name: &'a str,
-  on_press: Message,
-  sec: Option<f64>,
-  selected: bool,
-  tier: Tier,
 }
 
 fn caret_slot<'a>(caret: Option<(GeoNodeKey, bool)>) -> Element<'a, Message> {

@@ -8,6 +8,8 @@ use crate::store::{
   repo::org,
 };
 
+const BLUEPRINT_WRITE_BATCH_SIZE: usize = 500;
+
 #[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
 pub struct ActivityMaterial {
   pub activity_id: i64,
@@ -37,8 +39,6 @@ pub struct AllBlueprints {
   pub character_blueprints: Vec<CharacterBlueprint>,
   pub corporation_blueprints: Vec<CorporationBlueprint>,
 }
-
-const BLUEPRINT_WRITE_BATCH_SIZE: usize = 500;
 
 pub async fn activity_meta(
   db: &Database,

@@ -31,17 +31,24 @@ pub const AVAILABLE_KEYS: &[&str] = &[
 ];
 
 pub const CONNECTIONS_SKILL_ID: i64 = 3359;
+
 pub const CRIMINAL_CONNECTIONS_SKILL_ID: i64 = 3361;
+
 pub const DIPLOMACY_SKILL_ID: i64 = 3357;
 
 pub const SOCIAL_SKILL_COEFFICIENT: f64 = 0.04;
 
 const DEFAULT_LIMIT: i64 = 500;
+
 const FROM_TYPE_AGENT: &str = "agent";
+
 const FROM_TYPE_CORP: &str = "npc_corp";
+
 const FROM_TYPE_FACTION: &str = "faction";
+
 // Canonical EVE NPC corporation id range; player corporations start at 98,000,000.
 const NPC_CORP_ID_MAX: i64 = 1_999_999;
+
 const NPC_CORP_ID_MIN: i64 = 1_000_000;
 
 const PIRATE_FACTION_IDS: &[i64] = &[
@@ -119,21 +126,6 @@ pub struct SocialSkills {
   pub diplomacy: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum FactionClass {
-  Empire,
-  Other,
-  Pirate,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StandingComparison {
-  AtLeast,
-  AtMost,
-  GreaterThan,
-  LessThan,
-}
-
 #[derive(Clone, Debug, sqlx::FromRow)]
 struct AgentSql {
   agent_type: Option<String>,
@@ -155,11 +147,374 @@ struct CorpSql {
   name: String,
 }
 
+#[derive(Clone, Debug, Default)]
+struct Facets {
+  accessible: Option<bool>,
+  agent_names: Vec<String>,
+  agent_types: Vec<Vec<String>>,
+  corp_negatives: Vec<String>,
+  corp_positives: Vec<String>,
+  divisions: Vec<Vec<String>>,
+  faction_negatives: Vec<String>,
+  faction_positives: Vec<String>,
+  fields: Vec<Vec<String>>,
+  free_text: Vec<String>,
+  has_positive_type: bool,
+  levels: Vec<Vec<i64>>,
+  names: Vec<String>,
+  near_me: bool,
+  near_systems: Option<Vec<i64>>,
+  regions: Vec<Vec<String>>,
+  security_classes: Vec<SecurityClass>,
+  standing_thresholds: Vec<(StandingComparison, f64)>,
+  systems: Vec<Vec<String>>,
+}
+
+impl Facets {
+  fn from_query(query: &ParsedQuery) -> Self {
+    let mut facets = Facets::default();
+    for token in &query.tokens {
+      match token {
+        FilterToken::FreeText {
+          negated: false,
+          text,
+        } => match text.to_lowercase().as_str() {
+          "reachable" | "accessible" => facets.accessible = Some(true),
+          "locked" => facets.accessible = Some(false),
+          _ => facets.free_text.push(text.clone()),
+        },
+        FilterToken::FreeText {
+          ..
+        } => {}
+        FilterToken::KeyValue {
+          key,
+          negated,
+          values,
+        } => facets.absorb(key, *negated, values),
+      }
+    }
+    facets
+  }
+
+  fn absorb(&mut self, key: &str, negated: bool, values: &[String]) {
+    match normalize_facet_key(key) {
+      "faction" => self.absorb_faction(negated, values),
+      "corp" => self.absorb_corp(negated, values),
+      "agent" => self.absorb_agent(values),
+      "name" => self.names.extend(values.iter().cloned()),
+      "level" => self.absorb_level(values),
+      "type" => self.agent_types.push(values.to_vec()),
+      "division" => self.divisions.push(values.to_vec()),
+      "field" => self.fields.push(values.to_vec()),
+      "system" => self.systems.push(values.to_vec()),
+      "region" => self.regions.push(values.to_vec()),
+      "sec" => self.absorb_sec(values),
+      "near" => self.absorb_near(values),
+      "accessible" => self.absorb_accessible(negated, values),
+      "standing" => self.absorb_standing(values),
+      _ => {}
+    }
+  }
+
+  fn absorb_faction(&mut self, negated: bool, values: &[String]) {
+    if negated {
+      self.faction_negatives.extend(values.iter().cloned());
+    } else {
+      self.faction_positives.extend(values.iter().cloned());
+      self.has_positive_type = true;
+    }
+  }
+
+  fn absorb_corp(&mut self, negated: bool, values: &[String]) {
+    if negated {
+      self.corp_negatives.extend(values.iter().cloned());
+    } else {
+      self.corp_positives.extend(values.iter().cloned());
+      self.has_positive_type = true;
+    }
+  }
+
+  fn absorb_agent(&mut self, values: &[String]) {
+    self.agent_names.extend(values.iter().cloned());
+    self.has_positive_type = true;
+  }
+
+  fn absorb_level(&mut self, values: &[String]) {
+    let levels: Vec<i64> = values.iter().filter_map(|value| value.parse().ok()).collect();
+    if !levels.is_empty() {
+      self.levels.push(levels);
+    }
+  }
+
+  fn absorb_sec(&mut self, values: &[String]) {
+    for value in values {
+      if let Some(class) = parse_security_class(value) {
+        self.security_classes.push(class);
+      }
+    }
+  }
+
+  fn absorb_near(&mut self, values: &[String]) {
+    self.near_me = self.near_me || values.iter().any(|value| value == "me");
+  }
+
+  fn absorb_accessible(&mut self, negated: bool, values: &[String]) {
+    let wants = values
+      .iter()
+      .any(|value| matches!(value.as_str(), "true" | "yes" | "1"));
+    let denies = values
+      .iter()
+      .any(|value| matches!(value.as_str(), "false" | "no" | "0"));
+    self.accessible = Some(if denies { false } else { wants || !negated });
+  }
+
+  fn absorb_standing(&mut self, values: &[String]) {
+    for value in values {
+      if let Some(threshold) = parse_standing_threshold(value) {
+        self.standing_thresholds.push(threshold);
+      }
+    }
+  }
+
+  fn keeps(&self, row: &CatalogRow, names: &NameIndex) -> bool {
+    if !self.passes_type_filters(row, names) {
+      return false;
+    }
+    if !self.passes_name_and_free_text(row) {
+      return false;
+    }
+    if !self.passes_accessibility(row) {
+      return false;
+    }
+    if !self.passes_standing(row) {
+      return false;
+    }
+    true
+  }
+
+  fn passes_accessibility(&self, row: &CatalogRow) -> bool {
+    let Some(required) = self.accessible else {
+      return true;
+    };
+    match row.kind {
+      CatalogKind::Agent => row.accessible == Some(required),
+      _ => true,
+    }
+  }
+
+  // `name:` and bare free text are AND-combined cross-cutting filters that match a row's own name
+  // (and, for free text, its kind label) regardless of entity kind. The SQL agent query already
+  // applies these to agents; re-applying here also bounds the unfiltered faction/corp rows so a
+  // `name:` query does not leak the entire default catalog.
+  fn passes_name_and_free_text(&self, row: &CatalogRow) -> bool {
+    let name = row.name.to_lowercase();
+    let kind = kind_label(row.kind);
+
+    if !self.names.is_empty() && !self.names.iter().any(|value| name.contains(value)) {
+      return false;
+    }
+    self
+      .free_text
+      .iter()
+      .all(|word| name.contains(word) || kind.contains(word.as_str()))
+  }
+
+  fn passes_standing(&self, row: &CatalogRow) -> bool {
+    self.standing_thresholds.iter().all(|(comparison, bound)| {
+      let value = row.effective_standing;
+      match comparison {
+        StandingComparison::AtLeast => value >= *bound,
+        StandingComparison::AtMost => value <= *bound,
+        StandingComparison::GreaterThan => value > *bound,
+        StandingComparison::LessThan => value < *bound,
+      }
+    })
+  }
+
+  // Type facets are relationship-aware: a positive `faction:` keeps the faction, its corps, and its
+  // agents; a negative `-corp:` removes the corp row AND that corp's agents. Distinct positive type
+  // facets intersect (e.g. `faction:Caldari corp:Navy` keeps only Navy corps/agents inside Caldari);
+  // values within one facet are OR. This honors the spec acceptance criteria; the design-mock parser
+  // treats positive type facets as a union, which is non-authoritative.
+  fn passes_type_filters(&self, row: &CatalogRow, names: &NameIndex) -> bool {
+    let name = row.name.to_lowercase();
+
+    for value in &self.faction_negatives {
+      if row_in_faction(row, value, names) {
+        return false;
+      }
+    }
+    for value in &self.corp_negatives {
+      if row_in_corp(row, value, names) {
+        return false;
+      }
+    }
+
+    // A Faction row is "context" for a query: it shows only when a `faction:` facet selects it. Any
+    // positive `corp:`/`agent:` facet that is NOT accompanied by a matching `faction:` excludes the
+    // faction row, which keeps `corp:navy` from listing every faction.
+    if row.kind == CatalogKind::Faction {
+      if self.faction_positives.is_empty() {
+        return !self.has_positive_type;
+      }
+      return self.faction_positives.iter().any(|value| name.contains(value));
+    }
+
+    if !self.faction_positives.is_empty()
+      && !self
+        .faction_positives
+        .iter()
+        .any(|value| row_in_faction(row, value, names))
+    {
+      return false;
+    }
+
+    if !self.corp_positives.is_empty() && !self.corp_positives.iter().any(|value| row_in_corp(row, value, names)) {
+      return false;
+    }
+
+    if !self.agent_names.is_empty() {
+      match row.kind {
+        CatalogKind::Agent => {
+          if !self.agent_names.iter().any(|value| name.contains(value)) {
+            return false;
+          }
+        }
+        _ => return false,
+      }
+    }
+
+    true
+  }
+
+  fn surfaces_agents(&self) -> bool {
+    self.has_positive_type
+      || !self.names.is_empty()
+      || !self.free_text.is_empty()
+      || !self.levels.is_empty()
+      || !self.agent_types.is_empty()
+      || !self.divisions.is_empty()
+      || !self.fields.is_empty()
+      || !self.systems.is_empty()
+      || !self.regions.is_empty()
+      || !self.security_classes.is_empty()
+      || self.near_me
+      || self.accessible.is_some()
+      || !self.standing_thresholds.is_empty()
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FactionClass {
+  Empire,
+  Other,
+  Pirate,
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 struct FactionSql {
   corporation_id: Option<i64>,
   id: i64,
   name: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct NameIndex {
+  corps: HashMap<i64, String>,
+  factions: HashMap<i64, String>,
+}
+
+impl NameIndex {
+  async fn load(db: &Database) -> Result<Self, Error> {
+    let corps = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM corporations")
+      .fetch_all(&db.0)
+      .await?
+      .into_iter()
+      .map(|(id, name)| (id, name.to_lowercase()))
+      .collect();
+    let factions = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM factions")
+      .fetch_all(&db.0)
+      .await?
+      .into_iter()
+      .map(|(id, name)| (id, name.to_lowercase()))
+      .collect();
+    Ok(Self {
+      corps,
+      factions,
+    })
+  }
+
+  fn corps_matching(&self, values: &[String]) -> Vec<i64> {
+    self
+      .corps
+      .iter()
+      .filter(|(_, name)| values.iter().any(|value| name.contains(value)))
+      .map(|(id, _)| *id)
+      .collect()
+  }
+
+  fn factions_matching(&self, values: &[String]) -> Vec<i64> {
+    self
+      .factions
+      .iter()
+      .filter(|(_, name)| values.iter().any(|value| name.contains(value)))
+      .map(|(id, _)| *id)
+      .collect()
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RawStandings {
+  agent: HashMap<i64, f64>,
+  corp: HashMap<i64, f64>,
+  faction: HashMap<i64, f64>,
+}
+
+impl RawStandings {
+  /// Returns the standing for an entity using EVE's three-tier fallback: own standing first,
+  /// then the parent entity (corp for agents, faction for corps), then the faction, defaulting to 0.0.
+  fn lookup(&self, kind: &str, id: i64, parent_kind: &str, parent_id: Option<i64>, faction_id: Option<i64>) -> f64 {
+    let own = match kind {
+      FROM_TYPE_AGENT => self.agent.get(&id),
+      FROM_TYPE_CORP => self.corp.get(&id),
+      FROM_TYPE_FACTION => self.faction.get(&id),
+      _ => None,
+    };
+    if let Some(value) = own {
+      return *value;
+    }
+    if let Some(parent_id) = parent_id {
+      let parent = match parent_kind {
+        FROM_TYPE_CORP => self.corp.get(&parent_id),
+        FROM_TYPE_FACTION => self.faction.get(&parent_id),
+        _ => None,
+      };
+      if let Some(value) = parent {
+        return *value;
+      }
+    }
+    if let Some(faction_id) = faction_id
+      && let Some(value) = self.faction.get(&faction_id)
+    {
+      return *value;
+    }
+    0.0
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SecurityClass {
+  High,
+  Low,
+  Null,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StandingComparison {
+  AtLeast,
+  AtMost,
+  GreaterThan,
+  LessThan,
 }
 
 pub fn accessibility(effective: f64, level: Option<i64>) -> Option<bool> {
@@ -725,270 +1080,6 @@ async fn social_skills(db: &Database, character_id: i64) -> Result<SocialSkills,
   Ok(skills)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SecurityClass {
-  High,
-  Low,
-  Null,
-}
-
-#[derive(Clone, Debug, Default)]
-struct Facets {
-  accessible: Option<bool>,
-  agent_names: Vec<String>,
-  agent_types: Vec<Vec<String>>,
-  corp_negatives: Vec<String>,
-  corp_positives: Vec<String>,
-  divisions: Vec<Vec<String>>,
-  faction_negatives: Vec<String>,
-  faction_positives: Vec<String>,
-  fields: Vec<Vec<String>>,
-  free_text: Vec<String>,
-  has_positive_type: bool,
-  levels: Vec<Vec<i64>>,
-  names: Vec<String>,
-  near_me: bool,
-  near_systems: Option<Vec<i64>>,
-  regions: Vec<Vec<String>>,
-  security_classes: Vec<SecurityClass>,
-  standing_thresholds: Vec<(StandingComparison, f64)>,
-  systems: Vec<Vec<String>>,
-}
-
-impl Facets {
-  fn from_query(query: &ParsedQuery) -> Self {
-    let mut facets = Facets::default();
-    for token in &query.tokens {
-      match token {
-        FilterToken::FreeText {
-          negated: false,
-          text,
-        } => match text.to_lowercase().as_str() {
-          "reachable" | "accessible" => facets.accessible = Some(true),
-          "locked" => facets.accessible = Some(false),
-          _ => facets.free_text.push(text.clone()),
-        },
-        FilterToken::FreeText {
-          ..
-        } => {}
-        FilterToken::KeyValue {
-          key,
-          negated,
-          values,
-        } => facets.absorb(key, *negated, values),
-      }
-    }
-    facets
-  }
-
-  fn absorb(&mut self, key: &str, negated: bool, values: &[String]) {
-    match normalize_facet_key(key) {
-      "faction" => self.absorb_faction(negated, values),
-      "corp" => self.absorb_corp(negated, values),
-      "agent" => self.absorb_agent(values),
-      "name" => self.names.extend(values.iter().cloned()),
-      "level" => self.absorb_level(values),
-      "type" => self.agent_types.push(values.to_vec()),
-      "division" => self.divisions.push(values.to_vec()),
-      "field" => self.fields.push(values.to_vec()),
-      "system" => self.systems.push(values.to_vec()),
-      "region" => self.regions.push(values.to_vec()),
-      "sec" => self.absorb_sec(values),
-      "near" => self.absorb_near(values),
-      "accessible" => self.absorb_accessible(negated, values),
-      "standing" => self.absorb_standing(values),
-      _ => {}
-    }
-  }
-
-  fn absorb_faction(&mut self, negated: bool, values: &[String]) {
-    if negated {
-      self.faction_negatives.extend(values.iter().cloned());
-    } else {
-      self.faction_positives.extend(values.iter().cloned());
-      self.has_positive_type = true;
-    }
-  }
-
-  fn absorb_corp(&mut self, negated: bool, values: &[String]) {
-    if negated {
-      self.corp_negatives.extend(values.iter().cloned());
-    } else {
-      self.corp_positives.extend(values.iter().cloned());
-      self.has_positive_type = true;
-    }
-  }
-
-  fn absorb_agent(&mut self, values: &[String]) {
-    self.agent_names.extend(values.iter().cloned());
-    self.has_positive_type = true;
-  }
-
-  fn absorb_level(&mut self, values: &[String]) {
-    let levels: Vec<i64> = values.iter().filter_map(|value| value.parse().ok()).collect();
-    if !levels.is_empty() {
-      self.levels.push(levels);
-    }
-  }
-
-  fn absorb_sec(&mut self, values: &[String]) {
-    for value in values {
-      if let Some(class) = parse_security_class(value) {
-        self.security_classes.push(class);
-      }
-    }
-  }
-
-  fn absorb_near(&mut self, values: &[String]) {
-    self.near_me = self.near_me || values.iter().any(|value| value == "me");
-  }
-
-  fn absorb_accessible(&mut self, negated: bool, values: &[String]) {
-    let wants = values
-      .iter()
-      .any(|value| matches!(value.as_str(), "true" | "yes" | "1"));
-    let denies = values
-      .iter()
-      .any(|value| matches!(value.as_str(), "false" | "no" | "0"));
-    self.accessible = Some(if denies { false } else { wants || !negated });
-  }
-
-  fn absorb_standing(&mut self, values: &[String]) {
-    for value in values {
-      if let Some(threshold) = parse_standing_threshold(value) {
-        self.standing_thresholds.push(threshold);
-      }
-    }
-  }
-
-  fn keeps(&self, row: &CatalogRow, names: &NameIndex) -> bool {
-    if !self.passes_type_filters(row, names) {
-      return false;
-    }
-    if !self.passes_name_and_free_text(row) {
-      return false;
-    }
-    if !self.passes_accessibility(row) {
-      return false;
-    }
-    if !self.passes_standing(row) {
-      return false;
-    }
-    true
-  }
-
-  fn passes_accessibility(&self, row: &CatalogRow) -> bool {
-    let Some(required) = self.accessible else {
-      return true;
-    };
-    match row.kind {
-      CatalogKind::Agent => row.accessible == Some(required),
-      _ => true,
-    }
-  }
-
-  // `name:` and bare free text are AND-combined cross-cutting filters that match a row's own name
-  // (and, for free text, its kind label) regardless of entity kind. The SQL agent query already
-  // applies these to agents; re-applying here also bounds the unfiltered faction/corp rows so a
-  // `name:` query does not leak the entire default catalog.
-  fn passes_name_and_free_text(&self, row: &CatalogRow) -> bool {
-    let name = row.name.to_lowercase();
-    let kind = kind_label(row.kind);
-
-    if !self.names.is_empty() && !self.names.iter().any(|value| name.contains(value)) {
-      return false;
-    }
-    self
-      .free_text
-      .iter()
-      .all(|word| name.contains(word) || kind.contains(word.as_str()))
-  }
-
-  fn passes_standing(&self, row: &CatalogRow) -> bool {
-    self.standing_thresholds.iter().all(|(comparison, bound)| {
-      let value = row.effective_standing;
-      match comparison {
-        StandingComparison::AtLeast => value >= *bound,
-        StandingComparison::AtMost => value <= *bound,
-        StandingComparison::GreaterThan => value > *bound,
-        StandingComparison::LessThan => value < *bound,
-      }
-    })
-  }
-
-  // Type facets are relationship-aware: a positive `faction:` keeps the faction, its corps, and its
-  // agents; a negative `-corp:` removes the corp row AND that corp's agents. Distinct positive type
-  // facets intersect (e.g. `faction:Caldari corp:Navy` keeps only Navy corps/agents inside Caldari);
-  // values within one facet are OR. This honors the spec acceptance criteria; the design-mock parser
-  // treats positive type facets as a union, which is non-authoritative.
-  fn passes_type_filters(&self, row: &CatalogRow, names: &NameIndex) -> bool {
-    let name = row.name.to_lowercase();
-
-    for value in &self.faction_negatives {
-      if row_in_faction(row, value, names) {
-        return false;
-      }
-    }
-    for value in &self.corp_negatives {
-      if row_in_corp(row, value, names) {
-        return false;
-      }
-    }
-
-    // A Faction row is "context" for a query: it shows only when a `faction:` facet selects it. Any
-    // positive `corp:`/`agent:` facet that is NOT accompanied by a matching `faction:` excludes the
-    // faction row, which keeps `corp:navy` from listing every faction.
-    if row.kind == CatalogKind::Faction {
-      if self.faction_positives.is_empty() {
-        return !self.has_positive_type;
-      }
-      return self.faction_positives.iter().any(|value| name.contains(value));
-    }
-
-    if !self.faction_positives.is_empty()
-      && !self
-        .faction_positives
-        .iter()
-        .any(|value| row_in_faction(row, value, names))
-    {
-      return false;
-    }
-
-    if !self.corp_positives.is_empty() && !self.corp_positives.iter().any(|value| row_in_corp(row, value, names)) {
-      return false;
-    }
-
-    if !self.agent_names.is_empty() {
-      match row.kind {
-        CatalogKind::Agent => {
-          if !self.agent_names.iter().any(|value| name.contains(value)) {
-            return false;
-          }
-        }
-        _ => return false,
-      }
-    }
-
-    true
-  }
-
-  fn surfaces_agents(&self) -> bool {
-    self.has_positive_type
-      || !self.names.is_empty()
-      || !self.free_text.is_empty()
-      || !self.levels.is_empty()
-      || !self.agent_types.is_empty()
-      || !self.divisions.is_empty()
-      || !self.fields.is_empty()
-      || !self.systems.is_empty()
-      || !self.regions.is_empty()
-      || !self.security_classes.is_empty()
-      || self.near_me
-      || self.accessible.is_some()
-      || !self.standing_thresholds.is_empty()
-  }
-}
-
 fn normalize_facet_key(key: &str) -> &'static str {
   match key {
     "fac" | "faction" | "factions" => "faction",
@@ -1083,90 +1174,6 @@ fn row_in_faction(row: &CatalogRow, value: &str, names: &NameIndex) -> bool {
     .faction_id
     .and_then(|id| names.factions.get(&id))
     .is_some_and(|name| name.contains(value))
-}
-
-#[derive(Clone, Debug, Default)]
-struct NameIndex {
-  corps: HashMap<i64, String>,
-  factions: HashMap<i64, String>,
-}
-
-impl NameIndex {
-  async fn load(db: &Database) -> Result<Self, Error> {
-    let corps = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM corporations")
-      .fetch_all(&db.0)
-      .await?
-      .into_iter()
-      .map(|(id, name)| (id, name.to_lowercase()))
-      .collect();
-    let factions = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM factions")
-      .fetch_all(&db.0)
-      .await?
-      .into_iter()
-      .map(|(id, name)| (id, name.to_lowercase()))
-      .collect();
-    Ok(Self {
-      corps,
-      factions,
-    })
-  }
-
-  fn corps_matching(&self, values: &[String]) -> Vec<i64> {
-    self
-      .corps
-      .iter()
-      .filter(|(_, name)| values.iter().any(|value| name.contains(value)))
-      .map(|(id, _)| *id)
-      .collect()
-  }
-
-  fn factions_matching(&self, values: &[String]) -> Vec<i64> {
-    self
-      .factions
-      .iter()
-      .filter(|(_, name)| values.iter().any(|value| name.contains(value)))
-      .map(|(id, _)| *id)
-      .collect()
-  }
-}
-
-#[derive(Clone, Debug, Default)]
-struct RawStandings {
-  agent: HashMap<i64, f64>,
-  corp: HashMap<i64, f64>,
-  faction: HashMap<i64, f64>,
-}
-
-impl RawStandings {
-  /// Returns the standing for an entity using EVE's three-tier fallback: own standing first,
-  /// then the parent entity (corp for agents, faction for corps), then the faction, defaulting to 0.0.
-  fn lookup(&self, kind: &str, id: i64, parent_kind: &str, parent_id: Option<i64>, faction_id: Option<i64>) -> f64 {
-    let own = match kind {
-      FROM_TYPE_AGENT => self.agent.get(&id),
-      FROM_TYPE_CORP => self.corp.get(&id),
-      FROM_TYPE_FACTION => self.faction.get(&id),
-      _ => None,
-    };
-    if let Some(value) = own {
-      return *value;
-    }
-    if let Some(parent_id) = parent_id {
-      let parent = match parent_kind {
-        FROM_TYPE_CORP => self.corp.get(&parent_id),
-        FROM_TYPE_FACTION => self.faction.get(&parent_id),
-        _ => None,
-      };
-      if let Some(value) = parent {
-        return *value;
-      }
-    }
-    if let Some(faction_id) = faction_id
-      && let Some(value) = self.faction.get(&faction_id)
-    {
-      return *value;
-    }
-    0.0
-  }
 }
 
 #[cfg(test)]

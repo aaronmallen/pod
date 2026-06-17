@@ -45,6 +45,22 @@ const TE_FILL: Color = Color {
   a: 1.0,
 };
 
+#[derive(Clone, Copy)]
+struct Counts {
+  copies: usize,
+  originals: usize,
+}
+
+impl Counts {
+  fn of(blueprints: &[&Blueprint]) -> Self {
+    let originals = blueprints.iter().filter(|blueprint| blueprint.is_original()).count();
+    Counts {
+      copies: blueprints.len() - originals,
+      originals,
+    }
+  }
+}
+
 pub(super) fn tab(state: &State) -> Element<'_, Message> {
   let scoped = state.visible_blueprints();
   let counts = Counts::of(&scoped);
@@ -647,22 +663,6 @@ fn matches_query(blueprint: &Blueprint, needle: &str) -> bool {
       .system_name
       .as_deref()
       .is_some_and(|system| system.to_lowercase().contains(needle))
-}
-
-#[derive(Clone, Copy)]
-struct Counts {
-  copies: usize,
-  originals: usize,
-}
-
-impl Counts {
-  fn of(blueprints: &[&Blueprint]) -> Self {
-    let originals = blueprints.iter().filter(|blueprint| blueprint.is_original()).count();
-    Counts {
-      copies: blueprints.len() - originals,
-      originals,
-    }
-  }
 }
 
 #[cfg(test)]

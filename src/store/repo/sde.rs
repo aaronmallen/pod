@@ -237,6 +237,20 @@ pub async fn all_market_groups(db: &Database) -> Result<Vec<MarketGroup>, Error>
   Ok(rows)
 }
 
+pub async fn all_type_names(db: &Database) -> Result<Vec<(i64, String)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM item_types")
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows)
+}
+
+pub async fn all_type_volumes(db: &Database) -> Result<Vec<(i64, Option<f64>, Option<f64>)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, Option<f64>, Option<f64>)>("SELECT id, packaged_volume, volume FROM item_types")
+    .fetch_all(&db.0)
+    .await?;
+  Ok(rows)
+}
+
 pub async fn get_item_category(db: &Database, id: i64) -> Result<Option<ItemCategory>, Error> {
   let row =
     sqlx::query_as::<_, ItemCategory>("SELECT id, NULL AS icon_id, name, published FROM item_categories WHERE id = ?")
@@ -786,6 +800,17 @@ pub async fn pin_structure(
   .execute(&db.0)
   .await?;
   Ok(())
+}
+
+pub async fn product_categories(db: &Database) -> Result<Vec<(i64, String, String)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String, String)>(
+    "SELECT t.id, g.name, c.name FROM item_types t \
+    JOIN item_groups g ON g.id = t.group_id \
+    JOIN item_categories c ON c.id = g.category_id",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 pub async fn upsert_constellation(db: &Database, constellation: &Constellation) -> Result<(), Error> {
@@ -1427,6 +1452,65 @@ mod items_tests {
       let result = all_market_groups(&db).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+  }
+
+  mod all_type_names {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_every_type_id_and_name() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(588, 25, "Reaper")).await.unwrap();
+
+      let mut names = all_type_names(&db).await.unwrap();
+      names.sort();
+
+      assert_eq!(names, vec![(587, "Rifter".to_owned()), (588, "Reaper".to_owned())]);
+    }
+  }
+
+  mod all_type_volumes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_packaged_and_unpackaged_volumes() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      let mut item_type = make_item_type(587, 25, "Rifter");
+      item_type.packaged_volume = Some(2_500.0);
+      item_type.volume = Some(27_289.0);
+      upsert_item_type(&db, &item_type).await.unwrap();
+
+      let volumes = all_type_volumes(&db).await.unwrap();
+
+      assert_eq!(volumes, vec![(587, Some(2_500.0), Some(27_289.0))]);
+    }
+  }
+
+  mod product_categories {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_joins_each_type_to_its_group_and_category_names() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+
+      let rows = product_categories(&db).await.unwrap();
+
+      assert_eq!(rows, vec![(587, "Frigate".to_owned(), "Ship".to_owned())]);
     }
   }
 

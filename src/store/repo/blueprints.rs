@@ -1,12 +1,20 @@
 use std::collections::HashSet;
 
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
   model::{CharacterBlueprint, CorporationBlueprint},
   repo::org,
 };
+
+#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
+pub struct ActivityProduct {
+  pub activity_id: i64,
+  pub blueprint_type_id: i64,
+  pub product_type_id: i64,
+  pub quantity: i64,
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AllBlueprints {
@@ -30,6 +38,17 @@ pub async fn activity_meta(
   .fetch_optional(&db.0)
   .await?;
   Ok(row)
+}
+
+pub async fn blueprint_product(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Result<Option<i64>, Error> {
+  let product = sqlx::query_scalar::<_, i64>(
+    "SELECT product_type_id FROM blueprint_activity_products WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
+  )
+  .bind(blueprint_type_id)
+  .bind(activity_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(product)
 }
 
 pub async fn list_all(db: &Database) -> Result<AllBlueprints, Error> {
@@ -64,6 +83,68 @@ pub async fn list_for_corporation(db: &Database, corporation_id: i64) -> Result<
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+pub async fn materials_for_activity(
+  db: &Database,
+  blueprint_type_id: i64,
+  activity_id: i64,
+) -> Result<Vec<(i64, i64)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, i64)>(
+    "SELECT material_type_id, quantity FROM blueprint_activity_materials \
+    WHERE blueprint_type_id = ? AND activity_id = ? ORDER BY material_type_id",
+  )
+  .bind(blueprint_type_id)
+  .bind(activity_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Result<Option<i64>, Error> {
+  let quantity = sqlx::query_scalar::<_, i64>(
+    "SELECT quantity FROM blueprint_activity_products \
+    WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
+  )
+  .bind(blueprint_type_id)
+  .bind(activity_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(quantity)
+}
+
+pub async fn products_for_activities(db: &Database, activity_ids: &[i64]) -> Result<Vec<ActivityProduct>, Error> {
+  if activity_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT product_type_id, blueprint_type_id, activity_id, quantity FROM blueprint_activity_products WHERE \
+    activity_id IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for activity_id in activity_ids {
+    separated.push_bind(*activity_id);
+  }
+  separated.push_unseparated(") ");
+  builder.push("ORDER BY product_type_id, activity_id");
+  let rows = builder.build_query_as::<ActivityProduct>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+pub async fn recipe_for_activity(
+  db: &Database,
+  product_type_id: i64,
+  activity_id: i64,
+) -> Result<Option<(i64, i64)>, Error> {
+  let row = sqlx::query_as::<_, (i64, i64)>(
+    "SELECT blueprint_type_id, quantity FROM blueprint_activity_products \
+    WHERE product_type_id = ? AND activity_id = ? ORDER BY blueprint_type_id LIMIT 1",
+  )
+  .bind(product_type_id)
+  .bind(activity_id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row)
 }
 
 pub async fn replace_for_character(
@@ -330,6 +411,46 @@ mod tests {
     }
   }
 
+  async fn insert_material(
+    db: &Database,
+    blueprint_type_id: i64,
+    activity_id: i64,
+    material_type_id: i64,
+    quantity: i64,
+  ) {
+    sqlx::query(
+      "INSERT INTO blueprint_activity_materials (blueprint_type_id, activity_id, material_type_id, quantity) \
+      VALUES (?, ?, ?, ?)",
+    )
+    .bind(blueprint_type_id)
+    .bind(activity_id)
+    .bind(material_type_id)
+    .bind(quantity)
+    .execute(&db.0)
+    .await
+    .unwrap();
+  }
+
+  async fn insert_product(
+    db: &Database,
+    blueprint_type_id: i64,
+    activity_id: i64,
+    product_type_id: i64,
+    quantity: i64,
+  ) {
+    sqlx::query(
+      "INSERT INTO blueprint_activity_products (blueprint_type_id, activity_id, product_type_id, quantity) \
+      VALUES (?, ?, ?, ?)",
+    )
+    .bind(blueprint_type_id)
+    .bind(activity_id)
+    .bind(product_type_id)
+    .bind(quantity)
+    .execute(&db.0)
+    .await
+    .unwrap();
+  }
+
   mod replace_for_character {
     use pretty_assertions::assert_eq;
 
@@ -523,6 +644,125 @@ mod tests {
       let meta = super::activity_meta(&db, 939, 11).await.unwrap();
 
       assert_eq!(meta, None);
+    }
+  }
+
+  mod blueprint_product {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_product_for_a_blueprint_activity() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      let product = super::blueprint_product(&db, 939, 1).await.unwrap();
+
+      assert_eq!(product, Some(938));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_blueprint_activity_is_absent() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::blueprint_product(&db, 939, 1).await.unwrap(), None);
+    }
+  }
+
+  mod materials_for_activity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_materials_ordered_by_type_id() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 35, 200).await;
+      insert_material(&db, 939, 1, 34, 100).await;
+
+      let materials = super::materials_for_activity(&db, 939, 1).await.unwrap();
+
+      assert_eq!(materials, vec![(34, 100), (35, 200)]);
+    }
+  }
+
+  mod output_per_run {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_product_quantity() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 11, 16_634, 200).await;
+
+      assert_eq!(super::output_per_run(&db, 939, 11).await.unwrap(), Some(200));
+    }
+  }
+
+  mod products_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_products_for_the_given_activities_ordered() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+      insert_product(&db, 1_001, 11, 16_634, 200).await;
+      insert_product(&db, 1_002, 7, 99, 1).await;
+
+      let products = super::products_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        products,
+        vec![
+          ActivityProduct {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            product_type_id: 938,
+            quantity: 1,
+          },
+          ActivityProduct {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            product_type_id: 16_634,
+            quantity: 200,
+          },
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      assert!(super::products_for_activities(&db, &[]).await.unwrap().is_empty());
+    }
+  }
+
+  mod recipe_for_activity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_blueprint_and_quantity_for_a_product() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      let recipe = super::recipe_for_activity(&db, 938, 1).await.unwrap();
+
+      assert_eq!(recipe, Some((939, 1)));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unbuildable_product() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::recipe_for_activity(&db, 938, 1).await.unwrap(), None);
     }
   }
 

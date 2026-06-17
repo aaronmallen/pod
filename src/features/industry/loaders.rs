@@ -303,19 +303,12 @@ impl BlueprintProducts {
 
 /// Looks up the manufacturing product (and reaction flag) for a blueprint type from the seeded SDE reference.
 ///
-/// `Database.0` (the pool) is public; the Blueprints tab reads the `blueprint_activity_products` reference table
-/// directly here rather than through a repo, mirroring how the loaders already join other SDE tables. A blueprint that
-/// has only a reaction product (activity id 9) is flagged so the row hides ME/TE.
+/// A blueprint that has only a reaction product is flagged so the Blueprints tab hides ME/TE for the row.
 async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> BlueprintReference {
-  let manufacturing: Option<i64> = sqlx::query_scalar(
-    "SELECT product_type_id FROM blueprint_activity_products WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
-  )
-  .bind(blueprint_type_id)
-  .bind(MANUFACTURING_ACTIVITY_ID)
-  .fetch_optional(&db.0)
-  .await
-  .ok()
-  .flatten();
+  let manufacturing = blueprints::blueprint_product(db, blueprint_type_id, MANUFACTURING_ACTIVITY_ID)
+    .await
+    .ok()
+    .flatten();
 
   if let Some(product_type_id) = manufacturing {
     return BlueprintReference {
@@ -324,15 +317,10 @@ async fn blueprint_reference(db: &Database, blueprint_type_id: i64) -> Blueprint
     };
   }
 
-  let reaction: Option<i64> = sqlx::query_scalar(
-    "SELECT product_type_id FROM blueprint_activity_products WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
-  )
-  .bind(blueprint_type_id)
-  .bind(REACTION_ACTIVITY_ID)
-  .fetch_optional(&db.0)
-  .await
-  .ok()
-  .flatten();
+  let reaction = blueprints::blueprint_product(db, blueprint_type_id, REACTION_ACTIVITY_ID)
+    .await
+    .ok()
+    .flatten();
 
   BlueprintReference {
     product_type_id: reaction,

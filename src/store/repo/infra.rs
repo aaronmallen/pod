@@ -250,6 +250,30 @@ pub async fn prune_done(db: &Database, before: &str) -> Result<u64, Error> {
   Ok(result.rows_affected())
 }
 
+pub async fn outbox_failed_by_kind(
+  db: &Database,
+  kind_prefix: &str,
+) -> Result<Vec<(i64, String, Option<String>)>, Error> {
+  let pattern = format!("{}%", escape_like(kind_prefix));
+  let rows = sqlx::query_as::<_, (i64, String, Option<String>)>(
+    "SELECT id, kind, last_error FROM outbox WHERE kind LIKE ? AND status = 'failed' ORDER BY updated_at DESC",
+  )
+  .bind(pattern)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn outbox_pending_count_by_kind(db: &Database, kind_prefix: &str) -> Result<i64, Error> {
+  let pattern = format!("{}%", escape_like(kind_prefix));
+  let count =
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind LIKE ? AND status IN ('pending', 'inflight')")
+      .bind(pattern)
+      .fetch_one(&db.0)
+      .await?;
+  Ok(count)
+}
+
 pub fn escape_like(value: &str) -> String {
   value.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
@@ -1312,6 +1336,64 @@ mod outbox_tests {
       assert_eq!(reload(&db, pending.id()).await.status(), "pending");
       assert_eq!(reload(&db, inflight.id()).await.status(), "inflight");
       assert_eq!(reload(&db, failed.id()).await.status(), "failed");
+    }
+  }
+
+  mod outbox_failed_by_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_failed_rows_matching_the_kind_prefix() {
+      let db = store::open_test().await.unwrap();
+      let mail_failed = append(&db, OwnerType::Character, SUBJECT, "mail.set_read", "{}", Some("a"))
+        .await
+        .unwrap();
+      mark_failed(&db, mail_failed.id(), "boom").await.unwrap();
+      let skill_failed = append(&db, OwnerType::Character, SUBJECT, "skill.queue", "{}", Some("b"))
+        .await
+        .unwrap();
+      mark_failed(&db, skill_failed.id(), "nope").await.unwrap();
+      append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", Some("c"))
+        .await
+        .unwrap();
+
+      let rows = outbox_failed_by_kind(&db, "mail.").await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![(mail_failed.id(), "mail.set_read".to_owned(), Some("boom".to_owned()))]
+      );
+    }
+  }
+
+  mod outbox_pending_count_by_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_pending_and_inflight_rows_matching_the_prefix() {
+      let db = store::open_test().await.unwrap();
+      append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", Some("a"))
+        .await
+        .unwrap();
+      append(&db, OwnerType::Character, SUBJECT, "mail.set_read", "{}", Some("b"))
+        .await
+        .unwrap();
+      claim_due(&db, &future(), 10).await.unwrap();
+      let failed = append(&db, OwnerType::Character, SUBJECT, "mail.delete", "{}", Some("c"))
+        .await
+        .unwrap();
+      mark_failed(&db, failed.id(), "boom").await.unwrap();
+      append(&db, OwnerType::Character, SUBJECT, "skill.queue", "{}", Some("d"))
+        .await
+        .unwrap();
+
+      let count = outbox_pending_count_by_kind(&db, "mail.").await.unwrap();
+
+      assert_eq!(count, 2);
     }
   }
 

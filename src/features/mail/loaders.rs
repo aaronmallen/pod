@@ -269,26 +269,18 @@ pub struct FailedMutation {
 }
 
 pub(super) async fn load_outbox_indicator(db: &Database) -> OutboxIndicator {
-  let pending = sqlx::query_scalar::<_, i64>(
-    "SELECT COUNT(*) FROM outbox WHERE kind LIKE 'mail.%' AND status IN ('pending', 'inflight')",
-  )
-  .fetch_one(&db.0)
-  .await
-  .unwrap_or(0);
+  let pending = infra::outbox_pending_count_by_kind(db, "mail.").await.unwrap_or(0);
 
-  let failed = sqlx::query_as::<_, (i64, String, Option<String>)>(
-    "SELECT id, kind, last_error FROM outbox WHERE kind LIKE 'mail.%' AND status = 'failed' ORDER BY updated_at DESC",
-  )
-  .fetch_all(&db.0)
-  .await
-  .unwrap_or_default()
-  .into_iter()
-  .map(|(id, kind, last_error)| FailedMutation {
-    id,
-    kind,
-    last_error: last_error.unwrap_or_else(|| "unknown error".to_owned()),
-  })
-  .collect();
+  let failed = infra::outbox_failed_by_kind(db, "mail.")
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, kind, last_error)| FailedMutation {
+      id,
+      kind,
+      last_error: last_error.unwrap_or_else(|| "unknown error".to_owned()),
+    })
+    .collect();
 
   OutboxIndicator {
     pending,

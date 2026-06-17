@@ -8,7 +8,7 @@ use crate::{
   store::{
     Database,
     model::Facility,
-    repo::{blueprints, finance, industry},
+    repo::{blueprints, finance, industry, sde},
   },
   ui::components::facility_combobox::FacilityRef,
 };
@@ -227,33 +227,19 @@ pub async fn facilities(db: &Database) -> Vec<Facility> {
 }
 
 pub async fn materials_for(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Vec<Material> {
-  let rows: Vec<(i64, i64)> = sqlx::query_as(
-    "SELECT material_type_id, quantity FROM blueprint_activity_materials \
-    WHERE blueprint_type_id = ? AND activity_id = ? ORDER BY material_type_id",
-  )
-  .bind(blueprint_type_id)
-  .bind(activity_id)
-  .fetch_all(&db.0)
-  .await
-  .unwrap_or_default();
-
-  rows
+  blueprints::materials_for_activity(db, blueprint_type_id, activity_id)
+    .await
+    .unwrap_or_default()
     .into_iter()
     .map(|(type_id, quantity)| Material::new(type_id, quantity))
     .collect()
 }
 
 pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Option<i64> {
-  sqlx::query_scalar(
-    "SELECT quantity FROM blueprint_activity_products \
-    WHERE blueprint_type_id = ? AND activity_id = ? LIMIT 1",
-  )
-  .bind(blueprint_type_id)
-  .bind(activity_id)
-  .fetch_optional(&db.0)
-  .await
-  .ok()
-  .flatten()
+  blueprints::output_per_run(db, blueprint_type_id, activity_id)
+    .await
+    .ok()
+    .flatten()
 }
 
 pub async fn prices(db: &Database) -> HashMap<i64, f64> {
@@ -454,14 +440,7 @@ async fn planner_facilities(db: &Database) -> Vec<PlannerFacility> {
 
 async fn product_categories(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, (String, String)> {
   let mut out: HashMap<i64, (String, String)> = HashMap::new();
-  let rows: Vec<(i64, String, String)> = sqlx::query_as(
-    "SELECT t.id, g.name, c.name FROM item_types t \
-    JOIN item_groups g ON g.id = t.group_id \
-    JOIN item_categories c ON c.id = g.category_id",
-  )
-  .fetch_all(&db.0)
-  .await
-  .unwrap_or_default();
+  let rows = sde::product_categories(db).await.unwrap_or_default();
   for (type_id, group_name, category_name) in rows {
     if recipes.contains_key(&type_id) {
       out.insert(type_id, (group_name, category_name));
@@ -474,34 +453,28 @@ async fn product_categories(db: &Database, recipes: &HashMap<i64, Recipe>) -> Ha
 /// reaction (11) — the early-continue guard then silently drops any reaction row for a product that already has
 /// a manufacturing recipe, making manufacturing the canonical path wherever both exist.
 async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
-  let products: Vec<(i64, i64, i64, i64)> = sqlx::query_as(
-    "SELECT product_type_id, blueprint_type_id, activity_id, quantity FROM blueprint_activity_products \
-    WHERE activity_id IN (?, ?) ORDER BY product_type_id, activity_id",
-  )
-  .bind(MANUFACTURING_ACTIVITY_ID)
-  .bind(REACTION_ACTIVITY_ID)
-  .fetch_all(&db.0)
-  .await
-  .unwrap_or_default();
+  let products = blueprints::products_for_activities(db, &[MANUFACTURING_ACTIVITY_ID, REACTION_ACTIVITY_ID])
+    .await
+    .unwrap_or_default();
 
   let mut recipes: HashMap<i64, Recipe> = HashMap::new();
-  for (product_type_id, blueprint_type_id, activity_id, quantity) in products {
-    if activity_id == REACTION_ACTIVITY_ID && recipes.contains_key(&product_type_id) {
+  for product in products {
+    if product.activity_id == REACTION_ACTIVITY_ID && recipes.contains_key(&product.product_type_id) {
       continue;
     }
-    let materials = materials_for(db, blueprint_type_id, activity_id).await;
-    let time_per_run = build_time(db, blueprint_type_id, activity_id)
+    let materials = materials_for(db, product.blueprint_type_id, product.activity_id).await;
+    let time_per_run = build_time(db, product.blueprint_type_id, product.activity_id)
       .await
       .map(|(time, _)| time)
       .unwrap_or(0);
     recipes.insert(
-      product_type_id,
+      product.product_type_id,
       Recipe {
-        activity_id,
-        blueprint_type_id,
-        is_reaction: activity_id == REACTION_ACTIVITY_ID,
+        activity_id: product.activity_id,
+        blueprint_type_id: product.blueprint_type_id,
+        is_reaction: product.activity_id == REACTION_ACTIVITY_ID,
         materials,
-        output_per_run: quantity.max(1),
+        output_per_run: product.quantity.max(1),
         time_per_run,
       },
     );
@@ -510,19 +483,13 @@ async fn recipes(db: &Database) -> HashMap<i64, Recipe> {
 }
 
 async fn type_names(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, String> {
-  let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, name FROM item_types")
-    .fetch_all(&db.0)
-    .await
-    .unwrap_or_default();
+  let rows = sde::all_type_names(db).await.unwrap_or_default();
   let referenced = referenced_type_ids(recipes);
   rows.into_iter().filter(|(id, _)| referenced.contains(id)).collect()
 }
 
 async fn type_volumes(db: &Database, recipes: &HashMap<i64, Recipe>) -> HashMap<i64, f64> {
-  let rows: Vec<(i64, Option<f64>, Option<f64>)> = sqlx::query_as("SELECT id, packaged_volume, volume FROM item_types")
-    .fetch_all(&db.0)
-    .await
-    .unwrap_or_default();
+  let rows = sde::all_type_volumes(db).await.unwrap_or_default();
   let referenced = referenced_type_ids(recipes);
   rows
     .into_iter()
@@ -555,16 +522,10 @@ fn referenced_type_ids(recipes: &HashMap<i64, Recipe>) -> std::collections::Hash
 }
 
 async fn recipe_for_activity(db: &Database, product_type_id: i64, activity_id: i64) -> Option<BlueprintRecipe> {
-  let row: Option<(i64, i64)> = sqlx::query_as(
-    "SELECT blueprint_type_id, quantity FROM blueprint_activity_products \
-    WHERE product_type_id = ? AND activity_id = ? ORDER BY blueprint_type_id LIMIT 1",
-  )
-  .bind(product_type_id)
-  .bind(activity_id)
-  .fetch_optional(&db.0)
-  .await
-  .ok()
-  .flatten();
+  let row = blueprints::recipe_for_activity(db, product_type_id, activity_id)
+    .await
+    .ok()
+    .flatten();
 
   row.map(|(blueprint_type_id, quantity)| BlueprintRecipe {
     activity_id,

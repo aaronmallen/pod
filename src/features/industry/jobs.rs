@@ -11,28 +11,57 @@ use crate::{
   clients::eve_image::Size,
   store::images::{self, IconResolution},
   ui::{
-    components::{clip::clip_layer, icon::Icon, icon_tile::icon_tile, resizable_pane::pane_handle, rule},
+    components::{
+      clip::clip_layer,
+      icon::Icon,
+      icon_tile::icon_tile,
+      resizable_pane::pane_handle,
+      rule,
+      virtual_list::{self, VirtualList, VirtualListConfig},
+    },
     style::{color, radius, spacing, typography},
   },
 };
 
 const COUNTDOWN_WARNING_SECS: i64 = 3_600;
+/// Estimated visual-row height (px) feeding the [`VirtualList`] windowing math. Job rows are two-line
+/// with generous padding; group headers are shorter, but overscan absorbs the variance.
+const ESTIMATED_ROW_HEIGHT: f32 = 74.0;
 const ROW_SIDE_PADDING: f32 = 24.0;
 const TILE_BOX_COMFORTABLE: f32 = 40.0;
 const TILE_ICON: Size = Size::S64;
 const VALUE_WIDTH: f32 = 132.0;
 
 pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
-  let scoped = state.visible_jobs();
-  let counts = Counts::of(&scoped, now);
-  let filtered = filter_and_sort(&scoped, state.filter(), now);
+  let view = state.job_view();
+  let jobs = state.jobs();
 
-  let list = scrollable(job_groups(state, &filtered, now))
-    .style(crate::ui::style::control::scrollbar)
-    .width(Length::Fill)
-    .height(Length::Fill);
+  let body: Element<'a, Message> = if view.rows.is_empty() {
+    empty_state()
+  } else {
+    let offset = state.jobs_scroll_offset();
+    let rows = &view.rows;
+    virtual_list::responsive_window(move |viewport_height| {
+      let config = VirtualListConfig::new(rows.len(), ESTIMATED_ROW_HEIGHT)
+        .viewport_height(viewport_height)
+        .scroll_offset(offset);
+      let windowed = VirtualList::new(config, |index| match &rows[index] {
+        JobRowItem::Header(header) => group_header(&header.label, header.count, header.ready),
+        JobRowItem::Job(job_index) => job_row(&jobs[*job_index], now),
+      })
+      .view();
+      scrollable(windowed)
+        .style(crate::ui::style::control::scrollbar)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_scroll(|viewport| Message::JobsScrolled {
+          absolute: viewport.absolute_offset().y,
+        })
+        .into()
+    })
+  };
 
-  let left = Column::with_children(vec![filter_bar(state, counts), list.into()])
+  let left = Column::with_children(vec![filter_bar(state, view.counts), body])
     .width(Length::Fill)
     .height(Length::Fill);
 
@@ -363,36 +392,19 @@ fn group_header<'a>(label: &str, count: usize, ready: usize) -> Element<'a, Mess
     .into()
 }
 
-fn job_groups<'a>(state: &'a State, jobs: &[&'a IndustryJob], now: DateTime<Utc>) -> Element<'a, Message> {
-  if jobs.is_empty() {
-    return container(
-      text("No jobs match this filter.")
-        .font(typography::body::REGULAR)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::tertiary())),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
-    .padding(spacing::SPACE_6)
-    .into();
-  }
-
-  let groups = grouped(jobs, state.group_by(), now);
-
-  let mut children: Vec<Element<'a, Message>> = Vec::new();
-  for group in groups {
-    if let Some(label) = group.label {
-      let ready = group.jobs.iter().filter(|job| job.is_ready(now)).count();
-      children.push(group_header(&label, group.jobs.len(), ready));
-    }
-    for job in group.jobs {
-      children.push(job_row(job, now));
-    }
-  }
-
-  Column::with_children(children).width(Length::Fill).into()
+fn empty_state<'a>() -> Element<'a, Message> {
+  container(
+    text("No jobs match this filter.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::tertiary())),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .padding(spacing::SPACE_6)
+  .into()
 }
 
 fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -614,39 +626,67 @@ fn dot<'a>() -> Element<'a, Message> {
     .into()
 }
 
-struct Counts {
-  active: usize,
-  ready: usize,
-  total: usize,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct Counts {
+  pub active: usize,
+  pub ready: usize,
+  pub total: usize,
 }
 
-impl Counts {
-  fn of(jobs: &[&IndustryJob], now: DateTime<Utc>) -> Self {
-    let ready = jobs.iter().filter(|job| job.is_ready(now)).count();
-    Counts {
-      active: jobs.len() - ready,
-      ready,
-      total: jobs.len(),
+#[derive(Clone, Debug)]
+pub(super) struct GroupHeader {
+  pub count: usize,
+  pub label: String,
+  pub ready: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum JobRowItem {
+  Header(GroupHeader),
+  /// Index into `State::jobs()` — the full, unfiltered jobs slice, not the visible or filtered subset.
+  Job(usize),
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct JobView {
+  pub counts: Counts,
+  pub rows: Vec<JobRowItem>,
+}
+
+impl JobView {
+  pub fn build(jobs: &[IndustryJob], visible: &[usize], filter: Filter, group_by: GroupBy, now: DateTime<Utc>) -> Self {
+    let counts = counts_of(jobs, visible, now);
+    let filtered = filter_and_sort(jobs, visible, filter, now);
+    let rows = group_rows(jobs, &filtered, group_by, now);
+
+    JobView {
+      counts,
+      rows,
     }
   }
 }
 
-struct Group<'a> {
-  jobs: Vec<&'a IndustryJob>,
-  label: Option<String>,
+fn counts_of(jobs: &[IndustryJob], visible: &[usize], now: DateTime<Utc>) -> Counts {
+  let ready = visible.iter().filter(|&&index| jobs[index].is_ready(now)).count();
+  Counts {
+    active: visible.len() - ready,
+    ready,
+    total: visible.len(),
+  }
 }
 
-fn filter_and_sort<'a>(jobs: &[&'a IndustryJob], filter: Filter, now: DateTime<Utc>) -> Vec<&'a IndustryJob> {
-  let mut out: Vec<&'a IndustryJob> = jobs
+fn filter_and_sort(jobs: &[IndustryJob], visible: &[usize], filter: Filter, now: DateTime<Utc>) -> Vec<usize> {
+  let mut out: Vec<usize> = visible
     .iter()
     .copied()
-    .filter(|job| match filter {
+    .filter(|&index| match filter {
       Filter::All => true,
-      Filter::Active => !job.is_ready(now),
-      Filter::Ready => job.is_ready(now),
+      Filter::Active => !jobs[index].is_ready(now),
+      Filter::Ready => jobs[index].is_ready(now),
     })
     .collect();
-  out.sort_by(|a, b| {
+  out.sort_by(|&a, &b| {
+    let (a, b) = (&jobs[a], &jobs[b]);
     let ready = b.is_ready(now).cmp(&a.is_ready(now));
     ready
       .then_with(|| a.end().cmp(&b.end()))
@@ -655,18 +695,15 @@ fn filter_and_sort<'a>(jobs: &[&'a IndustryJob], filter: Filter, now: DateTime<U
   out
 }
 
-fn grouped<'a>(jobs: &[&'a IndustryJob], group_by: GroupBy, now: DateTime<Utc>) -> Vec<Group<'a>> {
-  let _ = now;
+fn group_rows(jobs: &[IndustryJob], filtered: &[usize], group_by: GroupBy, now: DateTime<Utc>) -> Vec<JobRowItem> {
   if group_by == GroupBy::None {
-    return vec![Group {
-      jobs: jobs.to_vec(),
-      label: None,
-    }];
+    return filtered.iter().copied().map(JobRowItem::Job).collect();
   }
 
   let mut order: Vec<String> = Vec::new();
-  let mut buckets: std::collections::HashMap<String, Vec<&'a IndustryJob>> = std::collections::HashMap::new();
-  for job in jobs {
+  let mut buckets: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+  for &index in filtered {
+    let job = &jobs[index];
     let label = match group_by {
       GroupBy::Owner => job.owner_name.clone(),
       GroupBy::Activity => job.activity.label().to_owned(),
@@ -676,14 +713,19 @@ fn grouped<'a>(jobs: &[&'a IndustryJob], group_by: GroupBy, now: DateTime<Utc>) 
     if !buckets.contains_key(&label) {
       order.push(label.clone());
     }
-    buckets.entry(label).or_default().push(job);
+    buckets.entry(label).or_default().push(index);
   }
 
-  order
-    .into_iter()
-    .map(|label| Group {
-      jobs: buckets.remove(&label).unwrap_or_default(),
-      label: Some(label),
-    })
-    .collect()
+  let mut rows: Vec<JobRowItem> = Vec::with_capacity(filtered.len() + order.len());
+  for label in order {
+    let members = buckets.remove(&label).unwrap_or_default();
+    let ready = members.iter().filter(|&&index| jobs[index].is_ready(now)).count();
+    rows.push(JobRowItem::Header(GroupHeader {
+      count: members.len(),
+      label,
+      ready,
+    }));
+    rows.extend(members.into_iter().map(JobRowItem::Job));
+  }
+  rows
 }

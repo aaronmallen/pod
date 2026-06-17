@@ -126,6 +126,7 @@ pub enum Message {
   BlueprintSortSelected(BlueprintSort),
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
+  JobsScrolled { absolute: f32 },
   Loaded(Box<Loaded>),
   PaneSettled(&'static str, f32),
   PickerToggled,
@@ -153,7 +154,9 @@ pub struct State {
   extractions: Vec<Extraction>,
   filter: Filter,
   group_by: GroupBy,
+  job_view: jobs::JobView,
   jobs: Vec<IndustryJob>,
+  jobs_scroll_offset: f32,
   picker_open: bool,
   planner: Planner,
   rail_pane: PaneDrag,
@@ -180,7 +183,9 @@ impl State {
       extractions: Vec::new(),
       filter: Filter::default(),
       group_by: GroupBy::default(),
+      job_view: jobs::JobView::default(),
       jobs: Vec::new(),
+      jobs_scroll_offset: 0.0,
       picker_open: false,
       planner,
       rail_pane: PaneDrag::with_min_width(
@@ -294,6 +299,18 @@ impl State {
     self.group_by
   }
 
+  pub(in crate::features::industry) fn job_view(&self) -> &jobs::JobView {
+    &self.job_view
+  }
+
+  pub(super) fn jobs(&self) -> &[IndustryJob] {
+    &self.jobs
+  }
+
+  pub(super) fn jobs_scroll_offset(&self) -> f32 {
+    self.jobs_scroll_offset
+  }
+
   pub(super) fn owner(&self, owner: Owner) -> Option<&RosterOwner> {
     let is_corporation = matches!(owner, Owner::Corporation(_));
     self
@@ -391,6 +408,17 @@ impl State {
         // character not yet loaded are not silently hidden.
         .unwrap_or(true),
     }
+  }
+
+  fn rebuild_job_view(&mut self, now: DateTime<Utc>) {
+    let visible: Vec<usize> = self
+      .jobs
+      .iter()
+      .enumerate()
+      .filter(|(_, job)| self.is_authorized(job.owner))
+      .map(|(index, _)| index)
+      .collect();
+    self.job_view = jobs::JobView::build(&self.jobs, &visible, self.filter, self.group_by, now);
   }
 }
 
@@ -641,7 +669,7 @@ fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -
   Task::batch(tasks)
 }
 
-pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime<Utc>) -> Task<Message> {
+pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<Utc>) -> Task<Message> {
   match message {
     Message::BlueprintKindSelected(kind) => {
       state.blueprint_kind = kind;
@@ -666,10 +694,20 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
     }
     Message::FilterSelected(filter) => {
       state.filter = filter;
+      state.jobs_scroll_offset = 0.0;
+      state.rebuild_job_view(now);
       Task::none()
     }
     Message::GroupBySelected(group_by) => {
       state.group_by = group_by;
+      state.jobs_scroll_offset = 0.0;
+      state.rebuild_job_view(now);
+      Task::none()
+    }
+    Message::JobsScrolled {
+      absolute,
+    } => {
+      state.jobs_scroll_offset = absolute;
       Task::none()
     }
     Message::Loaded(loaded) => {
@@ -686,6 +724,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
         state.extractions = extractions;
         state.jobs = jobs;
         state.roster = roster;
+        state.rebuild_job_view(now);
       }
       Task::none()
     }
@@ -722,6 +761,8 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       state.active = scope;
       state.picker_open = false;
       state.blueprint_scroll_offset = 0.0;
+      state.jobs_scroll_offset = 0.0;
+      state.rebuild_job_view(now);
       let mut tasks = vec![reload(db, scope, &state.required_scopes)];
       if state.planner.is_loaded() {
         tasks.push(load_planner(db, scope));
@@ -739,7 +780,12 @@ pub fn update(state: &mut State, message: Message, db: &Database, _now: DateTime
       }
       Task::none()
     }
-    Message::Tick => Task::none(),
+    Message::Tick => {
+      // Jobs cross their completion time between ticks, flipping the ready/active partition that drives
+      // both the sort order and the filter-bar tallies, so the memoized view must be refreshed each tick.
+      state.rebuild_job_view(now);
+      Task::none()
+    }
   }
 }
 
@@ -835,6 +881,7 @@ mod tests {
     state.active = active;
     state.roster = roster;
     state.jobs = jobs;
+    state.rebuild_job_view(now());
     state
   }
 
@@ -1375,6 +1422,84 @@ mod tests {
 
       assert_eq!(visible.len(), 2);
       assert!(visible.iter().all(|job| job.owner != Owner::Character(2)));
+    }
+  }
+
+  mod job_view {
+    use pretty_assertions::assert_eq;
+
+    use super::{super::jobs::JobRowItem, *};
+
+    fn job_ids(state: &State) -> Vec<i64> {
+      state
+        .job_view()
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+          JobRowItem::Job(index) => Some(state.jobs()[*index].job_id),
+          JobRowItem::Header(_) => None,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn it_orders_ready_jobs_first_then_by_end_time() {
+      let state = populated();
+
+      // Job 11 ends at 11:30 and is ready at the 12:00 clock, so it sorts ahead of the running jobs,
+      // which then order by end time (10 at 14:00 before 13 at 16:00). Job 12 belongs to the
+      // unauthorized pilot and is dropped.
+      assert_eq!(job_ids(&state), vec![11, 10, 13]);
+      assert_eq!(state.job_view().counts.total, 3);
+      assert_eq!(state.job_view().counts.ready, 1);
+      assert_eq!(state.job_view().counts.active, 2);
+    }
+
+    #[test]
+    fn it_drops_unauthorized_characters_from_the_memoized_set() {
+      let state = populated();
+
+      assert!(
+        state
+          .job_view()
+          .rows
+          .iter()
+          .all(|row| !matches!(row, JobRowItem::Job(index) if state.jobs()[*index].owner == Owner::Character(2)))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_filters_to_ready_jobs_only() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+
+      let _ = update(&mut state, Message::FilterSelected(Filter::Ready), &db, now());
+
+      assert_eq!(job_ids(&state), vec![11]);
+    }
+
+    #[tokio::test]
+    async fn it_emits_a_header_row_per_group() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+
+      let _ = update(&mut state, Message::GroupBySelected(GroupBy::Owner), &db, now());
+
+      let headers = state
+        .job_view()
+        .rows
+        .iter()
+        .filter(|row| matches!(row, JobRowItem::Header(_)))
+        .count();
+      let jobs = state
+        .job_view()
+        .rows
+        .iter()
+        .filter(|row| matches!(row, JobRowItem::Job(_)))
+        .count();
+
+      assert!(headers >= 1);
+      assert_eq!(jobs, 3);
     }
   }
 

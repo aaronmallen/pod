@@ -22,6 +22,7 @@ use crate::{
     },
     repo::{character, finance, infra, org},
   },
+  sync::JobKind,
   ui::components::resizable_pane::PaneDrag,
   window_state,
 };
@@ -246,6 +247,7 @@ pub struct State {
   corp_divisions: Vec<CorpDivision>,
   corporations: Vec<RosterCorp>,
   derived: Derived,
+  dirty: bool,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
   journal_total: i64,
@@ -278,6 +280,7 @@ impl State {
       corp_divisions: Vec::new(),
       corporations: Vec::new(),
       derived: Derived::default(),
+      dirty: false,
       financials: Vec::new(),
       journal: Vec::new(),
       journal_total: 0,
@@ -317,6 +320,25 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn drain_dirty(&mut self, db: &Database) -> Option<Task<Message>> {
+    if !self.dirty {
+      return None;
+    }
+    self.dirty = false;
+    Some(load(db))
+  }
+
+  #[cfg(test)]
+  pub fn is_dirty(&self) -> bool {
+    self.dirty
+  }
+
+  pub fn mark_dirty(&mut self, kind: JobKind) {
+    if reload_kind(kind) {
+      self.dirty = true;
+    }
   }
 
   pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
@@ -519,6 +541,13 @@ fn reload(db: &Database, scope: Scope, division: i64) -> Task<Message> {
   Task::perform(load_wallet(db.clone(), scope, division), |loaded| {
     Message::Loaded(Box::new(loaded))
   })
+}
+
+fn reload_kind(kind: JobKind) -> bool {
+  matches!(
+    kind,
+    JobKind::CharacterWallet | JobKind::CorporationWallet | JobKind::MarketPrices | JobKind::NetWorthSnapshot
+  )
 }
 
 fn load_more(state: &mut State, db: &Database) -> Task<Message> {
@@ -1391,6 +1420,47 @@ mod tests {
     images::ImageState::Stale {
       id,
       kind: images::ImageKind::CorporationLogo,
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    #[test]
+    fn it_marks_the_wallet_dirty_for_a_ledger_kind() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::CharacterWallet);
+
+      assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_kind_the_wallet_does_not_render() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::AssetSync);
+
+      assert!(!state.is_dirty());
+    }
+  }
+
+  mod reload_kind {
+    use super::*;
+
+    #[test]
+    fn it_feeds_the_wallet_for_every_ledger_and_derive_kind() {
+      assert!(reload_kind(JobKind::CharacterWallet));
+      assert!(reload_kind(JobKind::CorporationWallet));
+      assert!(reload_kind(JobKind::MarketPrices));
+      assert!(reload_kind(JobKind::NetWorthSnapshot));
+    }
+
+    #[test]
+    fn it_ignores_kinds_the_wallet_does_not_render() {
+      assert!(!reload_kind(JobKind::AssetSync));
+      assert!(!reload_kind(JobKind::CharacterSkills));
+      assert!(!reload_kind(JobKind::CharacterProfile));
     }
   }
 

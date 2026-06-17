@@ -30,7 +30,7 @@ use crate::{
   },
   services::{images, updater},
   store,
-  sync::{self, JobKey, JobKind, Subject},
+  sync::{self, JobKey},
   ui::{
     components::{
       backdrop,
@@ -94,7 +94,6 @@ struct App {
   about: Option<window::Id>,
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
-  assets_dirty: bool,
   auth: auth::State,
   calendar: Option<calendar::State>,
   calendar_attention: i64,
@@ -107,7 +106,6 @@ struct App {
   /// second explicit confirmation.
   confirm_force_takeover: bool,
   corporation_detail: Option<corporation_detail::State>,
-  detail_dirty: HashSet<character_detail::DetailDataType>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
   esi_connected: bool,
@@ -141,7 +139,6 @@ struct App {
   updater_state: updater::State,
   updater_toast_dismissed: bool,
   wallet: Option<wallet::State>,
-  wallet_dirty: bool,
   windows: Windows,
 }
 
@@ -733,7 +730,6 @@ fn boot() -> (App, Task<Message>) {
     about: None,
     accessibility,
     assets: None,
-    assets_dirty: false,
     auth: auth::State::default(),
     calendar: None,
     calendar_attention: 0,
@@ -743,7 +739,6 @@ fn boot() -> (App, Task<Message>) {
     compare: None,
     confirm_force_takeover: false,
     corporation_detail: None,
-    detail_dirty: HashSet::new(),
     editor: None,
     engine_state: EngineState::default(),
     esi_connected: true,
@@ -777,7 +772,6 @@ fn boot() -> (App, Task<Message>) {
     updater_state: updater::State::default(),
     updater_toast_dismissed: false,
     wallet: None,
-    wallet_dirty: false,
     windows: registry,
   };
   let task = Task::batch([open_task.map(Message::WindowOpened), open_store()]);
@@ -1421,40 +1415,20 @@ fn navigate_to_corporation_detail(app: &mut App, id: i64) -> Task<Message> {
   }
 }
 
-fn detail_reload_target(
-  detail: Option<&character_detail::State>,
-  key: JobKey,
-) -> Option<character_detail::DetailDataType> {
-  let detail = detail?;
-  if key.subject != Subject::Character(detail.active()) {
-    return None;
-  }
-  character_detail::DetailDataType::for_job_kind(key.kind)
-}
-
 fn drain_assets_dirty(app: &mut App) -> Option<Task<Message>> {
-  if !app.assets_dirty {
-    return None;
-  }
-  app.assets_dirty = false;
-  let runtime = app.runtime.as_ref()?;
-  let assets = app.assets.as_ref()?;
-  Some(assets::sync_reload(assets, &runtime.db).map(Message::Assets))
+  let db = app.runtime.as_ref()?.db.clone();
+  Some(app.assets.as_mut()?.drain_dirty(&db)?.map(Message::Assets))
 }
 
 fn drain_detail_dirty(app: &mut App) -> Option<Task<Message>> {
-  if app.detail_dirty.is_empty() {
-    return None;
-  }
-  // Take before the guards: if runtime or detail screen is absent there is nothing to reload,
-  // so discarding the set here is intentional rather than deferring to the next pulse.
-  let data_types = std::mem::take(&mut app.detail_dirty);
-  let runtime = app.runtime.as_ref()?;
-  let active = app.character_detail.as_ref()?.active();
-  let tasks = data_types
-    .into_iter()
-    .map(|data_type| character_detail::reload(&runtime.db, active, data_type).map(Message::CharacterDetail));
-  Some(Task::batch(tasks))
+  let db = app.runtime.as_ref()?.db.clone();
+  Some(
+    app
+      .character_detail
+      .as_mut()?
+      .drain_dirty(&db)?
+      .map(Message::CharacterDetail),
+  )
 }
 
 fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
@@ -1467,20 +1441,8 @@ fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
 }
 
 fn drain_wallet_dirty(app: &mut App) -> Option<Task<Message>> {
-  if !app.wallet_dirty {
-    return None;
-  }
-  app.wallet_dirty = false;
-  let runtime = app.runtime.as_ref()?;
-  app.wallet.as_ref()?;
-  Some(wallet::load(&runtime.db).map(Message::Wallet))
-}
-
-fn wallet_reload_kind(kind: JobKind) -> bool {
-  matches!(
-    kind,
-    JobKind::CharacterWallet | JobKind::CorporationWallet | JobKind::MarketPrices | JobKind::NetWorthSnapshot
-  )
+  let db = app.runtime.as_ref()?.db.clone();
+  Some(app.wallet.as_mut()?.drain_dirty(&db)?.map(Message::Wallet))
 }
 
 fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
@@ -3981,20 +3943,24 @@ fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
 }
 
 fn mark_assets_dirty(app: &mut App, key: JobKey) {
-  if app.route == Route::Assets && key.kind == JobKind::AssetSync && app.assets.is_some() {
-    app.assets_dirty = true;
+  if app.route == Route::Assets
+    && let Some(assets) = app.assets.as_mut()
+  {
+    assets.mark_dirty(key.kind);
   }
 }
 
 fn mark_detail_dirty(app: &mut App, key: JobKey) {
-  if let Some(data_type) = detail_reload_target(app.character_detail.as_ref(), key) {
-    app.detail_dirty.insert(data_type);
+  if let Some(detail) = app.character_detail.as_mut() {
+    detail.mark_dirty(key);
   }
 }
 
 fn mark_wallet_dirty(app: &mut App, key: JobKey) {
-  if app.route == Route::Wallet && wallet_reload_kind(key.kind) && app.wallet.is_some() {
-    app.wallet_dirty = true;
+  if app.route == Route::Wallet
+    && let Some(wallet) = app.wallet.as_mut()
+  {
+    wallet.mark_dirty(key.kind);
   }
 }
 
@@ -4166,6 +4132,7 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::sync::{JobKind, Subject};
 
   fn pilot(id: i64) -> OwnedPilot {
     OwnedPilot {
@@ -4181,7 +4148,6 @@ mod tests {
       about: None,
       accessibility: config::AccessibilityConfig::default(),
       assets: None,
-      assets_dirty: false,
       auth: auth::State::default(),
       calendar: None,
       calendar_attention: 0,
@@ -4191,7 +4157,6 @@ mod tests {
       compare: None,
       confirm_force_takeover: false,
       corporation_detail: None,
-      detail_dirty: HashSet::new(),
       editor: None,
       engine_state: EngineState::default(),
       esi_connected: true,
@@ -4225,7 +4190,6 @@ mod tests {
       updater_state: updater::State::default(),
       updater_toast_dismissed: false,
       wallet: None,
-      wallet_dirty: false,
       windows: Windows::default(),
     }
   }
@@ -4799,9 +4763,14 @@ mod tests {
       }
     }
 
-    #[test]
-    fn it_coalesces_a_burst_of_asset_syncs_into_one_pending_assets_refresh() {
+    fn assets_dirty(app: &App) -> bool {
+      app.assets.as_ref().is_some_and(assets::State::is_dirty)
+    }
+
+    #[tokio::test]
+    async fn it_coalesces_a_burst_of_asset_syncs_into_one_pending_assets_refresh() {
       let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
       app.route = Route::Assets;
       app.assets = Some(assets::State::new());
 
@@ -4810,15 +4779,15 @@ mod tests {
       }
 
       assert!(
-        app.assets_dirty,
+        assets_dirty(&app),
         "a burst of AssetSync events marks the assets dirty once instead of reloading per event"
       );
 
       let _ = update(&mut app, Message::SyncPulse);
-      assert!(!app.assets_dirty, "the pulse consumes the coalesced assets refresh");
+      assert!(!assets_dirty(&app), "the pulse consumes the coalesced assets refresh");
 
       let _ = update(&mut app, Message::SyncPulse);
-      assert!(!app.assets_dirty, "a quiet pulse schedules no further assets reload");
+      assert!(!assets_dirty(&app), "a quiet pulse schedules no further assets reload");
     }
 
     #[test]
@@ -4829,7 +4798,10 @@ mod tests {
 
       let _ = update(&mut app, Message::Sync(asset_sync_event(1)));
 
-      assert!(!app.assets_dirty, "an off-route asset sync schedules no assets reload");
+      assert!(
+        !assets_dirty(&app),
+        "an off-route asset sync schedules no assets reload"
+      );
     }
 
     #[test]
@@ -6724,101 +6696,33 @@ mod tests {
     }
   }
 
-  mod detail_sync_reload {
-    use pretty_assertions::assert_eq;
-
+  mod mark_detail_dirty {
     use super::*;
-    use crate::features::character_detail::{self, DetailDataType};
+    use crate::features::character_detail;
 
     const PILOT: i64 = 42;
-
-    fn detail() -> character_detail::State {
-      character_detail::State::new(PILOT, &[])
-    }
 
     fn finished(kind: JobKind, subject: Subject) -> JobKey {
       JobKey::new(kind, subject)
     }
 
     #[test]
-    fn it_reloads_only_the_matching_type_for_the_drilled_in_pilot() {
-      let detail = detail();
+    fn it_routes_a_finished_job_to_the_open_detail_screen() {
+      let mut app = test_app();
+      app.character_detail = Some(character_detail::State::new(PILOT, &[]));
 
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterClones, Subject::Character(PILOT))
-        ),
-        Some(DetailDataType::Clones)
-      );
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterStandings, Subject::Character(PILOT))
-        ),
-        Some(DetailDataType::Standings)
-      );
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterContacts, Subject::Character(PILOT))
-        ),
-        Some(DetailDataType::Contacts)
-      );
-    }
+      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
 
-    #[test]
-    fn it_ignores_a_finished_job_for_a_different_pilot() {
-      let detail = detail();
-
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterClones, Subject::Character(PILOT + 1))
-        ),
-        None
-      );
-    }
-
-    #[test]
-    fn it_ignores_a_corporation_subject_job() {
-      let detail = detail();
-
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterClones, Subject::Corporation(PILOT))
-        ),
-        None
-      );
-    }
-
-    #[test]
-    fn it_ignores_a_kind_this_screen_does_not_render() {
-      let detail = detail();
-
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterWallet, Subject::Character(PILOT))
-        ),
-        None
-      );
-      assert_eq!(
-        detail_reload_target(
-          Some(&detail),
-          finished(JobKind::CharacterTelemetry, Subject::Character(PILOT))
-        ),
-        None
-      );
+      assert!(app.character_detail.as_ref().unwrap().is_dirty());
     }
 
     #[test]
     fn it_ignores_everything_when_no_detail_screen_is_open() {
-      assert_eq!(
-        detail_reload_target(None, finished(JobKind::CharacterClones, Subject::Character(PILOT))),
-        None
-      );
+      let mut app = test_app();
+
+      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
+
+      assert!(app.character_detail.is_none());
     }
   }
 
@@ -6837,7 +6741,7 @@ mod tests {
 
       mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
 
-      assert!(app.assets_dirty);
+      assert!(app.assets.as_ref().unwrap().is_dirty());
     }
 
     #[test]
@@ -6848,7 +6752,7 @@ mod tests {
 
       mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
 
-      assert!(!app.assets_dirty);
+      assert!(!app.assets.as_ref().unwrap().is_dirty());
     }
 
     #[test]
@@ -6859,7 +6763,7 @@ mod tests {
 
       mark_assets_dirty(&mut app, finished(JobKind::CharacterWallet));
 
-      assert!(!app.assets_dirty);
+      assert!(!app.assets.as_ref().unwrap().is_dirty());
     }
   }
 
@@ -6878,7 +6782,7 @@ mod tests {
 
       mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
 
-      assert!(app.wallet_dirty);
+      assert!(app.wallet.as_ref().unwrap().is_dirty());
     }
 
     #[test]
@@ -6889,7 +6793,7 @@ mod tests {
 
       mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
 
-      assert!(!app.wallet_dirty);
+      assert!(!app.wallet.as_ref().unwrap().is_dirty());
     }
 
     #[test]
@@ -6900,26 +6804,7 @@ mod tests {
 
       mark_wallet_dirty(&mut app, finished(JobKind::AssetSync));
 
-      assert!(!app.wallet_dirty);
-    }
-  }
-
-  mod wallet_reload_kind {
-    use super::*;
-
-    #[test]
-    fn it_feeds_the_wallet_for_every_ledger_and_derive_kind() {
-      assert!(wallet_reload_kind(JobKind::CharacterWallet));
-      assert!(wallet_reload_kind(JobKind::CorporationWallet));
-      assert!(wallet_reload_kind(JobKind::MarketPrices));
-      assert!(wallet_reload_kind(JobKind::NetWorthSnapshot));
-    }
-
-    #[test]
-    fn it_ignores_kinds_the_wallet_does_not_render() {
-      assert!(!wallet_reload_kind(JobKind::AssetSync));
-      assert!(!wallet_reload_kind(JobKind::CharacterSkills));
-      assert!(!wallet_reload_kind(JobKind::CharacterProfile));
+      assert!(!app.wallet.as_ref().unwrap().is_dirty());
     }
   }
 

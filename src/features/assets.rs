@@ -34,6 +34,7 @@ use crate::{
     },
     repo::{assets, character, infra, org},
   },
+  sync::JobKind,
   ui::{
     components::resizable_pane::{self, PaneDrag},
     load_epoch::LoadEpoch,
@@ -328,6 +329,7 @@ pub struct State {
   category: Category,
   chart_hover: Option<f32>,
   corporations: Vec<RosterCorp>,
+  dirty: bool,
   expanded_containers: HashSet<i64>,
   geo_expanded: HashSet<GeoNodeKey>,
   geo_selected: GeoSelection,
@@ -390,6 +392,7 @@ impl State {
       category: Category::default(),
       chart_hover: None,
       corporations: Vec::new(),
+      dirty: false,
       expanded_containers: HashSet::new(),
       geo_expanded: HashSet::new(),
       geo_selected: GeoSelection::default(),
@@ -461,6 +464,25 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn drain_dirty(&mut self, db: &Database) -> Option<Task<Message>> {
+    if !self.dirty {
+      return None;
+    }
+    self.dirty = false;
+    Some(sync_reload(self, db))
+  }
+
+  #[cfg(test)]
+  pub fn is_dirty(&self) -> bool {
+    self.dirty
+  }
+
+  pub fn mark_dirty(&mut self, kind: JobKind) {
+    if kind == JobKind::AssetSync {
+      self.dirty = true;
+    }
   }
 
   pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
@@ -2075,6 +2097,28 @@ mod tests {
       },
       name: format!("Corp {id}"),
       ticker: "CRP".to_owned(),
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    #[test]
+    fn it_marks_the_assets_dirty_for_an_asset_sync() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::AssetSync);
+
+      assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_an_unrelated_kind() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::CharacterWallet);
+
+      assert!(!state.is_dirty());
     }
   }
 

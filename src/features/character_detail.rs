@@ -2,7 +2,7 @@ mod header;
 mod killmail_loader;
 mod tabs;
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use iced::{
   Element, Length, Task,
@@ -31,7 +31,7 @@ use crate::{
       infra, org, sde, standings,
     },
   },
-  sync::JobKind,
+  sync::{JobKey, JobKind, Subject},
   ui::{
     components::{
       backdrop,
@@ -305,6 +305,7 @@ pub struct State {
   contacts_loading_more: bool,
   contacts_query: String,
   contacts_scroll_offset: f32,
+  dirty: HashSet<DetailDataType>,
   enabled_tabs: Vec<Tab>,
   granted_scopes: Option<String>,
   head: HeadStats,
@@ -349,6 +350,7 @@ impl State {
       contacts_loading_more: false,
       contacts_query: String::new(),
       contacts_scroll_offset: 0.0,
+      dirty: HashSet::new(),
       enabled_tabs,
       granted_scopes: None,
       head: HeadStats::default(),
@@ -379,9 +381,34 @@ impl State {
     self.active
   }
 
+  pub fn drain_dirty(&mut self, db: &Database) -> Option<Task<Message>> {
+    if self.dirty.is_empty() {
+      return None;
+    }
+    let data_types = std::mem::take(&mut self.dirty);
+    let active = self.active;
+    Some(Task::batch(
+      data_types.into_iter().map(|data_type| reload(db, active, data_type)),
+    ))
+  }
+
   #[cfg(test)]
   pub fn enabled_tabs(&self) -> &[Tab] {
     &self.enabled_tabs
+  }
+
+  #[cfg(test)]
+  pub fn is_dirty(&self) -> bool {
+    !self.dirty.is_empty()
+  }
+
+  pub fn mark_dirty(&mut self, key: JobKey) {
+    if key.subject != Subject::Character(self.active) {
+      return;
+    }
+    if let Some(data_type) = DetailDataType::for_job_kind(key.kind) {
+      self.dirty.insert(data_type);
+    }
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -2772,6 +2799,53 @@ mod tests {
           "{kind:?} should not reload the detail"
         );
       }
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    const PILOT: i64 = 42;
+
+    fn finished(kind: JobKind, subject: Subject) -> JobKey {
+      JobKey::new(kind, subject)
+    }
+
+    #[test]
+    fn it_marks_the_matching_type_for_the_drilled_in_pilot() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT)));
+
+      assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_finished_job_for_a_different_pilot() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT + 1)));
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_corporation_subject_job() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Corporation(PILOT)));
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_kind_this_screen_does_not_render() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterWallet, Subject::Character(PILOT)));
+      state.mark_dirty(finished(JobKind::CharacterTelemetry, Subject::Character(PILOT)));
+
+      assert!(!state.is_dirty());
     }
   }
 

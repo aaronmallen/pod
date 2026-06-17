@@ -58,6 +58,35 @@ pub(super) struct SummaryData {
   pub total_sp: u64,
 }
 
+impl Default for SummaryData {
+  fn default() -> Self {
+    SummaryData {
+      base_attrs: Attributes::default(),
+      character_total_sp: 0,
+      current_base_sec: 0.0,
+      current_sec: 0.0,
+      group_sec: HashMap::new(),
+      implant_effect: ImplantEffect {
+        bonus: Attributes::default(),
+        with_sec: 0.0,
+        without_sec: 0.0,
+      },
+      pair_sec: HashMap::new(),
+      recommendation: Recommendation {
+        base: Attributes::default(),
+        current_out_of_spec: false,
+        is_current: true,
+        total_sec: 0.0,
+      },
+      remap_availability: 0,
+      remap_reason: String::new(),
+      steps: 0,
+      total_sec: 0.0,
+      total_sp: 0,
+    }
+  }
+}
+
 fn clamp_secs(sec: f64) -> u64 {
   if !sec.is_finite() || sec <= 0.0 {
     0

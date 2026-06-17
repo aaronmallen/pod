@@ -348,6 +348,7 @@ pub struct State {
   io_panel: Option<IoPanel>,
   pending_import: Option<import_export::Payload>,
   saved: Snapshot,
+  dirty: bool,
   next_remap_id: i64,
   next_entry_id: i64,
   picker: PickerState,
@@ -365,6 +366,7 @@ pub struct State {
   synced_levels: HashMap<i64, u8>,
   synced_sp: HashMap<i64, u64>,
   rows: Vec<ComputedRow>,
+  summary: summary::SummaryData,
   total_sp: u64,
   total_sec: f64,
 }
@@ -383,6 +385,7 @@ impl State {
       io_panel: None,
       pending_import: None,
       saved: Snapshot::default(),
+      dirty: false,
       next_remap_id: 1,
       next_entry_id: -1,
       picker: PickerState::default(),
@@ -400,6 +403,7 @@ impl State {
       synced_levels: HashMap::new(),
       synced_sp: HashMap::new(),
       rows: Vec::new(),
+      summary: summary::SummaryData::default(),
       total_sp: 0,
       total_sec: 0.0,
     }
@@ -471,7 +475,7 @@ impl State {
   }
 
   fn dirty(&self) -> bool {
-    self.snapshot() != self.saved
+    self.dirty
   }
 
   fn implant_bonus(&self) -> Attributes {
@@ -582,6 +586,10 @@ impl State {
     }
   }
 
+  fn recompute_dirty(&mut self) {
+    self.dirty = self.snapshot() != self.saved;
+  }
+
   fn refresh_rows(&mut self) {
     let Computed {
       rows,
@@ -591,6 +599,7 @@ impl State {
     self.rows = rows;
     self.total_sp = total_sp;
     self.total_sec = total_sec;
+    self.summary = self.summary_data();
   }
 
   fn snapshot(&self) -> Snapshot {
@@ -756,6 +765,12 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  let task = dispatch(state, message, db);
+  state.recompute_dirty();
+  task
+}
+
+fn dispatch(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   let message = match handle_io(state, message) {
     Ok(task) => return task,
     Err(message) => message,
@@ -1250,7 +1265,7 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     )
   };
 
-  let summary_panel = iced::widget::container(summary::summary(state.summary_data(), now))
+  let summary_panel = iced::widget::container(summary::summary(state.summary.clone(), now))
     .width(Length::Fixed(state.summary_pane.width()))
     .height(Length::Fill);
 
@@ -3828,6 +3843,7 @@ mod tests {
         let db = crate::store::open_test().await.unwrap();
         let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
         state.saved = state.snapshot();
+        state.recompute_dirty();
         assert!(!state.dirty());
 
         let id = entry_id_for(&state, 3300, 2);
